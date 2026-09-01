@@ -1,0 +1,16 @@
+# Local builds and release artifacts
+/build/
+/dist/
+/backups/
+
+# Local workspace state
+/.workbuddy/
+.DS_Store
+
+# JavaScript dependencies and logs
+node_modules/
+npm-debug.log*
+
+# Xcode and Swift build products
+.build/
+DerivedData/
