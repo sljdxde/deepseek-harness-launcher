@@ -7,8 +7,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let settings = LauncherSettings.shared
 
     private let autoUpdateCheckbox = NSButton(checkboxWithTitle: "自动检查更新", target: nil, action: nil)
-    private let openBrowserCheckbox = NSButton(checkboxWithTitle: "DHL 就绪后自动打开浏览器", target: nil, action: nil)
-    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动 DHL", target: nil, action: nil)
+    private let openBrowserCheckbox = NSButton(checkboxWithTitle: "Deepseek Harness Launcher 就绪后自动打开浏览器", target: nil, action: nil)
+    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动 Deepseek Harness Launcher", target: nil, action: nil)
     private let intervalField = NSTextField(string: "6")
 
     init(onSave: @escaping () -> Void, onCheckNow: @escaping () -> Void) {
@@ -21,7 +21,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "DHL 设置"
+        window.title = "Deepseek Harness Launcher 设置"
         window.isReleasedWhenClosed = false
         // Keep a native glass surface without letting the desktop bleed
         // through and wash out the settings text.
@@ -80,7 +80,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             root.bottomAnchor.constraint(equalTo: visualEffect.bottomAnchor, constant: -22)
         ])
 
-        let title = makeLabel("DHL 设置", size: 21, weight: .semibold, color: .labelColor)
+        let title = makeLabel("Deepseek Harness Launcher 设置", size: 21, weight: .semibold, color: .labelColor)
         let subtitle = makeLabel("启动器偏好与更新", size: 13, weight: .regular, color: .secondaryLabelColor)
         root.addSubview(title)
         root.addSubview(subtitle)

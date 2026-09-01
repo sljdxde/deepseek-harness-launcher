@@ -24,6 +24,8 @@ rg -q "return \{ inject: \['slots', 'locale'\], apply \}" "$ROOT/Plugins/DSHArch
 rg -q 'dsh-archive-select-all' "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 rg -q 'selectAllRef\.current\.indeterminate' "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 plutil -lint "$ROOT/Resources/Info.plist"
+plutil -extract CFBundleDisplayName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
+plutil -extract CFBundleName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
 plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/Info.plist" | grep -qx '0.1.0'
 zsh -n "$ROOT/scripts/install.sh"
 zsh -n "$ROOT/scripts/install-from-app.sh"
@@ -63,6 +65,7 @@ swiftc "$ROOT/scripts/test-launcher-support.swift" "$ROOT/Sources/ArchivePluginS
 "$ROOT/build/test-launcher-support"
 "$ROOT/scripts/build-app.sh" >/dev/null
 test -x "$ROOT/build/DHL.app/Contents/MacOS/DHL"
+plutil -extract CFBundleDisplayName raw "$ROOT/build/DHL.app/Contents/Info.plist" | grep -qx 'Deepseek Harness Launcher'
 test -f "$ROOT/build/DHL.app/Contents/Resources/DHL.icns"
 test -x "$ROOT/build/DHL.app/Contents/Resources/install-from-app.sh"
 "$ROOT/scripts/build-universal.sh" >/dev/null
@@ -78,4 +81,4 @@ if rg -Fq 'ln -s /Applications' "$ROOT/scripts/build-dmg.sh"; then
   echo "DMG must expose only the installation entry" >&2
   exit 1
 fi
-echo "DHL launcher checks passed"
+echo "Deepseek Harness Launcher checks passed"

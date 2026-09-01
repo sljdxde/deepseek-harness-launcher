@@ -211,7 +211,7 @@ final class UpdateService {
         }
 
         var request = URLRequest(url: releasesURL)
-        request.setValue("DHL Launcher", forHTTPHeaderField: "User-Agent")
+        request.setValue("Deepseek Harness Launcher", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.cachePolicy = .reloadIgnoringLocalCacheData
         session.dataTask(with: request) { data, response, error in
@@ -268,7 +268,7 @@ final class UpdateService {
             return
         }
         var request = URLRequest(url: url)
-        request.setValue("DHL Launcher", forHTTPHeaderField: "User-Agent")
+        request.setValue("Deepseek Harness Launcher", forHTTPHeaderField: "User-Agent")
         request.setValue("application/atom+xml, application/xml;q=0.9, */*;q=0.8", forHTTPHeaderField: "Accept")
         request.cachePolicy = .reloadIgnoringLocalCacheData
         session.dataTask(with: request) { data, response, error in

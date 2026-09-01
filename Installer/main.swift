@@ -42,7 +42,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
         iconView.imageScaling = .scaleProportionallyUpOrDown
         content.addSubview(iconView)
 
-        let title = NSTextField(labelWithString: "正在安装 DHL")
+        let title = NSTextField(labelWithString: "正在安装 Deepseek Harness Launcher")
         title.font = .systemFont(ofSize: 19, weight: .semibold)
         title.textColor = .labelColor
         title.frame = NSRect(x: 128, y: 129, width: 270, height: 28)
@@ -60,7 +60,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
         spinner.startAnimation(nil)
         content.addSubview(spinner)
 
-        let detail = NSTextField(labelWithString: "完成后会自动重新启动 DHL。")
+        let detail = NSTextField(labelWithString: "完成后会自动重新启动 Deepseek Harness Launcher。")
         detail.font = .systemFont(ofSize: 12)
         detail.textColor = .tertiaryLabelColor
         detail.frame = NSRect(x: 154, y: 56, width: 240, height: 18)
@@ -85,7 +85,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
 
         guard result.status == 0 else {
             let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            finishFailure(detail.isEmpty ? "安装失败，请关闭 DHL 后重试。" : detail)
+            finishFailure(detail.isEmpty ? "安装失败，请关闭 Deepseek Harness Launcher 后重试。" : detail)
             return
         }
 
@@ -98,7 +98,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.spinner.stopAnimation(nil)
-            self.statusLabel.stringValue = "已更新，正在重新启动 DHL…"
+            self.statusLabel.stringValue = "已更新，正在重新启动 Deepseek Harness Launcher…"
             NSWorkspace.shared.open(target)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
                 NSApp.terminate(nil)
@@ -168,7 +168,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
             self?.spinner.stopAnimation(nil)
             self?.window.orderOut(nil)
             let alert = NSAlert()
-            alert.messageText = "未能安装 DHL"
+            alert.messageText = "未能安装 Deepseek Harness Launcher"
             alert.informativeText = message
             alert.alertStyle = .critical
             alert.addButton(withTitle: "好")

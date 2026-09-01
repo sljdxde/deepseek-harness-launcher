@@ -1,8 +1,8 @@
-# DHL（DeepSeek Harness Launcher）
+# Deepseek Harness Launcher（DHL）
 
 [English](./README.en.md)
 
-轻量级 **原生 macOS 菜单栏启动器**，用于本地运行 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（基于 `@deepseek-ai/dsh` 的 AI agent 平台）。从 Spotlight 或 Raycast 打开 `DHL` 后，应用会启动 Harness 的 `web` profile、常驻菜单栏，并在服务就绪后打开系统默认浏览器；它不内嵌浏览器，也不提供独立的桌面聊天界面。
+**Deepseek Harness Launcher** 是一款轻量级 **原生 macOS 菜单栏启动器**，用于本地运行 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（基于 `@deepseek-ai/dsh` 的 AI agent 平台）。从 Spotlight 或 Raycast 搜索 `Deepseek Harness Launcher`，也可以输入 `dsh` 或 `dhl`，应用会启动 Harness 的 `web` profile、常驻菜单栏，并在服务就绪后打开系统默认浏览器；它不内嵌浏览器，也不提供独立的桌面聊天界面。
 
 App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协议），仅做了圆形外框等少量修改 —— 见 [THIRD_PARTY.md](./THIRD_PARTY.md)。
 
@@ -31,22 +31,22 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 6 | **开机自启动** | 通过 `LaunchAgent`（`com.local.dhl-launcher`）实现登录 macOS 自动拉起，可在设置中开关。 |
 | 7 | **优雅的进程生命周期** | 停止 / 更新前对 Harness 进程组做 `SIGTERM → SIGKILL` 级联终止（含超时兜底），并精确匹配 launcher 自身路径与运行该 patch 的 npm/node 进程，避免误杀或残留孤儿进程。 |
 | 8 | **原生设置窗口** | 自动更新开关与频率、就绪后是否自动开浏览器、开机启动；与系统外观一致。 |
-| 9 | **实时状态 + 日志** | 菜单栏实时显示当前运行端口；所有 stdout/stderr 与生命周期事件写入 `~/Library/Logs/DHL Launcher/dhl.log`，一键「打开日志」。 |
+| 9 | **实时状态 + 日志** | 菜单栏实时显示当前运行端口；所有 stdout/stderr 与生命周期事件写入 `~/Library/Logs/Deepseek Harness Launcher/dhl.log`，一键「打开日志」。 |
 
 **边界与取舍**：
 
 - 仅支持 macOS（无 Windows / Linux）；
 - 不捆绑 Node 运行时，也不管理多个 dsh 内核版本；需要用户系统中已有可用的 `node` 与 `npx`。
 - 缓存不存在时，首次启动可能需要下载 dsh，因此会比后续启动慢。
-- DHL 只添加自己的归档插件链接与临时 patch；Harness 原有 profile、会话及其他插件仍由 dsh 管理。
+- Deepseek Harness Launcher 只添加自己的归档插件链接与临时 patch；Harness 原有 profile、会话及其他插件仍由 dsh 管理。
 
 ---
 
 ## 前置条件
 
 - macOS 12 或更高版本。
-- 已安装可从终端使用的 Node.js（建议 Node 22 或与当前 dsh 兼容的 LTS）及 npm/npx。DHL 不携带运行时。
-- 网络仅在 npm 缓存中缺少 `@deepseek-ai/dsh` 或检查/下载 DHL 更新时需要。
+- 已安装可从终端使用的 Node.js（建议 Node 22 或与当前 dsh 兼容的 LTS）及 npm/npx。Deepseek Harness Launcher 不携带运行时。
+- 网络仅在 npm 缓存中缺少 `@deepseek-ai/dsh` 或检查/下载 Deepseek Harness Launcher 更新时需要。
 
 启动实际执行的命令为：
 
@@ -57,12 +57,12 @@ npx --prefer-offline --yes @deepseek-ai/dsh --profile web \
 
 ### 启动与端口
 
-1. 打开 DHL 后，启动器先检测 3080-3099。
+1. 打开 Deepseek Harness Launcher 后，启动器先检测 3080-3099。
 2. 找到能返回 Harness 首页的端口时，直接复用该进程；否则在第一个可绑定端口启动 dsh。
-3. Harness 首页可用后，DHL 进入运行状态，并按设置决定是否只打开一次系统默认浏览器。
-4. 「停止后台」会结束 DHL 管理的 Harness 进程；「退出 DHL 启动器」只退出菜单栏 UI，后台 Harness 会继续运行。
+3. Harness 首页可用后，Deepseek Harness Launcher 进入运行状态，并按设置决定是否只打开一次系统默认浏览器。
+4. 「停止后台」会结束 Deepseek Harness Launcher 管理的 Harness 进程；「退出 Deepseek Harness Launcher」只退出菜单栏 UI，后台 Harness 会继续运行。
 
-若所有端口均无法复用或绑定，或 `npx`/插件启动失败，DHL 会显示失败提示；详细 stdout、stderr 与命令行记录可从「打开日志」查看。
+若所有端口均无法复用或绑定，或 `npx`/插件启动失败，Deepseek Harness Launcher 会显示失败提示；详细 stdout、stderr 与命令行记录可从「打开日志」查看。
 
 ## 安装与构建
 
@@ -73,7 +73,7 @@ npx --prefer-offline --yes @deepseek-ai/dsh --profile web \
 DHL_INSTALL_DIR=/Applications ./scripts/install.sh    # 安装到系统 /Applications
 ```
 
-安装脚本会：先请求旧启动器退出，再对其及 DHL 管理的 Harness 后台执行 `SIGTERM`，超时后 `SIGKILL`；确认结束后保留带时间戳的 App 备份、用 `ditto` 替换 `DHL.app`，最后自动重新打开。设置 `DHL_NO_OPEN=1` 可跳过安装后自动启动。若无法确认相关进程已经退出，安装会取消，不会覆盖正在运行的 App。
+安装脚本会：先请求旧启动器退出，再对其及 Deepseek Harness Launcher 管理的 Harness 后台执行 `SIGTERM`，超时后 `SIGKILL`；确认结束后保留带时间戳的 App 备份、用 `ditto` 替换 `DHL.app`，最后自动重新打开。设置 `DHL_NO_OPEN=1` 可跳过安装后自动启动。若无法确认相关进程已经退出，安装会取消，不会覆盖正在运行的 App。
 
 > 当前机器仅有 Command Line Tools；Universal 2 可交叉编译，但签名 / notarization 需要完整 Xcode 与 Developer ID 环境。
 
@@ -93,22 +93,22 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。双击�
 
 | 菜单项 | 快捷键 | 作用 |
 |--------|--------|------|
-| 打开 DHL | ⌘O | 打开当前端口的 Harness 界面；未运行时自动启动 |
+| 打开 Deepseek Harness Launcher | ⌘O | 打开当前端口的 Harness 界面；未运行时自动启动 |
 | 端口：xxxx | — | 实时显示当前运行端口（未运行则显示「未运行」） |
 | 重新启动 | ⌘R | 停止后台并重启 |
 | 停止后台 | ⌘S | 终止 Harness 后台进程 |
 | 检查更新 | — | 手动检查 GitHub Releases |
 | 设置… | ⌘, | 自动更新、检查频率、就绪开浏览器、开机启动 |
-| 打开日志 | ⌘L | 打开 `~/Library/Logs/DHL Launcher/dhl.log` |
-| 退出 DHL 启动器 | ⌘Q | 退出（Harness 后台继续运行） |
+| 打开日志 | ⌘L | 打开 `~/Library/Logs/Deepseek Harness Launcher/dhl.log` |
+| 退出 Deepseek Harness Launcher | ⌘Q | 退出（Harness 后台继续运行） |
 
 ### 设置与更新
 
-- 设置项：自动检查更新、检查频率、Harness 就绪后自动打开浏览器、登录 macOS 时自动启动 DHL。
+- 设置项：自动检查更新、检查频率、Harness 就绪后自动打开浏览器、登录 macOS 时自动启动 Deepseek Harness Launcher。
 - 默认值：自动检查更新开启、每 6 小时检查一次、启动后约 8 秒做首次后台检查；就绪后自动打开浏览器开启；开机启动关闭。检查间隔最小为 1 小时。
 - 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.1.0`，仅当 Release 版本号更高时提示。
 - GitHub API 返回 `403`（通常是未认证限流）时，启动器会回退读取 Releases Atom feed 来比较版本；没有已发布 Release 时，手动检查会显示「暂无可用更新」。
-- 可用更新必须携带名为 `DHL.dmg` 的 Release asset。下载保存到 `~/Downloads/DHL-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先停止后台、替换当前 App、再重新启动。
+- 可用更新必须携带名为 `DHL.dmg` 的 Release asset。下载保存到 `~/Downloads/DHL-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先停止后台、替换当前 App、再重新启动 Deepseek Harness Launcher。
 
 ### 卸载
 
@@ -116,7 +116,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。双击�
 ./scripts/uninstall.sh
 ```
 
-卸载脚本会移除当前/旧版 `DHL.app` 与 `DSH.app`，并删除指向 DHL 自有资源的归档插件链接；**保留 `~/.dsh` 数据**（会话、归档、profile 与其他插件数据）。
+卸载脚本会移除当前/旧版 `DHL.app` 与 `DSH.app`，并删除指向 Deepseek Harness Launcher 自有资源的归档插件链接；**保留 `~/.dsh` 数据**（会话、归档、profile 与其他插件数据）。
 
 ---
 
@@ -127,11 +127,11 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。双击�
 - 归档面板展示 `archivedSessionIds` 中仍可找到的会话，并显示工作区与后代数量。服务端接口还会返回会话创建时间与工作目录，供后续界面使用。
 - 支持单选、全选、单条删除与批量删除。用户在二次确认中点击「确认删除」后，立即永久删除所选会话及整个后代树；不要求输入 `DELETE`，也不校验会话是否仍在运行或是否已归档。
 - 删除时先将会话目录移入 `~/.dsh/sessions` 下的临时暂存区，更新 `workspace.json` 中的工作区会话列表与 `archivedSessionIds`，再清理暂存区；索引更新失败会回滚已移动的目录。不会删除工作区目录本身。
-- 启动器会在 Harness 就绪后探测插件路由。探测不到时核心 Harness 保持可用，日志会记录「归档增强插件不可用，DHL 将以基础模式运行」。
+- 启动器会在 Harness 就绪后探测插件路由。探测不到时核心 Harness 保持可用，日志会记录「归档增强插件不可用，Deepseek Harness Launcher 将以基础模式运行」。
 
 ### 升级兼容性
 
-早期 DSH/DHL 安装可能在 `~/.dsh/profiles/web/node_modules/dsh-archive-manager` 留下一个指向旧 `DSH.app` 的失效软链接。DHL 会自动替换指向自身 `DSHArchiveManager` 资源的旧链接，避免 `ERR_MODULE_NOT_FOUND`。若同名条目不是 DHL 自己的链接或目录，DHL 不会覆盖它，以免破坏第三方插件。
+早期 DSH/DHL 安装可能在 `~/.dsh/profiles/web/node_modules/dsh-archive-manager` 留下一个指向旧 `DSH.app` 的失效软链接。Deepseek Harness Launcher 会自动替换指向自身 `DSHArchiveManager` 资源的旧链接，避免 `ERR_MODULE_NOT_FOUND`。若同名条目不是 Deepseek Harness Launcher 自己的链接或目录，Deepseek Harness Launcher 不会覆盖它，以免破坏第三方插件。
 
 ---
 
@@ -148,7 +148,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。双击�
 
 ```text
 ┌─────────────────────────────────────────────┐
-│ DHL 菜单栏 App（Swift / AppKit）            │
+│ Deepseek Harness Launcher 菜单栏 App        │
 │   状态栏图标 · 设置窗口 · 自更新 · 登录项    │
 └───────────────┬─────────────────────────────┘
                 │ 启动：npx --prefer-offline @deepseek-ai/dsh
@@ -169,7 +169,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。双击�
 
 ## 日志与排障
 
-- 日志文件：`~/Library/Logs/DHL Launcher/dhl.log`。菜单栏中的「打开日志」会直接打开它。
+- 日志文件：`~/Library/Logs/Deepseek Harness Launcher/dhl.log`。菜单栏中的「打开日志」会直接打开它。
 - 日志时间使用本机时区，格式为 `yyyy-MM-dd HH:mm:ss Z`；已有的历史 UTC 日志不会被重写。
 - 遇到启动失败，优先检查日志中的「启动命令」以及紧随其后的 npm/dsh stderr。常见原因是 Node/npx 不在可发现路径、首次下载失败、端口已被非 Harness 程序占用，或归档插件链接指向了已删除的旧 App。
 

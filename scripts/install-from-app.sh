@@ -79,14 +79,14 @@ stop_existing_dsh() {
   fi
 
   if ! wait_for_processes launcher_pids 15; then
-    print "DHL launcher did not exit normally; terminating it..."
+    print "Deepseek Harness Launcher did not exit normally; terminating it..."
     signal_processes launcher_pids TERM
     if ! wait_for_processes launcher_pids 10; then
-      print "DHL launcher did not exit after SIGTERM; force quitting..."
+      print "Deepseek Harness Launcher did not exit after SIGTERM; force quitting..."
       signal_processes launcher_pids KILL
     fi
     if ! wait_for_processes launcher_pids 10; then
-      print -u2 "Unable to stop the running DHL launcher; installation was cancelled."
+      print -u2 "Unable to stop the running Deepseek Harness Launcher; installation was cancelled."
       return 1
     fi
   fi
@@ -95,11 +95,11 @@ stop_existing_dsh() {
   # must stop the backend in a separate phase before its bundled patch moves.
   signal_processes dsh_pids TERM
   if ! wait_for_processes dsh_pids 20; then
-    print "DHL backend did not exit after SIGTERM; force quitting..."
+    print "Deepseek Harness Launcher backend did not exit after SIGTERM; force quitting..."
     signal_processes dsh_pids KILL
   fi
   if ! wait_for_processes dsh_pids 20; then
-    print -u2 "Unable to stop the running DHL backend; installation was cancelled."
+    print -u2 "Unable to stop the running Deepseek Harness Launcher backend; installation was cancelled."
     return 1
   fi
 }
@@ -122,7 +122,7 @@ if ! ditto "$SOURCE_APP" "$TARGET_APP"; then
   rm -rf "$TARGET_APP"
   [[ -n "$BACKUP" && -e "$BACKUP" ]] && mv "$BACKUP" "$TARGET_APP"
   [[ -n "${LEGACY_BACKUP:-}" && -e "$LEGACY_BACKUP" ]] && mv "$LEGACY_BACKUP" "$LEGACY_APP"
-  print -u2 "Failed to install DHL; the previous app was restored when possible."
+  print -u2 "Failed to install Deepseek Harness Launcher; the previous app was restored when possible."
   exit 1
 fi
 

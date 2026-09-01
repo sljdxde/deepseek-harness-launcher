@@ -115,9 +115,15 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
     private var patchPath: String { pluginURL.appendingPathComponent("cordis.patch.yml").path }
     private var logURL: URL {
-        let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/DHL Launcher", isDirectory: true)
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let logs = home.appendingPathComponent("Library/Logs/Deepseek Harness Launcher", isDirectory: true)
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
-        return logs.appendingPathComponent("dhl.log")
+        let current = logs.appendingPathComponent("dhl.log")
+        let legacy = home.appendingPathComponent("Library/Logs/DHL Launcher/dhl.log")
+        if !FileManager.default.fileExists(atPath: current.path), FileManager.default.fileExists(atPath: legacy.path) {
+            try? FileManager.default.copyItem(at: legacy, to: current)
+        }
+        return current
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -126,7 +132,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
 
     private func configureStatusItem() {
         statusItem.button?.image = makeStatusImage()
-        statusItem.button?.toolTip = "DHL（DeepSeek Harness Launcher）"
+        statusItem.button?.toolTip = "\(LauncherBrand.fullName) (\(LauncherBrand.shortName))"
         statusItem.menu = makeMenu()
     }
 
@@ -134,7 +140,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.showsStateColumn = false
         menu.autoenablesItems = false
-        let open = menuRowItem(title: "打开 DHL", action: #selector(openDHL), keyEquivalent: "o")
+        let open = menuRowItem(title: "打开 \(LauncherBrand.fullName)", action: #selector(openDHL), keyEquivalent: "o")
         let port = menuRowItem(title: "端口：未运行", action: nil, enabled: { false }); port.tag = 1001
         portMenuRow = port.view as? MenuRowView
         let restart = menuRowItem(title: "重新启动", action: #selector(restartDHL), keyEquivalent: "r")
@@ -143,7 +149,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         update.tag = 1002; updateMenuItem = update; updateMenuRow = update.view as? MenuRowView
         let settingsItem = makeSettingsMenuItem()
         let logs = menuRowItem(title: "打开日志", action: #selector(openLogs), keyEquivalent: "l")
-        let quit = menuRowItem(title: "退出 DHL 启动器", action: #selector(quit), keyEquivalent: "q")
+        let quit = menuRowItem(title: "退出 \(LauncherBrand.fullName)", action: #selector(quit), keyEquivalent: "q")
         [open, port, NSMenuItem.separator(), restart, stop, NSMenuItem.separator(), update, settingsItem, logs, quit].forEach(menu.addItem)
         return menu
     }
@@ -233,13 +239,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
             if exited() { return }
             usleep(100_000)
         }
-        appendLogString("DHL 未在宽限期内退出，执行强制终止\n")
+        appendLogString("\(LauncherBrand.fullName) 未在宽限期内退出，执行强制终止\n")
         signal(SIGKILL)
         for _ in 0..<20 {
             if exited() { return }
             usleep(100_000)
         }
-        appendLogString("无法确认 DHL 进程组已退出\n")
+        appendLogString("无法确认 \(LauncherBrand.fullName) 进程组已退出\n")
     }
 
     @objc private func openLogs() { NSWorkspace.shared.open(logURL) }
@@ -294,7 +300,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
             case .noPublishedRelease:
                 self.pendingUpdate = nil
                 self.setUpdateMenuTitle("检查更新")
-                if interactive { self.showInfo(title: "暂无可用更新", message: "项目暂未发布可下载安装的 DHL 版本。") }
+                if interactive { self.showInfo(title: "暂无可用更新", message: "项目暂未发布可下载安装的 \(LauncherBrand.fullName) 版本。") }
             case .failed(let message):
                 self.setUpdateMenuTitle("检查更新")
                 self.appendLogString("更新检查失败：\(message)\n")
@@ -305,7 +311,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
 
     private func presentUpdate(manifest: UpdateManifest) {
         let alert = NSAlert()
-        alert.messageText = "发现 DHL 新版本 v\(manifest.version)"
+        alert.messageText = "发现 \(LauncherBrand.fullName) 新版本 v\(manifest.version)"
         alert.informativeText = manifest.notes?.isEmpty == false ? manifest.notes! : "下载更新包后，在 Finder 中打开并安装。"
         alert.addButton(withTitle: "下载更新")
         alert.addButton(withTitle: "稍后")
@@ -321,7 +327,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
                 self.setUpdateMenuTitle("更新可用：v\(manifest.version)")
                 let alert = NSAlert()
                 alert.messageText = "更新包已下载"
-                alert.informativeText = "是否立即安装 v\(manifest.version) 并重启 DHL？当前后台进程会先关闭，安装完成后重新启动。"
+                alert.informativeText = "是否立即安装 v\(manifest.version) 并重启 \(LauncherBrand.fullName)？当前后台进程会先关闭，安装完成后重新启动。"
                 alert.addButton(withTitle: "安装并重启")
                 alert.addButton(withTitle: "稍后安装")
                 if alert.runModal() == .alertFirstButtonReturn {
@@ -479,13 +485,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
             let remainingErr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
             if !remainingOut.isEmpty { self?.appendLog(remainingOut, prefix: "stdout") }
             if !remainingErr.isEmpty { self?.appendLog(remainingErr, prefix: "stderr") }
-            self?.appendLogString("DHL 进程退出：code=\(terminatedProcess.terminationStatus), reason=\(terminatedProcess.terminationReason.rawValue)\n")
+            self?.appendLogString("\(LauncherBrand.fullName) 进程退出：code=\(terminatedProcess.terminationStatus), reason=\(terminatedProcess.terminationReason.rawValue)\n")
             DispatchQueue.main.async {
                 guard let self, self.state != .stopped else { return }
                 self.process = nil
                 self.selectedPort = nil
                 self.pollTimer?.invalidate(); self.pollTimer = nil
-                self.fail("DHL 进程已退出，请查看日志")
+                self.fail("\(LauncherBrand.fullName) 进程已退出，请查看日志")
             }
         }
         do {
@@ -515,7 +521,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
                     if self.settings.openBrowserOnReady && !self.didOpenBrowser { self.didOpenBrowser = true; self.openDHL() }
             } else if attempts >= 100 {
                 timer.invalidate()
-                self.fail("DHL 启动超时，请查看日志")
+                self.fail("\(LauncherBrand.fullName) 启动超时，请查看日志")
             }
         }
     }
@@ -529,7 +535,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
                 }
                 Thread.sleep(forTimeInterval: 0.25)
             }
-            DispatchQueue.main.async { [weak self] in self?.appendLogString("归档增强插件不可用，DHL 将以基础模式运行\n") }
+            DispatchQueue.main.async { [weak self] in self?.appendLogString("归档增强插件不可用，\(LauncherBrand.fullName) 将以基础模式运行\n") }
         }
     }
 
@@ -562,7 +568,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
 
     private func fail(_ message: String) {
         appendLogString("\(message)\n"); setState(.failed)
-        let alert = NSAlert(); alert.messageText = "DHL 启动失败"; alert.informativeText = message; alert.alertStyle = .warning; alert.addButton(withTitle: "打开日志"); alert.addButton(withTitle: "关闭")
+        let alert = NSAlert(); alert.messageText = "\(LauncherBrand.fullName) 启动失败"; alert.informativeText = message; alert.alertStyle = .warning; alert.addButton(withTitle: "打开日志"); alert.addButton(withTitle: "关闭")
         if alert.runModal() == .alertFirstButtonReturn { openLogs() }
     }
 

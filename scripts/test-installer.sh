@@ -55,4 +55,4 @@ test -d "$(dirname "$TARGET")/DHL.app.backup-"* || {
   exit 1
 }
 
-print 'DHL installer replacement test passed'
+print 'Deepseek Harness Launcher installer replacement test passed'

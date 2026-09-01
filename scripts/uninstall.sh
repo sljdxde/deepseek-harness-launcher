@@ -8,4 +8,4 @@ if [[ -L "$PLUGIN_LINK" ]]; then
   TARGET="$(readlink "$PLUGIN_LINK" || true)"
   if [[ "$TARGET" == *"DSHArchiveManager"* ]]; then rm -f "$PLUGIN_LINK"; echo "Removed plugin link $PLUGIN_LINK"; fi
 fi
-echo "DHL 的 ~/.dsh 数据保持不变。"
+echo "Deepseek Harness Launcher 的 ~/.dsh 数据保持不变。"
