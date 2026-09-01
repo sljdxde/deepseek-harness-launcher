@@ -24,7 +24,7 @@ Deepseek Harness Launcher is a third, macOS-only option: a Swift/AppKit menu-bar
 | 2 | **Built-in archive manager** | A Cordis patch adds an Archive Manager panel to Harness Web. It lists archived sessions, supports one-at-a-time and batch deletion with a confirmation step, and shows the workspace and descendant count. |
 | 3 | **Port management (3080-3099)** | Deepseek Harness Launcher scans ports starting from 3080. It reuses a responding Harness instance when found; otherwise it launches dsh on the first bindable port. If a reused instance has no archive plugin, Harness remains usable and the launcher records basic mode in the log. |
 | 4 | **Uses host Node and can fetch dsh automatically** | It runs `npx --prefer-offline --yes @deepseek-ai/dsh`: npm cache is preferred, and npx may download `@deepseek-ai/dsh` when it is absent. Deepseek Harness Launcher does not bundle Node or the dsh runtime. It searches `~/opt/node`, `~/.volta`, `~/.nvm`, `/opt/homebrew/bin`, and `/usr/local/bin`. |
-| 5 | **In-app updating** | The menu can check this repository's GitHub Releases, download `Deepseek Harness Launcher.dmg`, replace the app, and restart it. Automatic checks and their interval are configurable. |
+| 5 | **In-app updating** | The menu can check this repository's GitHub Releases, download `Deepseek.Harness.Launcher.dmg` (GitHub stores spaces as dots), replace the app, and restart it. Automatic checks and their interval are configurable. |
 | 6 | **Launch at login** | A `LaunchAgent` named `com.local.dhl-launcher` can open Deepseek Harness Launcher when you log in. |
 | 7 | **Managed process lifecycle** | Stop and update paths send `SIGTERM` to the managed Harness process group and fall back to `SIGKILL` after a timeout. Matching is restricted to the launcher and npm/node processes using its patch. |
 | 8 | **Native settings window** | Configure automatic update checks, the interval, browser opening after readiness, and launch at login. |
@@ -107,7 +107,7 @@ Default builds are ad-hoc signed for local use. A directly downloaded copy can s
 - Defaults: automatic checks are enabled every 6 hours; the first background check is about 8 seconds after launch; opening the browser is enabled; launch at login is disabled. The minimum interval is one hour.
 - The update source is fixed to GitHub Releases for `sljdxde/deepseek-harness-launcher`; users never need to enter a URL. The current App version is `0.1.0`, and only a higher Release version is offered.
 - If GitHub's API returns `403`, commonly an unauthenticated rate limit, Deepseek Harness Launcher falls back to the Releases Atom feed for version comparison. When no Release is published, a manual check reports that no update is available.
-- A usable Release must contain an asset named `Deepseek Harness Launcher.dmg`. Deepseek Harness Launcher saves it as `~/Downloads/Deepseek Harness Launcher-<version>.dmg` and asks for confirmation before **Install and Restart**. That action stops the backend, replaces the current App, and starts it again.
+- A usable Release must contain an asset named `Deepseek.Harness.Launcher.dmg` (GitHub replaces spaces in asset names with dots). Deepseek Harness Launcher saves it as `~/Downloads/Deepseek Harness Launcher-<version>.dmg` and asks for confirmation before **Install and Restart**. That action stops the backend, replaces the current App, and starts it again.
 
 ### Uninstall
 

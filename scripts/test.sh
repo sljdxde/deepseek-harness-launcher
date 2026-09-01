@@ -18,7 +18,7 @@ if rg -q 'feedField|updateFeedURL|更新清单' "$ROOT/Sources/SettingsWindowCon
 fi
 rg -Fq 'sljdxde/deepseek-harness-launcher' "$ROOT/Sources/UpdateSupport.swift"
 rg -Fq 'api.github.com/repos' "$ROOT/Sources/UpdateSupport.swift"
-rg -Fq 'Deepseek Harness Launcher.dmg' "$ROOT/Sources/UpdateSupport.swift"
+rg -Fq 'Deepseek.Harness.Launcher.dmg' "$ROOT/Sources/UpdateSupport.swift"
 if rg -Fq 'DHL.dmg' "$ROOT/Sources/UpdateSupport.swift"; then
   echo "update asset must use the full DMG name" >&2
   exit 1

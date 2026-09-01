@@ -103,7 +103,8 @@ enum LoginItemManager {
 
 final class UpdateService {
     static let repository = "sljdxde/deepseek-harness-launcher"
-    static let dmgAssetName = "Deepseek Harness Launcher.dmg"
+    // GitHub release assets cannot contain spaces; they are stored as dots.
+    static let dmgAssetName = "Deepseek.Harness.Launcher.dmg"
     static let releasesPageURL = URL(string: "https://github.com/\(repository)/releases")!
     static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
     static let releasesFeedURL = URL(string: "https://github.com/\(repository)/releases.atom")!

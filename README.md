@@ -27,7 +27,7 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 2 | **内置归档管理插件（DSHArchiveManager）** | 通过 `--patch` 注入 Cordis patch，在 Harness Web 界面提供「归档管理」面板：列出归档会话、单条/批量删除（带二次确认）、显示工作区与后代数量。 |
 | 3 | **智能端口管理（3080–3099）** | 启动前从 3080 扫描到 3099：发现正在响应的 Harness 就复用；否则使用第一个可绑定端口。若复用实例没有归档插件，Harness 仍可使用，日志会记录为基础模式。 |
 | 4 | **复用本机 Node，并可自动获取 dsh** | 用 `npx --prefer-offline --yes @deepseek-ai/dsh` 启动：优先使用 npm 缓存，缓存缺失时允许 npx 下载 `@deepseek-ai/dsh`。不捆绑 Node 或 dsh 内核；会查找 `~/opt/node`、`~/.volta`、`~/.nvm`、`/opt/homebrew/bin`、`/usr/local/bin`。 |
-| 5 | **原生应用内自更新** | 直接对接本仓库 GitHub Releases，菜单内「检查更新」可下载 `Deepseek Harness Launcher.dmg` 并自替换重启（支持自动定时检查 + 频率设置）。 |
+| 5 | **原生应用内自更新** | 直接对接本仓库 GitHub Releases，菜单内「检查更新」可下载 `Deepseek.Harness.Launcher.dmg`（GitHub 自动将空格存为点）并自替换重启（支持自动定时检查 + 频率设置）。 |
 | 6 | **开机自启动** | 通过 `LaunchAgent`（`com.local.dhl-launcher`）实现登录 macOS 自动拉起，可在设置中开关。 |
 | 7 | **优雅的进程生命周期** | 停止 / 更新前对 Harness 进程组做 `SIGTERM → SIGKILL` 级联终止（含超时兜底），并精确匹配 launcher 自身路径与运行该 patch 的 npm/node 进程，避免误杀或残留孤儿进程。 |
 | 8 | **原生设置窗口** | 自动更新开关与频率、就绪后是否自动开浏览器、开机启动；与系统外观一致。 |
@@ -108,7 +108,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。双击�
 - 默认值：自动检查更新开启、每 6 小时检查一次、启动后约 8 秒做首次后台检查；就绪后自动打开浏览器开启；开机启动关闭。检查间隔最小为 1 小时。
 - 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.1.0`，仅当 Release 版本号更高时提示。
 - GitHub API 返回 `403`（通常是未认证限流）时，启动器会回退读取 Releases Atom feed 来比较版本；没有已发布 Release 时，手动检查会显示「暂无可用更新」。
-- 可用更新必须携带名为 `Deepseek Harness Launcher.dmg` 的 Release asset。下载保存到 `~/Downloads/Deepseek Harness Launcher-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先停止后台、替换当前 App、再重新启动 Deepseek Harness Launcher。
+- 可用更新必须携带名为 `Deepseek.Harness.Launcher.dmg` 的 Release asset（GitHub 不接受空格，会把文件名里的空格改为点）。下载保存到 `~/Downloads/Deepseek Harness Launcher-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先停止后台、替换当前 App、再重新启动 Deepseek Harness Launcher。
 
 ### 卸载
 

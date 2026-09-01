@@ -34,7 +34,7 @@ struct UpdateSupportChecks {
         precondition(compareVersions("2.0.0", "1.9.9") == .orderedDescending)
 
         let manifestURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dhl-update-manifest-\(ProcessInfo.processInfo.processIdentifier).json")
-        let manifest = "{\"tag_name\":\"v9.9.9\",\"name\":\"Deepseek Harness Launcher v9.9.9\",\"body\":\"test\",\"published_at\":\"2026-09-01T00:00:00Z\",\"assets\":[{\"name\":\"Deepseek Harness Launcher.dmg\",\"browser_download_url\":\"file:///tmp/Deepseek%20Harness%20Launcher.dmg\"}]}"
+        let manifest = "{\"tag_name\":\"v9.9.9\",\"name\":\"Deepseek Harness Launcher v9.9.9\",\"body\":\"test\",\"published_at\":\"2026-09-01T00:00:00Z\",\"assets\":[{\"name\":\"Deepseek.Harness.Launcher.dmg\",\"browser_download_url\":\"file:///tmp/Deepseek%20Harness%20Launcher.dmg\"}]}"
         try! manifest.data(using: .utf8)!.write(to: manifestURL)
 
         var completed = false
@@ -85,7 +85,7 @@ struct UpdateSupportChecks {
             guard case .available(let update) = result, update.version == "9.9.9" else {
                 preconditionFailure("expected Atom fallback update")
             }
-            precondition(update.dmgURL.contains("Deepseek%20Harness%20Launcher.dmg"))
+            precondition(update.dmgURL.contains("Deepseek.Harness.Launcher.dmg"))
             completed = true
         }
         let fallbackDeadline = Date().addingTimeInterval(5)
