@@ -1,16 +1,15 @@
 #!/bin/zsh
 # 把图标装进 App Bundle。
 #
-# 优先使用 Resources/icons/<candidate>/DHL.icns（AI 设计稿生成的成品图标），
-# 找不到才回退到 scripts/generate-icon.swift 的 Swift 矢量绘制版本。
+# 使用 Resources/icons/<candidate>/DHL.icns 中的已审核图标资产。
 #
 # 用法:
 #   scripts/install-icon.sh <App路径>
-#   DHL_ICON=candidate-B scripts/install-icon.sh build/DHL.app
+#   DHL_ICON=candidate-D scripts/install-icon.sh build/DHL.app
 #
 # 切换图标:
-#   ln -sfn candidate-B Resources/icons/current     # 改默认
-#   DHL_ICON=candidate-C ./scripts/build-app.sh     # 或临时指定
+#   ln -sfn candidate-upstream Resources/icons/current # 改默认
+#   DHL_ICON=candidate-A ./scripts/build-app.sh        # 或临时指定
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,10 +26,9 @@ if [[ -f "$CANDIDATE" ]]; then
   cp "$CANDIDATE" "$RES/DHL.icns"
   echo "Icon: Resources/icons/$PICK/DHL.icns"
 else
-  ICONSET="$(mktemp -d)/DHL.iconset"
-  swift "$ROOT/scripts/generate-icon.swift" "$ICONSET"
-  iconutil -c icns "$ICONSET" -o "$RES/DHL.icns"
-  echo "Icon: fallback -> generate-icon.swift (矢量绘制)"
+  echo "Icon asset not found: Resources/icons/$PICK/DHL.icns" >&2
+  echo "Choose a valid DHL_ICON or restore Resources/icons/current." >&2
+  exit 1
 fi
 
 /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string DHL' "$APP/Contents/Info.plist" 2>/dev/null || true
