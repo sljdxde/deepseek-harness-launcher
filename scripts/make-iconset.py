@@ -19,7 +19,7 @@ CANDIDATES = {
     "candidate-A": ("macOS_app_icon_1024x1024_in_th_2026-09-01T02-18-38.png", "极简鲸鱼"),
     "candidate-B": ("macOS_app_icon_1024x1024_in_ic_2026-09-01T02-18-32.png", "菜单栏+鲸鱼"),
     "candidate-C": ("macOS_app_icon_1024x1024_in_ic_2026-09-01T02-18-31.png", "鲸鱼+火箭"),
-    "candidate-D": ("macOS_app_icon_1024x1024_in_ic_2026-09-01T02-18-28.png", "DSH 字母标"),
+    "candidate-D": ("macOS_app_icon_1024x1024_in_ic_2026-09-01T02-18-28.png", "DHL 字母标"),
 }
 
 # 标准 iconset 成员: 文件名 -> 像素尺寸
@@ -59,7 +59,7 @@ def build_one(name: str, src_name: str, label: str) -> Path | None:
         return None
 
     out_dir = OUT_ROOT / name
-    iconset = out_dir / "DSH.iconset"
+    iconset = out_dir / "DHL.iconset"
     if iconset.exists():
         shutil.rmtree(iconset)
     iconset.mkdir(parents=True, exist_ok=True)
@@ -78,7 +78,7 @@ def build_one(name: str, src_name: str, label: str) -> Path | None:
             resized = step_down_resize(img, size)
             resized.save(iconset / filename, "PNG", optimize=True)
 
-    icns = out_dir / "DSH.icns"
+    icns = out_dir / "DHL.icns"
     if icns.exists():
         icns.unlink()
     result = subprocess.run(

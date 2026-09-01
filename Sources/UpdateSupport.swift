@@ -9,7 +9,7 @@ struct UpdateManifest: Codable {
 }
 
 enum UpdateCheckResult {
-    case unconfigured
+    case noPublishedRelease
     case current
     case available(UpdateManifest)
     case failed(String)
@@ -35,7 +35,6 @@ final class LauncherSettings {
         defaults.register(defaults: [
             "autoUpdateEnabled": true,
             "updateIntervalHours": 6.0,
-            "updateFeedURL": ProcessInfo.processInfo.environment["DSH_UPDATE_FEED_URL"] ?? "",
             "openBrowserOnReady": true,
             "launchAtLogin": false
         ])
@@ -51,11 +50,6 @@ final class LauncherSettings {
         set { defaults.set(max(newValue, 1), forKey: "updateIntervalHours") }
     }
 
-    var updateFeedURL: String {
-        get { defaults.string(forKey: "updateFeedURL") ?? "" }
-        set { defaults.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "updateFeedURL") }
-    }
-
     var openBrowserOnReady: Bool {
         get { defaults.bool(forKey: "openBrowserOnReady") }
         set { defaults.set(newValue, forKey: "openBrowserOnReady") }
@@ -68,7 +62,7 @@ final class LauncherSettings {
 }
 
 enum LoginItemManager {
-    private static let label = "com.local.dsh-launcher"
+    private static let label = "com.local.dhl-launcher"
 
     static func setEnabled(_ enabled: Bool, appURL: URL = Bundle.main.bundleURL) throws {
         let agents = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents", isDirectory: true)
@@ -108,41 +102,181 @@ enum LoginItemManager {
 }
 
 final class UpdateService {
-    private let session: URLSession
+    static let repository = "sljdxde/deepseek-harness-launcher"
+    static let releasesPageURL = URL(string: "https://github.com/\(repository)/releases")!
+    static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
+    static let releasesFeedURL = URL(string: "https://github.com/\(repository)/releases.atom")!
 
-    init() {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 60
-        session = URLSession(configuration: configuration)
+    private struct GitHubRelease: Decodable {
+        let tagName: String
+        let name: String?
+        let body: String?
+        let publishedAt: String?
+        let assets: [GitHubAsset]
+
+        enum CodingKeys: String, CodingKey {
+            case tagName = "tag_name"
+            case name
+            case body
+            case publishedAt = "published_at"
+            case assets
+        }
     }
 
-    func check(currentVersion: String, feedURL: String, completion: @escaping (UpdateCheckResult) -> Void) {
-        guard !feedURL.isEmpty else { DispatchQueue.main.async { completion(.unconfigured) }; return }
-        guard let url = URL(string: feedURL), let scheme = url.scheme?.lowercased(), ["http", "https", "file"].contains(scheme) else {
-            DispatchQueue.main.async { completion(.failed("更新源地址无效")) }
+    private struct GitHubAsset: Decodable {
+        let name: String
+        let browserDownloadURL: String
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case browserDownloadURL = "browser_download_url"
+        }
+    }
+
+    private final class AtomReleaseParser: NSObject, XMLParserDelegate {
+        private var currentElement = ""
+        private var currentText = ""
+        private var insideEntry = false
+        private var latestTag: String?
+        private var latestTitle: String?
+
+        func parse(_ data: Data) -> (tag: String, title: String?)? {
+            let parser = XMLParser(data: data)
+            parser.delegate = self
+            guard parser.parse(), let latestTag else { return nil }
+            return (latestTag, latestTitle)
+        }
+
+        func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String : String] = [:]) {
+            currentElement = elementName
+            currentText = ""
+            if elementName == "entry" { insideEntry = true }
+            if insideEntry, elementName == "link", let href = attributeDict["href"], href.contains("/releases/tag/") {
+                let rawTag = URL(string: href)?.pathComponents.last ?? ""
+                let tag = rawTag.removingPercentEncoding ?? rawTag
+                if !tag.isEmpty { latestTag = tag }
+            }
+        }
+
+        func parser(_ parser: XMLParser, foundCharacters string: String) {
+            currentText += string
+        }
+
+        func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+            if insideEntry, elementName == "title", latestTitle == nil {
+                let value = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !value.isEmpty { latestTitle = value }
+            }
+            if elementName == "entry" { insideEntry = false }
+            currentElement = ""
+            currentText = ""
+        }
+    }
+
+    private let session: URLSession
+    private let releasesURL: URL
+    private let feedURL: URL
+
+    init(
+        releasesURL: URL = UpdateService.latestReleaseAPIURL,
+        feedURL: URL = UpdateService.releasesFeedURL,
+        session: URLSession? = nil
+    ) {
+        if let session {
+            self.session = session
+        } else {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 15
+            configuration.timeoutIntervalForResource = 60
+            self.session = URLSession(configuration: configuration)
+        }
+        self.releasesURL = releasesURL
+        self.feedURL = feedURL
+    }
+
+    func check(currentVersion: String, completion: @escaping (UpdateCheckResult) -> Void) {
+        guard let scheme = releasesURL.scheme?.lowercased(), ["http", "https", "file"].contains(scheme) else {
+            DispatchQueue.main.async { completion(.failed("GitHub Releases 地址无效")) }
             return
         }
 
         if scheme == "file" {
             DispatchQueue.global(qos: .utility).async {
                 do {
-                    let data = try Data(contentsOf: url)
-                    self.finishCheck(data: data, currentVersion: currentVersion, completion: completion)
+                    let data = try Data(contentsOf: self.releasesURL)
+                    self.finishGitHubCheck(data: data, currentVersion: currentVersion, completion: completion)
                 } catch { DispatchQueue.main.async { completion(.failed(error.localizedDescription)) } }
             }
             return
         }
 
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: releasesURL)
+        request.setValue("DHL Launcher", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.cachePolicy = .reloadIgnoringLocalCacheData
         session.dataTask(with: request) { data, response, error in
             if let error { DispatchQueue.main.async { completion(.failed(error.localizedDescription)) }; return }
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), let data else {
-                DispatchQueue.main.async { completion(.failed("更新源返回了无效响应")) }
+            guard let http = response as? HTTPURLResponse else {
+                DispatchQueue.main.async { completion(.failed("GitHub Releases 返回了无效响应")) }
                 return
             }
-            self.finishCheck(data: data, currentVersion: currentVersion, completion: completion)
+            if http.statusCode == 404 {
+                DispatchQueue.main.async { completion(.noPublishedRelease) }
+                return
+            }
+            if http.statusCode == 403 {
+                self.checkAtomFeed(currentVersion: currentVersion, completion: completion)
+                return
+            }
+            guard (200..<300).contains(http.statusCode), let data else {
+                let message = "GitHub Releases 请求失败（HTTP \(http.statusCode)）"
+                DispatchQueue.main.async { completion(.failed(message)) }
+                return
+            }
+            self.finishGitHubCheck(data: data, currentVersion: currentVersion, completion: completion)
+        }.resume()
+    }
+
+    private func checkAtomFeed(currentVersion: String, completion: @escaping (UpdateCheckResult) -> Void) {
+        loadData(from: feedURL) { result in
+            switch result {
+            case .failure:
+                DispatchQueue.main.async { completion(.failed("GitHub Releases 暂时无法访问（API 限流且备用源不可用）")) }
+            case .success(let data):
+                guard let release = AtomReleaseParser().parse(data) else {
+                    DispatchQueue.main.async { completion(.noPublishedRelease) }
+                    return
+                }
+                let version = release.tag.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
+                guard !version.isEmpty else {
+                    DispatchQueue.main.async { completion(.failed("GitHub Release 缺少版本号")) }
+                    return
+                }
+                let dmgURL = "https://github.com/\(Self.repository)/releases/download/\(release.tag)/DHL.dmg"
+                let manifest = UpdateManifest(version: version, dmgURL: dmgURL, notes: release.title, publishedAt: nil)
+                let result: UpdateCheckResult = compareVersions(currentVersion, version) == .orderedAscending ? .available(manifest) : .current
+                DispatchQueue.main.async { completion(result) }
+            }
+        }
+    }
+
+    private func loadData(from url: URL, completion: @escaping (Result<Data, Error>) -> Void) {
+        if url.scheme?.lowercased() == "file" {
+            DispatchQueue.global(qos: .utility).async {
+                completion(Result { try Data(contentsOf: url) })
+            }
+            return
+        }
+        var request = URLRequest(url: url)
+        request.setValue("DHL Launcher", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/atom+xml, application/xml;q=0.9, */*;q=0.8", forHTTPHeaderField: "Accept")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        session.dataTask(with: request) { data, response, error in
+            if let error { completion(.failure(error)); return }
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), let data else {
+                completion(.failure(UpdateError.invalidResponse)); return
+            }
+            completion(.success(data))
         }.resume()
     }
 
@@ -153,7 +287,7 @@ final class UpdateService {
         }
         let destination = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Downloads", isDirectory: true)
-            .appendingPathComponent("DSH-\(manifest.version).dmg")
+            .appendingPathComponent("DHL-\(manifest.version).dmg")
         try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
 
         if url.scheme?.lowercased() == "file" {
@@ -174,12 +308,27 @@ final class UpdateService {
         }.resume()
     }
 
-    private func finishCheck(data: Data, currentVersion: String, completion: @escaping (UpdateCheckResult) -> Void) {
+    private func finishGitHubCheck(data: Data, currentVersion: String, completion: @escaping (UpdateCheckResult) -> Void) {
         do {
-            let manifest = try JSONDecoder().decode(UpdateManifest.self, from: data)
+            let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+            let version = release.tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
+            guard !version.isEmpty else {
+                DispatchQueue.main.async { completion(.failed("GitHub Release 缺少版本号")) }
+                return
+            }
+            guard let asset = release.assets.first(where: { $0.name.caseInsensitiveCompare("DHL.dmg") == .orderedSame }) else {
+                DispatchQueue.main.async { completion(.failed("GitHub Release 未包含 DHL.dmg")) }
+                return
+            }
+            let manifest = UpdateManifest(
+                version: version,
+                dmgURL: asset.browserDownloadURL,
+                notes: release.body?.isEmpty == false ? release.body : release.name,
+                publishedAt: release.publishedAt
+            )
             let result: UpdateCheckResult = compareVersions(currentVersion, manifest.version) == .orderedAscending ? .available(manifest) : .current
             DispatchQueue.main.async { completion(result) }
-        } catch { DispatchQueue.main.async { completion(.failed("更新清单格式无效")) } }
+        } catch { DispatchQueue.main.async { completion(.failed("GitHub Release 数据格式无效")) } }
     }
 
     private func copyReplacing(source: URL, destination: URL) throws {
@@ -191,11 +340,13 @@ final class UpdateService {
 enum UpdateError: LocalizedError {
     case invalidDownloadURL
     case missingDownload
+    case invalidResponse
 
     var errorDescription: String? {
         switch self {
         case .invalidDownloadURL: return "更新包地址无效"
         case .missingDownload: return "未收到更新包"
+        case .invalidResponse: return "GitHub Releases 返回了无效响应"
         }
     }
 }

@@ -5,11 +5,11 @@
   <key>CFBundleDisplayName</key>
   <string>双击完成安装或更新</string>
   <key>CFBundleExecutable</key>
-  <string>DSHInstaller</string>
+  <string>DHLInstaller</string>
   <key>CFBundleIdentifier</key>
-  <string>com.local.dsh-installer</string>
+  <string>com.local.dhl-installer</string>
   <key>CFBundleIconFile</key>
-  <string>DSH</string>
+  <string>DHL</string>
   <key>CFBundleName</key>
   <string>双击完成安装或更新</string>
   <key>CFBundlePackageType</key>

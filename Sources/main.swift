@@ -5,24 +5,25 @@ import Darwin
 private enum LauncherState { case stopped, checking, running, failed }
 private enum PortChoice { case reuse(Int), launch(Int) }
 
-// A view-backed row keeps Settings icon-free while matching the native menu's
-// text and shortcut columns.
-private final class SettingsMenuItemView: NSView {
-    private let title = "设置…"
-    private let shortcut = "⌘,"
-    private let onActivate: () -> Void
-    private var isHovering = false
+// macOS 26 may add a semantic icon column to menu groups (notably for
+// "设置…"). Drawing every actionable row through the same view keeps the
+// title and shortcut columns stable while preserving native menu behavior.
+private final class MenuRowView: NSView {
+    var title: String { didSet { needsDisplay = true } }
+    let shortcut: String
+    private let enabled: () -> Bool
     private var trackingArea: NSTrackingArea?
 
-    init(onActivate: @escaping () -> Void) {
-        self.onActivate = onActivate
-        super.init(frame: NSRect(x: 0, y: 0, width: 0, height: 30))
+    init(title: String, shortcut: String, enabled: @escaping () -> Bool = { true }) {
+        self.title = title
+        self.shortcut = shortcut
+        self.enabled = enabled
+        super.init(frame: NSRect(x: 0, y: 0, width: 360, height: 30))
         autoresizingMask = [.width]
+        wantsLayer = true
     }
 
-    required init?(coder: NSCoder) {
-        nil
-    }
+    required init?(coder: NSCoder) { nil }
 
     override func updateTrackingAreas() {
         if let trackingArea { removeTrackingArea(trackingArea) }
@@ -37,47 +38,60 @@ private final class SettingsMenuItemView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        isHovering = true
         needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
-        isHovering = false
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        guard enabled(), bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        let item = enclosingMenuItem
+        let action = item?.action
+        let target = item?.target
         enclosingMenuItem?.menu?.cancelTracking()
-        DispatchQueue.main.async(execute: onActivate)
+        if let action, let target {
+            NSApp.sendAction(action, to: target, from: item)
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        if isHovering {
+        let highlighted = enclosingMenuItem?.isHighlighted == true
+        if highlighted {
+            let highlightRect = bounds.insetBy(dx: 8, dy: 2)
             NSColor.selectedContentBackgroundColor.setFill()
-            bounds.fill()
+            NSBezierPath(roundedRect: highlightRect, xRadius: 10, yRadius: 10).fill()
         }
 
+        let isEnabled = enabled()
+        let foregroundColor: NSColor
+        if highlighted {
+            foregroundColor = NSColor.selectedMenuItemTextColor
+        } else if isEnabled {
+            foregroundColor = NSColor.labelColor
+        } else {
+            foregroundColor = NSColor.tertiaryLabelColor
+        }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.menuFont(ofSize: 0),
-            .foregroundColor: isHovering ? NSColor.selectedMenuItemTextColor : NSColor.labelColor
+            .foregroundColor: foregroundColor
         ]
         let textSize = title.size(withAttributes: attributes)
-        let shortcutSize = shortcut.size(withAttributes: attributes)
-        // NSMenu already reserves its text column for a view-backed item.
-        // Drawing at zero keeps this aligned with the standard rows above/below.
         title.draw(
-            at: NSPoint(x: 0, y: (bounds.height - textSize.height) / 2),
+            at: NSPoint(x: 32, y: (bounds.height - textSize.height) / 2),
             withAttributes: attributes
         )
+        guard !shortcut.isEmpty else { return }
+        let shortcutSize = shortcut.size(withAttributes: attributes)
         shortcut.draw(
-            at: NSPoint(x: max(0, bounds.width - shortcutSize.width - 35), y: (bounds.height - shortcutSize.height) / 2),
+            at: NSPoint(x: max(32, bounds.width - shortcutSize.width - 35), y: (bounds.height - shortcutSize.height) / 2),
             withAttributes: attributes
         )
     }
 }
 
-final class DSHLauncher: NSObject, NSApplicationDelegate {
+final class DHLLauncher: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private var process: Process?
     private var selectedPort: Int?
@@ -89,19 +103,21 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
     private var pendingUpdate: UpdateManifest?
     private var updateCheckInFlight = false
     private var updateMenuItem: NSMenuItem?
+    private var updateMenuRow: MenuRowView?
+    private var portMenuRow: MenuRowView?
     private let settings = LauncherSettings.shared
     private let updateService = UpdateService()
     private let logLock = NSLock()
     private let basePort = 3080
     private let maxPort = 3099
 
-    private var rootURL: URL { URL(fileURLWithPath: FileManager.default.currentDirectoryPath).deletingLastPathComponent().appendingPathComponent("dsh-launcher") }
+    private var rootURL: URL { URL(fileURLWithPath: FileManager.default.currentDirectoryPath).deletingLastPathComponent().appendingPathComponent("deepseek-harness-launcher") }
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
     private var patchPath: String { pluginURL.appendingPathComponent("cordis.patch.yml").path }
     private var logURL: URL {
-        let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/DSH Launcher", isDirectory: true)
+        let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/DHL Launcher", isDirectory: true)
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
-        return logs.appendingPathComponent("dsh.log")
+        return logs.appendingPathComponent("dhl.log")
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -110,7 +126,7 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
 
     private func configureStatusItem() {
         statusItem.button?.image = makeStatusImage()
-        statusItem.button?.toolTip = "DeepSeek Harness"
+        statusItem.button?.toolTip = "DHL（DeepSeek Harness Launcher）"
         statusItem.menu = makeMenu()
     }
 
@@ -118,55 +134,46 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.showsStateColumn = false
         menu.autoenablesItems = false
-        let open = plainMenuItem(title: "打开 DSH", action: #selector(openDSH), keyEquivalent: "o")
-        let port = NSMenuItem(title: "端口：未运行", action: nil, keyEquivalent: ""); port.tag = 1001
-        let restart = plainMenuItem(title: "重新启动", action: #selector(restartDSH), keyEquivalent: "r")
-        let stop = plainMenuItem(title: "停止后台", action: #selector(stopDSH), keyEquivalent: "s")
-        let update = plainMenuItem(title: "检查更新", action: #selector(checkForUpdates))
-        update.tag = 1002; updateMenuItem = update
+        let open = menuRowItem(title: "打开 DHL", action: #selector(openDHL), keyEquivalent: "o")
+        let port = menuRowItem(title: "端口：未运行", action: nil, enabled: { false }); port.tag = 1001
+        portMenuRow = port.view as? MenuRowView
+        let restart = menuRowItem(title: "重新启动", action: #selector(restartDHL), keyEquivalent: "r")
+        let stop = menuRowItem(title: "停止后台", action: #selector(stopDHL), keyEquivalent: "s")
+        let update = menuRowItem(title: "检查更新", action: #selector(checkForUpdates))
+        update.tag = 1002; updateMenuItem = update; updateMenuRow = update.view as? MenuRowView
         let settingsItem = makeSettingsMenuItem()
-        let logs = plainMenuItem(title: "打开日志", action: #selector(openLogs), keyEquivalent: "l")
-        let quit = plainMenuItem(title: "退出 DSH 启动器", action: #selector(quit), keyEquivalent: "q")
-        configurePlainMenuItem(port, enabled: false)
+        let logs = menuRowItem(title: "打开日志", action: #selector(openLogs), keyEquivalent: "l")
+        let quit = menuRowItem(title: "退出 DHL 启动器", action: #selector(quit), keyEquivalent: "q")
         [open, port, NSMenuItem.separator(), restart, stop, NSMenuItem.separator(), update, settingsItem, logs, quit].forEach(menu.addItem)
         return menu
     }
 
-    private func plainMenuItem(title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
-        configurePlainMenuItem(item)
+    private func menuRowItem(title: String, action: Selector?, keyEquivalent: String = "", enabled: @escaping () -> Bool = { true }) -> NSMenuItem {
+        let item = NSMenuItem(title: "", action: action, keyEquivalent: keyEquivalent)
+        item.target = self
+        item.isEnabled = enabled()
+        item.keyEquivalentModifierMask = keyEquivalent.isEmpty ? [] : [.command]
+        item.image = nil
+        item.onStateImage = nil
+        item.offStateImage = nil
+        item.mixedStateImage = nil
+        item.state = .off
+        item.indentationLevel = 0
+        let shortcut = keyEquivalent.isEmpty ? "" : (keyEquivalent == "," ? "⌘," : "⌘ \(keyEquivalent.uppercased())")
+        item.view = MenuRowView(title: title, shortcut: shortcut, enabled: enabled)
         return item
     }
 
     private func makeSettingsMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "", action: #selector(openSettings), keyEquivalent: ",")
-        item.target = self
-        item.keyEquivalentModifierMask = [.command]
-        item.isEnabled = true
-        item.image = nil
-        item.onStateImage = nil
-        item.offStateImage = nil
-        item.mixedStateImage = nil
-        item.state = .off
-        item.indentationLevel = 0
-        item.view = SettingsMenuItemView { [weak self] in
-            self?.openSettings()
-        }
-        return item
+        menuRowItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
     }
 
-    private func configurePlainMenuItem(_ item: NSMenuItem, enabled: Bool = true) {
-        item.target = self
-        item.isEnabled = enabled
-        item.image = nil
-        item.onStateImage = nil
-        item.offStateImage = nil
-        item.mixedStateImage = nil
-        item.state = .off
-        item.indentationLevel = 0
+    private func setUpdateMenuTitle(_ title: String) {
+        updateMenuItem?.title = title
+        updateMenuRow?.title = title
     }
 
-    @objc private func openDSH() {
+    @objc private func openDHL() {
         guard let port = selectedPort else {
             if state == .stopped || state == .failed { start() }
             return
@@ -174,9 +181,9 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(URL(string: "http://127.0.0.1:\(port)/")!)
     }
 
-    @objc private func restartDSH() { stopDSH(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self.start() } }
+    @objc private func restartDHL() { stopDHL(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self.start() } }
 
-    @objc private func stopDSH() {
+    @objc private func stopDHL() {
         pollTimer?.invalidate(); pollTimer = nil
         let trackedPID = process?.processIdentifier ?? 0
         let discoveredPIDs = managedDSHPIDs()
@@ -193,15 +200,20 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
         let pipe = Pipe(); task.standardOutput = pipe; task.standardError = FileHandle.nullDevice
         do { try task.run(); task.waitUntilExit() } catch { return [] }
         guard let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) else { return [] }
-        let launcherPath = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/DSH").path
-        let patch = patchPath
+        let launcherPath = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/DHL").path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let managedPatches = [
+            patchPath,
+            "/Applications/DSH.app/Contents/Resources/DSHArchiveManager/cordis.patch.yml",
+            "\(home)/Applications/DSH.app/Contents/Resources/DSHArchiveManager/cordis.patch.yml"
+        ]
         return output.split(whereSeparator: \.isNewline).compactMap { line in
             let fields = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
             guard fields.count == 3, let pid = Int32(fields[0]), fields[1].first != "Z" else { return nil }
             let command = String(fields[2])
             let executable = command.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? ""
-            if executable == launcherPath { return pid }
-            if ["npm", "node", "/usr/local/bin/npm", "/usr/local/bin/node", "/opt/homebrew/bin/npm", "/opt/homebrew/bin/node"].contains(executable) && command.contains(patch) { return pid }
+            if executable == launcherPath || executable.hasSuffix("/DHL.app/Contents/MacOS/DHL") || executable.hasSuffix("/DSH.app/Contents/MacOS/DSH") { return pid }
+            if ["npm", "node", "/usr/local/bin/npm", "/usr/local/bin/node", "/opt/homebrew/bin/npm", "/opt/homebrew/bin/node"].contains(executable) && managedPatches.contains(where: command.contains) { return pid }
             return nil
         }
     }
@@ -221,13 +233,13 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
             if exited() { return }
             usleep(100_000)
         }
-        appendLogString("DSH 未在宽限期内退出，执行强制终止\n")
+        appendLogString("DHL 未在宽限期内退出，执行强制终止\n")
         signal(SIGKILL)
         for _ in 0..<20 {
             if exited() { return }
             usleep(100_000)
         }
-        appendLogString("无法确认 DSH 进程组已退出\n")
+        appendLogString("无法确认 DHL 进程组已退出\n")
     }
 
     @objc private func openLogs() { NSWorkspace.shared.open(logURL) }
@@ -251,7 +263,7 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
     private func scheduleAutoUpdateChecks() {
         autoUpdateTimer?.invalidate(); autoUpdateTimer = nil
         guard settings.autoUpdateEnabled else {
-            updateMenuItem?.title = "检查更新"
+            setUpdateMenuTitle("检查更新")
             return
         }
         let interval = settings.updateIntervalHours * 3600
@@ -266,24 +278,25 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
     private func performUpdateCheck(interactive: Bool) {
         guard !updateCheckInFlight else { return }
         updateCheckInFlight = true
-        if interactive { updateMenuItem?.title = "正在检查更新…" }
-        updateService.check(currentVersion: currentVersion, feedURL: settings.updateFeedURL) { [weak self] result in
+        if interactive { setUpdateMenuTitle("正在检查更新…") }
+        updateService.check(currentVersion: currentVersion) { [weak self] result in
             guard let self else { return }
             self.updateCheckInFlight = false
             switch result {
             case .available(let manifest):
                 self.pendingUpdate = manifest
-                self.updateMenuItem?.title = "更新可用：v\(manifest.version)"
+                self.setUpdateMenuTitle("更新可用：v\(manifest.version)")
                 if interactive { self.presentUpdate(manifest: manifest) }
             case .current:
                 self.pendingUpdate = nil
-                self.updateMenuItem?.title = "检查更新"
+                self.setUpdateMenuTitle("检查更新")
                 if interactive { self.showInfo(title: "已是最新版本", message: "当前版本：v\(self.currentVersion)") }
-            case .unconfigured:
-                self.updateMenuItem?.title = "检查更新"
-                if interactive { self.showInfo(title: "尚未配置更新源", message: "请在“设置…”中填写更新清单地址。") }
+            case .noPublishedRelease:
+                self.pendingUpdate = nil
+                self.setUpdateMenuTitle("检查更新")
+                if interactive { self.showInfo(title: "暂无可用更新", message: "项目暂未发布可下载安装的 DHL 版本。") }
             case .failed(let message):
-                self.updateMenuItem?.title = "检查更新"
+                self.setUpdateMenuTitle("检查更新")
                 self.appendLogString("更新检查失败：\(message)\n")
                 if interactive { self.showInfo(title: "检查更新失败", message: message) }
             }
@@ -292,7 +305,7 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
 
     private func presentUpdate(manifest: UpdateManifest) {
         let alert = NSAlert()
-        alert.messageText = "发现 DSH 新版本 v\(manifest.version)"
+        alert.messageText = "发现 DHL 新版本 v\(manifest.version)"
         alert.informativeText = manifest.notes?.isEmpty == false ? manifest.notes! : "下载更新包后，在 Finder 中打开并安装。"
         alert.addButton(withTitle: "下载更新")
         alert.addButton(withTitle: "稍后")
@@ -300,15 +313,15 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
     }
 
     private func downloadUpdate(_ manifest: UpdateManifest) {
-        updateMenuItem?.title = "正在下载更新…"
+        setUpdateMenuTitle("正在下载更新…")
         updateService.download(manifest) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success(let url):
-                self.updateMenuItem?.title = "更新可用：v\(manifest.version)"
+                self.setUpdateMenuTitle("更新可用：v\(manifest.version)")
                 let alert = NSAlert()
                 alert.messageText = "更新包已下载"
-                alert.informativeText = "是否立即安装 v\(manifest.version) 并重启 DSH？当前后台进程会先关闭，安装完成后重新启动。"
+                alert.informativeText = "是否立即安装 v\(manifest.version) 并重启 DHL？当前后台进程会先关闭，安装完成后重新启动。"
                 alert.addButton(withTitle: "安装并重启")
                 alert.addButton(withTitle: "稍后安装")
                 if alert.runModal() == .alertFirstButtonReturn {
@@ -317,7 +330,7 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                 }
             case .failure(let error):
-                self.updateMenuItem?.title = "更新可用：v\(manifest.version)"
+                self.setUpdateMenuTitle("更新可用：v\(manifest.version)")
                 self.showInfo(title: "下载更新失败", message: error.localizedDescription)
             }
         }
@@ -325,7 +338,7 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
 
     private func installUpdateAndRestart(_ dmgURL: URL) {
         appendLogString("用户确认安装更新：\(dmgURL.path)\n")
-        stopDSH()
+        stopDHL()
         let appURL = Bundle.main.bundleURL
         let appDirectory = appURL.deletingLastPathComponent()
         let pid = ProcessInfo.processInfo.processIdentifier
@@ -340,14 +353,14 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
           kill -0 "$PID" 2>/dev/null || break
           sleep 0.1
         done
-        MOUNT="$(mktemp -d "${TMPDIR:-/tmp}/dsh-update.XXXXXX")"
+        MOUNT="$(mktemp -d "${TMPDIR:-/tmp}/dhl-update.XXXXXX")"
         cleanup() { hdiutil detach "$MOUNT" -force >/dev/null 2>&1 || true; rmdir "$MOUNT" >/dev/null 2>&1 || true; }
         trap cleanup EXIT
         hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT" >/dev/null
-        test -d "$MOUNT/.DSH-payload.app"
-        BACKUP="$DEST/DSH.app.backup-$(date +%Y%m%d-%H%M%S)"
+        test -d "$MOUNT/.DHL-payload.app"
+        BACKUP="$DEST/DHL.app.backup-$(date +%Y%m%d-%H%M%S)"
         mv "$APP" "$BACKUP"
-        ditto "$MOUNT/.DSH-payload.app" "$APP"
+        ditto "$MOUNT/.DHL-payload.app" "$APP"
         open "$APP"
         """
         let task = Process()
@@ -372,7 +385,7 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
 
     private func start() {
         if state == .checking { return }
-        if state == .running { openDSH(); return }
+        if state == .running { openDHL(); return }
         setState(.checking)
         DispatchQueue.global(qos: .userInitiated).async {
             let choice = self.findPort()
@@ -383,7 +396,7 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
                     self.selectedPort = port
                     self.setState(.running)
                     self.monitorArchivePlugin(port: port)
-                    if self.settings.openBrowserOnReady && !self.didOpenBrowser { self.didOpenBrowser = true; self.openDSH() }
+                    if self.settings.openBrowserOnReady && !self.didOpenBrowser { self.didOpenBrowser = true; self.openDHL() }
                 case .launch(let port):
                     self.launch(port: port)
                 }
@@ -466,13 +479,13 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
             let remainingErr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
             if !remainingOut.isEmpty { self?.appendLog(remainingOut, prefix: "stdout") }
             if !remainingErr.isEmpty { self?.appendLog(remainingErr, prefix: "stderr") }
-            self?.appendLogString("DSH 进程退出：code=\(terminatedProcess.terminationStatus), reason=\(terminatedProcess.terminationReason.rawValue)\n")
+            self?.appendLogString("DHL 进程退出：code=\(terminatedProcess.terminationStatus), reason=\(terminatedProcess.terminationReason.rawValue)\n")
             DispatchQueue.main.async {
                 guard let self, self.state != .stopped else { return }
                 self.process = nil
                 self.selectedPort = nil
                 self.pollTimer?.invalidate(); self.pollTimer = nil
-                self.fail("DSH 进程已退出，请查看日志")
+                self.fail("DHL 进程已退出，请查看日志")
             }
         }
         do {
@@ -485,12 +498,9 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
 
     private func ensurePluginLink() {
         let profile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dsh/profiles/web/node_modules", isDirectory: true)
-        let link = profile.appendingPathComponent("dsh-archive-manager")
-        try? FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
-        if FileManager.default.fileExists(atPath: link.path) {
-            if let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path), destination.contains("DSHArchiveManager") { try? FileManager.default.removeItem(at: link) } else { return }
+        if !ensureArchivePluginLink(pluginURL: pluginURL, profileURL: profile) {
+            appendLogString("无法更新归档增强插件链接，保留现有插件配置\n")
         }
-        try? FileManager.default.createSymbolicLink(at: link, withDestinationURL: pluginURL)
     }
 
     private func pollUntilReady(port: Int) {
@@ -502,10 +512,10 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
                 timer.invalidate()
                 self.setState(.running)
                 self.monitorArchivePlugin(port: port)
-                if self.settings.openBrowserOnReady && !self.didOpenBrowser { self.didOpenBrowser = true; self.openDSH() }
+                    if self.settings.openBrowserOnReady && !self.didOpenBrowser { self.didOpenBrowser = true; self.openDHL() }
             } else if attempts >= 100 {
                 timer.invalidate()
-                self.fail("DSH 启动超时，请查看日志")
+                self.fail("DHL 启动超时，请查看日志")
             }
         }
     }
@@ -519,12 +529,12 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
                 }
                 Thread.sleep(forTimeInterval: 0.25)
             }
-            DispatchQueue.main.async { [weak self] in self?.appendLogString("归档增强插件不可用，DSH 继续以基础模式运行\n") }
+            DispatchQueue.main.async { [weak self] in self?.appendLogString("归档增强插件不可用，DHL 将以基础模式运行\n") }
         }
     }
 
     private func appendLog(_ data: Data, prefix: String? = nil) {
-        if let prefix { appendLogString("[\(Date())] [\(prefix)] ", includeTimestamp: false) }
+        if let prefix { appendLogString("[\(formatLogTimestamp())] [\(prefix)] ", includeTimestamp: false) }
         logLock.lock(); defer { logLock.unlock() }
         if !FileManager.default.fileExists(atPath: logURL.path) { FileManager.default.createFile(atPath: logURL.path, contents: nil) }
         guard let handle = try? FileHandle(forWritingTo: logURL) else { return }
@@ -538,19 +548,21 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
     }
 
     private func appendLogString(_ text: String, includeTimestamp: Bool = true) {
-        let value = includeTimestamp ? "[\(Date())] \(text)" : text
+        let value = includeTimestamp ? "[\(formatLogTimestamp())] \(text)" : text
         appendLog(Data(value.utf8))
     }
 
     private func setState(_ next: LauncherState) {
         state = next
         statusItem.button?.image = makeStatusImage()
-        statusItem.menu?.item(withTag: 1001)?.title = selectedPort.map { "端口：\($0)" } ?? "端口：未运行"
+        let portTitle = selectedPort.map { "端口：\($0)" } ?? "端口：未运行"
+        statusItem.menu?.item(withTag: 1001)?.title = portTitle
+        portMenuRow?.title = portTitle
     }
 
     private func fail(_ message: String) {
         appendLogString("\(message)\n"); setState(.failed)
-        let alert = NSAlert(); alert.messageText = "DSH 启动失败"; alert.informativeText = message; alert.alertStyle = .warning; alert.addButton(withTitle: "打开日志"); alert.addButton(withTitle: "关闭")
+        let alert = NSAlert(); alert.messageText = "DHL 启动失败"; alert.informativeText = message; alert.alertStyle = .warning; alert.addButton(withTitle: "打开日志"); alert.addButton(withTitle: "关闭")
         if alert.runModal() == .alertFirstButtonReturn { openLogs() }
     }
 
@@ -567,4 +579,4 @@ final class DSHLauncher: NSObject, NSApplicationDelegate {
     }
 }
 
-let app = NSApplication.shared; let delegate = DSHLauncher(); app.delegate = delegate; app.run()
+let app = NSApplication.shared; let delegate = DHLLauncher(); app.delegate = delegate; app.run()

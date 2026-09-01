@@ -12,6 +12,14 @@ rg -Fq 'body: JSON.stringify({ sessionIds: confirmIds })' "$ROOT/Plugins/DSHArch
 rg -q 'window.isOpaque = true' "$ROOT/Sources/SettingsWindowController.swift"
 rg -q 'visualEffect.blendingMode = .withinWindow' "$ROOT/Sources/SettingsWindowController.swift"
 rg -q 'checkbox.contentTintColor = .labelColor' "$ROOT/Sources/SettingsWindowController.swift"
+if rg -q 'feedField|updateFeedURL|更新清单' "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift"; then
+  echo "update source must be fixed to GitHub Releases" >&2
+  exit 1
+fi
+rg -Fq 'sljdxde/deepseek-harness-launcher' "$ROOT/Sources/UpdateSupport.swift"
+rg -Fq 'api.github.com/repos' "$ROOT/Sources/UpdateSupport.swift"
+rg -Fq 'DHL.dmg' "$ROOT/Sources/UpdateSupport.swift"
+rg -q 'case \.noPublishedRelease' "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift"
 rg -q "return \{ inject: \['slots', 'locale'\], apply \}" "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 rg -q 'dsh-archive-select-all' "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 rg -q 'selectAllRef\.current\.indeterminate' "$ROOT/Plugins/DSHArchiveManager/client/client.js"
@@ -19,7 +27,7 @@ plutil -lint "$ROOT/Resources/Info.plist"
 plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/Info.plist" | grep -qx '0.1.0'
 zsh -n "$ROOT/scripts/install.sh"
 zsh -n "$ROOT/scripts/install-from-app.sh"
-zsh -n "$ROOT/scripts/Install DSH.command"
+zsh -n "$ROOT/scripts/Install DHL.command"
 zsh -n "$ROOT/scripts/build-installer-app.sh"
 zsh -n "$ROOT/scripts/build-dmg.sh"
 "$ROOT/scripts/test-installer.sh"
@@ -27,46 +35,47 @@ rg -q 'signal_processes launcher_pids KILL' "$ROOT/scripts/install-from-app.sh"
 rg -q 'signal_processes dsh_pids KILL' "$ROOT/scripts/install-from-app.sh"
 rg -q 'wait_for_processes launcher_pids' "$ROOT/scripts/install-from-app.sh"
 rg -q 'Previous app backup' "$ROOT/scripts/install-from-app.sh"
-rg -q 'DSH_SKIP_BUNDLE_QUIT' "$ROOT/scripts/install-from-app.sh"
+rg -q 'DHL_SKIP_BUNDLE_QUIT' "$ROOT/scripts/install-from-app.sh"
+rg -q 'ensureArchivePluginLink' "$ROOT/Sources/main.swift"
 rg -q '"--profile", "web"' "$ROOT/Sources/main.swift"
 if rg -q 'func applicationWillTerminate' "$ROOT/Sources/main.swift"; then
-  echo "launcher exit must not synchronously stop the DSH backend" >&2
+  echo "launcher exit must not synchronously stop the Harness backend" >&2
   exit 1
 fi
 rg -q 'menu\.showsStateColumn = false' "$ROOT/Sources/main.swift"
 rg -q 'item\.offStateImage = nil' "$ROOT/Sources/main.swift"
 rg -q 'let settingsItem = makeSettingsMenuItem()' "$ROOT/Sources/main.swift"
-rg -q 'private final class SettingsMenuItemView: NSView' "$ROOT/Sources/main.swift"
-rg -Fq 'NSPoint(x: 0' "$ROOT/Sources/main.swift"
-rg -Fq 'private let shortcut = "⌘,"' "$ROOT/Sources/main.swift"
+rg -Fq 'menuRowItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")' "$ROOT/Sources/main.swift"
 rg -Fq 'keyEquivalent: ","' "$ROOT/Sources/main.swift"
-rg -Fq 'item.keyEquivalentModifierMask = [.command]' "$ROOT/Sources/main.swift"
-if rg -Fq 'plainMenuItem(title: "设置…"' "$ROOT/Sources/main.swift"; then
-  echo "settings must use the icon-free custom menu row" >&2
+rg -Fq 'keyEquivalentModifierMask = keyEquivalent.isEmpty ? [] : [.command]' "$ROOT/Sources/main.swift"
+if rg -q 'SettingsMenuItemView' "$ROOT/Sources/main.swift"; then
+  echo "legacy settings-only menu view must be removed" >&2
   exit 1
 fi
 if rg -q '"web", "--no-open".*"--patch"' "$ROOT/Sources/main.swift"; then
-  echo "invalid DSH argument order" >&2
+  echo "invalid Harness argument order" >&2
   exit 1
 fi
 mkdir -p "$ROOT/build"
 swiftc "$ROOT/scripts/test-update-support.swift" "$ROOT/Sources/UpdateSupport.swift" -o "$ROOT/build/test-update-support"
 "$ROOT/build/test-update-support"
+swiftc "$ROOT/scripts/test-launcher-support.swift" "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/Sources/LogSupport.swift" -o "$ROOT/build/test-launcher-support"
+"$ROOT/build/test-launcher-support"
 "$ROOT/scripts/build-app.sh" >/dev/null
-test -x "$ROOT/build/DSH.app/Contents/MacOS/DSH"
-test -f "$ROOT/build/DSH.app/Contents/Resources/DSH.icns"
-test -x "$ROOT/build/DSH.app/Contents/Resources/install-from-app.sh"
+test -x "$ROOT/build/DHL.app/Contents/MacOS/DHL"
+test -f "$ROOT/build/DHL.app/Contents/Resources/DHL.icns"
+test -x "$ROOT/build/DHL.app/Contents/Resources/install-from-app.sh"
 "$ROOT/scripts/build-universal.sh" >/dev/null
-lipo -info "$ROOT/build/DSH.app/Contents/MacOS/DSH" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
-test -f "$ROOT/build/DSH.app/Contents/Resources/menubar-creature.png"
+lipo -info "$ROOT/build/DHL.app/Contents/MacOS/DHL" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
+test -f "$ROOT/build/DHL.app/Contents/Resources/menubar-creature.png"
 "$ROOT/scripts/build-installer-app.sh" >/dev/null
-test -x "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DSHInstaller"
+test -x "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DHLInstaller"
 test -x "$ROOT/build/双击完成安装或更新.app/Contents/Resources/install-from-app.sh"
-lipo -info "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DSHInstaller" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
-rg -Fq 'appendingPathComponent(".DSH-payload.app")' "$ROOT/Installer/main.swift"
-rg -Fq 'cp -R "$ROOT/build/DSH.app" "$STAGE/.DSH-payload.app"' "$ROOT/scripts/build-dmg.sh"
+lipo -info "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DHLInstaller" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
+rg -Fq 'appendingPathComponent(".DHL-payload.app")' "$ROOT/Installer/main.swift"
+rg -Fq 'cp -R "$ROOT/build/DHL.app" "$STAGE/.DHL-payload.app"' "$ROOT/scripts/build-dmg.sh"
 if rg -Fq 'ln -s /Applications' "$ROOT/scripts/build-dmg.sh"; then
   echo "DMG must expose only the installation entry" >&2
   exit 1
 fi
-echo "DSH launcher checks passed"
+echo "DHL launcher checks passed"

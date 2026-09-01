@@ -7,10 +7,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let settings = LauncherSettings.shared
 
     private let autoUpdateCheckbox = NSButton(checkboxWithTitle: "自动检查更新", target: nil, action: nil)
-    private let openBrowserCheckbox = NSButton(checkboxWithTitle: "DSH 就绪后自动打开浏览器", target: nil, action: nil)
-    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动 DSH", target: nil, action: nil)
+    private let openBrowserCheckbox = NSButton(checkboxWithTitle: "DHL 就绪后自动打开浏览器", target: nil, action: nil)
+    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动 DHL", target: nil, action: nil)
     private let intervalField = NSTextField(string: "6")
-    private let feedField = NSTextField(string: "")
 
     init(onSave: @escaping () -> Void, onCheckNow: @escaping () -> Void) {
         self.onSave = onSave
@@ -22,7 +21,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "DSH 设置"
+        window.title = "DHL 设置"
         window.isReleasedWhenClosed = false
         // Keep a native glass surface without letting the desktop bleed
         // through and wash out the settings text.
@@ -81,7 +80,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             root.bottomAnchor.constraint(equalTo: visualEffect.bottomAnchor, constant: -22)
         ])
 
-        let title = makeLabel("DSH 设置", size: 21, weight: .semibold, color: .labelColor)
+        let title = makeLabel("DHL 设置", size: 21, weight: .semibold, color: .labelColor)
         let subtitle = makeLabel("启动器偏好与更新", size: 13, weight: .regular, color: .secondaryLabelColor)
         root.addSubview(title)
         root.addSubview(subtitle)
@@ -134,10 +133,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         intervalField.widthAnchor.constraint(equalToConstant: 64).isActive = true
         updateCard.addSubview(intervalField)
 
-        let feedLabel = makeLabel("更新清单", size: 13, weight: .regular, color: .labelColor)
-        updateCard.addSubview(feedLabel)
-        configureTextField(feedField, placeholder: "可选：https://example.com/dsh.json")
-        updateCard.addSubview(feedField)
+        let sourceLabel = makeLabel("更新来源", size: 13, weight: .regular, color: .labelColor)
+        let sourceValue = makeLabel("GitHub Releases · deepseek-harness-launcher", size: 13, weight: .regular, color: .secondaryLabelColor)
+        updateCard.addSubview(sourceLabel)
+        updateCard.addSubview(sourceValue)
 
         NSLayoutConstraint.activate([
             updateTitle.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
@@ -152,13 +151,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             intervalField.heightAnchor.constraint(equalToConstant: 26),
             intervalSuffix.leadingAnchor.constraint(equalTo: intervalField.trailingAnchor, constant: 8),
             intervalSuffix.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
-            feedLabel.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
-            feedLabel.centerYAnchor.constraint(equalTo: feedField.centerYAnchor),
-            feedField.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 150),
-            feedField.trailingAnchor.constraint(equalTo: updateCard.trailingAnchor, constant: -16),
-            feedField.topAnchor.constraint(equalTo: intervalField.bottomAnchor, constant: 9),
-            feedField.heightAnchor.constraint(equalToConstant: 28),
-            updateCard.heightAnchor.constraint(equalToConstant: 166)
+            sourceLabel.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
+            sourceLabel.centerYAnchor.constraint(equalTo: sourceValue.centerYAnchor),
+            sourceValue.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 150),
+            sourceValue.trailingAnchor.constraint(lessThanOrEqualTo: updateCard.trailingAnchor, constant: -16),
+            sourceValue.topAnchor.constraint(equalTo: intervalField.bottomAnchor, constant: 12),
+            updateCard.heightAnchor.constraint(equalToConstant: 142)
         ])
         root.addSubview(updateCard)
         NSLayoutConstraint.activate([
@@ -248,7 +246,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         openBrowserCheckbox.state = settings.openBrowserOnReady ? .on : .off
         launchAtLoginCheckbox.state = settings.launchAtLogin ? .on : .off
         intervalField.stringValue = String(format: "%.0f", settings.updateIntervalHours)
-        feedField.stringValue = settings.updateFeedURL
     }
 
     @objc private func checkNow() {
@@ -264,7 +261,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         settings.openBrowserOnReady = openBrowserCheckbox.state == .on
         settings.launchAtLogin = launchAtLoginCheckbox.state == .on
         settings.updateIntervalHours = max(intervalField.doubleValue, 1)
-        settings.updateFeedURL = feedField.stringValue
 
         do {
             try LoginItemManager.setEnabled(settings.launchAtLogin)

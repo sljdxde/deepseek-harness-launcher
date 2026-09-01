@@ -12,7 +12,7 @@ CANDIDATES = [
     ("candidate-A", "A", "极简鲸鱼"),
     ("candidate-B", "B", "菜单栏+鲸鱼"),
     ("candidate-C", "C", "鲸鱼+火箭"),
-    ("candidate-D", "D", "DSH 字母标"),
+    ("candidate-D", "D", "DHL 字母标"),
 ]
 
 BG = (38, 38, 42, 255)
@@ -52,7 +52,7 @@ def main() -> None:
     draw = ImageDraw.Draw(canvas)
 
     title_font = load_font(26)
-    draw.text((PAD, PAD), "DSH 图标候选对比", font=title_font, fill=TEXT)
+    draw.text((PAD, PAD), "DHL 图标候选对比", font=title_font, fill=TEXT)
     draw.text(
         (PAD, PAD + 34),
         "上行 256px 主图 / 下行 16·32·64px 真实像素（菜单栏实际观感）",
@@ -75,7 +75,7 @@ def main() -> None:
             (x + PAD + 30, y + 30), label, font=load_font(17), fill=TEXT
         )
 
-        source = ICONS / folder / "DSH.iconset" / "icon_256x256.png"
+        source = ICONS / folder / "DHL.iconset" / "icon_256x256.png"
         if source.exists():
             big = Image.open(source).convert("RGBA").resize(
                 (BIG, BIG), Image.LANCZOS
@@ -86,7 +86,7 @@ def main() -> None:
         cursor = x + PAD
         for size in SMALL_SIZES:
             small_src = (
-                ICONS / folder / "DSH.iconset" / f"icon_{size}x{size}.png"
+                ICONS / folder / "DHL.iconset" / f"icon_{size}x{size}.png"
             )
             if not small_src.exists():
                 continue

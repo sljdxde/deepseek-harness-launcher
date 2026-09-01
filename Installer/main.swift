@@ -38,11 +38,11 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
         window.contentView = content
 
         let iconView = NSImageView(frame: NSRect(x: 32, y: 82, width: 72, height: 72))
-        iconView.image = Bundle.main.image(forResource: "DSH")
+        iconView.image = Bundle.main.image(forResource: "DHL")
         iconView.imageScaling = .scaleProportionallyUpOrDown
         content.addSubview(iconView)
 
-        let title = NSTextField(labelWithString: "正在安装 DSH")
+        let title = NSTextField(labelWithString: "正在安装 DHL")
         title.font = .systemFont(ofSize: 19, weight: .semibold)
         title.textColor = .labelColor
         title.frame = NSRect(x: 128, y: 129, width: 270, height: 28)
@@ -60,7 +60,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
         spinner.startAnimation(nil)
         content.addSubview(spinner)
 
-        let detail = NSTextField(labelWithString: "完成后会自动重新启动 DSH。")
+        let detail = NSTextField(labelWithString: "完成后会自动重新启动 DHL。")
         detail.font = .systemFont(ofSize: 12)
         detail.textColor = .tertiaryLabelColor
         detail.frame = NSRect(x: 154, y: 56, width: 240, height: 18)
@@ -69,13 +69,13 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
 
     private func install() {
         let volumeURL = Bundle.main.bundleURL.deletingLastPathComponent()
-        let sourceApp = volumeURL.appendingPathComponent(".DSH-payload.app")
+        let sourceApp = volumeURL.appendingPathComponent(".DHL-payload.app")
         let script = Bundle.main.resourceURL?.appendingPathComponent("install-from-app.sh")
         let destination = preferredInstallDirectory()
 
         guard FileManager.default.fileExists(atPath: sourceApp.path),
               let script, FileManager.default.isExecutableFile(atPath: script.path) else {
-            finishFailure("未找到安装包内容。请从 DSH.dmg 中直接打开“双击完成安装或更新”。")
+            finishFailure("未找到安装包内容。请从 DHL.dmg 中直接打开“双击完成安装或更新”。")
             return
         }
 
@@ -85,20 +85,20 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
 
         guard result.status == 0 else {
             let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            finishFailure(detail.isEmpty ? "安装失败，请关闭 DSH 后重试。" : detail)
+            finishFailure(detail.isEmpty ? "安装失败，请关闭 DHL 后重试。" : detail)
             return
         }
 
-        let target = destination.appendingPathComponent("DSH.app")
+        let target = destination.appendingPathComponent("DHL.app")
         guard FileManager.default.fileExists(atPath: target.path) else {
-            finishFailure("安装完成后未找到 DSH.app。")
+            finishFailure("安装完成后未找到 DHL.app。")
             return
         }
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.spinner.stopAnimation(nil)
-            self.statusLabel.stringValue = "已更新，正在重新启动 DSH…"
+            self.statusLabel.stringValue = "已更新，正在重新启动 DHL…"
             NSWorkspace.shared.open(target)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
                 NSApp.terminate(nil)
@@ -108,7 +108,8 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
 
     private func preferredInstallDirectory() -> URL {
         let applications = URL(fileURLWithPath: "/Applications", isDirectory: true)
-        if FileManager.default.fileExists(atPath: applications.appendingPathComponent("DSH.app").path) ||
+        if FileManager.default.fileExists(atPath: applications.appendingPathComponent("DHL.app").path) ||
+            FileManager.default.fileExists(atPath: applications.appendingPathComponent("DSH.app").path) ||
             FileManager.default.isWritableFile(atPath: applications.path) {
             return applications
         }
@@ -167,7 +168,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
             self?.spinner.stopAnimation(nil)
             self?.window.orderOut(nil)
             let alert = NSAlert()
-            alert.messageText = "未能安装 DSH"
+            alert.messageText = "未能安装 DHL"
             alert.informativeText = message
             alert.alertStyle = .critical
             alert.addButton(withTitle: "好")

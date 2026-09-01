@@ -2,5 +2,5 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ -z "${CODESIGN_IDENTITY:-}" ]]; then echo "No CODESIGN_IDENTITY supplied; leaving build unsigned."; exit 0; fi
-codesign --deep --force --options runtime --sign "$CODESIGN_IDENTITY" "$ROOT/build/DSH.app"
-if [[ -n "${APPLE_ID:-}" && -n "${TEAM_ID:-}" && -n "${APP_PASSWORD:-}" ]]; then xcrun notarytool submit "$ROOT/dist/DSH.dmg" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_PASSWORD" --wait; fi
+codesign --deep --force --options runtime --sign "$CODESIGN_IDENTITY" "$ROOT/build/DHL.app"
+if [[ -n "${APPLE_ID:-}" && -n "${TEAM_ID:-}" && -n "${APP_PASSWORD:-}" ]]; then xcrun notarytool submit "$ROOT/dist/DHL.dmg" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_PASSWORD" --wait; fi
