@@ -18,17 +18,30 @@ if rg -q 'feedField|updateFeedURL|更新清单' "$ROOT/Sources/SettingsWindowCon
 fi
 rg -Fq 'sljdxde/deepseek-harness-launcher' "$ROOT/Sources/UpdateSupport.swift"
 rg -Fq 'api.github.com/repos' "$ROOT/Sources/UpdateSupport.swift"
-rg -Fq 'DHL.dmg' "$ROOT/Sources/UpdateSupport.swift"
+rg -Fq 'Deepseek Harness Launcher.dmg' "$ROOT/Sources/UpdateSupport.swift"
+if rg -Fq 'DHL.dmg' "$ROOT/Sources/UpdateSupport.swift"; then
+  echo "update asset must use the full DMG name" >&2
+  exit 1
+fi
 rg -q 'case \.noPublishedRelease' "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift"
 rg -q "return \{ inject: \['slots', 'locale'\], apply \}" "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 rg -q 'dsh-archive-select-all' "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 rg -q 'selectAllRef\.current\.indeterminate' "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 plutil -lint "$ROOT/Resources/Info.plist"
+plutil -extract CFBundleExecutable raw "$ROOT/Resources/Info.plist" | grep -qx 'DHL'
 plutil -extract CFBundleDisplayName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
 plutil -extract CFBundleName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
 plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/Info.plist" | grep -qx '0.1.0'
+rg -Fq '正在安装 DHL' "$ROOT/Installer/main.swift"
+rg -Fq '已更新，正在重新启动 DHL' "$ROOT/Installer/main.swift"
 zsh -n "$ROOT/scripts/install.sh"
 zsh -n "$ROOT/scripts/install-from-app.sh"
+zsh -n "$ROOT/scripts/uninstall.sh"
+rg -q "cleanup_legacy_volumes" "$ROOT/scripts/uninstall.sh"
+rg -q "unregister_legacy_paths" "$ROOT/scripts/uninstall.sh" "$ROOT/scripts/install-from-app.sh"
+rg -q "remove_backups" "$ROOT/scripts/uninstall.sh"
+rg -q "prune_backups" "$ROOT/scripts/install-from-app.sh"
+rg -q "xattr -dr com.apple.quarantine" "$ROOT/scripts/install-from-app.sh"
 zsh -n "$ROOT/scripts/Install DHL.command"
 zsh -n "$ROOT/scripts/build-installer-app.sh"
 zsh -n "$ROOT/scripts/build-dmg.sh"
@@ -64,19 +77,21 @@ swiftc "$ROOT/scripts/test-update-support.swift" "$ROOT/Sources/UpdateSupport.sw
 swiftc "$ROOT/scripts/test-launcher-support.swift" "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/Sources/LogSupport.swift" -o "$ROOT/build/test-launcher-support"
 "$ROOT/build/test-launcher-support"
 "$ROOT/scripts/build-app.sh" >/dev/null
-test -x "$ROOT/build/DHL.app/Contents/MacOS/DHL"
-plutil -extract CFBundleDisplayName raw "$ROOT/build/DHL.app/Contents/Info.plist" | grep -qx 'Deepseek Harness Launcher'
-test -f "$ROOT/build/DHL.app/Contents/Resources/DHL.icns"
-test -x "$ROOT/build/DHL.app/Contents/Resources/install-from-app.sh"
+test -x "$ROOT/build/Deepseek Harness Launcher.app/Contents/MacOS/DHL"
+plutil -extract CFBundleDisplayName raw "$ROOT/build/Deepseek Harness Launcher.app/Contents/Info.plist" | grep -qx 'Deepseek Harness Launcher'
+test -f "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/DHL.icns"
+test -x "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/install-from-app.sh"
 "$ROOT/scripts/build-universal.sh" >/dev/null
-lipo -info "$ROOT/build/DHL.app/Contents/MacOS/DHL" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
-test -f "$ROOT/build/DHL.app/Contents/Resources/menubar-creature.png"
+lipo -info "$ROOT/build/Deepseek Harness Launcher.app/Contents/MacOS/DHL" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
+test -f "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/menubar-creature.png"
+codesign --verify --deep --strict "$ROOT/build/Deepseek Harness Launcher.app"
 "$ROOT/scripts/build-installer-app.sh" >/dev/null
 test -x "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DHLInstaller"
 test -x "$ROOT/build/双击完成安装或更新.app/Contents/Resources/install-from-app.sh"
 lipo -info "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DHLInstaller" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
-rg -Fq 'appendingPathComponent(".DHL-payload.app")' "$ROOT/Installer/main.swift"
-rg -Fq 'cp -R "$ROOT/build/DHL.app" "$STAGE/.DHL-payload.app"' "$ROOT/scripts/build-dmg.sh"
+codesign --verify --deep --strict "$ROOT/build/双击完成安装或更新.app"
+rg -Fq 'appendingPathComponent(".Deepseek Harness Launcher-payload.app")' "$ROOT/Installer/main.swift"
+rg -Fq 'cp -R "$ROOT/build/Deepseek Harness Launcher.app" "$STAGE/.Deepseek Harness Launcher-payload.app"' "$ROOT/scripts/build-dmg.sh"
 if rg -Fq 'ln -s /Applications' "$ROOT/scripts/build-dmg.sh"; then
   echo "DMG must expose only the installation entry" >&2
   exit 1

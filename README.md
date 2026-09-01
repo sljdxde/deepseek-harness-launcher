@@ -27,7 +27,7 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 2 | **内置归档管理插件（DSHArchiveManager）** | 通过 `--patch` 注入 Cordis patch，在 Harness Web 界面提供「归档管理」面板：列出归档会话、单条/批量删除（带二次确认）、显示工作区与后代数量。 |
 | 3 | **智能端口管理（3080–3099）** | 启动前从 3080 扫描到 3099：发现正在响应的 Harness 就复用；否则使用第一个可绑定端口。若复用实例没有归档插件，Harness 仍可使用，日志会记录为基础模式。 |
 | 4 | **复用本机 Node，并可自动获取 dsh** | 用 `npx --prefer-offline --yes @deepseek-ai/dsh` 启动：优先使用 npm 缓存，缓存缺失时允许 npx 下载 `@deepseek-ai/dsh`。不捆绑 Node 或 dsh 内核；会查找 `~/opt/node`、`~/.volta`、`~/.nvm`、`/opt/homebrew/bin`、`/usr/local/bin`。 |
-| 5 | **原生应用内自更新** | 直接对接本仓库 GitHub Releases，菜单内「检查更新」可下载 `DHL.dmg` 并自替换重启（支持自动定时检查 + 频率设置）。 |
+| 5 | **原生应用内自更新** | 直接对接本仓库 GitHub Releases，菜单内「检查更新」可下载 `Deepseek Harness Launcher.dmg` 并自替换重启（支持自动定时检查 + 频率设置）。 |
 | 6 | **开机自启动** | 通过 `LaunchAgent`（`com.local.dhl-launcher`）实现登录 macOS 自动拉起，可在设置中开关。 |
 | 7 | **优雅的进程生命周期** | 停止 / 更新前对 Harness 进程组做 `SIGTERM → SIGKILL` 级联终止（含超时兜底），并精确匹配 launcher 自身路径与运行该 patch 的 npm/node 进程，避免误杀或残留孤儿进程。 |
 | 8 | **原生设置窗口** | 自动更新开关与频率、就绪后是否自动开浏览器、开机启动；与系统外观一致。 |
@@ -52,7 +52,7 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 
 ```sh
 npx --prefer-offline --yes @deepseek-ai/dsh --profile web \
-  --patch <DHL.app 内的 cordis.patch.yml> --no-open --port <3080-3099>
+  --patch <Deepseek Harness Launcher.app 内的 cordis.patch.yml> --no-open --port <3080-3099>
 ```
 
 ### 启动与端口
@@ -69,25 +69,25 @@ npx --prefer-offline --yes @deepseek-ai/dsh --profile web \
 ### 从源码安装
 
 ```sh
-./scripts/install.sh                                  # 编译 Universal 2 → ~/Applications/DHL.app
+./scripts/install.sh                                  # 编译 Universal 2 → ~/Applications/Deepseek Harness Launcher.app
 DHL_INSTALL_DIR=/Applications ./scripts/install.sh    # 安装到系统 /Applications
 ```
 
-安装脚本会：先请求旧启动器退出，再对其及 Deepseek Harness Launcher 管理的 Harness 后台执行 `SIGTERM`，超时后 `SIGKILL`；确认结束后保留带时间戳的 App 备份、用 `ditto` 替换 `DHL.app`，最后自动重新打开。设置 `DHL_NO_OPEN=1` 可跳过安装后自动启动。若无法确认相关进程已经退出，安装会取消，不会覆盖正在运行的 App。
+安装脚本会：先请求旧启动器退出，再对其及 Deepseek Harness Launcher 管理的 Harness 后台执行 `SIGTERM`，超时后 `SIGKILL`；确认结束后保留带时间戳的 App 备份、用 `ditto` 替换 `Deepseek Harness Launcher.app`，最后自动重新打开。重装成功后会自动清理此前的 App 备份、注销旧的 DMG payload 注册并移除新 App 的 quarantine 标记。设置 `DHL_NO_OPEN=1` 可跳过安装后自动启动。若无法确认相关进程已经退出，安装会取消，不会覆盖正在运行的 App。
 
 > 当前机器仅有 Command Line Tools；Universal 2 可交叉编译，但签名 / notarization 需要完整 Xcode 与 Developer ID 环境。
 
 ### 构建产物
 
 ```sh
-./scripts/build-app.sh            # arm64 开发构建 → build/DHL.app
+./scripts/build-app.sh            # arm64 开发构建 → build/Deepseek Harness Launcher.app
 ./scripts/build-universal.sh      # Universal 2（arm64 + x86_64）
-./scripts/build-dmg.sh            # dist/DHL.dmg（含「双击完成安装或更新」安装助手）
+./scripts/build-dmg.sh            # dist/Deepseek Harness Launcher.dmg（含「双击完成安装或更新」安装助手）
 ```
 
-DMG 打开后只显示一个 **「双击完成安装或更新」** App。双击后会停止旧进程、替换应用并重新启动：已安装在 `/Applications`（或旧版 `DSH.app` 在其中）时优先更新到 `/Applications/DHL.app`；否则安装到 `~/Applications/DHL.app`。没有写入 `/Applications` 权限时会请求管理员授权。隐藏载荷不会显示在 Finder 中，避免误拖。
+DMG 打开后只显示一个 **「双击完成安装或更新」** App。双击后会停止旧进程、替换应用并重新启动：已安装在 `/Applications`（支持迁移旧版 `DHL.app` 或 `DSH.app`）时优先更新到 `/Applications/Deepseek Harness Launcher.app`；否则安装到 `~/Applications/Deepseek Harness Launcher.app`。没有写入 `/Applications` 权限时会请求管理员授权。隐藏载荷不会显示在 Finder 中，避免误拖。
 
-默认构建产物为未签名开发版；`scripts/sign-and-notarize.sh` 预留了 Developer ID 签名与公证入口，所需凭据通过环境变量提供，不能写入仓库。
+默认构建产物使用 ad-hoc 签名，本机可直接运行；但直接下载安装仍可能被 Gatekeeper 拦截（提示“应用已损坏”），可先执行 `xattr -dr com.apple.quarantine "/Applications/Deepseek Harness Launcher.app"` 后重试。正式分发需通过 `scripts/sign-and-notarize.sh` 完成 Developer ID 签名与公证，所需凭据通过环境变量提供，不能写入仓库。
 
 ### 菜单栏操作
 
@@ -108,7 +108,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。双击�
 - 默认值：自动检查更新开启、每 6 小时检查一次、启动后约 8 秒做首次后台检查；就绪后自动打开浏览器开启；开机启动关闭。检查间隔最小为 1 小时。
 - 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.1.0`，仅当 Release 版本号更高时提示。
 - GitHub API 返回 `403`（通常是未认证限流）时，启动器会回退读取 Releases Atom feed 来比较版本；没有已发布 Release 时，手动检查会显示「暂无可用更新」。
-- 可用更新必须携带名为 `DHL.dmg` 的 Release asset。下载保存到 `~/Downloads/DHL-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先停止后台、替换当前 App、再重新启动 Deepseek Harness Launcher。
+- 可用更新必须携带名为 `Deepseek Harness Launcher.dmg` 的 Release asset。下载保存到 `~/Downloads/Deepseek Harness Launcher-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先停止后台、替换当前 App、再重新启动 Deepseek Harness Launcher。
 
 ### 卸载
 
@@ -116,7 +116,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。双击�
 ./scripts/uninstall.sh
 ```
 
-卸载脚本会移除当前/旧版 `DHL.app` 与 `DSH.app`，并删除指向 Deepseek Harness Launcher 自有资源的归档插件链接；**保留 `~/.dsh` 数据**（会话、归档、profile 与其他插件数据）。
+卸载脚本会移除当前/旧版 `Deepseek Harness Launcher.app`、`DHL.app` 与 `DSH.app`，清理历史 App 备份，卸载并注销旧 DMG 卷与 payload 注册，并删除指向 Deepseek Harness Launcher 自有资源的归档插件链接；**保留 `~/.dsh` 数据**（会话、归档、profile 与其他插件数据）。
 
 ---
 

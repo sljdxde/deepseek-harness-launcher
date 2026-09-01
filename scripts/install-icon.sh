@@ -5,7 +5,7 @@
 #
 # 用法:
 #   scripts/install-icon.sh <App路径>
-#   DHL_ICON=candidate-D scripts/install-icon.sh build/DHL.app
+#   DHL_ICON=candidate-D scripts/install-icon.sh "build/Deepseek Harness Launcher.app"
 #
 # 切换图标:
 #   ln -sfn candidate-upstream Resources/icons/current # 改默认

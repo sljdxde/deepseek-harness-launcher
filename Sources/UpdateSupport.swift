@@ -103,6 +103,7 @@ enum LoginItemManager {
 
 final class UpdateService {
     static let repository = "sljdxde/deepseek-harness-launcher"
+    static let dmgAssetName = "Deepseek Harness Launcher.dmg"
     static let releasesPageURL = URL(string: "https://github.com/\(repository)/releases")!
     static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
     static let releasesFeedURL = URL(string: "https://github.com/\(repository)/releases.atom")!
@@ -252,7 +253,7 @@ final class UpdateService {
                     DispatchQueue.main.async { completion(.failed("GitHub Release 缺少版本号")) }
                     return
                 }
-                let dmgURL = "https://github.com/\(Self.repository)/releases/download/\(release.tag)/DHL.dmg"
+                let dmgURL = "https://github.com/\(Self.repository)/releases/download/\(release.tag)/\(Self.dmgAssetName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? Self.dmgAssetName)"
                 let manifest = UpdateManifest(version: version, dmgURL: dmgURL, notes: release.title, publishedAt: nil)
                 let result: UpdateCheckResult = compareVersions(currentVersion, version) == .orderedAscending ? .available(manifest) : .current
                 DispatchQueue.main.async { completion(result) }
@@ -287,7 +288,7 @@ final class UpdateService {
         }
         let destination = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Downloads", isDirectory: true)
-            .appendingPathComponent("DHL-\(manifest.version).dmg")
+            .appendingPathComponent("Deepseek Harness Launcher-\(manifest.version).dmg")
         try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
 
         if url.scheme?.lowercased() == "file" {
@@ -316,8 +317,8 @@ final class UpdateService {
                 DispatchQueue.main.async { completion(.failed("GitHub Release 缺少版本号")) }
                 return
             }
-            guard let asset = release.assets.first(where: { $0.name.caseInsensitiveCompare("DHL.dmg") == .orderedSame }) else {
-                DispatchQueue.main.async { completion(.failed("GitHub Release 未包含 DHL.dmg")) }
+            guard let asset = release.assets.first(where: { $0.name.caseInsensitiveCompare(Self.dmgAssetName) == .orderedSame }) else {
+                DispatchQueue.main.async { completion(.failed("GitHub Release 未包含 \(Self.dmgAssetName)")) }
                 return
             }
             let manifest = UpdateManifest(

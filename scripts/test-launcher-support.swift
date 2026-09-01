@@ -8,7 +8,7 @@ struct LauncherSupportChecks {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let profile = root.appendingPathComponent("profile/node_modules", isDirectory: true)
-        let currentPlugin = root.appendingPathComponent("DHL.app/Contents/Resources/DSHArchiveManager", isDirectory: true)
+        let currentPlugin = root.appendingPathComponent("Deepseek Harness Launcher.app/Contents/Resources/DSHArchiveManager", isDirectory: true)
         let stalePlugin = root.appendingPathComponent("DSH.app/Contents/Resources/DSHArchiveManager", isDirectory: true)
         try FileManager.default.createDirectory(at: currentPlugin, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)

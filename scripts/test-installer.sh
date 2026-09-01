@@ -7,7 +7,7 @@ INSTALLER="$ROOT/scripts/install-from-app.sh"
 test -x "$INSTALLER"
 rg -q 'index\(\$0, patch\)' "$INSTALLER"
 rg -q '\$2 !~ /\^Z/' "$INSTALLER"
-rg -q '\$3 == launcher' "$INSTALLER"
+rg -q 'index\(cmd, launcher\) == 1' "$INSTALLER"
 rg -q '\$3 == "npm"' "$INSTALLER"
 rg -q 'signal_processes launcher_pids KILL' "$INSTALLER"
 rg -q 'signal_processes dsh_pids KILL' "$INSTALLER"
@@ -21,10 +21,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-SOURCE="$WORKDIR/source/DHL.app"
+SOURCE="$WORKDIR/source/Deepseek Harness Launcher.app"
 DEST="$WORKDIR/destination"
-TARGET="$DEST/DHL.app"
-mkdir -p "$SOURCE/Contents/Resources" "$TARGET/Contents/Resources/DSHArchiveManager" "$TARGET/Contents/MacOS"
+TARGET="$DEST/Deepseek Harness Launcher.app"
+OLD_BACKUP="$DEST/DHL.app.backup-old"
+mkdir -p "$SOURCE/Contents/Resources" "$TARGET/Contents/Resources/DSHArchiveManager" "$TARGET/Contents/MacOS" "$OLD_BACKUP"
 print -r -- 'new-version' > "$SOURCE/Contents/Resources/version.txt"
 print -r -- 'patch' > "$TARGET/Contents/Resources/DSHArchiveManager/cordis.patch.yml"
 print -r -- 'old-version' > "$TARGET/Contents/Resources/version.txt"
@@ -50,8 +51,12 @@ wait "$PID" 2>/dev/null || true
 PID=""
 
 test "$(cat "$TARGET/Contents/Resources/version.txt")" = 'new-version'
-test -d "$(dirname "$TARGET")/DHL.app.backup-"* || {
-  print -u2 'expected a recoverable DHL.app backup'
+test -d "$(dirname "$TARGET")/Deepseek Harness Launcher.app.backup-"* || {
+  print -u2 'expected a recoverable Deepseek Harness Launcher.app backup'
+  exit 1
+}
+test ! -e "$OLD_BACKUP" || {
+  print -u2 'old backups should be pruned after reinstall'
   exit 1
 }
 

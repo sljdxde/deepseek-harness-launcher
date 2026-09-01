@@ -2,14 +2,15 @@
 set -euo pipefail
 
 if [[ $# -lt 2 || $# -gt 3 ]]; then
-  print -u2 "Usage: $0 SOURCE_DHL_APP DESTINATION_DIRECTORY [--no-open]"
+  print -u2 "Usage: $0 SOURCE_APP DESTINATION_DIRECTORY [--no-open]"
   exit 64
 fi
 
 SOURCE_APP="${1:A}"
 DEST_DIR="${2:A}"
 NO_OPEN="${3:-}"
-TARGET_APP="$DEST_DIR/DHL.app"
+TARGET_APP="$DEST_DIR/Deepseek Harness Launcher.app"
+LEGACY_DHL_APP="$DEST_DIR/DHL.app"
 LEGACY_APP="$DEST_DIR/DSH.app"
 
 if [[ ! -d "$SOURCE_APP" ]]; then
@@ -17,22 +18,61 @@ if [[ ! -d "$SOURCE_APP" ]]; then
   exit 66
 fi
 
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
+unregister_legacy_paths() {
+  local path
+  while IFS= read -r path; do
+    [[ -n "$path" ]] && "$LSREGISTER" -u "$path" >/dev/null 2>&1 || true
+  done < <("$LSREGISTER" -dump 2>/dev/null | /usr/bin/sed -n \
+    's/^path:[[:space:]]*\(.*\.DHL-payload\.app\) ([^)]*)$/\1/p; s/^path:[[:space:]]*\(.*\.Deepseek Harness Launcher-payload\.app\) ([^)]*)$/\1/p')
+}
+
+prune_backups() {
+  local dir="${1:-}"
+  shift || true
+  [[ -d "$dir" ]] || return 0
+  local path keep skip
+  while IFS= read -r -d '' path; do
+    skip=0
+    for keep in "$@"; do
+      [[ -n "$keep" && "$path" == "$keep" ]] && { skip=1; break; }
+    done
+    [[ "$skip" == 1 ]] && continue
+    /bin/rm -rf "$path"
+    echo "Removed old backup $path"
+  done < <(/usr/bin/find "$dir" -maxdepth 1 -type d \( \
+    -name 'Deepseek Harness Launcher.app.backup-*' -o \
+    -name 'DHL.app.backup-*' -o \
+    -name 'DSH.app.backup-*' \
+  \) -print0 2>/dev/null || true)
+}
+
+
 launcher_pids() {
   local launcher="$TARGET_APP/Contents/MacOS/DHL"
+  local legacy_dhl_launcher="$LEGACY_DHL_APP/Contents/MacOS/DHL"
   local legacy_launcher="$LEGACY_APP/Contents/MacOS/DSH"
-  # Match the executable identity, not an arbitrary shell command that happens
-  # to contain the app path (the installer command itself does).
-  ps -axo pid=,state=,command= | awk -v launcher="$launcher" -v legacy_launcher="$legacy_launcher" \
-    '$2 !~ /^Z/ && ($3 == launcher || $3 == legacy_launcher) { print $1 }'
+  # Match processes whose command starts with the launcher executable. A shell
+  # that merely contains the app path in its own arguments must not match.
+  ps -axo pid=,state=,command= | awk -v launcher="$launcher" -v legacy_dhl_launcher="$legacy_dhl_launcher" -v legacy_launcher="$legacy_launcher" '
+    $2 !~ /^Z/ {
+      cmd = $0
+      sub(/^[ \t]*[0-9]+[ \t]+[^ \t]+[ \t]+/, "", cmd)
+      if (cmd == launcher || index(cmd, launcher) == 1 ||
+          cmd == legacy_dhl_launcher || index(cmd, legacy_dhl_launcher) == 1 ||
+          cmd == legacy_launcher || index(cmd, legacy_launcher) == 1) print $1
+    }'
 }
 
 dsh_pids() {
   local patch="$TARGET_APP/Contents/Resources/DSHArchiveManager/cordis.patch.yml"
+  local legacy_dhl_patch="$LEGACY_DHL_APP/Contents/Resources/DSHArchiveManager/cordis.patch.yml"
   local legacy_patch="$LEGACY_APP/Contents/Resources/DSHArchiveManager/cordis.patch.yml"
   # npm exec is the parent and node is the actual Harness server. Restricting
   # the executable field avoids matching the shell/awk used to perform this scan.
-  ps -axo pid=,state=,command= | awk -v patch="$patch" -v legacy_patch="$legacy_patch" \
-    '$2 !~ /^Z/ && ($3 == "npm" || $3 == "node" || $3 ~ /\/(npm|node)$/) && (index($0, patch) || index($0, legacy_patch)) { print $1 }'
+  ps -axo pid=,state=,command= | awk -v patch="$patch" -v legacy_dhl_patch="$legacy_dhl_patch" -v legacy_patch="$legacy_patch" \
+    '$2 !~ /^Z/ && ($3 == "npm" || $3 == "node" || $3 ~ /\/(npm|node)$/) && (index($0, patch) || index($0, legacy_dhl_patch) || index($0, legacy_patch)) { print $1 }'
 }
 
 managed_pids() {
@@ -108,9 +148,15 @@ stop_existing_dsh
 mkdir -p "$DEST_DIR"
 
 BACKUP=""
+LEGACY_DHL_BACKUP=""
 if [[ -e "$TARGET_APP" ]]; then
-  BACKUP="$DEST_DIR/DHL.app.backup-$(date +%Y%m%d-%H%M%S)-$$"
+  BACKUP="$DEST_DIR/Deepseek Harness Launcher.app.backup-$(date +%Y%m%d-%H%M%S)-$$"
   mv "$TARGET_APP" "$BACKUP"
+fi
+
+if [[ -e "$LEGACY_DHL_APP" ]]; then
+  LEGACY_DHL_BACKUP="$DEST_DIR/DHL.app.backup-$(date +%Y%m%d-%H%M%S)-$$"
+  mv "$LEGACY_DHL_APP" "$LEGACY_DHL_BACKUP"
 fi
 
 if [[ -e "$LEGACY_APP" ]]; then
@@ -119,13 +165,17 @@ if [[ -e "$LEGACY_APP" ]]; then
 fi
 
 if ! ditto "$SOURCE_APP" "$TARGET_APP"; then
-  rm -rf "$TARGET_APP"
+  /bin/rm -rf "$TARGET_APP"
   [[ -n "$BACKUP" && -e "$BACKUP" ]] && mv "$BACKUP" "$TARGET_APP"
+  [[ -n "$LEGACY_DHL_BACKUP" && -e "$LEGACY_DHL_BACKUP" ]] && mv "$LEGACY_DHL_BACKUP" "$LEGACY_DHL_APP"
   [[ -n "${LEGACY_BACKUP:-}" && -e "$LEGACY_BACKUP" ]] && mv "$LEGACY_BACKUP" "$LEGACY_APP"
   print -u2 "Failed to install Deepseek Harness Launcher; the previous app was restored when possible."
   exit 1
 fi
 
+unregister_legacy_paths
+prune_backups "$DEST_DIR" "$BACKUP" "$LEGACY_DHL_BACKUP" "${LEGACY_BACKUP:-}"
+xattr -dr com.apple.quarantine "$TARGET_APP" 2>/dev/null || true
 print "Installed $TARGET_APP"
 [[ -n "$BACKUP" ]] && print "Previous app backup: $BACKUP"
 if [[ "$NO_OPEN" != "--no-open" && "${DHL_NO_OPEN:-${DSH_NO_OPEN:-0}}" != "1" ]]; then

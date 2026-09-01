@@ -210,6 +210,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let managedPatches = [
             patchPath,
+            "/Applications/Deepseek Harness Launcher.app/Contents/Resources/DSHArchiveManager/cordis.patch.yml",
+            "\(home)/Applications/Deepseek Harness Launcher.app/Contents/Resources/DSHArchiveManager/cordis.patch.yml",
+            "/Applications/DHL.app/Contents/Resources/DSHArchiveManager/cordis.patch.yml",
+            "\(home)/Applications/DHL.app/Contents/Resources/DSHArchiveManager/cordis.patch.yml",
             "/Applications/DSH.app/Contents/Resources/DSHArchiveManager/cordis.patch.yml",
             "\(home)/Applications/DSH.app/Contents/Resources/DSHArchiveManager/cordis.patch.yml"
         ]
@@ -218,7 +222,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
             guard fields.count == 3, let pid = Int32(fields[0]), fields[1].first != "Z" else { return nil }
             let command = String(fields[2])
             let executable = command.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? ""
-            if executable == launcherPath || executable.hasSuffix("/DHL.app/Contents/MacOS/DHL") || executable.hasSuffix("/DSH.app/Contents/MacOS/DSH") { return pid }
+            let isLauncher = command == launcherPath || command.hasPrefix(launcherPath + " ") ||
+                executable.hasSuffix("/DHL.app/Contents/MacOS/DHL") || executable.hasSuffix("/DSH.app/Contents/MacOS/DSH")
+            if isLauncher { return pid }
             if ["npm", "node", "/usr/local/bin/npm", "/usr/local/bin/node", "/opt/homebrew/bin/npm", "/opt/homebrew/bin/node"].contains(executable) && managedPatches.contains(where: command.contains) { return pid }
             return nil
         }
@@ -354,6 +360,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         DMG=\(quote(dmgURL.path))
         APP=\(quote(appURL.path))
         DEST=\(quote(appDirectory.path))
+        TARGET=\(quote(appDirectory.appendingPathComponent("Deepseek Harness Launcher.app").path))
         PID=\(pid)
         for i in {1..100}; do
           kill -0 "$PID" 2>/dev/null || break
@@ -363,11 +370,17 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         cleanup() { hdiutil detach "$MOUNT" -force >/dev/null 2>&1 || true; rmdir "$MOUNT" >/dev/null 2>&1 || true; }
         trap cleanup EXIT
         hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT" >/dev/null
-        test -d "$MOUNT/.DHL-payload.app"
-        BACKUP="$DEST/DHL.app.backup-$(date +%Y%m%d-%H%M%S)"
-        mv "$APP" "$BACKUP"
-        ditto "$MOUNT/.DHL-payload.app" "$APP"
-        open "$APP"
+        test -d "$MOUNT/.Deepseek Harness Launcher-payload.app"
+        if [[ "$APP" != "$TARGET" && -e "$APP" ]]; then
+          OLD_BACKUP="$DEST/DHL.app.backup-$(date +%Y%m%d-%H%M%S)"
+          mv "$APP" "$OLD_BACKUP"
+        fi
+        if [[ -e "$TARGET" ]]; then
+          BACKUP="$DEST/Deepseek Harness Launcher.app.backup-$(date +%Y%m%d-%H%M%S)"
+          mv "$TARGET" "$BACKUP"
+        fi
+        ditto "$MOUNT/.Deepseek Harness Launcher-payload.app" "$TARGET"
+        open "$TARGET"
         """
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/zsh")

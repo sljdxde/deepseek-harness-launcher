@@ -24,7 +24,7 @@ Deepseek Harness Launcher is a third, macOS-only option: a Swift/AppKit menu-bar
 | 2 | **Built-in archive manager** | A Cordis patch adds an Archive Manager panel to Harness Web. It lists archived sessions, supports one-at-a-time and batch deletion with a confirmation step, and shows the workspace and descendant count. |
 | 3 | **Port management (3080-3099)** | Deepseek Harness Launcher scans ports starting from 3080. It reuses a responding Harness instance when found; otherwise it launches dsh on the first bindable port. If a reused instance has no archive plugin, Harness remains usable and the launcher records basic mode in the log. |
 | 4 | **Uses host Node and can fetch dsh automatically** | It runs `npx --prefer-offline --yes @deepseek-ai/dsh`: npm cache is preferred, and npx may download `@deepseek-ai/dsh` when it is absent. Deepseek Harness Launcher does not bundle Node or the dsh runtime. It searches `~/opt/node`, `~/.volta`, `~/.nvm`, `/opt/homebrew/bin`, and `/usr/local/bin`. |
-| 5 | **In-app updating** | The menu can check this repository's GitHub Releases, download `DHL.dmg`, replace the app, and restart it. Automatic checks and their interval are configurable. |
+| 5 | **In-app updating** | The menu can check this repository's GitHub Releases, download `Deepseek Harness Launcher.dmg`, replace the app, and restart it. Automatic checks and their interval are configurable. |
 | 6 | **Launch at login** | A `LaunchAgent` named `com.local.dhl-launcher` can open Deepseek Harness Launcher when you log in. |
 | 7 | **Managed process lifecycle** | Stop and update paths send `SIGTERM` to the managed Harness process group and fall back to `SIGKILL` after a timeout. Matching is restricted to the launcher and npm/node processes using its patch. |
 | 8 | **Native settings window** | Configure automatic update checks, the interval, browser opening after readiness, and launch at login. |
@@ -49,7 +49,7 @@ The launcher executes this command, with a selected port from 3080 through 3099:
 
 ```sh
 npx --prefer-offline --yes @deepseek-ai/dsh --profile web \
-  --patch <cordis.patch.yml inside DHL.app> --no-open --port <3080-3099>
+  --patch <cordis.patch.yml inside Deepseek Harness Launcher.app> --no-open --port <3080-3099>
 ```
 
 ### Startup and ports
@@ -68,25 +68,25 @@ If no port can be reused or bound, or if npx/the plugin fails to start, Deepseek
 ### Install from source
 
 ```sh
-./scripts/install.sh                                  # Build Universal 2 -> ~/Applications/DHL.app
+./scripts/install.sh                                  # Build Universal 2 -> ~/Applications/Deepseek Harness Launcher.app
 DHL_INSTALL_DIR=/Applications ./scripts/install.sh    # Install into system /Applications
 ```
 
-The script first asks the old launcher to quit. It then sends `SIGTERM`, followed by `SIGKILL` on timeout, to the old launcher and its Deepseek Harness Launcher-managed Harness backend. Once they are confirmed stopped, it keeps a timestamped App backup, uses `ditto` to replace `DHL.app`, and reopens it. Set `DHL_NO_OPEN=1` to skip that final launch. Installation is cancelled rather than replacing an App whose related process cannot be confirmed stopped.
+The script first asks the old launcher to quit. It then sends `SIGTERM`, followed by `SIGKILL` on timeout, to the old launcher and its Deepseek Harness Launcher-managed Harness backend. Once they are confirmed stopped, it keeps a timestamped App backup, uses `ditto` to replace `Deepseek Harness Launcher.app`, and reopens it. After a successful reinstall it prunes older App backups, unregisters stale DMG payload entries, and removes quarantine from the new App. Set `DHL_NO_OPEN=1` to skip that final launch. Installation is cancelled rather than replacing an App whose related process cannot be confirmed stopped.
 
 > Command Line Tools are sufficient for the Universal 2 build. Signing and notarization require a complete Xcode and Developer ID environment.
 
 ### Build outputs
 
 ```sh
-./scripts/build-app.sh            # arm64 development build -> build/DHL.app
+./scripts/build-app.sh            # arm64 development build -> build/Deepseek Harness Launcher.app
 ./scripts/build-universal.sh      # Universal 2 (arm64 + x86_64)
-./scripts/build-dmg.sh            # dist/DHL.dmg, with the installation helper
+./scripts/build-dmg.sh            # dist/Deepseek Harness Launcher.dmg, with the installation helper
 ```
 
-The DMG exposes a single **Double-click to install or update** app. It stops old processes, replaces the app, and starts Deepseek Harness Launcher again. It prefers `/Applications/DHL.app` when the launcher or the previous `DSH.app` is there; otherwise it installs to `~/Applications/DHL.app`. When `/Applications` is not writable, the installer asks for administrator authorization. The payload is hidden in Finder to prevent accidental drag-and-drop installation.
+The DMG exposes a single **Double-click to install or update** app. It stops old processes, replaces the app, and starts Deepseek Harness Launcher again. It prefers `/Applications/Deepseek Harness Launcher.app` when the launcher or a legacy `DHL.app`/`DSH.app` is there; otherwise it installs to `~/Applications/Deepseek Harness Launcher.app`. When `/Applications` is not writable, the installer asks for administrator authorization. The payload is hidden in Finder to prevent accidental drag-and-drop installation.
 
-Default builds are unsigned development artifacts. `scripts/sign-and-notarize.sh` provides a Developer ID signing/notarization entry point; its credentials are environment variables and must not be committed.
+Default builds are ad-hoc signed for local use. A directly downloaded copy can still be rejected by Gatekeeper with a “damaged” alert; run `xattr -dr com.apple.quarantine "/Applications/Deepseek Harness Launcher.app"` and try again. For distribution, `scripts/sign-and-notarize.sh` provides a Developer ID signing/notarization entry point; its credentials are environment variables and must not be committed.
 
 ### Menu-bar actions
 
@@ -107,7 +107,7 @@ Default builds are unsigned development artifacts. `scripts/sign-and-notarize.sh
 - Defaults: automatic checks are enabled every 6 hours; the first background check is about 8 seconds after launch; opening the browser is enabled; launch at login is disabled. The minimum interval is one hour.
 - The update source is fixed to GitHub Releases for `sljdxde/deepseek-harness-launcher`; users never need to enter a URL. The current App version is `0.1.0`, and only a higher Release version is offered.
 - If GitHub's API returns `403`, commonly an unauthenticated rate limit, Deepseek Harness Launcher falls back to the Releases Atom feed for version comparison. When no Release is published, a manual check reports that no update is available.
-- A usable Release must contain an asset named `DHL.dmg`. Deepseek Harness Launcher saves it as `~/Downloads/DHL-<version>.dmg` and asks for confirmation before **Install and Restart**. That action stops the backend, replaces the current App, and starts it again.
+- A usable Release must contain an asset named `Deepseek Harness Launcher.dmg`. Deepseek Harness Launcher saves it as `~/Downloads/Deepseek Harness Launcher-<version>.dmg` and asks for confirmation before **Install and Restart**. That action stops the backend, replaces the current App, and starts it again.
 
 ### Uninstall
 
@@ -115,7 +115,7 @@ Default builds are unsigned development artifacts. `scripts/sign-and-notarize.sh
 ./scripts/uninstall.sh
 ```
 
-The script removes current and legacy `DHL.app`/`DSH.app` installations and the archive-plugin link when it points to Deepseek Harness Launcher's resources. It preserves `~/.dsh` data, including sessions, archives, profiles, and other plugin data.
+The script removes current and legacy `Deepseek Harness Launcher.app`, `DHL.app`, and `DSH.app` installations, prunes historical App backups, detaches and unregisters old DMG volumes/payloads, and removes the archive-plugin link when it points to Deepseek Harness Launcher's resources. It preserves `~/.dsh` data, including sessions, archives, profiles, and other plugin data.
 
 ---
 

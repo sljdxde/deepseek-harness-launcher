@@ -13,9 +13,10 @@ swiftc "$ROOT/Installer/main.swift" -o "$ROOT/build/DHLInstaller-x86_64" -sdk "$
 lipo -create "$ROOT/build/DHLInstaller-arm64" "$ROOT/build/DHLInstaller-x86_64" -output "$OUT/Contents/MacOS/DHLInstaller"
 cp "$ROOT/Resources/InstallerInfo.plist" "$OUT/Contents/Info.plist"
 cp "$ROOT/scripts/install-from-app.sh" "$OUT/Contents/Resources/install-from-app.sh"
-cp "$ROOT/build/DHL.app/Contents/Resources/DHL.icns" "$OUT/Contents/Resources/DHL.icns"
+cp "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/DHL.icns" "$OUT/Contents/Resources/DHL.icns"
 chmod +x "$OUT/Contents/MacOS/DHLInstaller" "$OUT/Contents/Resources/install-from-app.sh"
 rm -f "$ROOT/build/DHLInstaller-arm64" "$ROOT/build/DHLInstaller-x86_64"
 plutil -lint "$OUT/Contents/Info.plist" >/dev/null
 lipo -info "$OUT/Contents/MacOS/DHLInstaller"
+codesign --force --deep --sign - "$OUT"
 echo "Built $OUT (Universal 2)"
