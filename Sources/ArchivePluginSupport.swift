@@ -26,3 +26,20 @@ func ensureArchivePluginLink(
         return false
     }
 }
+
+@discardableResult
+func ensureArchivePluginLinks(
+    pluginURL: URL,
+    profileURLs: [URL],
+    fileManager: FileManager = .default
+) -> Bool {
+    var available = false
+    for profileURL in profileURLs {
+        if ensureArchivePluginLink(pluginURL: pluginURL, profileURL: profileURL, fileManager: fileManager) {
+            available = true
+        } else if fileManager.fileExists(atPath: profileURL.appendingPathComponent("dsh-archive-manager").path) {
+            available = true
+        }
+    }
+    return available
+}

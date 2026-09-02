@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: Regression
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run regression tests
+        run: ./scripts/test.sh
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Deepseek-Harness-Launcher-dmg
+          path: dist/Deepseek Harness Launcher.dmg
+          if-no-files-found: error
+
+      - name: Write test summary
+        if: always()
+        run: |
+          if [[ -f "dist/Deepseek Harness Launcher.dmg" ]]; then
+            echo "## 回归测试通过" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- 测试命令：\`./scripts/test.sh\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- DMG：\`dist/Deepseek Harness Launcher.dmg\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- 本次提交：\`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## 回归测试失败" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "请查看上方工作流日志中的失败步骤。" >> "$GITHUB_STEP_SUMMARY"
+          fi

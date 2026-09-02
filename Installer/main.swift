@@ -69,13 +69,18 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
 
     private func install() {
         let volumeURL = Bundle.main.bundleURL.deletingLastPathComponent()
-        let sourceApp = volumeURL.appendingPathComponent(".Deepseek Harness Launcher-payload.app")
+        let bundledSource = Bundle.main.resourceURL?.appendingPathComponent("Deepseek Harness Launcher.app")
+        let siblingSource = volumeURL.appendingPathComponent(".Deepseek Harness Launcher-payload.app")
+        let legacySiblingSource = volumeURL.appendingPathComponent(".DHL-payload.app")
+        let sourceApp = [bundledSource, siblingSource, legacySiblingSource].compactMap { $0 }.first {
+            FileManager.default.fileExists(atPath: $0.path)
+        }
         let script = Bundle.main.resourceURL?.appendingPathComponent("install-from-app.sh")
         let destination = preferredInstallDirectory()
 
-        guard FileManager.default.fileExists(atPath: sourceApp.path),
+        guard let sourceApp,
               let script, FileManager.default.isExecutableFile(atPath: script.path) else {
-            finishFailure("未找到安装包内容。请从 Deepseek Harness Launcher.dmg 中直接打开“双击完成安装或更新”。")
+            finishFailure("未找到安装包内容。请重新下载完整的 Deepseek Harness Launcher.dmg 后打开安装器。")
             return
         }
 
@@ -126,15 +131,19 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
+        let userHome = FileManager.default.homeDirectoryForCurrentUser.path
 
         if needsAdmin {
-            let command = arguments.map(shellQuote).joined(separator: " ")
+            let command = "DHL_USER_HOME=\(shellQuote(userHome)) " + arguments.map(shellQuote).joined(separator: " ")
             let appleScript = "do shell script \"\(escapeAppleScript(command))\" with administrator privileges"
             task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             task.arguments = ["-e", appleScript]
         } else {
             task.executableURL = URL(fileURLWithPath: "/bin/zsh")
             task.arguments = arguments
+            var environment = ProcessInfo.processInfo.environment
+            environment["DHL_USER_HOME"] = userHome
+            task.environment = environment
         }
 
         do {

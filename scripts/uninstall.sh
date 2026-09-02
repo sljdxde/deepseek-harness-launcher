@@ -20,6 +20,30 @@ cleanup_legacy_volumes() {
   done
 }
 
+managed_dsh_pids() {
+  local runtime_dsh="$HOME/.dsh/runtime/node_modules/.bin/dsh"
+  local runtime_staging="$HOME/.dsh/runtime.installing-"
+  ps -axo pid=,state=,command= | awk -v runtime_dsh="$runtime_dsh" -v runtime_staging="$runtime_staging" \
+    '$2 !~ /^Z/ { executable = ($3 == "npm" || $3 == "node" || $3 == "dsh" || $3 ~ /\/(npm|node|dsh)$/); if (executable && (index($0, runtime_dsh) || index($0, runtime_staging))) print $1 }'
+}
+
+stop_managed_dsh() {
+  local pids pid
+  pids="$(managed_dsh_pids)"
+  [[ -z "$pids" ]] && return 0
+  while read -r pid; do
+    [[ -z "$pid" || "$pid" == "$$" ]] && continue
+    kill -TERM "$pid" 2>/dev/null || true
+  done <<< "$pids"
+  sleep 1
+  pids="$(managed_dsh_pids)"
+  [[ -z "$pids" ]] && return 0
+  while read -r pid; do
+    [[ -z "$pid" || "$pid" == "$$" ]] && continue
+    kill -KILL "$pid" 2>/dev/null || true
+  done <<< "$pids"
+}
+
 unregister_legacy_paths() {
   local path
   while IFS= read -r path; do
@@ -62,10 +86,21 @@ remove_backups() {
   done
 }
 
+remove_dsh_runtime() {
+  local path
+  for path in "$HOME/.dsh/runtime" "$HOME/.dsh"/runtime.installing-*(N) "$HOME/.dsh"/runtime.previous-*(N); do
+    [[ -e "$path" ]] || continue
+    /bin/rm -rf "$path"
+    echo "Removed dsh runtime $path"
+  done
+}
+
 cleanup_legacy_volumes
 unregister_legacy_paths
+stop_managed_dsh
 remove_apps
 remove_backups
+remove_dsh_runtime
 
 PLUGIN_LINK="$HOME/.dsh/profiles/web/node_modules/dsh-archive-manager"
 if [[ -L "$PLUGIN_LINK" ]]; then

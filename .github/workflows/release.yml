@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  regression:
+    name: Regression gate
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Run regression tests
+        run: ./scripts/test.sh
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Release-DMG
+          path: dist/Deepseek Harness Launcher.dmg
+          if-no-files-found: error
+
+      - name: Write test summary
+        if: always()
+        run: |
+          if [[ -f "dist/Deepseek Harness Launcher.dmg" ]]; then
+            echo "## 发布回归测试通过" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- DMG：\`dist/Deepseek Harness Launcher.dmg\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- 接下来只有测试通过才会进入发布步骤。" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## 发布回归测试失败" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Release 已被阻止，不会创建或更新。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  publish:
+    name: Publish GitHub Release
+    needs: regression
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Download DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: Release-DMG
+          path: dist/
+
+      - name: Resolve tag
+        id: version
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          DMG="dist/Deepseek Harness Launcher.dmg"
+          NOTES=$(printf '## Deepseek Harness Launcher v%s\n\n已通过 GitHub Actions 回归测试后自动发布。\n' "${TAG#v}")
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "Deepseek Harness Launcher v${TAG#v}" --notes "$NOTES" --target "${GITHUB_SHA}"
+            gh release upload "$TAG" "$DMG" --clobber
+          else
+            gh release create "$TAG" "$DMG" --title "Deepseek Harness Launcher v${TAG#v}" --notes "$NOTES" --target "${GITHUB_SHA}"
+          fi

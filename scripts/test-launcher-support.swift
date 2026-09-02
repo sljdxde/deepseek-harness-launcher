@@ -8,6 +8,7 @@ struct LauncherSupportChecks {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let profile = root.appendingPathComponent("profile/node_modules", isDirectory: true)
+        let shared = root.appendingPathComponent("profiles/node_modules", isDirectory: true)
         let currentPlugin = root.appendingPathComponent("Deepseek Harness Launcher.app/Contents/Resources/DSHArchiveManager", isDirectory: true)
         let stalePlugin = root.appendingPathComponent("DSH.app/Contents/Resources/DSHArchiveManager", isDirectory: true)
         try FileManager.default.createDirectory(at: currentPlugin, withIntermediateDirectories: true)
@@ -27,6 +28,12 @@ struct LauncherSupportChecks {
         precondition(!ensureArchivePluginLink(pluginURL: currentPlugin, profileURL: profile))
         let preservedDestination = try FileManager.default.destinationOfSymbolicLink(atPath: link.path)
         precondition(preservedDestination == foreign.path)
+
+        try FileManager.default.removeItem(at: link)
+        precondition(ensureArchivePluginLinks(pluginURL: currentPlugin, profileURLs: [shared, profile]))
+        let sharedLink = shared.appendingPathComponent("dsh-archive-manager")
+        let sharedDestination = try FileManager.default.destinationOfSymbolicLink(atPath: sharedLink.path)
+        precondition(sharedDestination == currentPlugin.path)
 
         let timestamp = formatLogTimestamp(Date(timeIntervalSince1970: 0), timeZone: TimeZone(secondsFromGMT: 8 * 3600)!)
         precondition(timestamp == "1970-01-01 08:00:00 +0800")

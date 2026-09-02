@@ -23,18 +23,20 @@ Deepseek Harness Launcher is a third, macOS-only option: a Swift/AppKit menu-bar
 | 1 | **Native menu-bar shell, no WebView** | Built with AppKit and Swift as an `LSUIElement` app, so it stays out of the Dock and follows the system appearance. |
 | 2 | **Built-in archive manager** | A Cordis patch adds an Archive Manager panel to Harness Web. It lists archived sessions, supports one-at-a-time and batch deletion with a confirmation step, and shows the workspace and descendant count. |
 | 3 | **Port management (3080-3099)** | Deepseek Harness Launcher scans ports starting from 3080. It reuses a responding Harness instance when found; otherwise it launches dsh on the first bindable port. If a reused instance has no archive plugin, Harness remains usable and the launcher records basic mode in the log. |
-| 4 | **Uses host Node and can fetch dsh automatically** | It runs `npx --prefer-offline --yes @deepseek-ai/dsh`: npm cache is preferred, and npx may download `@deepseek-ai/dsh` when it is absent. Deepseek Harness Launcher does not bundle Node or the dsh runtime. It searches `~/opt/node`, `~/.volta`, `~/.nvm`, `/opt/homebrew/bin`, and `/usr/local/bin`. |
+| 4 | **Reliable first install, stable subsequent starts** | On first start it installs `@deepseek-ai/dsh` completely into `~/.dsh/runtime`, keeps peer-dependency resolution enabled, stages into a temporary directory, and swaps atomically. It tries a faster npm mirror first and falls back to the official registry. Later starts run the fixed runtime directly instead of relying on a half-installed npx cache. |
 | 5 | **In-app updating** | The menu can check this repository's GitHub Releases, download `Deepseek.Harness.Launcher.dmg` (GitHub stores spaces as dots), replace the app, and restart it. Automatic checks and their interval are configurable. |
 | 6 | **Launch at login** | A `LaunchAgent` named `com.local.dhl-launcher` can open Deepseek Harness Launcher when you log in. |
 | 7 | **Managed process lifecycle** | Stop and update paths send `SIGTERM` to the managed Harness process group and fall back to `SIGKILL` after a timeout. Matching is restricted to the launcher and npm/node processes using its patch. |
 | 8 | **Native settings window** | Configure automatic update checks, the interval, browser opening after readiness, and launch at login. |
 | 9 | **Live state and logs** | The current port is shown in the menu. stdout, stderr, and lifecycle records are written to `~/Library/Logs/Deepseek Harness Launcher/dhl.log`. |
+| 10 | **Global quick summon** | Press `Control-Option-D` (record a custom combination in Settings) from any app to summon the Deepseek Harness browser window, focusing the existing tab instead of opening a new one. |
+| 11 | **Startup dsh update check** | After launch, asynchronously checks the latest `@deepseek-ai/dsh` version on npm without blocking startup, and shows a menu-bar hint when a newer version is available. |
 
 **Scope and trade-offs**
 
 - macOS only; Windows and Linux are not supported.
-- Node and npm/npx must already be usable on the host. Deepseek Harness Launcher does not manage multiple dsh runtime versions.
-- The first start can be slower when `@deepseek-ai/dsh` is not in the npm cache and has to be downloaded.
+- Node and npm must already be usable on the host. Deepseek Harness Launcher does not manage multiple dsh runtime versions.
+- The first start shows an installation window and can take several minutes; later starts reuse `~/.dsh/runtime`.
 - Deepseek Harness Launcher only adds its own archive-plugin link and temporary patch. Existing Harness profiles, sessions, and other plugins remain managed by dsh.
 
 ---
@@ -42,24 +44,43 @@ Deepseek Harness Launcher is a third, macOS-only option: a Swift/AppKit menu-bar
 ## Requirements
 
 - macOS 12 or later.
-- A terminal-usable Node.js installation and npm/npx. Node 22, or a currently dsh-compatible LTS release, is recommended. Deepseek Harness Launcher does not ship a runtime.
-- Network access is required only when the npm cache lacks `@deepseek-ai/dsh`, or when checking/downloading a Deepseek Harness Launcher update.
+- A terminal-usable Node.js installation and npm. Node 22, or a currently dsh-compatible LTS release, is recommended. Deepseek Harness Launcher does not ship Node.
+- Network access is required for the first install or update of `@deepseek-ai/dsh`, or when checking/downloading a Deepseek Harness Launcher update.
 
-The launcher executes this command, with a selected port from 3080 through 3099:
+On first start the launcher performs a complete install:
 
 ```sh
-npx --prefer-offline --yes @deepseek-ai/dsh --profile web \
+npm install --prefix ~/.dsh/runtime --no-package-lock --no-audit --no-fund \
+  --progress --loglevel=silly --prefer-offline --registry <registry> @deepseek-ai/dsh
+```
+
+After installation it executes:
+
+```sh
+~/.dsh/runtime/node_modules/.bin/dsh web \
   --patch <cordis.patch.yml inside Deepseek Harness Launcher.app> --no-open --port <3080-3099>
 ```
+
+The default registry order is `registry.npmmirror.com`, then `registry.npmjs.org`. Set `DHL_NPM_REGISTRY` to use a company or private registry.
+
+The installation window reads npm's actual output and shows the current npm operation (resolve, download, write, validate), actual successful download records, and elapsed time. It shows a percentage only when npm provides a stable dependency total and real completion events; the percentage is always formatted to two decimal places, with no remaining-time estimate.
+
+If npm keeps failing inside the launcher, the failure dialog provides this copyable official fallback:
+
+```sh
+npx @deepseek-ai/dsh web
+```
+
+Leave the terminal process running, then reopen Deepseek Harness Launcher; it will reuse the running Harness. Add `--no-open` if the command should not open a browser.
 
 ### Startup and ports
 
 1. Deepseek Harness Launcher checks ports 3080-3099.
 2. If a port returns a Harness home page, it reuses that process; otherwise it starts dsh on the first available port.
 3. When the Harness home page is ready, Deepseek Harness Launcher enters the running state and, depending on the setting, opens the system default browser once.
-4. **Stop Backend** ends Harness processes managed by Deepseek Harness Launcher. **Quit Deepseek Harness Launcher** only exits the menu-bar UI; the backend continues running.
+4. **Quit Deepseek Harness** exits the menu-bar UI and terminates the Harness backend managed by Deepseek Harness Launcher.
 
-If no port can be reused or bound, or if npx/the plugin fails to start, Deepseek Harness Launcher shows a failure alert. Use **Open Log** for the command and its stdout/stderr.
+If no port can be reused or bound, or if npm, dsh, or the plugin fails to start, Deepseek Harness Launcher shows a failure alert. The first install can be cancelled and its temporary directory is cleaned automatically. Use **Open Log** for the command and its stdout/stderr.
 
 ---
 
@@ -82,9 +103,12 @@ The script first asks the old launcher to quit. It then sends `SIGTERM`, followe
 ./scripts/build-app.sh            # arm64 development build -> build/Deepseek Harness Launcher.app
 ./scripts/build-universal.sh      # Universal 2 (arm64 + x86_64)
 ./scripts/build-dmg.sh            # dist/Deepseek Harness Launcher.dmg, with the installation helper
+./scripts/test.sh                # full regression suite, including DMG packaging and verification
 ```
 
-The DMG exposes a single **Double-click to install or update** app. It stops old processes, replaces the app, and starts Deepseek Harness Launcher again. It prefers `/Applications/Deepseek Harness Launcher.app` when the launcher or a legacy `DHL.app`/`DSH.app` is there; otherwise it installs to `~/Applications/Deepseek Harness Launcher.app`. When `/Applications` is not writable, the installer asks for administrator authorization. The payload is hidden in Finder to prevent accidental drag-and-drop installation.
+See [TESTING.md](TESTING.md) for the full regression checklist and release gate. GitHub Actions runs it on every commit; a failed suite blocks release creation and updates.
+
+The DMG exposes a single **Double-click to install or update** app. The installer embeds the complete Deepseek Harness Launcher.app, so it still works when copied out of the DMG or moved to another folder; the hidden DMG payload remains only for compatibility with older install/update flows. It stops old processes, replaces the app, and starts Deepseek Harness Launcher again. It prefers `/Applications/Deepseek Harness Launcher.app` when the launcher or a legacy `DHL.app`/`DSH.app` is there; otherwise it installs to `~/Applications/Deepseek Harness Launcher.app`. When `/Applications` is not writable, the installer asks for administrator authorization.
 
 Default builds are ad-hoc signed for local use. A directly downloaded copy can still be rejected by Gatekeeper with a “damaged” alert; run `xattr -dr com.apple.quarantine "/Applications/Deepseek Harness Launcher.app"` and try again. For distribution, `scripts/sign-and-notarize.sh` provides a Developer ID signing/notarization entry point; its credentials are environment variables and must not be committed.
 
@@ -92,22 +116,22 @@ Default builds are ad-hoc signed for local use. A directly downloaded copy can s
 
 | Menu item | Shortcut | Behavior |
 |---|---|---|
-| Open Deepseek Harness Launcher | Command-O | Opens Harness at the current port; starts it if needed. |
+| Open Deepseek Harness | Command-O | Opens Harness at the current port; starts it if needed. |
+| Global quick summon | Control-Option-D | Summons Harness from any app; customizable in Settings. |
 | Port: xxxx | - | Shows the active port, or Not Running. |
-| Restart | Command-R | Stops the backend and starts it again. |
-| Stop Backend | Command-S | Terminates the Harness backend. |
 | Check for Updates | - | Checks GitHub Releases manually. |
 | Settings... | Command-Comma | Opens update, browser, and login settings. |
 | Open Log | Command-L | Opens `~/Library/Logs/Deepseek Harness Launcher/dhl.log`. |
-| Quit Deepseek Harness Launcher | Command-Q | Quits only the menu-bar UI; Harness keeps running. |
+| Quit Deepseek Harness | Command-Q | Quits the menu-bar UI and terminates the Harness backend. |
 
 ### Settings and updates
 
-- Settings include automatic update checks, update interval, opening the browser when Harness is ready, and launching Deepseek Harness Launcher at macOS login.
-- Defaults: automatic checks are enabled every 6 hours; the first background check is about 8 seconds after launch; opening the browser is enabled; launch at login is disabled. The minimum interval is one hour.
+- Settings include automatic update checks, update interval, opening the browser when Harness is ready, launching Deepseek Harness Launcher at macOS login, and the global quick-summon shortcut.
+- Defaults: automatic checks are enabled every 6 hours; the first background check is about 8 seconds after launch; opening the browser is enabled; launch at login is disabled; the global shortcut is enabled as Control-Option-D. The minimum interval is one hour.
 - The update source is fixed to GitHub Releases for `sljdxde/deepseek-harness-launcher`; users never need to enter a URL. The current App version is `0.1.0`, and only a higher Release version is offered.
+- Launcher updates and `@deepseek-ai/dsh` updates are separate paths. The dsh check only compares the npm latest version and shows a hint; it never modifies the npm cache.
 - If GitHub's API returns `403`, commonly an unauthenticated rate limit, Deepseek Harness Launcher falls back to the Releases Atom feed for version comparison. When no Release is published, a manual check reports that no update is available.
-- A usable Release must contain an asset named `Deepseek.Harness.Launcher.dmg` (GitHub replaces spaces in asset names with dots). Deepseek Harness Launcher saves it as `~/Downloads/Deepseek Harness Launcher-<version>.dmg` and asks for confirmation before **Install and Restart**. That action stops the backend, replaces the current App, and starts it again.
+- A usable Release must contain an asset named `Deepseek.Harness.Launcher.dmg` (GitHub replaces spaces in asset names with dots). Deepseek Harness Launcher saves it as `~/Downloads/Deepseek Harness Launcher-<version>.dmg` and asks for confirmation before **Install and Restart**. That action terminates the backend, replaces the current App, and starts Deepseek Harness again.
 
 ### Uninstall
 
@@ -115,7 +139,7 @@ Default builds are ad-hoc signed for local use. A directly downloaded copy can s
 ./scripts/uninstall.sh
 ```
 
-The script removes current and legacy `Deepseek Harness Launcher.app`, `DHL.app`, and `DSH.app` installations, prunes historical App backups, detaches and unregisters old DMG volumes/payloads, and removes the archive-plugin link when it points to Deepseek Harness Launcher's resources. It preserves `~/.dsh` data, including sessions, archives, profiles, and other plugin data.
+The script removes current and legacy `Deepseek Harness Launcher.app`, `DHL.app`, and `DSH.app` installations, stops and removes the DHL-managed `~/.dsh/runtime` and temporary install directories, prunes historical App backups, detaches and unregisters old DMG volumes/payloads, and removes the archive-plugin link when it points to Deepseek Harness Launcher's resources. It preserves the other `~/.dsh` data, including sessions, archives, profiles, and other plugin data.
 
 ---
 
@@ -150,8 +174,8 @@ Older DSH/DHL installations can leave `~/.dsh/profiles/web/node_modules/dsh-arch
 | Deepseek Harness Launcher menu-bar App        |
 | state icon · settings · updating · login item  |
 +-------------------------+---------------------+
-                          | npx --prefer-offline @deepseek-ai/dsh
-                          | --profile web --patch <cordis.patch.yml>
+                          | ~/.dsh/runtime/node_modules/.bin/dsh
+                          | web --patch <cordis.patch.yml>
                           | --no-open --port 3080..3099
                           v
 +-----------------------------------------------+
@@ -170,7 +194,7 @@ The dsh data directory is `~/.dsh`; dsh manages its profiles, sessions, and arch
 
 - Log file: `~/Library/Logs/Deepseek Harness Launcher/dhl.log`; choose **Open Log** from the menu to reveal it.
 - New log entries use the local time zone in `yyyy-MM-dd HH:mm:ss Z` format. Existing UTC log entries are not rewritten.
-- For a startup error, first inspect the logged launch command and the following npm/dsh stderr. Common causes are Node/npx outside the discoverable paths, an initial download failure, a non-Harness program occupying a port, or an archive-plugin link pointing to a removed old App.
+- For a startup error, first inspect the logged launch command and the following npm/dsh stderr. Common causes are Node/npm outside the discoverable paths, registry network failures, a non-Harness program occupying a port, or an archive-plugin link pointing to a removed old App.
 
 ---
 

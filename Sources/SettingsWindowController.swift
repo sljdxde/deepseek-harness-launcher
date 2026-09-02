@@ -2,21 +2,28 @@ import AppKit
 import Foundation
 
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
-    private let onSave: () -> Void
+    private let onSave: () -> Bool
     private let onCheckNow: () -> Void
     private let settings = LauncherSettings.shared
 
     private let autoUpdateCheckbox = NSButton(checkboxWithTitle: "自动检查更新", target: nil, action: nil)
     private let openBrowserCheckbox = NSButton(checkboxWithTitle: "Deepseek Harness Launcher 就绪后自动打开浏览器", target: nil, action: nil)
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动 Deepseek Harness Launcher", target: nil, action: nil)
+    private let globalHotKeyCheckbox = NSButton(checkboxWithTitle: "启用全局快捷键呼出 Deepseek Harness", target: nil, action: nil)
+    private let globalHotKeyButton = NSButton(title: "", target: nil, action: nil)
+    private var hotKeyEventMonitor: Any?
+    private var isRecordingHotKey = false
+    private var pendingHotKeyModifiers: UInt32 = 0x1800
+    private var pendingHotKeyKeyCode: UInt32 = 2
+    private var pendingHotKeyDisplay = "⌃⌥D"
     private let intervalField = NSTextField(string: "6")
 
-    init(onSave: @escaping () -> Void, onCheckNow: @escaping () -> Void) {
+    init(onSave: @escaping () -> Bool, onCheckNow: @escaping () -> Void) {
         self.onSave = onSave
         self.onCheckNow = onCheckNow
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 460),
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 580),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -29,7 +36,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.backgroundColor = .windowBackgroundColor
         window.titlebarAppearsTransparent = false
         window.titleVisibility = .visible
-        window.minSize = NSSize(width: 560, height: 430)
+        window.minSize = NSSize(width: 560, height: 520)
         window.delegate = nil
         super.init(window: window)
         window.delegate = self
@@ -118,6 +125,42 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             startupCard.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 20)
         ])
 
+        let hotkeyCard = makeCard()
+        let hotkeyTitle = makeLabel("快捷呼出", size: 13, weight: .semibold, color: .secondaryLabelColor)
+        hotkeyCard.addSubview(hotkeyTitle)
+        configureCheckbox(globalHotKeyCheckbox)
+        globalHotKeyCheckbox.target = self
+        globalHotKeyCheckbox.action = #selector(globalHotKeyCheckChanged)
+        hotkeyCard.addSubview(globalHotKeyCheckbox)
+        let hotkeyLabel = makeLabel("快捷键", size: 13, weight: .regular, color: .labelColor)
+        hotkeyCard.addSubview(hotkeyLabel)
+        globalHotKeyButton.translatesAutoresizingMaskIntoConstraints = false
+        globalHotKeyButton.target = self
+        globalHotKeyButton.action = #selector(toggleHotKeyRecording)
+        globalHotKeyButton.bezelStyle = .rounded
+        globalHotKeyButton.controlSize = .regular
+        globalHotKeyButton.widthAnchor.constraint(equalToConstant: 132).isActive = true
+        hotkeyCard.addSubview(globalHotKeyButton)
+        NSLayoutConstraint.activate([
+            hotkeyTitle.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: 16),
+            hotkeyTitle.topAnchor.constraint(equalTo: hotkeyCard.topAnchor, constant: 12),
+            globalHotKeyCheckbox.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: 16),
+            globalHotKeyCheckbox.topAnchor.constraint(equalTo: hotkeyTitle.bottomAnchor, constant: 8),
+            globalHotKeyCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: hotkeyCard.trailingAnchor, constant: -16),
+            hotkeyLabel.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: 16),
+            hotkeyLabel.centerYAnchor.constraint(equalTo: globalHotKeyButton.centerYAnchor),
+            globalHotKeyButton.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: 150),
+            globalHotKeyButton.topAnchor.constraint(equalTo: globalHotKeyCheckbox.bottomAnchor, constant: 7),
+            globalHotKeyButton.heightAnchor.constraint(equalToConstant: 26),
+            hotkeyCard.heightAnchor.constraint(equalToConstant: 84)
+        ])
+        root.addSubview(hotkeyCard)
+        NSLayoutConstraint.activate([
+            hotkeyCard.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            hotkeyCard.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            hotkeyCard.topAnchor.constraint(equalTo: startupCard.bottomAnchor, constant: 14)
+        ])
+
         let updateCard = makeCard()
         let updateTitle = makeLabel("自动更新", size: 13, weight: .semibold, color: .secondaryLabelColor)
         updateCard.addSubview(updateTitle)
@@ -162,7 +205,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         NSLayoutConstraint.activate([
             updateCard.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             updateCard.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            updateCard.topAnchor.constraint(equalTo: startupCard.bottomAnchor, constant: 14)
+            updateCard.topAnchor.constraint(equalTo: hotkeyCard.bottomAnchor, constant: 14)
         ])
 
         let versionLabel = makeLabel("当前版本 v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0")", size: 12, weight: .regular, color: .secondaryLabelColor)
@@ -245,6 +288,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         autoUpdateCheckbox.state = settings.autoUpdateEnabled ? .on : .off
         openBrowserCheckbox.state = settings.openBrowserOnReady ? .on : .off
         launchAtLoginCheckbox.state = settings.launchAtLogin ? .on : .off
+        globalHotKeyCheckbox.state = settings.globalHotKeyEnabled ? .on : .off
+        pendingHotKeyModifiers = settings.globalHotKeyModifiers
+        pendingHotKeyKeyCode = settings.globalHotKeyKeyCode
+        pendingHotKeyDisplay = settings.globalHotKeyDisplay
+        globalHotKeyButton.title = pendingHotKeyDisplay
+        globalHotKeyButton.isEnabled = settings.globalHotKeyEnabled
         intervalField.stringValue = String(format: "%.0f", settings.updateIntervalHours)
     }
 
@@ -253,14 +302,72 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func cancel() {
+        cancelRecording()
         window?.close()
     }
 
+    @objc private func globalHotKeyCheckChanged() {
+        let enabled = globalHotKeyCheckbox.state == .on
+        globalHotKeyButton.isEnabled = enabled
+        if !enabled { cancelRecording() }
+    }
+
+    @objc private func toggleHotKeyRecording() {
+        if isRecordingHotKey {
+            cancelRecording()
+            return
+        }
+        isRecordingHotKey = true
+        globalHotKeyButton.title = "请按下快捷键…"
+        hotKeyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if event.keyCode == 53 {
+                self.cancelRecording()
+                return nil
+            }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard !flags.intersection([.command, .control, .option]).isEmpty,
+                  let character = event.charactersIgnoringModifiers?.uppercased().first.map(String.init) else {
+                return event
+            }
+            let modifiers = GlobalHotKey.carbonModifiers(from: flags)
+            self.pendingHotKeyModifiers = modifiers
+            self.pendingHotKeyKeyCode = UInt32(event.keyCode)
+            self.pendingHotKeyDisplay = GlobalHotKey.modifierSymbols(modifiers) + character
+            self.cancelRecording()
+            return nil
+        }
+    }
+
+    private func cancelRecording() {
+        if let hotKeyEventMonitor { NSEvent.removeMonitor(hotKeyEventMonitor) }
+        hotKeyEventMonitor = nil
+        isRecordingHotKey = false
+        globalHotKeyButton.title = pendingHotKeyDisplay
+    }
+
     @objc private func save() {
+        let previousHotKeyEnabled = settings.globalHotKeyEnabled
+        let previousHotKeyModifiers = settings.globalHotKeyModifiers
+        let previousHotKeyKeyCode = settings.globalHotKeyKeyCode
+        let previousHotKeyDisplay = settings.globalHotKeyDisplay
+
         settings.autoUpdateEnabled = autoUpdateCheckbox.state == .on
         settings.openBrowserOnReady = openBrowserCheckbox.state == .on
         settings.launchAtLogin = launchAtLoginCheckbox.state == .on
         settings.updateIntervalHours = max(intervalField.doubleValue, 1)
+        settings.globalHotKeyEnabled = globalHotKeyCheckbox.state == .on
+        settings.globalHotKeyModifiers = pendingHotKeyModifiers
+        settings.globalHotKeyKeyCode = pendingHotKeyKeyCode
+        settings.globalHotKeyDisplay = pendingHotKeyDisplay
+
+        guard onSave() else {
+            settings.globalHotKeyEnabled = previousHotKeyEnabled
+            settings.globalHotKeyModifiers = previousHotKeyModifiers
+            settings.globalHotKeyKeyCode = previousHotKeyKeyCode
+            settings.globalHotKeyDisplay = previousHotKeyDisplay
+            return
+        }
 
         do {
             try LoginItemManager.setEnabled(settings.launchAtLogin)
@@ -274,7 +381,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        onSave()
         window?.close()
     }
 }

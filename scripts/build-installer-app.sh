@@ -14,6 +14,7 @@ lipo -create "$ROOT/build/DHLInstaller-arm64" "$ROOT/build/DHLInstaller-x86_64" 
 cp "$ROOT/Resources/InstallerInfo.plist" "$OUT/Contents/Info.plist"
 cp "$ROOT/scripts/install-from-app.sh" "$OUT/Contents/Resources/install-from-app.sh"
 cp "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/DHL.icns" "$OUT/Contents/Resources/DHL.icns"
+cp -R "$ROOT/build/Deepseek Harness Launcher.app" "$OUT/Contents/Resources/Deepseek Harness Launcher.app"
 chmod +x "$OUT/Contents/MacOS/DHLInstaller" "$OUT/Contents/Resources/install-from-app.sh"
 rm -f "$ROOT/build/DHLInstaller-arm64" "$ROOT/build/DHLInstaller-x86_64"
 plutil -lint "$OUT/Contents/Info.plist" >/dev/null

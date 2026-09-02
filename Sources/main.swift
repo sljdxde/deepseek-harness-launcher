@@ -96,18 +96,31 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
     private var process: Process?
     private var selectedPort: Int?
     private var state: LauncherState = .stopped
-    private var didOpenBrowser = false
-    private var pollTimer: Timer?
+    // Only guards the automatic open that happens when the backend becomes ready.
+    // Manual menu clicks must always be allowed to open a fresh browser page.
+    private var didAutoOpenBrowser = false
+    private var openWhenReady = false
     private var autoUpdateTimer: Timer?
     private var settingsWindow: SettingsWindowController?
     private var pendingUpdate: UpdateManifest?
     private var updateCheckInFlight = false
     private var updateMenuItem: NSMenuItem?
     private var updateMenuRow: MenuRowView?
+    private var dshUpdateMenuItem: NSMenuItem?
+    private var dshUpdateMenuRow: MenuRowView?
     private var portMenuRow: MenuRowView?
+    private var dshInstallWindow: DSHInstallWindowController?
+    private var dshInstallHandle: DSHRuntimeInstallHandle?
+    private var dshInstallProgressTracker: DSHInstallProgressTracker?
+    private var terminateAfterDSHInstall = false
     private let settings = LauncherSettings.shared
     private let updateService = UpdateService()
+    private let dshUpdateService = DSHVersionService()
+    private var dshUpdateCheckInFlight = false
     private let logLock = NSLock()
+    private lazy var globalHotKeyManager = GlobalHotKeyManager { [weak self] in
+        self?.openDHL()
+    }
     private let basePort = 3080
     private let maxPort = 3099
 
@@ -127,7 +140,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory); configureStatusItem(); start(); scheduleAutoUpdateChecks()
+        NSApp.setActivationPolicy(.accessory); configureStatusItem(); applyGlobalHotKey(showAlert: false); start(); scheduleAutoUpdateChecks(); scheduleDSHUpdateCheck()
     }
 
     private func configureStatusItem() {
@@ -140,17 +153,17 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.showsStateColumn = false
         menu.autoenablesItems = false
-        let open = menuRowItem(title: "打开 \(LauncherBrand.fullName)", action: #selector(openDHL), keyEquivalent: "o")
+        let open = menuRowItem(title: "打开 Deepseek Harness", action: #selector(openDHL), keyEquivalent: "o")
         let port = menuRowItem(title: "端口：未运行", action: nil, enabled: { false }); port.tag = 1001
         portMenuRow = port.view as? MenuRowView
-        let restart = menuRowItem(title: "重新启动", action: #selector(restartDHL), keyEquivalent: "r")
-        let stop = menuRowItem(title: "停止后台", action: #selector(stopDHL), keyEquivalent: "s")
         let update = menuRowItem(title: "检查更新", action: #selector(checkForUpdates))
         update.tag = 1002; updateMenuItem = update; updateMenuRow = update.view as? MenuRowView
+        let dshUpdate = menuRowItem(title: "检查 dsh 更新", action: #selector(checkDSHForUpdates))
+        dshUpdate.tag = 1003; dshUpdateMenuItem = dshUpdate; dshUpdateMenuRow = dshUpdate.view as? MenuRowView
         let settingsItem = makeSettingsMenuItem()
         let logs = menuRowItem(title: "打开日志", action: #selector(openLogs), keyEquivalent: "l")
-        let quit = menuRowItem(title: "退出 \(LauncherBrand.fullName)", action: #selector(quit), keyEquivalent: "q")
-        [open, port, NSMenuItem.separator(), restart, stop, NSMenuItem.separator(), update, settingsItem, logs, quit].forEach(menu.addItem)
+        let quit = menuRowItem(title: "退出 Deepseek Harness", action: #selector(quit), keyEquivalent: "q")
+        [open, port, NSMenuItem.separator(), update, dshUpdate, settingsItem, logs, quit].forEach(menu.addItem)
         return menu
     }
 
@@ -179,24 +192,192 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         updateMenuRow?.title = title
     }
 
+    private func setDSHUpdateMenuTitle(_ title: String) {
+        dshUpdateMenuItem?.title = title
+        dshUpdateMenuRow?.title = title
+    }
+
+    private func scheduleDSHUpdateCheck() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.performDSHUpdateCheck(interactive: false)
+        }
+    }
+
+    @objc private func checkDSHForUpdates() {
+        performDSHUpdateCheck(interactive: true)
+    }
+
+    private func performDSHUpdateCheck(interactive: Bool) {
+        guard DSHRuntimeSupport.isInstalled() else {
+            setDSHUpdateMenuTitle("检查 dsh 更新")
+            return
+        }
+        guard !dshUpdateCheckInFlight else { return }
+        dshUpdateCheckInFlight = true
+        if interactive { setDSHUpdateMenuTitle("正在检查 dsh 更新…") }
+        dshUpdateService.check { [weak self] result in
+            guard let self else { return }
+            self.dshUpdateCheckInFlight = false
+            switch result {
+            case .available(let current, let latest):
+                self.setDSHUpdateMenuTitle("dsh 更新可用：v\(latest)")
+                if interactive { self.presentDSHUpdate(current: current, latest: latest) }
+            case .current(let version):
+                self.setDSHUpdateMenuTitle("检查 dsh 更新")
+                if interactive { self.showInfo(title: "dsh 已是最新版本", message: "当前版本：v\(version)") }
+            case .failed(let message):
+                self.setDSHUpdateMenuTitle("检查 dsh 更新")
+                self.appendLogString("dsh 更新检查失败：\(message)\n")
+                if interactive { self.showInfo(title: "检查 dsh 更新失败", message: message) }
+            }
+        }
+    }
+
+    private func presentDSHUpdate(current: String, latest: String) {
+        let alert = NSAlert()
+        alert.messageText = "发现 dsh 新版本 v\(latest)"
+        alert.informativeText = "当前使用 v\(current)。新版本发布在 npm，可前往查看更新说明。"
+        alert.addButton(withTitle: "打开 npm")
+        alert.addButton(withTitle: "关闭")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(string: "https://www.npmjs.com/package/@deepseek-ai/dsh")!)
+        }
+    }
+
     @objc private func openDHL() {
-        guard let port = selectedPort else {
+        if let installWindow = dshInstallWindow {
+            openWhenReady = true
+            installWindow.present()
+            return
+        }
+        guard state == .running, let port = selectedPort else {
+            openWhenReady = true
             if state == .stopped || state == .failed { start() }
             return
         }
-        NSWorkspace.shared.open(URL(string: "http://127.0.0.1:\(port)/")!)
+        openWebPage(on: port)
     }
 
-    @objc private func restartDHL() { stopDHL(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self.start() } }
+    private func openBrowserWhenReadyIfNeeded() {
+        guard !didAutoOpenBrowser, settings.openBrowserOnReady || openWhenReady else { return }
+        didAutoOpenBrowser = true
+        openWhenReady = false
+        guard state == .running, let port = selectedPort else { return }
+        openWebPage(on: port)
+    }
 
-    @objc private func stopDHL() {
-        pollTimer?.invalidate(); pollTimer = nil
+    private func openWebPage(on port: Int) {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.open(url, configuration: configuration) { [weak self] _, error in
+            guard let error else { return }
+            DispatchQueue.main.async {
+                self?.appendLogString("打开 DeepSeek Harness Web 页面失败：\(error.localizedDescription)\n")
+            }
+        }
+    }
+
+    private func focusExistingBrowserTab(for url: URL) -> Bool {
+        let supportedBrowserIDs = [
+            "com.google.chrome",
+            "com.apple.safari",
+            "com.microsoft.edgemac",
+            "com.brave.browser",
+            "company.thebrowser.browser",
+            "com.vivaldi.vivaldi",
+            "com.operasoftware.opera",
+            "org.chromium.chromium",
+            "com.apple.safaritechnologypreview"
+        ]
+        var browserIDs = NSWorkspace.shared.runningApplications
+            .compactMap(\.bundleIdentifier)
+            .filter { supportedBrowserIDs.contains($0.lowercased()) }
+        if let defaultAppURL = NSWorkspace.shared.urlForApplication(toOpen: url),
+           let defaultBundleID = Bundle(url: defaultAppURL)?.bundleIdentifier,
+           supportedBrowserIDs.contains(defaultBundleID.lowercased()),
+           !browserIDs.contains(where: { $0.caseInsensitiveCompare(defaultBundleID) == .orderedSame }) {
+            browserIDs.append(defaultBundleID)
+        }
+        for bundleID in browserIDs {
+            guard let script = browserFocusScript(for: bundleID, url: url) else { continue }
+            var error: NSDictionary?
+            if let result = NSAppleScript(source: script)?.executeAndReturnError(&error), result.booleanValue {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func browserFocusScript(for bundleID: String, url: URL) -> String? {
+        let absoluteURL = url.absoluteString
+        let targetURL = absoluteURL.hasSuffix("/") ? String(absoluteURL.dropLast()) : absoluteURL
+        let safeTargetURL = targetURL.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        switch bundleID.lowercased() {
+        case "com.google.chrome", "com.microsoft.edgemac", "com.brave.browser", "com.operasoftware.opera", "org.chromium.chromium", "com.vivaldi.vivaldi", "company.thebrowser.browser":
+            return """
+            tell application id "\(bundleID)"
+                activate
+                set targetURL to "\(safeTargetURL)"
+                repeat with w in windows
+                    repeat with i from 1 to (count of tabs of w)
+                        set t to tab i of w
+                        try
+                            set tabURL to (URL of t) as text
+                            if tabURL is targetURL or tabURL starts with (targetURL & "/") or tabURL starts with (targetURL & "?") then
+                                set active tab index of w to i
+                                set index of w to 1
+                                return true
+                            end if
+                        end try
+                    end repeat
+                end repeat
+                return false
+            end tell
+            """
+        case "com.apple.safari", "com.apple.safaritechnologypreview":
+            return """
+            tell application id "\(bundleID)"
+                activate
+                set targetURL to "\(safeTargetURL)"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        try
+                            set tabURL to (URL of t) as text
+                            if tabURL is targetURL or tabURL starts with (targetURL & "/") or tabURL starts with (targetURL & "?") then
+                                set current tab of w to t
+                                set index of w to 1
+                                return true
+                            end if
+                        end try
+                    end repeat
+                end repeat
+                return false
+            end tell
+            """
+        default:
+            return nil
+        }
+    }
+
+    private func stopDHL(completion: (() -> Void)? = nil) {
+        cancelDSHInstall()
         let trackedPID = process?.processIdentifier ?? 0
         let discoveredPIDs = managedDSHPIDs()
-        process = nil; selectedPort = nil; didOpenBrowser = false; setState(.stopped)
+        process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false; setState(.stopped)
         var pids = discoveredPIDs
         if trackedPID > 0 && !pids.contains(trackedPID) { pids.insert(trackedPID, at: 0) }
-        for pid in pids { terminateProcessGroup(pid: pid) }
+        guard !pids.isEmpty else {
+            completion?()
+            return
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            for pid in pids { self?.terminateProcessGroup(pid: pid) }
+            DispatchQueue.main.async {
+                completion?()
+            }
+        }
     }
 
     private func managedDSHPIDs() -> [Int32] {
@@ -206,8 +387,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         let pipe = Pipe(); task.standardOutput = pipe; task.standardError = FileHandle.nullDevice
         do { try task.run(); task.waitUntilExit() } catch { return [] }
         guard let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) else { return [] }
-        let launcherPath = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/DHL").path
         let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let runtimeDSH = DSHRuntimeSupport.executableURL.path
+        let runtimeRoot = DSHRuntimeSupport.runtimeURL.path
         let managedPatches = [
             patchPath,
             "/Applications/Deepseek Harness Launcher.app/Contents/Resources/DSHArchiveManager/cordis.patch.yml",
@@ -222,9 +404,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
             guard fields.count == 3, let pid = Int32(fields[0]), fields[1].first != "Z" else { return nil }
             let command = String(fields[2])
             let executable = command.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? ""
-            let isLauncher = command == launcherPath || command.hasPrefix(launcherPath + " ") ||
-                executable.hasSuffix("/DHL.app/Contents/MacOS/DHL") || executable.hasSuffix("/DSH.app/Contents/MacOS/DSH")
-            if isLauncher { return pid }
+            let isInstalledDSH = executable == runtimeDSH ||
+                (command.contains(runtimeRoot) && managedPatches.contains(where: command.contains))
+            let isRuntimeInstallProcess = command.contains("\(home)/.dsh/runtime.installing-") &&
+                ["npm", "node", "/usr/local/bin/npm", "/usr/local/bin/node", "/opt/homebrew/bin/npm", "/opt/homebrew/bin/node"].contains(executable)
+            if isInstalledDSH { return pid }
+            if isRuntimeInstallProcess { return pid }
             if ["npm", "node", "/usr/local/bin/npm", "/usr/local/bin/node", "/opt/homebrew/bin/npm", "/opt/homebrew/bin/node"].contains(executable) && managedPatches.contains(where: command.contains) { return pid }
             return nil
         }
@@ -257,10 +442,34 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
     @objc private func openLogs() { NSWorkspace.shared.open(logURL) }
     @objc private func openSettings() {
         if settingsWindow == nil {
-            settingsWindow = SettingsWindowController(onSave: { [weak self] in self?.scheduleAutoUpdateChecks() }, onCheckNow: { [weak self] in self?.performUpdateCheck(interactive: true) })
+            settingsWindow = SettingsWindowController(
+                onSave: { [weak self] in
+                    guard let self else { return false }
+                    let applied = self.applyGlobalHotKey()
+                    self.scheduleAutoUpdateChecks()
+                    return applied
+                },
+                onCheckNow: { [weak self] in self?.performUpdateCheck(interactive: true) }
+            )
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.present()
+    }
+
+    @discardableResult
+    private func applyGlobalHotKey(showAlert: Bool = true) -> Bool {
+        let applied = globalHotKeyManager.apply(
+            enabled: settings.globalHotKeyEnabled,
+            modifiers: settings.globalHotKeyModifiers,
+            keyCode: settings.globalHotKeyKeyCode
+        )
+        if !applied {
+            appendLogString("全局快捷键注册失败：\(settings.globalHotKeyDisplay)\n")
+            if showAlert {
+                showInfo(title: "全局快捷键冲突", message: "\(settings.globalHotKeyDisplay) 已被其他应用占用，请在设置中更换。")
+            }
+        }
+        return applied
     }
 
     @objc private func checkForUpdates() {
@@ -349,6 +558,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
     }
 
     private func installUpdateAndRestart(_ dmgURL: URL) {
+        if dshInstallHandle != nil {
+            showInfo(title: "正在安装 dsh", message: "首次安装尚未完成，请等待安装结束后再更新 Deepseek Harness Launcher。")
+            return
+        }
         appendLogString("用户确认安装更新：\(dmgURL.path)\n")
         stopDHL()
         let appURL = Bundle.main.bundleURL
@@ -400,9 +613,17 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         let alert = NSAlert(); alert.messageText = title; alert.informativeText = message; alert.addButton(withTitle: "好"); alert.runModal()
     }
 
-    @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func quit() {
+        if dshInstallHandle != nil {
+            terminateAfterDSHInstall = true
+            cancelDSHInstall()
+            return
+        }
+        stopDHL { NSApp.terminate(nil) }
+    }
 
     private func start() {
+        if dshInstallHandle != nil { return }
         if state == .checking { return }
         if state == .running { openDHL(); return }
         setState(.checking)
@@ -415,7 +636,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
                     self.selectedPort = port
                     self.setState(.running)
                     self.monitorArchivePlugin(port: port)
-                    if self.settings.openBrowserOnReady && !self.didOpenBrowser { self.didOpenBrowser = true; self.openDHL() }
+                    self.openBrowserWhenReadyIfNeeded()
                 case .launch(let port):
                     self.launch(port: port)
                 }
@@ -425,19 +646,26 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
 
     private func findPort() -> PortChoice? {
         for port in basePort...maxPort {
-            if dshResponds(on: port) { return .reuse(port) }
             if canBind(port: port) { return .launch(port) }
+            if dshResponds(on: port) { return .reuse(port) }
         }
         return nil
     }
 
     private func dshResponds(on port: Int) -> Bool {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/"), let data = try? Data(contentsOf: url), let body = String(data: data, encoding: .utf8) else { return false }
-        return body.localizedCaseInsensitiveContains("DeepSeek Harness")
+        guard let url = URL(string: "http://127.0.0.1:\(port)/"), let body = ServiceProbe.body(at: url) else { return false }
+        return isHarnessWebBody(body)
+    }
+
+    private func isHarnessWebBody(_ body: String) -> Bool {
+        // The Web UI HTML does not reliably contain the product title; use
+        // stable DeepSeek/dsh asset markers instead.
+        return body.localizedCaseInsensitiveContains("deepseek") &&
+            body.localizedCaseInsensitiveContains("dsh")
     }
 
     private func dshHasArchivePlugin(on port: Int) -> Bool {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/dsh-archive-manager/archives"), let data = try? Data(contentsOf: url), let body = String(data: data, encoding: .utf8) else { return false }
+        guard let url = URL(string: "http://127.0.0.1:\(port)/dsh-archive-manager/archives"), let body = ServiceProbe.body(at: url) else { return false }
         return body.contains("items")
     }
 
@@ -453,30 +681,98 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
 
     private func launch(port: Int) {
         ensurePluginLink()
-        let task = Process(); task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        let environment = LauncherEnvironment.nodeEnvironment(preferOffline: false)
+        guard let npmPath = LauncherEnvironment.executablePath(named: "npm", environment: environment) else {
+            fail("未找到 npm。请先安装 Node.js（包含 npm），或把 Node 加入标准安装路径后重试")
+            return
+        }
+        if DSHRuntimeSupport.isInstalled() {
+            launchInstalledDSH(port: port, executableURL: DSHRuntimeSupport.executableURL, environment: environment)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "首次安装 dsh"
+        alert.informativeText = "首次安装会下载较多 npm 依赖，可能需要几分钟。启动器会优先尝试更快的镜像，失败后自动回退到官方源。"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "开始安装")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            setState(.stopped)
+            return
+        }
+        beginDSHInstall(port: port, npmPath: npmPath, environment: environment)
+    }
+
+    private func beginDSHInstall(port: Int, npmPath: String, environment: [String: String]) {
+        setPortMenuTitle("正在安装 dsh（首次可能需要几分钟）…")
+        appendLogString("本地未检测到 DeepSeek Harness，开始执行下载安装。官方命令：npx @deepseek-ai/dsh web\n")
+        let installWindow = DSHInstallWindowController { [weak self] in
+            self?.cancelDSHInstall()
+        }
+        dshInstallWindow = installWindow
+        dshInstallProgressTracker = DSHInstallProgressTracker()
+        installWindow.present()
+        installWindow.update(
+            status: "本地未检测到 DeepSeek Harness",
+            detail: "正在执行下载安装，请保持网络连接。",
+            percentage: nil
+        )
+        dshInstallHandle = DSHRuntimeSupport.install(npmPath: npmPath, environment: environment, onOutput: { [weak self, weak installWindow] text in
+            self?.appendLog(Data(text.utf8), prefix: "npm")
+            guard let self else { return }
+            let snapshot = self.dshInstallProgressTracker?.consume(text)
+            DispatchQueue.main.async {
+                installWindow?.update(
+                    status: "正在安装 dsh…",
+                    detail: snapshot?.detail,
+                    percentage: snapshot?.percentage
+                )
+            }
+        }) { [weak self, weak installWindow] result in
+            guard let self else { return }
+            self.dshInstallHandle = nil
+            self.dshInstallProgressTracker = nil
+            installWindow?.dismiss()
+            self.dshInstallWindow = nil
+            switch result {
+            case .success(let executableURL):
+                guard self.state != .stopped else { return }
+                self.appendLogString("dsh runtime 安装完成，开始启动…\n")
+                self.launchInstalledDSH(port: self.selectedPort ?? port, executableURL: executableURL, environment: environment)
+            case .failure(let error):
+                self.openWhenReady = false
+                if case .cancelled = error as? DSHRuntimeError {
+                    self.appendLogString("dsh 首次安装已取消，临时安装目录已清理\n")
+                } else if self.state != .stopped {
+                    self.showDSHInstallFailure(error)
+                }
+            }
+            if self.terminateAfterDSHInstall {
+                self.terminateAfterDSHInstall = false
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    private func cancelDSHInstall() {
+        guard dshInstallHandle != nil else { return }
+        dshInstallWindow?.markCancelling()
+        dshInstallHandle?.cancel()
+        appendLogString("用户取消 dsh 首次安装，临时安装目录将被清理\n")
+        if state == .checking { setState(.stopped) }
+    }
+
+    private func launchInstalledDSH(port: Int, executableURL: URL, environment: [String: String]) {
+        let task = Process(); task.executableURL = executableURL
         let arguments = [
-            "npx", "--prefer-offline", "--yes", "@deepseek-ai/dsh",
-            "--profile", "web",
+            "web",
             "--patch", patchPath,
             "--no-open",
             "--port", String(port)
         ]
         task.arguments = arguments
         task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
-        var env = ProcessInfo.processInfo.environment
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let launchPaths = [
-            "\(home)/opt/node/bin",
-            "\(home)/.volta/bin",
-            "\(home)/.nvm/current/bin",
-            "/opt/homebrew/bin",
-            "/usr/local/bin"
-        ]
-        env["PATH"] = (launchPaths + [env["PATH"] ?? "/usr/bin:/bin"]).joined(separator: ":")
-        env["npm_config_prefer_offline"] = "true"
-        env["npm_config_audit"] = "false"
-        env["npm_config_fund"] = "false"
-        task.environment = env
+        task.environment = environment
 
         let stdoutPipe = Pipe(); let stderrPipe = Pipe()
         task.standardOutput = stdoutPipe; task.standardError = stderrPipe
@@ -489,7 +785,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
             if data.isEmpty { handle.readabilityHandler = nil } else { self?.appendLog(data, prefix: "stderr") }
         }
 
-        let command = arguments.joined(separator: " ")
+        let command = ([executableURL.path] + arguments).joined(separator: " ")
         appendLogString("启动命令：\(command)\n")
         task.terminationHandler = { [weak self] terminatedProcess in
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
@@ -503,52 +799,71 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
                 guard let self, self.state != .stopped else { return }
                 self.process = nil
                 self.selectedPort = nil
-                self.pollTimer?.invalidate(); self.pollTimer = nil
                 self.fail("\(LauncherBrand.fullName) 进程已退出，请查看日志")
             }
         }
         do {
             try task.run()
-            process = task; selectedPort = port; didOpenBrowser = false; pollUntilReady(port: port)
+            process = task; selectedPort = port; didAutoOpenBrowser = false; pollUntilReady(port: port, startedAt: Date())
         } catch {
-            fail("无法启动 npx：\(error.localizedDescription)")
+            fail("无法启动 dsh：\(error.localizedDescription)")
         }
     }
 
     private func ensurePluginLink() {
-        let profile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dsh/profiles/web/node_modules", isDirectory: true)
-        if !ensureArchivePluginLink(pluginURL: pluginURL, profileURL: profile) {
+        let profiles = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dsh/profiles", isDirectory: true)
+        let locations = [
+            profiles.appendingPathComponent("node_modules", isDirectory: true),
+            profiles.appendingPathComponent("web/node_modules", isDirectory: true)
+        ]
+        if !ensureArchivePluginLinks(pluginURL: pluginURL, profileURLs: locations) {
             appendLogString("无法更新归档增强插件链接，保留现有插件配置\n")
         }
     }
 
-    private func pollUntilReady(port: Int) {
-        var attempts = 0
-        pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] timer in
-            guard let self else { timer.invalidate(); return }; attempts += 1
-            if self.dshResponds(on: port) {
-                timer.invalidate()
+    private func pollUntilReady(port: Int, startedAt: Date) {
+        guard process?.isRunning == true else { return }
+        let elapsed = Date().timeIntervalSince(startedAt)
+        // A cold dsh runtime bootstrap can still take several minutes. Do not
+        // mistake that startup phase for a dead Harness process.
+        guard elapsed < 10 * 60 else {
+            terminateProcessGroup(pid: process?.processIdentifier ?? 0)
+            fail("\(LauncherBrand.fullName) 启动超过 10 分钟，请检查网络和日志")
+            return
+        }
+        if Int(elapsed) > 0 && Int(elapsed) % 30 == 0 {
+            setPortMenuTitle("正在安装或启动 dsh（已等待 \(Int(elapsed)) 秒）…")
+        }
+        guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return }
+        ServiceProbe.body(at: url) { [weak self] body in
+            guard let self, self.state != .stopped else { return }
+            if let body, self.isHarnessWebBody(body) {
                 self.setState(.running)
                 self.monitorArchivePlugin(port: port)
-                    if self.settings.openBrowserOnReady && !self.didOpenBrowser { self.didOpenBrowser = true; self.openDHL() }
-            } else if attempts >= 100 {
-                timer.invalidate()
-                self.fail("\(LauncherBrand.fullName) 启动超时，请查看日志")
+                self.openBrowserWhenReadyIfNeeded()
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    self.pollUntilReady(port: port, startedAt: startedAt)
+                }
             }
         }
     }
 
-    private func monitorArchivePlugin(port: Int) {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            for _ in 0..<40 {
-                if self?.dshHasArchivePlugin(on: port) == true {
-                    DispatchQueue.main.async { [weak self] in self?.appendLogString("归档增强插件已就绪\n") }
-                    return
-                }
-                Thread.sleep(forTimeInterval: 0.25)
+    private func monitorArchivePlugin(port: Int, attempts: Int = 0) {
+        guard attempts < 40 else {
+            appendLogString("归档增强插件不可用，\(LauncherBrand.fullName) 将以基础模式运行\n")
+            return
+        }
+        guard let url = URL(string: "http://127.0.0.1:\(port)/dsh-archive-manager/archives") else { return }
+        ServiceProbe.body(at: url) { [weak self] body in
+            guard let self, self.state != .stopped else { return }
+            if body?.contains("items") == true {
+                self.appendLogString("归档增强插件已就绪\n")
+                return
             }
-            DispatchQueue.main.async { [weak self] in self?.appendLogString("归档增强插件不可用，\(LauncherBrand.fullName) 将以基础模式运行\n") }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                self.monitorArchivePlugin(port: port, attempts: attempts + 1)
+            }
         }
     }
 
@@ -575,14 +890,42 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         state = next
         statusItem.button?.image = makeStatusImage()
         let portTitle = selectedPort.map { "端口：\($0)" } ?? "端口：未运行"
-        statusItem.menu?.item(withTag: 1001)?.title = portTitle
-        portMenuRow?.title = portTitle
+        setPortMenuTitle(portTitle)
+    }
+
+    private func setPortMenuTitle(_ title: String) {
+        statusItem.menu?.item(withTag: 1001)?.title = title
+        portMenuRow?.title = title
     }
 
     private func fail(_ message: String) {
+        openWhenReady = false
         appendLogString("\(message)\n"); setState(.failed)
         let alert = NSAlert(); alert.messageText = "\(LauncherBrand.fullName) 启动失败"; alert.informativeText = message; alert.alertStyle = .warning; alert.addButton(withTitle: "打开日志"); alert.addButton(withTitle: "关闭")
         if alert.runModal() == .alertFirstButtonReturn { openLogs() }
+    }
+
+    private func showDSHInstallFailure(_ error: Error) {
+        let detail = error.localizedDescription
+        let command = "npx @deepseek-ai/dsh web"
+        appendLogString("dsh 安装失败，建议手动执行：\(command)\n")
+        setState(.failed)
+        let alert = NSAlert()
+        alert.messageText = "dsh 安装失败"
+        alert.informativeText = "\(detail)\n\n如果 npm 持续下载失败，请在终端手动执行下面的官方命令，完成后重新打开 Deepseek Harness Launcher：\n\n\(command)"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "复制命令")
+        alert.addButton(withTitle: "打开日志")
+        alert.addButton(withTitle: "关闭")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(command, forType: .string)
+        case .alertSecondButtonReturn:
+            openLogs()
+        default:
+            break
+        }
     }
 
     private func makeStatusImage() -> NSImage {

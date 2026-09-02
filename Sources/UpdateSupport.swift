@@ -36,7 +36,11 @@ final class LauncherSettings {
             "autoUpdateEnabled": true,
             "updateIntervalHours": 6.0,
             "openBrowserOnReady": true,
-            "launchAtLogin": false
+            "launchAtLogin": false,
+            "globalHotKeyEnabled": true,
+            "globalHotKeyModifiers": 0x1800,
+            "globalHotKeyKeyCode": 2,
+            "globalHotKeyDisplay": "⌃⌥D"
         ])
     }
 
@@ -58,6 +62,26 @@ final class LauncherSettings {
     var launchAtLogin: Bool {
         get { defaults.bool(forKey: "launchAtLogin") }
         set { defaults.set(newValue, forKey: "launchAtLogin") }
+    }
+
+    var globalHotKeyEnabled: Bool {
+        get { defaults.bool(forKey: "globalHotKeyEnabled") }
+        set { defaults.set(newValue, forKey: "globalHotKeyEnabled") }
+    }
+
+    var globalHotKeyModifiers: UInt32 {
+        get { UInt32(defaults.integer(forKey: "globalHotKeyModifiers")) }
+        set { defaults.set(Int(newValue), forKey: "globalHotKeyModifiers") }
+    }
+
+    var globalHotKeyKeyCode: UInt32 {
+        get { UInt32(defaults.integer(forKey: "globalHotKeyKeyCode")) }
+        set { defaults.set(Int(newValue), forKey: "globalHotKeyKeyCode") }
+    }
+
+    var globalHotKeyDisplay: String {
+        get { defaults.string(forKey: "globalHotKeyDisplay") ?? "⌃⌥D" }
+        set { defaults.set(newValue, forKey: "globalHotKeyDisplay") }
     }
 }
 

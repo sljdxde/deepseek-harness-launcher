@@ -12,6 +12,8 @@ NO_OPEN="${3:-}"
 TARGET_APP="$DEST_DIR/Deepseek Harness Launcher.app"
 LEGACY_DHL_APP="$DEST_DIR/DHL.app"
 LEGACY_APP="$DEST_DIR/DSH.app"
+USER_HOME="${DHL_USER_HOME:-$HOME}"
+[[ -d "$USER_HOME" ]] || USER_HOME="$HOME"
 
 if [[ ! -d "$SOURCE_APP" ]]; then
   print -u2 "Source app not found: $SOURCE_APP"
@@ -53,15 +55,21 @@ launcher_pids() {
   local launcher="$TARGET_APP/Contents/MacOS/DHL"
   local legacy_dhl_launcher="$LEGACY_DHL_APP/Contents/MacOS/DHL"
   local legacy_launcher="$LEGACY_APP/Contents/MacOS/DSH"
-  # Match processes whose command starts with the launcher executable. A shell
-  # that merely contains the app path in its own arguments must not match.
+  # Match the launcher executable itself, or a shell whose first script
+  # argument is the launcher executable. A parent shell that merely contains
+  # the app path in unrelated arguments must not match.
   ps -axo pid=,state=,command= | awk -v launcher="$launcher" -v legacy_dhl_launcher="$legacy_dhl_launcher" -v legacy_launcher="$legacy_launcher" '
     $2 !~ /^Z/ {
       cmd = $0
       sub(/^[ \t]*[0-9]+[ \t]+[^ \t]+[ \t]+/, "", cmd)
-      if (cmd == launcher || index(cmd, launcher) == 1 ||
-          cmd == legacy_dhl_launcher || index(cmd, legacy_dhl_launcher) == 1 ||
-          cmd == legacy_launcher || index(cmd, legacy_launcher) == 1) print $1
+      direct = (cmd == launcher || index(cmd, launcher) == 1 ||
+        (cmd !~ /^\/bin\/(zsh|bash|sh) / && cmd ~ /^\/.*\/Deepseek Harness Launcher\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/) ||
+        (cmd !~ /^\/bin\/(zsh|bash|sh) / && cmd ~ /^\/.*\/DHL\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/) ||
+        (cmd !~ /^\/bin\/(zsh|bash|sh) / && cmd ~ /^\/.*\/DSH\.app\/Contents\/MacOS\/DSH([[:space:]]|$)/))
+      shell = (cmd ~ /^\/bin\/(zsh|bash|sh) \/.*\/Deepseek Harness Launcher\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/ ||
+        cmd ~ /^\/bin\/(zsh|bash|sh) \/.*\/DHL\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/ ||
+        cmd ~ /^\/bin\/(zsh|bash|sh) \/.*\/DSH\.app\/Contents\/MacOS\/DSH([[:space:]]|$)/)
+      if (direct || shell) print $1
     }'
 }
 
@@ -69,10 +77,19 @@ dsh_pids() {
   local patch="$TARGET_APP/Contents/Resources/DSHArchiveManager/cordis.patch.yml"
   local legacy_dhl_patch="$LEGACY_DHL_APP/Contents/Resources/DSHArchiveManager/cordis.patch.yml"
   local legacy_patch="$LEGACY_APP/Contents/Resources/DSHArchiveManager/cordis.patch.yml"
-  # npm exec is the parent and node is the actual Harness server. Restricting
-  # the executable field avoids matching the shell/awk used to perform this scan.
-  ps -axo pid=,state=,command= | awk -v patch="$patch" -v legacy_dhl_patch="$legacy_dhl_patch" -v legacy_patch="$legacy_patch" \
-    '$2 !~ /^Z/ && ($3 == "npm" || $3 == "node" || $3 ~ /\/(npm|node)$/) && (index($0, patch) || index($0, legacy_dhl_patch) || index($0, legacy_patch)) { print $1 }'
+  local runtime_dsh="$USER_HOME/.dsh/runtime/node_modules/.bin/dsh"
+  local runtime_root="$USER_HOME/.dsh/runtime"
+  local runtime_staging="$USER_HOME/.dsh/runtime.installing-"
+  # npm/node are used by older builds; dsh is the fixed-runtime executable in
+  # current builds. Restricting the executable field avoids matching this scan.
+  ps -axo pid=,state=,command= | awk -v patch="$patch" -v legacy_dhl_patch="$legacy_dhl_patch" -v legacy_patch="$legacy_patch" -v runtime_dsh="$runtime_dsh" -v runtime_root="$runtime_root" -v runtime_staging="$runtime_staging" \
+    '$2 !~ /^Z/ {
+      executable = ($3 == "npm" || $3 == "npx" || $3 == "node" || $3 == "dsh" || $3 ~ /\/(npm|npx|node|dsh)$/)
+      managed = index($0, patch) || index($0, legacy_dhl_patch) || index($0, legacy_patch) ||
+        index($0, "DSHArchiveManager/cordis.patch.yml") || index($0, "@deepseek-ai/dsh") ||
+        index($0, runtime_dsh) || index($0, runtime_root) || index($0, runtime_staging)
+      if (executable && managed) print $1
+    }'
 }
 
 managed_pids() {
@@ -174,7 +191,23 @@ if ! ditto "$SOURCE_APP" "$TARGET_APP"; then
 fi
 
 unregister_legacy_paths
-prune_backups "$DEST_DIR" "$BACKUP" "$LEGACY_DHL_BACKUP" "${LEGACY_BACKUP:-}"
+# A successful replacement is the commit point: remove all historical app
+# copies and backups from the standard user/system installation locations.
+cleanup_dirs=("$DEST_DIR")
+if [[ "${DHL_SKIP_GLOBAL_CLEANUP:-0}" != "1" ]]; then
+  cleanup_dirs+=("/Applications" "$USER_HOME/Applications")
+fi
+for dir in "${cleanup_dirs[@]}"; do
+  [[ -d "$dir" ]] || continue
+  for historical in "$dir/Deepseek Harness Launcher.app" "$dir/DHL.app" "$dir/DSH.app"; do
+    [[ "$historical" == "$TARGET_APP" ]] && continue
+    if [[ -e "$historical" ]]; then
+      /bin/rm -rf "$historical"
+      echo "Removed historical app $historical"
+    fi
+  done
+  prune_backups "$dir"
+done
 xattr -dr com.apple.quarantine "$TARGET_APP" 2>/dev/null || true
 print "Installed $TARGET_APP"
 [[ -n "$BACKUP" ]] && print "Previous app backup: $BACKUP"

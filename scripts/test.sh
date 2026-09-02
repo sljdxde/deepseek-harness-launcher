@@ -40,6 +40,8 @@ zsh -n "$ROOT/scripts/uninstall.sh"
 rg -q "cleanup_legacy_volumes" "$ROOT/scripts/uninstall.sh"
 rg -q "unregister_legacy_paths" "$ROOT/scripts/uninstall.sh" "$ROOT/scripts/install-from-app.sh"
 rg -q "remove_backups" "$ROOT/scripts/uninstall.sh"
+rg -q "remove_dsh_runtime" "$ROOT/scripts/uninstall.sh"
+rg -q "runtime.installing-" "$ROOT/scripts/uninstall.sh"
 rg -q "prune_backups" "$ROOT/scripts/install-from-app.sh"
 rg -q "xattr -dr com.apple.quarantine" "$ROOT/scripts/install-from-app.sh"
 zsh -n "$ROOT/scripts/Install DHL.command"
@@ -52,7 +54,60 @@ rg -q 'wait_for_processes launcher_pids' "$ROOT/scripts/install-from-app.sh"
 rg -q 'Previous app backup' "$ROOT/scripts/install-from-app.sh"
 rg -q 'DHL_SKIP_BUNDLE_QUIT' "$ROOT/scripts/install-from-app.sh"
 rg -q 'ensureArchivePluginLink' "$ROOT/Sources/main.swift"
-rg -q '"--profile", "web"' "$ROOT/Sources/main.swift"
+rg -q 'ensureArchivePluginLinks' "$ROOT/Sources/main.swift"
+rg -q 'executablePath\(named: "npm"' "$ROOT/Sources/main.swift"
+rg -q 'DSHRuntimeSupport.install' "$ROOT/Sources/main.swift"
+rg -q 'runtime.installing-' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -q 'cleanupInterruptedInstalls' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -Fq '已检测到完整 dsh runtime，跳过 npm 下载' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -q 'SIGKILL' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -q 'cordis-plugin-group/package.json' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -q 'DSHInstallWindowController' "$ROOT/Sources/main.swift"
+rg -q 'DSHInstallProgressTracker' "$ROOT/Sources/main.swift"
+rg -Fq '本地未检测到 DeepSeek Harness' "$ROOT/Sources/DSHInstallWindowController.swift" "$ROOT/Sources/main.swift"
+rg -Fq '安装命令：npx @deepseek-ai/dsh web' "$ROOT/Sources/DSHInstallWindowController.swift"
+rg -Fq '安装进度：正在下载 npm 依赖' "$ROOT/Sources/DSHInstallWindowController.swift"
+rg -Fq '安装完成后会自动打开 DeepSeek Harness Web 页面' "$ROOT/Sources/DSHInstallWindowController.swift"
+rg -Fq '打开 Deepseek Harness' "$ROOT/Sources/main.swift"
+rg -Fq '退出 Deepseek Harness' "$ROOT/Sources/main.swift"
+if rg -Fq 'menuRowItem(title: "打开 Deepseek Harness Launcher"' "$ROOT/Sources/main.swift" || rg -Fq 'menuRowItem(title: "退出 Deepseek Harness Launcher"' "$ROOT/Sources/main.swift"; then
+  echo "menu labels must use the shorter Deepseek Harness name" >&2
+  exit 1
+fi
+if rg -Fq '停止后台' "$ROOT/Sources/main.swift"; then
+  echo "obsolete Stop Backend menu item must not be present" >&2
+  exit 1
+fi
+rg -q 'if elapsedTimer == nil' "$ROOT/Sources/DSHInstallWindowController.swift"
+if rg -q '预计时长|预计剩余|estimate' "$ROOT/Sources/DSHInstallWindowController.swift" "$ROOT/Sources/DSHInstallProgress.swift" "$ROOT/Sources/main.swift"; then
+  echo "installation UI must not show fabricated time estimates" >&2
+  exit 1
+fi
+rg -q 'progress\.isIndeterminate = true' "$ROOT/Sources/DSHInstallWindowController.swift"
+rg -q 'openWhenReady' "$ROOT/Sources/main.swift"
+rg -q 'openBrowserWhenReadyIfNeeded' "$ROOT/Sources/main.swift"
+rg -q 'installWindow\.present\(\)' "$ROOT/Sources/main.swift"
+rg -q 'tell application id' "$ROOT/Sources/main.swift"
+rg -q 'safeTargetURL' "$ROOT/Sources/main.swift"
+rg -q 'runningApplications' "$ROOT/Sources/main.swift"
+rg -q 'createsNewApplicationInstance = true' "$ROOT/Sources/main.swift"
+rg -q -- '--registry' "$ROOT/Sources/DSHRuntimeSupport.swift"
+if rg -q 'npx --prefer-offline --yes @deepseek-ai/dsh' "$ROOT/Sources/main.swift" "$ROOT/Sources/DSHUpdateSupport.swift"; then
+  echo "launcher must not bootstrap dsh through npx" >&2
+  exit 1
+fi
+rg -q 'npm_config_legacy_peer_deps.*false' "$ROOT/Sources/LauncherEnvironment.swift"
+rg -q 'npm_config_fetch_retries' "$ROOT/Sources/LauncherEnvironment.swift"
+if rg -q 'npm_config_progress.*false|--progress=false' "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift"; then
+  echo "npm installation progress must remain enabled" >&2
+  exit 1
+fi
+rg -q '启动超过 10 分钟' "$ROOT/Sources/main.swift"
+rg -q 'DSHRuntimeSupport.isInstalled' "$ROOT/Sources/DSHUpdateSupport.swift"
+rg -q 'runtime.installing-' "$ROOT/Sources/main.swift" "$ROOT/scripts/install-from-app.sh" "$ROOT/scripts/uninstall.sh"
+rg -q '正在安装 dsh' "$ROOT/Sources/main.swift"
+rg -q '"web",' "$ROOT/Sources/main.swift"
+rg -Fq 'npx @deepseek-ai/dsh web' "$ROOT/Sources/main.swift" "$ROOT/README.md"
 if rg -q 'func applicationWillTerminate' "$ROOT/Sources/main.swift"; then
   echo "launcher exit must not synchronously stop the Harness backend" >&2
   exit 1
@@ -63,6 +118,15 @@ rg -q 'let settingsItem = makeSettingsMenuItem()' "$ROOT/Sources/main.swift"
 rg -Fq 'menuRowItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")' "$ROOT/Sources/main.swift"
 rg -Fq 'keyEquivalent: ","' "$ROOT/Sources/main.swift"
 rg -Fq 'keyEquivalentModifierMask = keyEquivalent.isEmpty ? [] : [.command]' "$ROOT/Sources/main.swift"
+rg -Fq 'RegisterEventHotKey' "$ROOT/Sources/GlobalHotKey.swift"
+rg -Fq '"view", "@deepseek-ai/dsh", "version"' "$ROOT/Sources/DSHUpdateSupport.swift"
+rg -Fq 'scheduleDSHUpdateCheck' "$ROOT/Sources/main.swift"
+rg -Fq 'ServiceProbe.body' "$ROOT/Sources/main.swift"
+rg -Fq 'nodeEnvironment' "$ROOT/Sources/LauncherEnvironment.swift"
+rg -Fq '检查 dsh 更新' "$ROOT/Sources/main.swift"
+rg -Fq 'globalHotKeyEnabled' "$ROOT/Sources/UpdateSupport.swift"
+rg -Fq '请按下快捷键' "$ROOT/Sources/SettingsWindowController.swift"
+rg -Fq 'globalHotKeyManager' "$ROOT/Sources/main.swift"
 if rg -q 'SettingsMenuItemView' "$ROOT/Sources/main.swift"; then
   echo "legacy settings-only menu view must be removed" >&2
   exit 1
@@ -76,6 +140,18 @@ swiftc "$ROOT/scripts/test-update-support.swift" "$ROOT/Sources/UpdateSupport.sw
 "$ROOT/build/test-update-support"
 swiftc "$ROOT/scripts/test-launcher-support.swift" "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/Sources/LogSupport.swift" -o "$ROOT/build/test-launcher-support"
 "$ROOT/build/test-launcher-support"
+swiftc "$ROOT/scripts/test-global-hotkey.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-global-hotkey"
+"$ROOT/build/test-global-hotkey"
+swiftc "$ROOT/scripts/test-dsh-version-support.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" -o "$ROOT/build/test-dsh-version-support"
+"$ROOT/build/test-dsh-version-support"
+swiftc "$ROOT/scripts/test-dsh-install-progress.swift" "$ROOT/Sources/DSHInstallProgress.swift" -o "$ROOT/build/test-dsh-install-progress"
+"$ROOT/build/test-dsh-install-progress"
+swiftc "$ROOT/scripts/test-dsh-runtime-support.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" -o "$ROOT/build/test-dsh-runtime-support"
+RUNTIME_TEST_HOME="$(mktemp -d /tmp/dsh-runtime-home.XXXXXX)"
+HOME="$RUNTIME_TEST_HOME" "$ROOT/build/test-dsh-runtime-support"
+find "$RUNTIME_TEST_HOME" -depth -type f -delete 2>/dev/null || true
+find "$RUNTIME_TEST_HOME" -depth -type l -delete 2>/dev/null || true
+find "$RUNTIME_TEST_HOME" -depth -type d -empty -delete 2>/dev/null || true
 "$ROOT/scripts/build-app.sh" >/dev/null
 test -x "$ROOT/build/Deepseek Harness Launcher.app/Contents/MacOS/DHL"
 plutil -extract CFBundleDisplayName raw "$ROOT/build/Deepseek Harness Launcher.app/Contents/Info.plist" | grep -qx 'Deepseek Harness Launcher'
@@ -88,6 +164,7 @@ codesign --verify --deep --strict "$ROOT/build/Deepseek Harness Launcher.app"
 "$ROOT/scripts/build-installer-app.sh" >/dev/null
 test -x "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DHLInstaller"
 test -x "$ROOT/build/双击完成安装或更新.app/Contents/Resources/install-from-app.sh"
+test -d "$ROOT/build/双击完成安装或更新.app/Contents/Resources/Deepseek Harness Launcher.app"
 lipo -info "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DHLInstaller" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
 codesign --verify --deep --strict "$ROOT/build/双击完成安装或更新.app"
 rg -Fq 'appendingPathComponent(".Deepseek Harness Launcher-payload.app")' "$ROOT/Installer/main.swift"
@@ -96,4 +173,7 @@ if rg -Fq 'ln -s /Applications' "$ROOT/scripts/build-dmg.sh"; then
   echo "DMG must expose only the installation entry" >&2
   exit 1
 fi
-echo "Deepseek Harness Launcher checks passed"
+"$ROOT/scripts/build-dmg.sh" >/dev/null
+test -s "$ROOT/dist/Deepseek Harness Launcher.dmg"
+hdiutil verify "$ROOT/dist/Deepseek Harness Launcher.dmg" >/dev/null
+echo "Deepseek Harness Launcher regression checks passed"
