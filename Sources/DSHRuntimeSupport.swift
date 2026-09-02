@@ -214,6 +214,12 @@ enum DSHRuntimeSupport {
         attemptEnvironment["npm_config_prefer_offline"] = "true"
         attemptEnvironment["npm_config_progress"] = "true"
         attemptEnvironment["npm_config_color"] = "false"
+        // Resolving the 100+ package dsh tree needs >2GB of V8 heap; Node's
+        // default limit crashes npm mid-resolution. This is a ceiling, not a
+        // preallocation.
+        let existingNodeOptions = attemptEnvironment["NODE_OPTIONS"] ?? ""
+        attemptEnvironment["NODE_OPTIONS"] =
+            ([existingNodeOptions, "--max-old-space-size=3072"].filter { !$0.isEmpty }).joined(separator: " ")
         task.environment = attemptEnvironment
         let pipe = Pipe()
         let lock = NSLock()
