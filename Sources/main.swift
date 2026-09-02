@@ -364,15 +364,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
     private func stopDHL(completion: (() -> Void)? = nil) {
         cancelDSHInstall()
         let trackedPID = process?.processIdentifier ?? 0
-        let discoveredPIDs = managedDSHPIDs()
         process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false; setState(.stopped)
-        var pids = discoveredPIDs
-        if trackedPID > 0 && !pids.contains(trackedPID) { pids.insert(trackedPID, at: 0) }
-        guard !pids.isEmpty else {
-            completion?()
-            return
-        }
         DispatchQueue.global(qos: .utility).async { [weak self] in
+            var pids = self?.managedDSHPIDs() ?? []
+            if trackedPID > 0 && !pids.contains(trackedPID) { pids.insert(trackedPID, at: 0) }
             for pid in pids { self?.terminateProcessGroup(pid: pid) }
             DispatchQueue.main.async {
                 completion?()
@@ -385,8 +380,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
         task.arguments = ["-axo", "pid=,state=,command="]
         let pipe = Pipe(); task.standardOutput = pipe; task.standardError = FileHandle.nullDevice
-        do { try task.run(); task.waitUntilExit() } catch { return [] }
-        guard let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) else { return [] }
+        do { try task.run() } catch { return [] }
+        // ps output can exceed the 64KB pipe buffer; waiting before draining
+        // deadlocks (ps blocks on write, waitUntilExit never returns).
+        let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        guard let output = String(data: outputData, encoding: .utf8) else { return [] }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let runtimeDSH = DSHRuntimeSupport.executableURL.path
         let runtimeRoot = DSHRuntimeSupport.runtimeURL.path
