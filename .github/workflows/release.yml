@@ -25,6 +25,9 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      - name: Install test dependencies
+        run: brew install ripgrep
+
       - name: Run regression tests
         run: ./scripts/test.sh
 

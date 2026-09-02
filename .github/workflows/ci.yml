@@ -19,6 +19,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install test dependencies
+        run: brew install ripgrep
+
       - name: Run regression tests
         run: ./scripts/test.sh
 
