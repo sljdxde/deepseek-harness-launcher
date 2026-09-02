@@ -906,13 +906,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
     }
 
     private func showDSHInstallFailure(_ error: Error) {
-        let detail = error.localizedDescription
         let command = "npx @deepseek-ai/dsh web"
         appendLogString("dsh 安装失败，建议手动执行：\(command)\n")
         setState(.failed)
         let alert = NSAlert()
         alert.messageText = "dsh 安装失败"
-        alert.informativeText = "\(detail)\n\n如果 npm 持续下载失败，请在终端手动执行下面的官方命令，完成后重新打开 Deepseek Harness Launcher：\n\n\(command)"
+        alert.informativeText = "\(Self.summarizedInstallError(error.localizedDescription))\n\n如果 npm 持续下载失败，请在终端手动执行下面的官方命令，完成后重新打开 Deepseek Harness Launcher：\n\n\(command)"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "复制命令")
         alert.addButton(withTitle: "打开日志")
@@ -926,6 +925,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         default:
             break
         }
+    }
+
+    // npm failure output can be tens of thousands of characters; an alert that
+    // tall pushes its buttons off-screen and wedges the app in runModal.
+    private static func summarizedInstallError(_ text: String) -> String {
+        guard text.count > 1500 else { return text }
+        return "…（输出过长，仅保留末尾，完整内容请用「打开日志」查看）\n" + String(text.suffix(1500))
     }
 
     private func makeStatusImage() -> NSImage {

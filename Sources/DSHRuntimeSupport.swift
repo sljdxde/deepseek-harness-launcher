@@ -204,7 +204,7 @@ enum DSHRuntimeSupport {
         task.executableURL = URL(fileURLWithPath: npmPath)
         task.arguments = [
             "install", "--prefix", staging.path,
-            "--no-package-lock", "--no-audit", "--no-fund", "--progress", "--loglevel=silly",
+            "--no-package-lock", "--no-audit", "--no-fund", "--progress",
             "--prefer-offline", "--registry", registry,
             "@deepseek-ai/dsh"
         ]
@@ -213,7 +213,6 @@ enum DSHRuntimeSupport {
         attemptEnvironment["npm_config_registry"] = registry
         attemptEnvironment["npm_config_prefer_offline"] = "true"
         attemptEnvironment["npm_config_progress"] = "true"
-        attemptEnvironment["npm_config_loglevel"] = "silly"
         attemptEnvironment["npm_config_color"] = "false"
         task.environment = attemptEnvironment
         let pipe = Pipe()
