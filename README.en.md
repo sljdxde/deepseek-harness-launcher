@@ -51,7 +51,7 @@ On first start the launcher performs a complete install:
 
 ```sh
 npm install --prefix ~/.dsh/runtime --no-package-lock --no-audit --no-fund \
-  --progress --loglevel=silly --prefer-offline --registry <registry> @deepseek-ai/dsh
+  --progress --prefer-offline --registry <registry> @deepseek-ai/dsh
 ```
 
 After installation it executes:

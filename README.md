@@ -54,7 +54,7 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 
 ```sh
 npm install --prefix ~/.dsh/runtime --no-package-lock --no-audit --no-fund \
-  --progress --loglevel=silly --prefer-offline --registry <registry> @deepseek-ai/dsh
+  --progress --prefer-offline --registry <registry> @deepseek-ai/dsh
 ```
 
 安装完成后实际执行：
