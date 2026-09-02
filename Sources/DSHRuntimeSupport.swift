@@ -100,12 +100,13 @@ enum DSHRuntimeSupport {
         task.standardError = FileHandle.nullDevice
         do {
             try task.run()
-            task.waitUntilExit()
         } catch {
             return []
         }
+        let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
         var childrenByParent: [Int32: [Int32]] = [:]
-        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let output = String(data: outputData, encoding: .utf8) ?? ""
         for line in output.split(whereSeparator: \.isNewline) {
             let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
             guard fields.count >= 2, let child = Int32(fields[0]), let parent = Int32(fields[1]) else { continue }
