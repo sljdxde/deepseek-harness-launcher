@@ -3,7 +3,7 @@ import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parsePluginYml, installCandidates, listInstalledPlugins, ensurePnpmPath, hasCommandOnPath } from '../lib/index.js';
+import { parsePluginYml, installCandidates, listInstalledPlugins, cleanupBrokenPlugin, ensurePnpmPath, hasCommandOnPath } from '../lib/index.js';
 
 test('parsePluginYml 解析 awesome-dsh-plugin 的插件条目格式', () => {
   const text = `url: https://github.com/1624318455/dsh-plugin-tavily
@@ -41,6 +41,14 @@ test('installCandidates 先生成 npm 包名、再提供 git 回退', () => {
   assert.equal(git, 'https://github.com/1624318455/dsh-plugin-tavily.git');
 });
 
+test('installCandidates 解析 repo#子目录 格式：候选剥离 #、不生成整仓 git，改为 subdir 安装', () => {
+  const { candidates, git, repoRef } = installCandidates({ name: 'volcengine/OpenViking#examples/dsh-memory-plugin', url: 'https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin' });
+  // candidates 是干净的 npm 名（不带 #），git 不得带 /tree/main/ 这种无效整仓 URL
+  assert.deepEqual(candidates, ['@volcengine/openviking', 'openviking']);
+  assert.equal(git, null);
+  assert.deepEqual(repoRef, { author: 'volcengine', repo: 'OpenViking', subdir: 'examples/dsh-memory-plugin', full: 'volcengine/OpenViking#examples/dsh-memory-plugin' });
+});
+
 test('listInstalledPlugins 只收录 node_modules 下有 package.json 的条目并标记内置来源', async () => {
   const previousHome = process.env.DSH_HOME;
   const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-list-'));
@@ -59,6 +67,8 @@ test('listInstalledPlugins 只收录 node_modules 下有 package.json 的条目�
     // non-plugin: directory without package.json — must be skipped
     const junk = join(modules, 'junk-dir');
     await mkdir(junk, { recursive: true });
+    // broken leftover: dangling symlink pointing at a nonexistent target
+    await symlink('../@volcengine/openviking#examples/dsh-memory-plugin', join(modules, 'dsh-memory-plugin'));
 
     const items = await listInstalledPlugins();
     const bundledItem = items.find(item => item.name === 'dsh-archive-manager');
@@ -67,6 +77,36 @@ test('listInstalledPlugins 只收录 node_modules 下有 package.json 的条目�
     assert.equal(userItem.source, 'user');
     assert.equal(userItem.version, '1.2.3');
     assert.equal(items.some(item => item.name === 'junk-dir'), false);
+    const brokenItem = items.find(item => item.name === 'dsh-memory-plugin');
+    assert.equal(brokenItem.broken, true);
+    assert.equal(brokenItem.source, 'broken');
+    assert.equal(items.find(item => item.name === 'dsh-memory-plugin').version, null);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('cleanupBrokenPlugin 删除残留并拒绝路径穿越', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-clean-'));
+  process.env.DSH_HOME = dshHome;
+
+  try {
+    const modules = join(dshHome, 'profiles', 'web', 'node_modules');
+    await mkdir(modules, { recursive: true });
+    await symlink('/nonexistent/target', join(modules, 'dsh-memory-plugin'));
+
+    const result = await cleanupBrokenPlugin('dsh-memory-plugin');
+    assert.equal(result.ok, true);
+    await assert.rejects(access(join(modules, 'dsh-memory-plugin')));
+
+    // path traversal / separators must be rejected
+    await assert.rejects(cleanupBrokenPlugin('../evil'));
+    await assert.rejects(cleanupBrokenPlugin('a/b/../c'));
+    await assert.rejects(cleanupBrokenPlugin(''));
+    await assert.rejects(cleanupBrokenPlugin(undefined));
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previousHome;

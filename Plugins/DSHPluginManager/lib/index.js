@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -67,10 +67,10 @@ async function listScopedModules(modulesDir) {
       let scoped = [];
       try { scoped = await fs.readdir(path, { withFileTypes: true }); } catch { continue; }
       for (const item of scoped) {
-        entries.push({ package: `${entry.name}/${item.name}`, path: join(path, item.name), isDir: item.isDirectory() || item.isSymbolicLink() });
+        entries.push({ package: `${entry.name}/${item.name}`, path: join(path, item.name), isDir: item.isDirectory() || item.isSymbolicLink(), isLink: item.isSymbolicLink() });
       }
     } else if (entry.isDirectory() || entry.isSymbolicLink()) {
-      entries.push({ package: entry.name, path, isDir: true });
+      entries.push({ package: entry.name, path, isDir: true, isLink: entry.isSymbolicLink() });
     }
   }
   return entries;
@@ -78,17 +78,25 @@ async function listScopedModules(modulesDir) {
 
 /**
  * List the plugins actually present in the web profile's node_modules.
- * @returns {Promise<Array<{name:string,version:string,description:string,source:'bundled'|'user'|'unknown'}>>}
+ * Entries whose package.json cannot be read (e.g. a dangling symlink left by a
+ * failed install) are reported as `broken` so the UI can offer a cleanup,
+ * instead of being silently skipped.
+ * @returns {Promise<Array<{name:string,version:string|null,description:string,source:'bundled'|'user'|'broken',broken?:boolean}>>}
  */
 export async function listInstalledPlugins() {
   const entries = await listScopedModules(profilesWebModules());
   const out = [];
   for (const entry of entries) {
     const meta = await readPackageMeta(entry.path);
-    if (!meta?.name) continue;
-    const target = await linkTarget(entry.path);
-    const source = target && BUNDLED_MARKERS.some(marker => target.includes(marker)) ? 'bundled' : 'user';
-    out.push({ name: meta.name, version: meta.version, description: meta.description, source });
+    if (meta?.name) {
+      const target = await linkTarget(entry.path);
+      const source = target && BUNDLED_MARKERS.some(marker => target.includes(marker)) ? 'bundled' : 'user';
+      out.push({ name: meta.name, version: meta.version, description: meta.description, source });
+    } else if (entry.isLink) {
+      // A dangling symlink left by a failed install: report it so the UI can
+      // offer a cleanup, instead of silently skipping it.
+      out.push({ name: entry.package, version: null, description: '安装不完整或已损坏，可清理后重新安装', source: 'broken', broken: true });
+    }
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
@@ -143,24 +151,112 @@ async function pluginCommand(args) {
   return { stdout, stderr, note };
 }
 
-/** npm package candidates for a market entry (`author/repo`), then a git URL. */
+/**
+ * npm package candidates for a market entry (`author/repo`, or
+ * `author/repo#subdir` for a plugin living in a repo subdirectory), then a git
+ * URL for whole-repo installs. A `#subdir` spec has no valid npm package name
+ * and no whole-repo git URL — it must be installed from the git subdirectory,
+ * so we surface it as `repoRef.subdir` for the caller.
+ * @param {{name?:string,url?:string}} entry
+ * @returns {{candidates:string[],git:string|null,repoRef:{author:string,repo:string,subdir:string|null,full:string}|null}}
+ */
 export function installCandidates(entry) {
-  const slash = (entry.name || '').indexOf('/');
-  const author = slash >= 0 ? entry.name.slice(0, slash) : '';
-  const repo = slash >= 0 ? entry.name.slice(slash + 1) : entry.name;
+  const name = entry.name || '';
+  const slash = name.indexOf('/');
+  const author = slash >= 0 ? name.slice(0, slash) : '';
+  const rest = slash >= 0 ? name.slice(slash + 1) : name;
+  const hash = rest.indexOf('#');
+  const repo = hash >= 0 ? rest.slice(0, hash) : rest;
+  const subdir = hash >= 0 ? rest.slice(hash + 1) : null;
   const candidates = [];
   if (author && repo) candidates.push(`@${author.toLowerCase()}/${repo.toLowerCase()}`);
   if (repo) candidates.push(repo.toLowerCase());
-  return { candidates, git: entry.url ? entry.url.replace(/\/$/, '') + '.git' : null };
+  const git = author && repo && !subdir ? `https://github.com/${author}/${repo}.git` : null;
+  return {
+    candidates,
+    git,
+    repoRef: author && repo ? { author, repo, subdir, full: `${author}/${repo}${subdir ? '#' + subdir : ''}` } : null
+  };
 }
 
+/**
+ * Install a plugin that lives in a git repo subdirectory (`author/repo#subdir`).
+ * Such plugins are not npm packages, so they cannot go through `pnpm add <pkg>`.
+ * We shallow-clone the repo, copy the subdirectory into a persistent source
+ * folder under the profile, and add it as a `file:` dependency so pnpm records
+ * it in the profile manifest and node_modules (and dsh reconciles its bundle).
+ * @param {{author:string,repo:string,subdir:string}} ref
+ * @param {Set<string>} installedNames - lower-cased names already present.
+ * @returns {Promise<{ok:boolean,alreadyInstalled?:boolean,installedAs?:string,packageName?:string,note?:string,error?:string}>}
+ */
+async function installSubdirPlugin(ref, installedNames) {
+  const repoUrl = `https://github.com/${ref.author}/${ref.repo}.git`;
+  const tmpRoot = await fs.mkdtemp(join(tmpdir(), 'dsh-pm-'));
+  const cloneDir = join(tmpRoot, 'repo');
+  let note = '';
+  try {
+    await run('git', ['clone', '--depth', '1', repoUrl, cloneDir], { timeout: 300000 });
+    const src = join(cloneDir, ref.subdir);
+    const meta = await readPackageMeta(src);
+    if (!meta?.name) {
+      return { ok: false, error: `仓库 ${ref.full} 的子目录 ${ref.subdir} 没有 package.json，无法作为插件安装` };
+    }
+    if (installedNames.has(meta.name.toLowerCase())) {
+      return { ok: true, alreadyInstalled: true, installedAs: meta.name, packageName: meta.name };
+    }
+    // Persistent source folder inside the profile keeps the file: dependency
+    // stable across restarts; a safe folder name avoids path tricks.
+    const sourcesDir = join(profilesWebModules(), '..', 'plugin-sources');
+    const safeName = ref.subdir.split('/').pop().replace(/[^a-zA-Z0-9._-]/g, '-') || 'plugin';
+    const dest = join(sourcesDir, `${ref.author}-${ref.repo}-${safeName}`);
+    await fs.rm(dest, { recursive: true, force: true });
+    await fs.cp(src, dest, { recursive: true });
+    const result = await pluginCommand(['add', `file:${dest}`]);
+    note = result.note;
+    return { ok: true, installedAs: `file:${dest}`, packageName: meta.name, note };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Install a market entry. Pure `author/repo` plugins are installed through the
+ * npm candidates first, falling back to a git URL. `author/repo#subdir`
+ * plugins are installed from their git subdirectory. Both paths are idempotent:
+ * an already-installed package is reported as `alreadyInstalled` instead of
+ * being reinstalled.
+ * @param {{name?:string,url?:string}} entry
+ * @returns {Promise<{ok:boolean,alreadyInstalled?:boolean,installedAs?:string,packageName?:string,note?:string,error?:string}>}
+ */
 export async function installPlugin(entry) {
-  const { candidates, git } = installCandidates(entry);
+  const { candidates, git, repoRef } = installCandidates(entry);
+  const installed = await listInstalledPlugins();
+  const installedNames = new Set(installed.filter(item => !item.broken).map(item => item.name.toLowerCase()));
+
+  // Subdirectory plugins cannot be addressed by npm name; route them to the
+  // git-subdirectory installer (which also does its own idempotence check).
+  if (repoRef?.subdir) {
+    return installSubdirPlugin(repoRef, installedNames);
+  }
+
+  // Idempotence for whole-repo plugins: any candidate or repo name already
+  // present in node_modules counts as installed.
+  if (repoRef) {
+    const existing = installed.find(item => {
+      if (item.broken) return false;
+      const n = item.name.toLowerCase();
+      return candidates.includes(n) || n === repoRef.repo.toLowerCase() || n.endsWith('/' + repoRef.repo.toLowerCase());
+    });
+    if (existing) return { ok: true, alreadyInstalled: true, installedAs: existing.name, packageName: existing.name };
+  }
+
   let lastError = '';
   for (const candidate of candidates) {
     try {
       const result = await pluginCommand(['add', candidate]);
-      return { ok: true, installedAs: candidate, note: result.note };
+      return { ok: true, installedAs: candidate, packageName: candidate, note: result.note };
     } catch (error) {
       lastError = String(error?.message || error);
     }
@@ -183,6 +279,23 @@ export async function uninstallPlugin(name) {
   } catch (error) {
     return { ok: false, error: String(error?.message || error) };
   }
+}
+
+/**
+ * Remove a leftover of a failed install (dangling symlink / partial checkout)
+ * from the profile's node_modules. Only a bare package path (optionally under
+ * an `@scope` directory) is accepted, so the path cannot escape the modules
+ * directory.
+ * @param {string} name - module name, e.g. `foo` or `@scope/foo`.
+ * @returns {Promise<{ok:boolean}>}
+ */
+export async function cleanupBrokenPlugin(name) {
+  if (typeof name !== 'string' || !/^[@a-zA-Z0-9._/-]+$/.test(name) || name.includes('..')) {
+    throw new Error('非法的插件名');
+  }
+  const target = join(profilesWebModules(), name);
+  await fs.rm(target, { recursive: true, force: true });
+  return { ok: true };
 }
 
 async function refreshMarketRepo() {
@@ -293,6 +406,14 @@ export function apply(ctx) {
             const value = await body(req);
             if (!value?.name) { json(res, 400, { error: '缺少插件名' }); return; }
             json(res, 200, await uninstallPlugin(value.name));
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/cleanup', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            if (!value?.name) { json(res, 400, { error: '缺少插件名' }); return; }
+            json(res, 200, await cleanupBrokenPlugin(value.name));
           } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }})
       ];

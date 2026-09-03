@@ -38,6 +38,7 @@ test('apply 注册全部插件管理路由', () => {
   const { routes } = boot();
   const paths = routes.map(route => route.path).sort();
   assert.deepEqual(paths, [
+    '/dsh-plugin-manager/cleanup',
     '/dsh-plugin-manager/install',
     '/dsh-plugin-manager/installed',
     '/dsh-plugin-manager/marketplace',

@@ -101,6 +101,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
   function installedKey(plugin, installed) {
     const repo = normalizeText(plugin.repo)
     return installed.some(item => {
+      if (item.broken) return false
       const name = normalizeText(item.name)
       return name === repo || name.endsWith('/' + repo) || (plugin.url && normalizeText(plugin.url).includes(normalizeText(item.name)))
     })
@@ -162,8 +163,19 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
         .then(r => r.json()).then(v => {
           if (v.error) throw Error(v.error)
           if (!v.ok) throw Error(v.error || '安装失败')
-          setNotice(`已安装 ${plugin.name}，重启 dsh 后生效`)
+          setNotice(v.alreadyInstalled ? `${plugin.name} 已在已安装列表中` : `已安装 ${plugin.name}，重启 dsh 后生效`)
           setDetail(null)
+          return loadInstalled()
+        })
+        .catch(e => setError(String(e.message || e))).finally(() => setBusy(''))
+    }
+    const cleanupBroken = (item) => {
+      setBusy('cleanup-' + item.name); setError(''); setNotice('')
+      fetch('/dsh-plugin-manager/cleanup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: item.name }) })
+        .then(r => r.json()).then(v => {
+          if (v.error) throw Error(v.error)
+          if (!v.ok) throw Error(v.error || '清理失败')
+          setNotice(`已清理损坏的安装 ${item.name}`)
           return loadInstalled()
         })
         .catch(e => setError(String(e.message || e))).finally(() => setBusy(''))
@@ -197,7 +209,12 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
         h('div', { className: 'dsh-pm-row-title' }, item.name),
         h('div', { className: 'dsh-pm-row-meta' }, `${item.description || '无描述'}${item.version ? ` · v${item.version}` : ''}`)),
       item.source === 'bundled' ? h('span', { className: 'dsh-pm-badge' }, '内置') : null,
-      h('button', { className: 'dsh-pm-row-action', disabled: busy === 'uninstall' || item.source === 'bundled', onClick: () => requestUninstall(item), title: item.source === 'bundled' ? '内置插件不可卸载' : '卸载' }, item.source === 'bundled' ? '—' : '卸载')))
+      item.broken ? h('span', { className: 'dsh-pm-badge', style: { borderColor: 'var(--dsw-alias-state-error-primary)', color: 'var(--dsw-alias-state-error-primary)' } }, '损坏') : null,
+      item.broken
+        ? h('button', { className: 'dsh-pm-row-action', disabled: busy === 'cleanup-' + item.name, onClick: () => cleanupBroken(item), title: '清理损坏的安装残留' }, busy === 'cleanup-' + item.name ? '清理中…' : '清理')
+        : item.source === 'bundled'
+          ? h('button', { className: 'dsh-pm-row-action', disabled: true, title: '内置插件不可卸载' }, '—')
+          : h('button', { className: 'dsh-pm-row-action', disabled: busy === 'uninstall', onClick: () => requestUninstall(item), title: '卸载' }, '卸载')))
 
     const marketCards = plugins.map(plugin => {
       const isInstalled = installedKey(plugin, installed)
