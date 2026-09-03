@@ -1,6 +1,7 @@
 {
   "name": "dsh-archive-manager",
   "version": "0.1.0",
+  "description": "归档管理：批量归档与删除 dsh 会话（内置）",
   "private": true,
   "type": "module",
   "main": "lib/index.js",

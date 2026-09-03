@@ -8,10 +8,12 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
 .dsh-pm-trigger-icon{display:inline-block;flex:0 0 16px;height:16px;position:relative;width:16px}
 .dsh-pm-trigger-icon:before{background:repeating-linear-gradient(0deg,currentColor 0 2px,transparent 2px 4px);border:1.75px solid currentColor;border-radius:4px;content:"";inset:0;position:absolute}
 .dsh-pm-backdrop{background:rgba(15,18,24,.32);inset:0;position:fixed;z-index:2147483000}
-.dsh-pm-page{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;font-size:13px;inset:0;position:fixed;z-index:2147483001}
-.dsh-pm-header{align-items:center;border-bottom:1px solid var(--dsw-alias-border-l2);display:flex;gap:12px;padding:0 18px;height:52px;flex:none}
-.dsh-pm-header strong{font-size:16px;line-height:22px}
-.dsh-pm-tabs{display:flex;gap:4px;margin-left:8px}
+.dsh-pm-page{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 20px 70px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;font-size:13px;left:50%;max-height:82vh;max-width:720px;position:fixed;top:50%;transform:translate(-50%,-50%);width:min(720px,calc(100vw - 32px));z-index:2147483001}
+.dsh-pm-header{align-items:center;border-bottom:1px solid var(--dsw-alias-border-l2);display:flex;gap:10px;padding:0 16px;height:52px;flex:none}
+.dsh-pm-back{background:transparent;border:0;border-radius:8px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:13px;line-height:20px;margin-left:-8px;padding:6px 10px}
+.dsh-pm-back:hover{background:var(--dsw-alias-button-ghost-active-fill);color:inherit}
+.dsh-pm-header strong{font-size:15px;line-height:22px;color:var(--dsw-alias-label-primary)}
+.dsh-pm-tabs{display:flex;gap:4px;margin-left:6px}
 .dsh-pm-tab{background:transparent;border:0;border-radius:8px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:13px;line-height:20px;padding:6px 12px}
 .dsh-pm-tab:hover{background:var(--dsw-alias-button-ghost-active-fill)}
 .dsh-pm-tab-active{background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary)}
@@ -32,16 +34,17 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
 .dsh-pm-chip:hover{background:var(--dsw-alias-button-ghost-active-fill)}
 .dsh-pm-chip-active{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}
 .dsh-pm-sort{margin-left:auto}
-.dsh-pm-grid{display:flex;gap:10px;flex-wrap:wrap}
-.dsh-pm-card{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;cursor:pointer;display:flex;flex:1 1 240px;flex-direction:column;min-width:200px;padding:12px}
+.dsh-pm-grid{display:flex;flex-direction:column;gap:10px}
+.dsh-pm-card{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;cursor:pointer;display:flex;gap:12px;padding:12px 14px;width:100%}
 .dsh-pm-card:hover{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l3)}
-.dsh-pm-card-head{display:flex;gap:10px;align-items:center}
 .dsh-pm-card-icon{flex:0 0 36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;background:var(--dsw-alias-bg-module-platform)}
+.dsh-pm-card-main{flex:1;min-width:0}
 .dsh-pm-card-title{font-size:13px;font-weight:600;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-pm-card-author{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-pm-card-desc{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;margin:8px 0;min-height:36px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.dsh-pm-card-meta{display:flex;gap:10px;align-items:center;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;margin-top:auto}
-.dsh-pm-card-actions{display:flex;gap:8px;align-items:center;margin-top:10px}
+.dsh-pm-card-desc{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;margin:6px 0 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dsh-pm-card-side{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.dsh-pm-card-meta{display:flex;gap:10px;align-items:center;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}
+.dsh-pm-card-actions{display:flex;gap:8px;align-items:center}
 .dsh-pm-install{box-sizing:border-box;background:var(--dsw-alias-button-primary-fill);border:0;border-radius:8px;color:var(--dsw-alias-label-primary-foreground);cursor:pointer;font:inherit;font-size:12px;line-height:18px;padding:6px 14px}
 .dsh-pm-install:hover{background:var(--dsw-alias-button-primary-hover)}
 .dsh-pm-install:disabled{cursor:not-allowed;opacity:.6}
@@ -103,6 +106,19 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
     return plugin.descriptionEn || plugin.descriptionZh || ''
   }
 
+  /// Sidebar entry: a button that opens the plugin manager page on click.
+  /// The slot renders this component in the sidebar footer, so the page itself
+  /// must NOT be registered directly (it would render the full-screen modal on
+  /// load and its close button would not work).
+  function PluginTrigger({ wide, t, onClose }) {
+    const [open, setOpen] = React.useState(false)
+    return h(React.Fragment, null,
+      h('button', { type: 'button', className: 'dsh-pm-trigger', onClick: () => setOpen(true), title: '插件管理', 'aria-label': '插件管理' },
+        h('span', { className: 'dsh-pm-trigger-icon', 'aria-hidden': true }),
+        h('span', null, '插件管理')),
+      open ? h(PluginManagerPage, { wide, t, onClose: () => setOpen(false) }) : null)
+  }
+
   function PluginManagerPage({ wide, t, onClose }) {
     ensureStyles()
     const [tab, setTab] = React.useState('installed')
@@ -116,12 +132,17 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
     const [confirmUninstall, setConfirmUninstall] = React.useState(null)
     const [error, setError] = React.useState('')
     const [notice, setNotice] = React.useState('')
+    const autoRefreshed = React.useRef(false)
     const loadInstalled = () => fetch('/dsh-plugin-manager/installed', { cache: 'no-store' })
       .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); setInstalled(v.items || []); setError('') })
       .catch(e => setError(String(e.message || e)))
     const loadMarket = () => fetch('/dsh-plugin-manager/marketplace', { cache: 'no-store' })
       .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); setMarket(v); setError('') })
-      .catch(e => { setError(String(e.message || e)); setMarket(false) })
+      .catch(e => {
+        // 无本地索引/索引过期时自动刷新一次，避免用户手动找「刷新市场」
+        if (!autoRefreshed.current) { autoRefreshed.current = true; return refreshMarket() }
+        setError(String(e.message || e)); setMarket(false)
+      })
     React.useEffect(() => { loadInstalled() }, [])
     React.useEffect(() => { if (tab === 'market') loadMarket() }, [tab])
 
@@ -177,17 +198,16 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
     const marketCards = plugins.map(plugin => {
       const isInstalled = installedKey(plugin, installed)
       return h('div', { className: 'dsh-pm-card', key: plugin.id, onClick: () => setDetail(plugin) },
-        h('div', { className: 'dsh-pm-card-head' },
-          h('div', { className: 'dsh-pm-card-icon' }, CATEGORY_EMOJI[plugin.category] || '🧩'),
-          h('div', { style: { minWidth: 0 } },
-            h('div', { className: 'dsh-pm-card-title' }, plugin.repo || plugin.name),
-            h('div', { className: 'dsh-pm-card-author' }, plugin.author || plugin.name))),
-        h('div', { className: 'dsh-pm-card-desc' }, descOf(plugin, true) || descOf(plugin)),
-        h('div', { className: 'dsh-pm-card-meta' },
-          h('span', null, `★ ${formatNumber(plugin.stars)}`),
-          h('span', null, `↓ ${formatNumber(plugin.downloads)}`),
-          h('span', { className: 'dsh-pm-cat' }, plugin.category)),
-        h('div', { className: 'dsh-pm-card-actions' },
+        h('div', { className: 'dsh-pm-card-icon' }, CATEGORY_EMOJI[plugin.category] || '🧩'),
+        h('div', { className: 'dsh-pm-card-main' },
+          h('div', { className: 'dsh-pm-card-title' }, plugin.repo || plugin.name),
+          h('div', { className: 'dsh-pm-card-author' }, plugin.author || plugin.name),
+          h('div', { className: 'dsh-pm-card-desc' }, descOf(plugin, true) || descOf(plugin))),
+        h('div', { className: 'dsh-pm-card-side' },
+          h('div', { className: 'dsh-pm-card-meta' },
+            h('span', null, `★ ${formatNumber(plugin.stars)}`),
+            h('span', null, `↓ ${formatNumber(plugin.downloads)}`),
+            h('span', { className: 'dsh-pm-cat' }, plugin.category)),
           isInstalled
             ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
             : h('button', { className: 'dsh-pm-install', disabled: busy === plugin.id, onClick: (e) => { e.stopPropagation(); install(plugin) } }, busy === plugin.id ? '安装中…' : '安装')))
@@ -231,7 +251,8 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
       h('div', { className: 'dsh-pm-backdrop', onClick: () => { if (!busy) { onClose() } } }),
       h('div', { className: 'dsh-pm-page', role: 'dialog', 'aria-modal': 'true', 'aria-label': '插件管理' },
         h('div', { className: 'dsh-pm-header' },
-          h('strong', null, '🧩 插件管理'),
+          h('button', { className: 'dsh-pm-back', onClick: () => { if (!busy) onClose() }, 'aria-label': '返回' }, '← 返回'),
+          h('strong', null, '插件管理'),
           h('div', { className: 'dsh-pm-tabs' },
             h('button', { className: `dsh-pm-tab${tab === 'installed' ? ' dsh-pm-tab-active' : ''}`, onClick: () => setTab('installed') }, `已安装${installed.length ? ` (${installed.length})` : ''}`),
             h('button', { className: `dsh-pm-tab${tab === 'market' ? ' dsh-pm-tab-active' : ''}`, onClick: () => setTab('market') }, '插件市场')),
@@ -255,7 +276,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
 
   function apply(ctx) {
     ensureStyles()
-    ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({ name: 'sidebar.footer.action', id: NS, order: 60, label: '插件管理' }, PluginManagerPage))
+    ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({ name: 'sidebar.footer.action', id: NS, order: 60, label: '插件管理' }, PluginTrigger))
   }
   return { inject: ['slots', 'locale'], apply }
 }})

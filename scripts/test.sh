@@ -19,6 +19,7 @@ if rg -q 'npx |git clone|github.com' "$ROOT/Plugins/DSHPluginManager/lib/index.j
 fi
 rg -q 'dsh-plugin-manager' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -q 'sidebar.footer.action' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -q "register\([^\n]*PluginTrigger" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -q '/dsh-plugin-manager/installed' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q '/dsh-plugin-manager/marketplace' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q '/dsh-plugin-manager/install' "$ROOT/Plugins/DSHPluginManager/lib/index.js"

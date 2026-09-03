@@ -1,6 +1,7 @@
 {
   "name": "dsh-plugin-manager",
   "version": "0.1.0",
+  "description": "插件管理与插件市场：浏览、搜索、安装与卸载 dsh 插件（内置）",
   "private": true,
   "type": "module",
   "main": "lib/index.js",
