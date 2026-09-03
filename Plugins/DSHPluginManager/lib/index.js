@@ -249,16 +249,22 @@ export function installCandidates(entry) {
 /**
  * Fast existence probe against the npm registry. `pnpm add <name>` on a
  * package that does not exist makes pnpm wait on network round-trips before
- * failing; probing first with `npm view` (≈0.2–2s) lets us skip straight to a
- * name that actually resolves, or move on to git quickly. Returns false when
- * the name does not resolve, or when npm is unavailable / times out.
+ * failing; probing first (≈0.2–1.5s) lets us skip straight to a name that
+ * actually resolves, or move on to git quickly. Returns false when the name
+ * does not resolve, or when the registry is unavailable / times out.
+ *
+ * Uses the launcher-owned pnpm shim (never the system `npm`, which is usually
+ * absent from a GUI-launched app's PATH), so it resolves over the same
+ * registry/network stack pnpm install uses.
  * @param {string} name - npm package name.
  * @param {number} timeoutMs
  * @returns {Promise<boolean>}
  */
 async function npmViewExists(name, timeoutMs = 8000) {
   try {
-    await run('npm', ['view', name, 'version', '--json'], { timeout: timeoutMs });
+    await ensurePnpmPath();
+    const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
+    await run(cli, ['view', name, 'version'], { timeout: timeoutMs });
     return true;
   } catch {
     return false;
