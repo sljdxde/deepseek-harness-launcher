@@ -88,10 +88,14 @@ remove_backups() {
 
 remove_dsh_runtime() {
   local path
-  for path in "$HOME/.dsh/runtime" "$HOME/.dsh"/runtime.installing-*(N) "$HOME/.dsh"/runtime.previous-*(N); do
+  # 保留正式 runtime：~/.dsh/runtime/node_modules 里是 DeepSeek Harness 的完整
+  # npm 依赖树，删除后下次启动会重新下载并可能被误判为「首次安装」。只有更新
+  # dsh（launcher 检测到版本差异时）才重建 runtime。这里只清理中断/残留的
+  # 临时安装目录。
+  for path in "$HOME/.dsh"/runtime.installing-*(N) "$HOME/.dsh"/runtime.previous-*(N); do
     [[ -e "$path" ]] || continue
     /bin/rm -rf "$path"
-    echo "Removed dsh runtime $path"
+    echo "Removed dsh runtime residue $path"
   done
 }
 

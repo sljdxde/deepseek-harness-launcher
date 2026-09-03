@@ -139,9 +139,17 @@ enum DSHRuntimeSupport {
     }
 
     static var runtimeURL: URL {
-        fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".dsh", isDirectory: true)
-            .appendingPathComponent("runtime", isDirectory: true)
+        dshHomeURL.appendingPathComponent("runtime", isDirectory: true)
+    }
+
+    /// Root of the DeepSeek Harness user data directory. Honors the DSH_HOME
+    /// environment variable (used by the test harness for isolation and
+    /// consistent with the dsh ecosystem); defaults to `~/.dsh`.
+    static var dshHomeURL: URL {
+        if let custom = ProcessInfo.processInfo.environment["DSH_HOME"], !custom.isEmpty {
+            return URL(fileURLWithPath: custom, isDirectory: true)
+        }
+        return fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".dsh", isDirectory: true)
     }
 
     static var executableURL: URL {
@@ -150,6 +158,35 @@ enum DSHRuntimeSupport {
 
     static func isInstalled() -> Bool {
         runtimeIsHealthy(runtimeURL)
+    }
+
+    /// Whether DeepSeek Harness has been installed/used before on this machine.
+    /// A missing `~/.dsh/runtime` does NOT mean a fresh first install: the
+    /// runtime directory can be cleaned without touching the user's profiles,
+    /// sessions, archives or plugins. When this returns true, an absent runtime
+    /// should be rebuilt in place (preserving data) instead of starting the
+    /// first-install onboarding.
+    static func hasHarnessInstall() -> Bool {
+        let profiles = dshHomeURL.appendingPathComponent("profiles", isDirectory: true)
+        // ① 任一 profile 已初始化过（web/desktop 存在 package.json）
+        for name in ["web", "desktop"] {
+            let profilePackage = profiles
+                .appendingPathComponent(name, isDirectory: true)
+                .appendingPathComponent("package.json")
+            if fileManager.fileExists(atPath: profilePackage.path) {
+                return true
+            }
+        }
+        // ② deepseek harness 依赖树已安装过：@deepseek-ai scoped 目录下存在
+        // 核心 harness 包条目（目录条目存在即可，软链悬空不影响判定）
+        let scoped = profiles.appendingPathComponent("node_modules/@deepseek-ai", isDirectory: true)
+        if let names = try? fileManager.contentsOfDirectory(atPath: scoped.path) {
+            let harness = ["dsh", "dsh-web-app", "dsh-app-boot", "dsh-base"]
+            if harness.contains(where: names.contains) {
+                return true
+            }
+        }
+        return false
     }
 
     private static func runtimeIsHealthy(_ root: URL) -> Bool {

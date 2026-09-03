@@ -17,6 +17,7 @@ struct DSHRuntimeSupportChecks {
             try testBundledVersionParsing()
             try testUpgradeReinstall(fakeNPM: fakeNPM)
             try testCapturedOutputIsBounded()
+            try testHasHarnessInstall()
             try fileManager.removeItem(at: temp)
             print("dsh runtime support checks passed")
         } catch {
@@ -264,6 +265,44 @@ struct DSHRuntimeSupportChecks {
 
     private final class ResultBox {
         var value: Result<URL, Error>?
+    }
+
+    /// A missing runtime is NOT a first install when DeepSeek Harness has
+    /// profiles or a dependency tree already on disk: the launcher should rebuild
+    /// the runtime in place, not start first-install onboarding.
+    private static func testHasHarnessInstall() throws {
+        let fileManager = FileManager.default
+        let previousHome = ProcessInfo.processInfo.environment["DSH_HOME"]
+        let dshHome = fileManager.temporaryDirectory
+            .appendingPathComponent("dsh-has-harness-\(UUID().uuidString)", isDirectory: true)
+        setenv("DSH_HOME", dshHome.path, 1)
+        defer {
+            if let previousHome { setenv("DSH_HOME", previousHome, 1) } else { unsetenv("DSH_HOME") }
+            try? fileManager.removeItem(at: dshHome)
+        }
+
+        let profiles = dshHome.appendingPathComponent("profiles", isDirectory: true)
+
+        // Clean environment: no harness install.
+        precondition(!DSHRuntimeSupport.hasHarnessInstall())
+
+        // ① An initialized profile (web/package.json) counts as an install.
+        try fileManager.createDirectory(at: profiles.appendingPathComponent("web"), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: profiles.appendingPathComponent("web/package.json"))
+        precondition(DSHRuntimeSupport.hasHarnessInstall())
+
+        // ② A dependency tree under @deepseek-ai also counts (dangling symlinks
+        // from a cleaned runtime still prove the tree was installed once).
+        try fileManager.removeItem(at: profiles.appendingPathComponent("web"))
+        let scoped = profiles.appendingPathComponent("node_modules/@deepseek-ai")
+        try fileManager.createDirectory(at: scoped.appendingPathComponent("dsh"), withIntermediateDirectories: true)
+        precondition(DSHRuntimeSupport.hasHarnessInstall())
+
+        // A random scoped name must NOT count as a harness install.
+        try fileManager.removeItem(at: dshHome)
+        let unrelated = profiles.appendingPathComponent("node_modules/@random-vendor")
+        try fileManager.createDirectory(at: unrelated, withIntermediateDirectories: true)
+        precondition(!DSHRuntimeSupport.hasHarnessInstall())
     }
 
     private struct TestError: LocalizedError {

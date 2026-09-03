@@ -4,7 +4,7 @@ import Darwin
 
 private enum LauncherState { case stopped, checking, running, failed }
 private enum PortChoice { case reuse(Int), launch(Int) }
-private enum DSHInstallMode { case firstInstall, upgrade }
+private enum DSHInstallMode { case firstInstall, upgrade, repair }
 
 // macOS 26 may add a semantic icon column to menu groups (notably for
 // "设置…"). Drawing every actionable row through the same view keeps the
@@ -702,6 +702,23 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
             launchInstalledDSH(port: port, executableURL: DSHRuntimeSupport.executableURL, environment: environment)
             return
         }
+        // runtime 缺失但本机已安装/使用过 DeepSeek Harness（profile 或依赖树存在）：
+        // 这不是首次安装，而是运行环境被清理或损坏，应在保留会话/归档/插件数据
+        // 的前提下重建 runtime，避免误导性的「首次安装」引导。
+        if DSHRuntimeSupport.hasHarnessInstall() {
+            let alert = NSAlert()
+            alert.messageText = "检测到已有 DeepSeek Harness 安装"
+            alert.informativeText = "本机已检测到 DeepSeek Harness 数据，但运行环境缺失，将重新安装运行环境（不影响你的会话、归档与插件数据）。启动器会优先尝试更快的镜像，失败后自动回退到官方源。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "重新安装")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                setState(.stopped)
+                return
+            }
+            beginDSHInstall(port: port, npmPath: npmPath, environment: environment, mode: .repair)
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "首次安装 dsh"
         alert.informativeText = "首次安装会下载较多 npm 依赖，可能需要几分钟。启动器会优先尝试更快的镜像，失败后自动回退到官方源。"
@@ -717,31 +734,35 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
 
     private func beginDSHInstall(port: Int, npmPath: String, environment: [String: String], mode: DSHInstallMode) {
         let isUpgrade = mode == .upgrade
+        let isRepair = mode == .repair
         if isUpgrade {
             setPortMenuTitle("正在更新 dsh（可能需要几分钟）…")
             appendLogString("检测到新版本 dsh，开始低内存更新（npm ci，按锁定版本）…\n")
+        } else if isRepair {
+            setPortMenuTitle("正在修复 dsh 运行环境…")
+            appendLogString("检测到已有 DeepSeek Harness 数据但运行环境缺失，开始重建 runtime（npm ci，保留用户数据）…\n")
         } else {
             setPortMenuTitle("正在安装 dsh（首次可能需要几分钟）…")
             appendLogString("本地未检测到 DeepSeek Harness，开始执行下载安装。官方命令：npx @deepseek-ai/dsh web\n")
         }
-        let installWindow = DSHInstallWindowController(commandText: isUpgrade ? "更新命令：npm ci（锁定版本）" : "安装命令：npx @deepseek-ai/dsh web") { [weak self] in
+        let installWindow = DSHInstallWindowController(commandText: isUpgrade ? "更新命令：npm ci（锁定版本）" : isRepair ? "重建运行环境：npm ci（锁定版本）" : "安装命令：npx @deepseek-ai/dsh web") { [weak self] in
             self?.cancelDSHInstall()
         }
         dshInstallWindow = installWindow
         dshInstallProgressTracker = DSHInstallProgressTracker()
         installWindow.present()
         installWindow.update(
-            status: isUpgrade ? "检测到新的 dsh 版本" : "本地未检测到 DeepSeek Harness",
-            detail: isUpgrade ? "正在更新 runtime，请保持网络连接。" : "正在执行下载安装，请保持网络连接。",
+            status: isUpgrade ? "检测到新的 dsh 版本" : isRepair ? "检测到已有 dsh 数据，正在重建运行环境" : "本地未检测到 DeepSeek Harness",
+            detail: isUpgrade ? "正在更新 runtime，请保持网络连接。" : isRepair ? "正在重建 runtime，你的会话、归档与插件数据不会受影响。" : "正在执行下载安装，请保持网络连接。",
             percentage: nil
         )
-        dshInstallHandle = DSHRuntimeSupport.install(npmPath: npmPath, environment: environment, force: isUpgrade, onOutput: { [weak self, weak installWindow] text in
+        dshInstallHandle = DSHRuntimeSupport.install(npmPath: npmPath, environment: environment, force: isUpgrade || isRepair, onOutput: { [weak self, weak installWindow] text in
             self?.appendLog(Data(text.utf8), prefix: "npm")
             guard let self else { return }
             let snapshot = self.dshInstallProgressTracker?.consume(text)
             DispatchQueue.main.async {
                 installWindow?.update(
-                    status: isUpgrade ? "正在更新 dsh…" : "正在安装 dsh…",
+                    status: isUpgrade ? "正在更新 dsh…" : isRepair ? "正在重建运行环境…" : "正在安装 dsh…",
                     detail: snapshot?.detail,
                     percentage: snapshot?.percentage
                 )
@@ -760,7 +781,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
             case .failure(let error):
                 self.openWhenReady = false
                 if case .cancelled = error as? DSHRuntimeError {
-                    self.appendLogString(isUpgrade ? "dsh 更新已取消，原 runtime 保持不变\n" : "dsh 首次安装已取消，临时安装目录已清理\n")
+                    self.appendLogString(isUpgrade ? "dsh 更新已取消，原 runtime 保持不变\n" : isRepair ? "dsh 运行环境重建已取消，用户数据保持不变\n" : "dsh 首次安装已取消，临时安装目录已清理\n")
                 } else if self.state != .stopped {
                     self.showDSHInstallFailure(error)
                 }
@@ -776,7 +797,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         guard dshInstallHandle != nil else { return }
         dshInstallWindow?.markCancelling()
         dshInstallHandle?.cancel()
-        appendLogString("用户取消 dsh 首次安装，临时安装目录将被清理\n")
+        appendLogString("用户取消 dsh 安装，临时安装目录将被清理\n")
         if state == .checking { setState(.stopped) }
     }
 

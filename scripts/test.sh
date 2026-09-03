@@ -149,6 +149,10 @@ rg -q 'bundledDSHVersion' "$ROOT/Sources/DSHRuntimeSupport.swift"
 rg -q 'installedDSHVersion' "$ROOT/Sources/DSHRuntimeSupport.swift"
 rg -q 'force: isUpgrade' "$ROOT/Sources/main.swift"
 rg -q 'DSHInstallMode' "$ROOT/Sources/main.swift"
+rg -q 'hasHarnessInstall' "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/main.swift"
+rg -q 'case firstInstall, upgrade, repair' "$ROOT/Sources/main.swift"
+rg -Fq '检测到已有 DeepSeek Harness 安装' "$ROOT/Sources/main.swift"
+rg -Fq '不影响你的会话、归档与插件数据' "$ROOT/Sources/main.swift"
 if rg -q 'npm_config_progress.*false|--progress=false' "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift"; then
   echo "npm installation progress must remain enabled" >&2
   exit 1
@@ -199,7 +203,9 @@ swiftc "$ROOT/scripts/test-dsh-install-progress.swift" "$ROOT/Sources/DSHInstall
 "$ROOT/build/test-dsh-install-progress"
 swiftc "$ROOT/scripts/test-dsh-runtime-support.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" -o "$ROOT/build/test-dsh-runtime-support"
 RUNTIME_TEST_HOME="$(mktemp -d /tmp/dsh-runtime-home.XXXXXX)"
-HOME="$RUNTIME_TEST_HOME" "$ROOT/build/test-dsh-runtime-support"
+# macOS ignores the HOME env var for NSHomeDirectory(); DSHRuntimeSupport honors
+# DSH_HOME, so use it to isolate the runtime tests from the real ~/.dsh.
+DSH_HOME="$RUNTIME_TEST_HOME" "$ROOT/build/test-dsh-runtime-support"
 find "$RUNTIME_TEST_HOME" -depth -type f -delete 2>/dev/null || true
 find "$RUNTIME_TEST_HOME" -depth -type l -delete 2>/dev/null || true
 find "$RUNTIME_TEST_HOME" -depth -type d -empty -delete 2>/dev/null || true
