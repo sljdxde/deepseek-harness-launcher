@@ -98,6 +98,35 @@ if rg -q 'npx --prefer-offline --yes @deepseek-ai/dsh' "$ROOT/Sources/main.swift
 fi
 rg -q 'npm_config_legacy_peer_deps.*false' "$ROOT/Sources/LauncherEnvironment.swift"
 rg -q 'npm_config_fetch_retries' "$ROOT/Sources/LauncherEnvironment.swift"
+# First-install memory budget: fetch concurrency is capped at 16 and npm's V8
+# heap ceiling is bounded (see npmMaxOldSpaceSizeMB) so a fresh dsh install
+# stays far below the ~3GB peak that unbounded settings produced.
+rg -q 'npm_config_maxsockets.*"16"' "$ROOT/Sources/LauncherEnvironment.swift"
+if rg -q 'npm_config_maxsockets.*"50"' "$ROOT/Sources/LauncherEnvironment.swift"; then
+  echo "npm fetch concurrency must stay at 16 for the first-install memory budget" >&2
+  exit 1
+fi
+rg -q 'npmMaxOldSpaceSizeMB' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -q 'appendCapturedOutput' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -q 'maxCapturedOutputBytes' "$ROOT/Sources/DSHRuntimeSupport.swift"
+# Lockfile-based first install: the bundled dsh-runtime spec must exist, the
+# install path must switch to `npm ci` when it is present, and build scripts
+# must ship it inside the app bundle.
+test -s "$ROOT/Resources/dsh-runtime/package.json"
+test -s "$ROOT/Resources/dsh-runtime/package-lock.json"
+rg -q 'bundledRuntimeSpec' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -q '"ci", "--prefix"' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -q 'Resources/dsh-runtime' "$ROOT/scripts/build-app.sh" "$ROOT/scripts/build-universal.sh"
+if [[ "$(rg -c -- '--no-package-lock' "$ROOT/Sources/DSHRuntimeSupport.swift")" != "1" ]]; then
+  echo "--no-package-lock must only appear once, on the fallback (no bundled spec) install path" >&2
+  exit 1
+fi
+# Irregular-update path: version mismatch must drive a forced lockfile reinstall
+rg -q 'needsRuntimeUpgrade' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -q 'bundledDSHVersion' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -q 'installedDSHVersion' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -q 'force: isUpgrade' "$ROOT/Sources/main.swift"
+rg -q 'DSHInstallMode' "$ROOT/Sources/main.swift"
 if rg -q 'npm_config_progress.*false|--progress=false' "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift"; then
   echo "npm installation progress must remain enabled" >&2
   exit 1
@@ -146,7 +175,7 @@ swiftc "$ROOT/scripts/test-dsh-version-support.swift" "$ROOT/Sources/UpdateSuppo
 "$ROOT/build/test-dsh-version-support"
 swiftc "$ROOT/scripts/test-dsh-install-progress.swift" "$ROOT/Sources/DSHInstallProgress.swift" -o "$ROOT/build/test-dsh-install-progress"
 "$ROOT/build/test-dsh-install-progress"
-swiftc "$ROOT/scripts/test-dsh-runtime-support.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" -o "$ROOT/build/test-dsh-runtime-support"
+swiftc "$ROOT/scripts/test-dsh-runtime-support.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" -o "$ROOT/build/test-dsh-runtime-support"
 RUNTIME_TEST_HOME="$(mktemp -d /tmp/dsh-runtime-home.XXXXXX)"
 HOME="$RUNTIME_TEST_HOME" "$ROOT/build/test-dsh-runtime-support"
 find "$RUNTIME_TEST_HOME" -depth -type f -delete 2>/dev/null || true

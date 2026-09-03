@@ -16,6 +16,9 @@ struct DSHVersionSupportChecks {
             LauncherEnvironment.npmRegistryCandidates(environment: ["DHL_NPM_REGISTRY": "https://npm.example.test/"]) ==
                 ["https://npm.example.test", "https://registry.npmmirror.com", "https://registry.npmjs.org"]
         )
+        // First-install memory budget: fetch concurrency must stay modest so
+        // npm's concurrent tarball fetch/extract cannot balloon peak RSS.
+        precondition(LauncherEnvironment.nodeEnvironment()["npm_config_maxsockets"] == "16")
         print("dsh version support checks passed")
     }
 }

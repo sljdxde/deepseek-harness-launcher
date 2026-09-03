@@ -14,7 +14,7 @@
 | 归档插件 | 删除不读运行状态、不要求手动输入 DELETE、批量删除确认、全选/半选状态 |
 | 更新器 | 版本比较、GitHub Releases 解析、Atom 降级源、DMG asset 命名 |
 | dsh 更新检查 | npm 版本输出解析、启动异步检查入口、菜单栏状态 |
-| dsh 首次安装 | npm 完整依赖解析、镜像回退、临时目录原子替换、取消清理、固定 runtime 校验 |
+| dsh 首次安装 | 内置锁定文件 + `npm ci` 低内存路径、裸 `npm install` 回退、镜像回退、临时目录原子替换、取消清理、固定 runtime 校验、bundled 版本解析、版本不一致触发强制升级重装 |
 | 启动器核心 | 端口选择、归档插件链接、进程生命周期、菜单栏 UI 不变量 |
 | 全局快捷键 | Carbon 热键注册、修饰键转换、设置窗口录制入口 |
 | 安装与卸载 | 安装器替换、旧进程终止、备份清理、旧路径清理、数据保留 |
@@ -31,7 +31,8 @@
 ## 发布门禁
 
 - `.github/workflows/ci.yml` 会在每次 push 到 `main` 和每个 PR 上运行回归测试。
-- `.github/workflows/release.yml` 只有在回归测试通过后，才会执行 `publish` 任务。
+- `.github/workflows/ci.yml` 与 `.github/workflows/release.yml` 均含 `memory-gate` job：实测首次安装 `npm ci` 的峰值 RSS，超过 1024MB（1GB）即失败（`./scripts/memory-bench.sh 1024`）。
+- `.github/workflows/release.yml` 只有在回归测试与内存门禁都通过后，才会执行 `publish` 任务。
 - 如果回归测试失败，Release 不会被创建，也不会更新已有 Release。
 - 建议在 GitHub 仓库 Settings → Branches 中为 `main` 配置保护规则，把 CI 的 `regression` job 设为 required status check，让未通过测试的 PR 无法合入。
 
@@ -49,3 +50,5 @@
 8. 检查更新能读取 GitHub Releases，能下载并安装更新。
 9. 卸载后保留 `~/.dsh` 用户数据，移除 DHL 自有 runtime、启动器与自身插件链接。
 10. 首次启动无 `~/.dsh/runtime` 时显示安装提示和进度窗口；取消后无残留 `runtime.installing-*` 目录或 npm/node 子进程。
+11. 用包含更新 `dsh-runtime/package-lock.json`（不同 dsh 版本）的 App 启动时，能自动检测到版本不一致并弹出“更新 dsh”窗口，完成后原子替换并启动新版本。
+12. 首次安装全程峰值内存低于 1GB：`./scripts/memory-bench.sh 1024` 应输出 `PASS`。

@@ -56,9 +56,11 @@ enum LauncherEnvironment {
         env["npm_config_fetch_retry_mintimeout"] = "1000"
         env["npm_config_fetch_retry_maxtimeout"] = "10000"
         env["npm_config_fetch_timeout"] = "120000"
-        // dsh has a large dependency graph; allow npm to fetch more tarballs
-        // concurrently while retaining npm's normal retry behavior.
-        env["npm_config_maxsockets"] = "50"
+        // dsh has a large dependency graph; keep a modest number of fetch
+        // sockets so installs still parallelize downloads without letting the
+        // concurrent tarball fetch/extract phase balloon npm's peak memory.
+        // npm's own default is 15; 50 previously raised first-install RSS.
+        env["npm_config_maxsockets"] = "16"
         // Keep npm's peer-dependency resolver enabled. dsh-app-boot relies on
         // peer packages such as cordis-plugin-group at runtime; legacy-peer-
         // deps would silently omit them and leave a broken npx cache.

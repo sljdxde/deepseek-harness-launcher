@@ -46,3 +46,23 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "请查看上方工作流日志中的失败步骤。" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  memory-gate:
+    name: First-install memory gate
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: brew install ripgrep
+
+      - name: Cache npm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-cache-${{ runner.os }}-dsh-${{ hashFiles('Resources/dsh-runtime/package-lock.json') }}
+
+      - name: Measure first-install peak RSS
+        run: ./scripts/memory-bench.sh 1024

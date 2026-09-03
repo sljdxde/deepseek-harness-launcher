@@ -13,10 +13,10 @@ final class DSHInstallWindowController: NSWindowController {
     private var startedAt = Date()
     private var baseDetail = "正在执行下载安装，请保持网络连接。"
 
-    init(onCancel: @escaping () -> Void) {
+    init(commandText: String = "安装命令：npx @deepseek-ai/dsh web", onCancel: @escaping () -> Void) {
         self.onCancel = onCancel
         statusLabel = NSTextField(labelWithString: "本地未检测到 DeepSeek Harness")
-        commandLabel = NSTextField(labelWithString: "安装命令：npx @deepseek-ai/dsh web")
+        commandLabel = NSTextField(labelWithString: commandText)
         detailLabel = NSTextField(wrappingLabelWithString: "正在执行下载安装，请保持网络连接。")
         progress = NSProgressIndicator()
         progressLabel = NSTextField(labelWithString: "安装进度：正在下载 npm 依赖")
@@ -28,7 +28,7 @@ final class DSHInstallWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "首次安装 dsh"
+        window.title = "dsh 安装"
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
