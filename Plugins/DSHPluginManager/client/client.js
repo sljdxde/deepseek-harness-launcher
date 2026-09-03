@@ -3,6 +3,10 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
   const h = React.createElement
   const NS = 'dsh-plugin-manager'
   const css = `
+/* dsh sidebar footer actions: stack vertically so archive / plugin manager /
+   future entries appear one per row instead of side by side */
+[class$="_footerActions"]{flex-direction:column}
+[class$="_footerActions"]>*{width:100%}
 .dsh-pm-trigger{align-items:center;appearance:none;background:transparent;border:0;border-radius:8px;color:inherit;cursor:pointer;display:flex;font:inherit;font-size:14px;gap:8px;line-height:22px;margin:4px -2px;min-height:42px;padding:0 10px 0 8px;text-align:left;width:100%}
 .dsh-pm-trigger:hover{background:var(--dsw-alias-button-ghost-active-fill)}
 .dsh-pm-trigger-icon{display:inline-block;flex:0 0 16px;height:16px;position:relative;width:16px}
