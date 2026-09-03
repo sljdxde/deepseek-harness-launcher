@@ -3,7 +3,7 @@ import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parsePluginYml, installCandidates, listInstalledPlugins, cleanupBrokenPlugin, ensurePnpmPath, hasCommandOnPath } from '../lib/index.js';
+import { parsePluginYml, installCandidates, listInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, hasCommandOnPath } from '../lib/index.js';
 
 test('parsePluginYml 解析 awesome-dsh-plugin 的插件条目格式', () => {
   const text = `url: https://github.com/1624318455/dsh-plugin-tavily
@@ -81,6 +81,27 @@ test('listInstalledPlugins 只收录 node_modules 下有 package.json 的条目�
     assert.equal(brokenItem.broken, true);
     assert.equal(brokenItem.source, 'broken');
     assert.equal(items.find(item => item.name === 'dsh-memory-plugin').version, null);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('installPlugin 已安装的纯 repo 插件直接返回 alreadyInstalled，不触发安装', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-idem-'));
+  process.env.DSH_HOME = dshHome;
+  try {
+    const modules = join(dshHome, 'profiles', 'web', 'node_modules');
+    await mkdir(modules, { recursive: true });
+    const existing = join(modules, 'dsh-foo');
+    await mkdir(existing, { recursive: true });
+    await writeFile(join(existing, 'package.json'), JSON.stringify({ name: 'dsh-foo', version: '1.0.0' }));
+    const result = await installPlugin({ name: 'someauthor/dsh-foo', url: 'https://github.com/someauthor/dsh-foo' });
+    assert.equal(result.ok, true);
+    assert.equal(result.alreadyInstalled, true);
+    assert.equal(result.packageName, 'dsh-foo');
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previousHome;

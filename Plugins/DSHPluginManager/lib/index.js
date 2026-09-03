@@ -180,63 +180,112 @@ export function installCandidates(entry) {
 }
 
 /**
- * Install a plugin that lives in a git repo subdirectory (`author/repo#subdir`).
- * Such plugins are not npm packages, so they cannot go through `pnpm add <pkg>`.
- * We shallow-clone the repo, copy the subdirectory into a persistent source
- * folder under the profile, and add it as a `file:` dependency so pnpm records
- * it in the profile manifest and node_modules (and dsh reconciles its bundle).
- * @param {{author:string,repo:string,subdir:string}} ref
- * @param {Set<string>} installedNames - lower-cased names already present.
- * @returns {Promise<{ok:boolean,alreadyInstalled?:boolean,installedAs?:string,packageName?:string,note?:string,error?:string}>}
+ * Fast existence probe against the npm registry. `pnpm add <name>` on a
+ * package that does not exist makes pnpm wait on network round-trips before
+ * failing; probing first with `npm view` (≈0.2–2s) lets us skip straight to a
+ * name that actually resolves, or move on to git quickly. Returns false when
+ * the name does not resolve, or when npm is unavailable / times out.
+ * @param {string} name - npm package name.
+ * @param {number} timeoutMs
+ * @returns {Promise<boolean>}
  */
-async function installSubdirPlugin(ref, installedNames) {
+async function npmViewExists(name, timeoutMs = 8000) {
+  try {
+    await run('npm', ['view', name, 'version', '--json'], { timeout: timeoutMs });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Clone `author/repo` into a persistent source folder under the profile and
+ * return the resolved plugin's package.json name. When `subdir` is given, only
+ * that subdirectory is materialized via a `blob:none` sparse checkout (a few
+ * MB / a few seconds instead of a full-repo clone); older git falls back to a
+ * plain shallow clone. The source folder is stable across restarts, so the
+ * `file:` dependency installed from it does not break.
+ * @param {{author:string,repo:string,subdir:string|null,full:string}} ref
+ * @param {string|null} subdir - subdirectory to materialize, or null for root.
+ * @returns {Promise<{ok:boolean,dest?:string,packageName?:string,error?:string}>}
+ */
+async function cloneToSources(ref, subdir) {
   const repoUrl = `https://github.com/${ref.author}/${ref.repo}.git`;
+  const sourcesDir = join(profilesWebModules(), '..', 'plugin-sources');
+  const safeName = ((subdir ? subdir.split('/').pop() : ref.repo) || 'plugin').replace(/[^a-zA-Z0-9._-]/g, '-');
+  const dest = join(sourcesDir, `${ref.author}-${ref.repo}${subdir ? '-' + safeName : ''}`);
   const tmpRoot = await fs.mkdtemp(join(tmpdir(), 'dsh-pm-'));
   const cloneDir = join(tmpRoot, 'repo');
-  let note = '';
   try {
-    await run('git', ['clone', '--depth', '1', repoUrl, cloneDir], { timeout: 300000 });
-    const src = join(cloneDir, ref.subdir);
+    if (subdir) {
+      // Sparse checkout materializes only the subdirectory — a few MB instead
+      // of the whole repo. Fall back to a plain shallow clone on older git.
+      try {
+        await run('git', ['clone', '--depth', '1', '--filter=blob:none', '--sparse', repoUrl, cloneDir], { timeout: 300000 });
+        await run('git', ['-C', cloneDir, 'sparse-checkout', 'set', subdir], { timeout: 120000 });
+      } catch {
+        await fs.rm(cloneDir, { recursive: true, force: true }).catch(() => {});
+        await run('git', ['clone', '--depth', '1', repoUrl, cloneDir], { timeout: 300000 });
+      }
+    } else {
+      // Whole-repo plugin: a plain shallow clone (sparse would drop the
+      // subdirectories the plugin source depends on).
+      await run('git', ['clone', '--depth', '1', repoUrl, cloneDir], { timeout: 300000 });
+    }
+    const src = subdir ? join(cloneDir, subdir) : cloneDir;
     const meta = await readPackageMeta(src);
     if (!meta?.name) {
-      return { ok: false, error: `仓库 ${ref.full} 的子目录 ${ref.subdir} 没有 package.json，无法作为插件安装` };
+      return { ok: false, error: `仓库 ${ref.full}${subdir ? ' 的子目录 ' + subdir : ' 根目录'}没有 package.json，无法作为插件安装` };
     }
-    if (installedNames.has(meta.name.toLowerCase())) {
-      return { ok: true, alreadyInstalled: true, installedAs: meta.name, packageName: meta.name };
-    }
-    // Persistent source folder inside the profile keeps the file: dependency
-    // stable across restarts; a safe folder name avoids path tricks.
-    const sourcesDir = join(profilesWebModules(), '..', 'plugin-sources');
-    const safeName = ref.subdir.split('/').pop().replace(/[^a-zA-Z0-9._-]/g, '-') || 'plugin';
-    const dest = join(sourcesDir, `${ref.author}-${ref.repo}-${safeName}`);
     await fs.rm(dest, { recursive: true, force: true });
     await fs.cp(src, dest, { recursive: true });
-    const result = await pluginCommand(['add', `file:${dest}`]);
-    note = result.note;
-    return { ok: true, installedAs: `file:${dest}`, packageName: meta.name, note };
-  } catch (error) {
-    return { ok: false, error: String(error?.message || error) };
+    return { ok: true, dest, packageName: meta.name };
   } finally {
     await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
   }
 }
 
 /**
+ * Install a plugin that lives in a git repo subdirectory (`author/repo#subdir`).
+ * Such plugins are not npm packages, so they cannot go through `pnpm add <pkg>`.
+ * We sparse-clone the repo, copy the subdirectory into a persistent source
+ * folder under the profile, and add it as a `file:` dependency so pnpm records
+ * it in the profile manifest and node_modules (and dsh reconciles its bundle).
+ * @param {{author:string,repo:string,subdir:string,full:string}} ref
+ * @param {Set<string>} installedNames - lower-cased names already present.
+ * @returns {Promise<{ok:boolean,alreadyInstalled?:boolean,installedAs?:string,packageName?:string,note?:string,error?:string}>}
+ */
+async function installSubdirPlugin(ref, installedNames) {
+  const src = await cloneToSources(ref, ref.subdir);
+  if (!src.ok) return src;
+  if (installedNames.has(src.packageName.toLowerCase())) {
+    return { ok: true, alreadyInstalled: true, installedAs: src.packageName, packageName: src.packageName };
+  }
+  try {
+    const result = await pluginCommand(['add', `file:${src.dest}`]);
+    return { ok: true, installedAs: `file:${src.dest}`, packageName: src.packageName, note: result.note };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+/**
  * Install a market entry. Pure `author/repo` plugins are installed through the
- * npm candidates first, falling back to a git URL. `author/repo#subdir`
- * plugins are installed from their git subdirectory. Both paths are idempotent:
- * an already-installed package is reported as `alreadyInstalled` instead of
- * being reinstalled.
+ * npm candidates first (probed fast via `npm view`), falling back to a shallow
+ * clone added as a `file:` dependency. `author/repo#subdir` plugins are
+ * installed from their git subdirectory via a sparse clone. Both paths are
+ * idempotent: an already-installed package is reported as `alreadyInstalled`
+ * instead of being reinstalled.
  * @param {{name?:string,url?:string}} entry
  * @returns {Promise<{ok:boolean,alreadyInstalled?:boolean,installedAs?:string,packageName?:string,note?:string,error?:string}>}
  */
 export async function installPlugin(entry) {
-  const { candidates, git, repoRef } = installCandidates(entry);
+  const { candidates, repoRef } = installCandidates(entry);
   const installed = await listInstalledPlugins();
   const installedNames = new Set(installed.filter(item => !item.broken).map(item => item.name.toLowerCase()));
 
   // Subdirectory plugins cannot be addressed by npm name; route them to the
-  // git-subdirectory installer (which also does its own idempotence check).
+  // sparse-clone installer (which does its own idempotence check).
   if (repoRef?.subdir) {
     return installSubdirPlugin(repoRef, installedNames);
   }
@@ -253,20 +302,32 @@ export async function installPlugin(entry) {
   }
 
   let lastError = '';
-  for (const candidate of candidates) {
+  // Probe candidates in parallel first: only `pnpm add` a name that really
+  // exists, so a missing name never makes pnpm wait on a network failure.
+  const probes = await Promise.all(candidates.map(name => npmViewExists(name)));
+  for (let i = 0; i < candidates.length; i++) {
+    if (!probes[i]) { lastError = `npm 包 ${candidates[i]} 不存在`; continue; }
     try {
-      const result = await pluginCommand(['add', candidate]);
-      return { ok: true, installedAs: candidate, packageName: candidate, note: result.note };
+      const result = await pluginCommand(['add', candidates[i]]);
+      return { ok: true, installedAs: candidates[i], packageName: candidates[i], note: result.note };
     } catch (error) {
       lastError = String(error?.message || error);
     }
   }
-  if (git) {
-    try {
-      const result = await pluginCommand(['add', `git+${git}`]);
-      return { ok: true, installedAs: `git+${git}`, note: result.note };
-    } catch (error) {
-      lastError = String(error?.message || error);
+  // Git fallback: shallow-clone into a persistent source folder and add as a
+  // file: dependency — faster and more predictable than `pnpm add git+…`,
+  // which clones the whole repo without a depth limit.
+  if (repoRef && !repoRef.subdir) {
+    const src = await cloneToSources(repoRef, null);
+    if (src.ok) {
+      try {
+        const result = await pluginCommand(['add', `file:${src.dest}`]);
+        return { ok: true, installedAs: `file:${src.dest}`, packageName: src.packageName, note: result.note };
+      } catch (error) {
+        lastError = String(error?.message || error);
+      }
+    } else {
+      lastError = src.error || lastError;
     }
   }
   return { ok: false, error: lastError || '安装失败' };
