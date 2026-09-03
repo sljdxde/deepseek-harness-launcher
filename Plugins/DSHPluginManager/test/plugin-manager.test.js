@@ -3,7 +3,7 @@ import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parsePluginYml, installCandidates, listInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, hasCommandOnPath } from '../lib/index.js';
+import { parsePluginYml, installCandidates, listInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath } from '../lib/index.js';
 
 test('parsePluginYml 解析 awesome-dsh-plugin 的插件条目格式', () => {
   const text = `url: https://github.com/1624318455/dsh-plugin-tavily
@@ -159,6 +159,28 @@ test('cleanupBrokenPlugin 删除残留并拒绝路径穿越', async () => {
     await assert.rejects(cleanupBrokenPlugin('a/b/../c'));
     await assert.rejects(cleanupBrokenPlugin(''));
     await assert.rejects(cleanupBrokenPlugin(undefined));
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('ensurePnpmWorkspace 批准依赖构建脚本且不重复追加', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-ws-'));
+  process.env.DSH_HOME = dshHome;
+  try {
+    const profileDir = join(dshHome, 'profiles', 'web');
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(join(profileDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n');
+    await ensurePnpmWorkspace();
+    const content = await readFile(join(profileDir, 'pnpm-workspace.yaml'), 'utf8');
+    assert.match(content, /dangerouslyAllowAllBuilds:\s*true/);
+    // second call must not duplicate the entry
+    await ensurePnpmWorkspace();
+    const after = await readFile(join(profileDir, 'pnpm-workspace.yaml'), 'utf8');
+    assert.equal((after.match(/dangerouslyAllowAllBuilds/g) || []).length, 1);
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previousHome;

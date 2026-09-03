@@ -8,6 +8,7 @@ const run = promisify(execFile);
 
 const dshHome = () => process.env.DSH_HOME || join(homedir(), '.dsh');
 const profilesWebModules = () => join(dshHome(), 'profiles', 'web', 'node_modules');
+const profilesWebDir = () => join(dshHome(), 'profiles', 'web');
 const marketRoot = () => join(dshHome(), 'plugin-market');
 const marketIndexFile = () => join(marketRoot(), 'index.json');
 const marketRepoDir = () => join(marketRoot(), 'repo');
@@ -186,6 +187,7 @@ export async function ensurePnpmPath() {
 }
 
 async function pluginCommand(args) {
+  await ensurePnpmWorkspace();
   const cli = dshCli();
   const [pathWithPnpm, note] = await ensurePnpmPath();
   const { stdout, stderr } = await run(cli, ['plugin', '--profile', 'web', ...args], {
@@ -194,6 +196,26 @@ async function pluginCommand(args) {
     cwd: dshHome()
   });
   return { stdout, stderr, note };
+}
+
+/**
+ * pnpm 10+ blocks dependency build scripts unless approved, and `pnpm add`
+ * hard-fails with ERR_PNPM_IGNORED_BUILDS when a dependency (e.g. a native
+ * addon like node-pty) has a build script that was not approved. The shipped
+ * dsh profile workspace only sets `autoInstallPeers: false`, so a plugin with
+ * native deps cannot be installed. Approve dependency builds on the web
+ * profile so such plugins install cleanly.
+ */
+export async function ensurePnpmWorkspace() {
+  const workspacePath = join(profilesWebDir(), 'pnpm-workspace.yaml');
+  try {
+    const content = await fs.readFile(workspacePath, 'utf8');
+    if (content.includes('dangerouslyAllowAllBuilds') || content.includes('allowBuilds')) return;
+    await fs.writeFile(workspacePath, `${content.replace(/\n*$/, '')}\ndangerouslyAllowAllBuilds: true\n`, 'utf8');
+  } catch {
+    await fs.mkdir(profilesWebDir(), { recursive: true });
+    await fs.writeFile(workspacePath, 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\ndangerouslyAllowAllBuilds: true\n', 'utf8');
+  }
 }
 
 /**
