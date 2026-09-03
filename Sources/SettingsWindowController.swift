@@ -1,15 +1,15 @@
 import AppKit
 import Foundation
 
-final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     private let onSave: () -> Bool
     private let onCheckNow: () -> Void
     private let settings = LauncherSettings.shared
 
     private let autoUpdateCheckbox = NSButton(checkboxWithTitle: "自动检查更新", target: nil, action: nil)
-    private let openBrowserCheckbox = NSButton(checkboxWithTitle: "Deepseek Harness Launcher 就绪后自动打开浏览器", target: nil, action: nil)
-    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动 Deepseek Harness Launcher", target: nil, action: nil)
-    private let globalHotKeyCheckbox = NSButton(checkboxWithTitle: "启用全局快捷键呼出 Deepseek Harness", target: nil, action: nil)
+    private let openBrowserCheckbox = NSButton(checkboxWithTitle: "就绪后自动打开浏览器", target: nil, action: nil)
+    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动", target: nil, action: nil)
+    private let globalHotKeyCheckbox = NSButton(checkboxWithTitle: "启用全局快捷键呼出", target: nil, action: nil)
     private let globalHotKeyButton = NSButton(title: "", target: nil, action: nil)
     private var hotKeyEventMonitor: Any?
     private var isRecordingHotKey = false
@@ -17,6 +17,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var pendingHotKeyKeyCode: UInt32 = 2
     private var pendingHotKeyDisplay = "⌃⌥D"
     private let intervalField = NSTextField(string: "6")
+    private let intervalStepper = NSStepper()
+    private var intervalLabel: NSTextField?
+    private var intervalSuffixLabel: NSTextField?
+    private var hotkeyLabel: NSTextField?
+    /// 设置卡片里“标签列”与“控件列”的分界，三张卡片共用同一个列，保证纵向对齐。
+    private let controlColumn: CGFloat = 132
 
     init(onSave: @escaping () -> Bool, onCheckNow: @escaping () -> Void) {
         self.onSave = onSave
@@ -132,8 +138,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         globalHotKeyCheckbox.target = self
         globalHotKeyCheckbox.action = #selector(globalHotKeyCheckChanged)
         hotkeyCard.addSubview(globalHotKeyCheckbox)
-        let hotkeyLabel = makeLabel("快捷键", size: 13, weight: .regular, color: .labelColor)
-        hotkeyCard.addSubview(hotkeyLabel)
+        let hotkeyDescLabel = makeLabel("快捷键", size: 13, weight: .regular, color: .labelColor)
+        hotkeyLabel = hotkeyDescLabel
+        hotkeyCard.addSubview(hotkeyDescLabel)
         globalHotKeyButton.translatesAutoresizingMaskIntoConstraints = false
         globalHotKeyButton.target = self
         globalHotKeyButton.action = #selector(toggleHotKeyRecording)
@@ -147,12 +154,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             globalHotKeyCheckbox.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: 16),
             globalHotKeyCheckbox.topAnchor.constraint(equalTo: hotkeyTitle.bottomAnchor, constant: 8),
             globalHotKeyCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: hotkeyCard.trailingAnchor, constant: -16),
-            hotkeyLabel.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: 16),
-            hotkeyLabel.centerYAnchor.constraint(equalTo: globalHotKeyButton.centerYAnchor),
-            globalHotKeyButton.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: 150),
+            hotkeyDescLabel.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: 16),
+            hotkeyDescLabel.centerYAnchor.constraint(equalTo: globalHotKeyButton.centerYAnchor),
+            globalHotKeyButton.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: controlColumn),
             globalHotKeyButton.topAnchor.constraint(equalTo: globalHotKeyCheckbox.bottomAnchor, constant: 7),
             globalHotKeyButton.heightAnchor.constraint(equalToConstant: 26),
-            hotkeyCard.heightAnchor.constraint(equalToConstant: 84)
+            hotkeyCard.heightAnchor.constraint(equalToConstant: 88)
         ])
         root.addSubview(hotkeyCard)
         NSLayoutConstraint.activate([
@@ -165,16 +172,32 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let updateTitle = makeLabel("自动更新", size: 13, weight: .semibold, color: .secondaryLabelColor)
         updateCard.addSubview(updateTitle)
         configureCheckbox(autoUpdateCheckbox)
+        autoUpdateCheckbox.target = self
+        autoUpdateCheckbox.action = #selector(autoUpdateCheckChanged)
         updateCard.addSubview(autoUpdateCheckbox)
 
-        let intervalLabel = makeLabel("检查频率", size: 13, weight: .regular, color: .labelColor)
-        let intervalSuffix = makeLabel("小时一次", size: 13, weight: .regular, color: .secondaryLabelColor)
-        updateCard.addSubview(intervalLabel)
-        updateCard.addSubview(intervalSuffix)
+        let intervalDescLabel = makeLabel("检查频率", size: 13, weight: .regular, color: .labelColor)
+        intervalLabel = intervalDescLabel
+        let intervalUnitLabel = makeLabel("小时一次", size: 13, weight: .regular, color: .secondaryLabelColor)
+        intervalSuffixLabel = intervalUnitLabel
+        updateCard.addSubview(intervalDescLabel)
+        updateCard.addSubview(intervalUnitLabel)
         configureTextField(intervalField, placeholder: "6")
         intervalField.alignment = .right
-        intervalField.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        intervalField.target = self
+        intervalField.action = #selector(intervalFieldChanged)
+        intervalField.delegate = self
+        intervalField.widthAnchor.constraint(equalToConstant: 56).isActive = true
         updateCard.addSubview(intervalField)
+
+        intervalStepper.minValue = 1
+        intervalStepper.maxValue = 168
+        intervalStepper.increment = 1
+        intervalStepper.valueWraps = false
+        intervalStepper.target = self
+        intervalStepper.action = #selector(intervalStepperChanged)
+        intervalStepper.translatesAutoresizingMaskIntoConstraints = false
+        updateCard.addSubview(intervalStepper)
 
         let sourceLabel = makeLabel("更新来源", size: 13, weight: .regular, color: .labelColor)
         let sourceValue = makeLabel("GitHub Releases · deepseek-harness-launcher", size: 13, weight: .regular, color: .secondaryLabelColor)
@@ -187,19 +210,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             autoUpdateCheckbox.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
             autoUpdateCheckbox.topAnchor.constraint(equalTo: updateTitle.bottomAnchor, constant: 8),
             autoUpdateCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: updateCard.trailingAnchor, constant: -16),
-            intervalLabel.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
-            intervalLabel.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
-            intervalField.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 150),
+            intervalDescLabel.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
+            intervalDescLabel.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
+            intervalField.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: controlColumn),
             intervalField.topAnchor.constraint(equalTo: autoUpdateCheckbox.bottomAnchor, constant: 7),
             intervalField.heightAnchor.constraint(equalToConstant: 26),
-            intervalSuffix.leadingAnchor.constraint(equalTo: intervalField.trailingAnchor, constant: 8),
-            intervalSuffix.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
+            intervalStepper.leadingAnchor.constraint(equalTo: intervalField.trailingAnchor, constant: 4),
+            intervalStepper.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
+            intervalUnitLabel.leadingAnchor.constraint(equalTo: intervalStepper.trailingAnchor, constant: 6),
+            intervalUnitLabel.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
             sourceLabel.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
             sourceLabel.centerYAnchor.constraint(equalTo: sourceValue.centerYAnchor),
-            sourceValue.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 150),
+            sourceValue.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: controlColumn),
             sourceValue.trailingAnchor.constraint(lessThanOrEqualTo: updateCard.trailingAnchor, constant: -16),
             sourceValue.topAnchor.constraint(equalTo: intervalField.bottomAnchor, constant: 12),
-            updateCard.heightAnchor.constraint(equalToConstant: 142)
+            updateCard.heightAnchor.constraint(equalToConstant: 148)
         ])
         root.addSubview(updateCard)
         NSLayoutConstraint.activate([
@@ -293,8 +318,41 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         pendingHotKeyKeyCode = settings.globalHotKeyKeyCode
         pendingHotKeyDisplay = settings.globalHotKeyDisplay
         globalHotKeyButton.title = pendingHotKeyDisplay
-        globalHotKeyButton.isEnabled = settings.globalHotKeyEnabled
-        intervalField.stringValue = String(format: "%.0f", settings.updateIntervalHours)
+        globalHotKeyButton.bezelColor = nil
+        setHotKeyControlsEnabled(settings.globalHotKeyEnabled)
+        let interval = max(settings.updateIntervalHours, 1)
+        intervalField.doubleValue = interval
+        intervalStepper.doubleValue = interval
+        setUpdateIntervalControlsEnabled(settings.autoUpdateEnabled)
+    }
+
+    @objc private func autoUpdateCheckChanged() {
+        setUpdateIntervalControlsEnabled(autoUpdateCheckbox.state == .on)
+    }
+
+    @objc private func intervalStepperChanged() {
+        intervalField.doubleValue = intervalStepper.doubleValue
+    }
+
+    @objc private func intervalFieldChanged() {
+        intervalStepper.doubleValue = intervalField.doubleValue
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField, field === intervalField else { return }
+        intervalStepper.doubleValue = intervalField.doubleValue
+    }
+
+    private func setUpdateIntervalControlsEnabled(_ enabled: Bool) {
+        intervalField.isEnabled = enabled
+        intervalStepper.isEnabled = enabled
+        intervalLabel?.textColor = enabled ? .labelColor : .tertiaryLabelColor
+        intervalSuffixLabel?.textColor = enabled ? .secondaryLabelColor : .tertiaryLabelColor
+    }
+
+    private func setHotKeyControlsEnabled(_ enabled: Bool) {
+        globalHotKeyButton.isEnabled = enabled
+        hotkeyLabel?.textColor = enabled ? .labelColor : .tertiaryLabelColor
     }
 
     @objc private func checkNow() {
@@ -308,7 +366,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func globalHotKeyCheckChanged() {
         let enabled = globalHotKeyCheckbox.state == .on
-        globalHotKeyButton.isEnabled = enabled
+        setHotKeyControlsEnabled(enabled)
         if !enabled { cancelRecording() }
     }
 
@@ -319,6 +377,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         isRecordingHotKey = true
         globalHotKeyButton.title = "请按下快捷键…"
+        globalHotKeyButton.bezelColor = .controlAccentColor
         hotKeyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             if event.keyCode == 53 {
@@ -343,6 +402,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if let hotKeyEventMonitor { NSEvent.removeMonitor(hotKeyEventMonitor) }
         hotKeyEventMonitor = nil
         isRecordingHotKey = false
+        globalHotKeyButton.bezelColor = nil
         globalHotKeyButton.title = pendingHotKeyDisplay
     }
 
