@@ -1,3 +1,6 @@
 - insert:
     - id: dsh-archive-manager
       name: 'dsh-archive-manager'
+- insert:
+    - id: dsh-plugin-manager
+      name: 'dsh-plugin-manager'

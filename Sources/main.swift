@@ -127,6 +127,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
 
     private var rootURL: URL { URL(fileURLWithPath: FileManager.default.currentDirectoryPath).deletingLastPathComponent().appendingPathComponent("deepseek-harness-launcher") }
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
+    private var pluginManagerURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHPluginManager") ?? rootURL.appendingPathComponent("Plugins/DSHPluginManager") }
+    private var bundledPlugins: [BundledPlugin] {
+        [
+            BundledPlugin(linkName: "dsh-archive-manager", bundleMarker: "DSHArchiveManager", url: pluginURL),
+            BundledPlugin(linkName: "dsh-plugin-manager", bundleMarker: "DSHPluginManager", url: pluginManagerURL)
+        ]
+    }
     private var patchPath: String { pluginURL.appendingPathComponent("cordis.patch.yml").path }
     private var logURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -827,8 +834,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
             profiles.appendingPathComponent("node_modules", isDirectory: true),
             profiles.appendingPathComponent("web/node_modules", isDirectory: true)
         ]
-        if !ensureArchivePluginLinks(pluginURL: pluginURL, profileURLs: locations) {
-            appendLogString("无法更新归档增强插件链接，保留现有插件配置\n")
+        if !ensureBundledPluginLinks(plugins: bundledPlugins, profileURLs: locations) {
+            appendLogString("无法更新内置插件链接，保留现有插件配置\n")
         }
     }
 

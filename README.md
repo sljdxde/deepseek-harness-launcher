@@ -34,13 +34,14 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 9 | **实时状态 + 日志** | 菜单栏实时显示当前运行端口；所有 stdout/stderr 与生命周期事件写入 `~/Library/Logs/Deepseek Harness Launcher/dhl.log`，一键「打开日志」。 |
 | 10 | **全局快捷呼出** | 任意应用中按 `⌃⌥D`（可在设置中录制更换）直接呼出 Deepseek Harness 浏览器窗口；已有标签页时聚焦原标签，不再重复新开。 |
 | 11 | **启动时检测 dsh 更新** | 应用启动后异步检查 npm 上 `@deepseek-ai/dsh` 的最新版本，不阻塞启动；有新版本时菜单栏提示并可跳转 npm 查看。 |
+| 12 | **内置插件管理（DSHPluginManager）** | 侧边栏新增「插件管理」入口，含「已安装」与「插件市场」两个页面：已安装插件可查看/卸载；市场数据来自 `awesome-dsh-plugin`（分类、搜索、按星级/下载排序、一键安装）。安装/卸载通过 `dsh plugin --profile web` 执行，缺 pnpm 时自动用 corepack 自举，安装后提示重启 dsh 生效。 |
 
 **边界与取舍**：
 
 - 仅支持 macOS（无 Windows / Linux）；
 - 不捆绑 Node 运行时，也不管理多个 dsh 内核版本；需要用户系统中已有可用的 `node` 与 `npm`。
 - 首次启动会显示安装窗口；依赖下载可能需要几分钟，安装成功后后续启动直接复用 `~/.dsh/runtime`。
-- Deepseek Harness Launcher 只添加自己的归档插件链接与临时 patch；Harness 原有 profile、会话及其他插件仍由 dsh 管理。
+- Deepseek Harness Launcher 只添加自己的内置插件链接（归档管理、插件管理）与临时 patch；Harness 原有 profile、会话及其他插件仍由 dsh 管理。
 
 ---
 

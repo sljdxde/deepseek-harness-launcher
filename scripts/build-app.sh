@@ -6,6 +6,7 @@ rm -rf "$ROOT/build"; mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 swiftc "$ROOT"/Sources/*.swift -o "$OUT/Contents/MacOS/DHL" -sdk "$SDK" -target arm64-apple-macos12.0
 cp "$ROOT/Resources/Info.plist" "$OUT/Contents/Info.plist"; chmod +x "$OUT/Contents/MacOS/DHL"
 cp -R "$ROOT/Plugins/DSHArchiveManager" "$OUT/Contents/Resources/DSHArchiveManager"
+cp -R "$ROOT/Plugins/DSHPluginManager" "$OUT/Contents/Resources/DSHPluginManager"
 cp -R "$ROOT/Resources/dsh-runtime" "$OUT/Contents/Resources/dsh-runtime"
 cp "$ROOT/scripts/install-from-app.sh" "$OUT/Contents/Resources/install-from-app.sh"; chmod +x "$OUT/Contents/Resources/install-from-app.sh"
 cp "$ROOT/Resources/menubar-creature.png" "$OUT/Contents/Resources/menubar-creature.png"
