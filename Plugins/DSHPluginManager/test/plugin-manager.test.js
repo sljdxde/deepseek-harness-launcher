@@ -118,10 +118,22 @@ test('cleanupBrokenPlugin 删除残留并拒绝路径穿越', async () => {
     const modules = join(dshHome, 'profiles', 'web', 'node_modules');
     await mkdir(modules, { recursive: true });
     await symlink('/nonexistent/target', join(modules, 'dsh-memory-plugin'));
+    // profile manifest carries a stale dependency record that must be dropped
+    const profileDir = join(dshHome, 'profiles', 'web');
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web',
+      private: true,
+      dependencies: { 'dsh-memory-plugin': 'link:@volcengine/openviking#examples/dsh-memory-plugin', '@openviking/dsh-memory-plugin': 'file:/x' },
+      dsh: { profile: { bundles: ['dsh-memory-plugin', '@openviking/dsh-memory-plugin'] } }
+    }, null, 2));
 
     const result = await cleanupBrokenPlugin('dsh-memory-plugin');
     assert.equal(result.ok, true);
     await assert.rejects(access(join(modules, 'dsh-memory-plugin')));
+    const manifest = JSON.parse(await readFile(join(profileDir, 'package.json'), 'utf8'));
+    assert.equal(manifest.dependencies['dsh-memory-plugin'], undefined);
+    assert.equal(manifest.dependencies['@openviking/dsh-memory-plugin'], 'file:/x');
+    assert.deepEqual(manifest.dsh.profile.bundles, ['@openviking/dsh-memory-plugin']);
 
     // path traversal / separators must be rejected
     await assert.rejects(cleanupBrokenPlugin('../evil'));

@@ -346,7 +346,9 @@ export async function uninstallPlugin(name) {
  * Remove a leftover of a failed install (dangling symlink / partial checkout)
  * from the profile's node_modules. Only a bare package path (optionally under
  * an `@scope` directory) is accepted, so the path cannot escape the modules
- * directory.
+ * directory. Also drops any matching entry from the profile's package.json
+ * dependencies, so a stale `link:`/`file:` record cannot resurrect the broken
+ * symlink on the next `pnpm add`.
  * @param {string} name - module name, e.g. `foo` or `@scope/foo`.
  * @returns {Promise<{ok:boolean}>}
  */
@@ -356,6 +358,24 @@ export async function cleanupBrokenPlugin(name) {
   }
   const target = join(profilesWebModules(), name);
   await fs.rm(target, { recursive: true, force: true });
+  // Also drop any stale dependency / bundle record from the profile manifest
+  // so the broken entry cannot come back on the next install.
+  const manifestPath = join(profilesWebModules(), '..', 'package.json');
+  try {
+    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+    let changed = false;
+    if (manifest.dependencies && Object.prototype.hasOwnProperty.call(manifest.dependencies, name)) {
+      delete manifest.dependencies[name];
+      changed = true;
+    }
+    if (manifest.dsh?.profile?.bundles && manifest.dsh.profile.bundles.includes(name)) {
+      manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(entry => entry !== name);
+      changed = true;
+    }
+    if (changed) {
+      await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+    }
+  } catch { /* no manifest to clean */ }
   return { ok: true };
 }
 
