@@ -43,7 +43,8 @@ test('apply 注册全部插件管理路由', () => {
     '/dsh-plugin-manager/installed',
     '/dsh-plugin-manager/marketplace',
     '/dsh-plugin-manager/refresh',
-    '/dsh-plugin-manager/uninstall'
+    '/dsh-plugin-manager/uninstall',
+    '/dsh-plugin-manager/uninstall-many'
   ]);
   assert.ok(routes.every(route => route.kind === 'exact'));
 });
@@ -120,6 +121,28 @@ test('uninstall 路由拒绝缺失插件名的请求', async () => {
     await uninstall.handler(makeReq('POST'), res);
     const payload = JSON.parse(res.calls.find(call => call[0] === 'end')[1]);
     assert.equal(payload.error.includes('缺少') || payload.error.includes('不存在'), true);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('uninstall-many 路由拒绝空插件列表', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-route5-'));
+  process.env.DSH_HOME = dshHome;
+  try {
+    const { routes } = boot();
+    const route = routes.find(r => r.path === '/dsh-plugin-manager/uninstall-many');
+    const res = makeRes();
+    await route.handler(makeReq('POST', {}), res);
+    const payload = JSON.parse(res.calls.find(call => call[0] === 'end')[1]);
+    assert.equal(payload.error.includes('缺少'), true);
+    const res2 = makeRes();
+    await route.handler(makeReq('POST', { names: [] }), res2);
+    const payload2 = JSON.parse(res2.calls.find(call => call[0] === 'end')[1]);
+    assert.equal(payload2.error.includes('缺少'), true);
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previousHome;

@@ -49,21 +49,32 @@ test('installCandidates 解析 repo#子目录 格式：候选剥离 #、不生�
   assert.deepEqual(repoRef, { author: 'volcengine', repo: 'OpenViking', subdir: 'examples/dsh-memory-plugin', full: 'volcengine/OpenViking#examples/dsh-memory-plugin' });
 });
 
-test('listInstalledPlugins 只收录 node_modules 下有 package.json 的条目并标记内置来源', async () => {
+test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依赖库', async () => {
   const previousHome = process.env.DSH_HOME;
   const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-list-'));
   process.env.DSH_HOME = dshHome;
 
   try {
-    const modules = join(dshHome, 'profiles', 'web', 'node_modules');
+    const profileDir = join(dshHome, 'profiles', 'web');
+    const modules = join(profileDir, 'node_modules');
     await mkdir(modules, { recursive: true });
+    // profile manifest: the real plugin layer is dsh.profile.bundles
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', private: true,
+      dependencies: { 'dsh-community-tool': 'file:/x', 'lodash-es': '1.0.0' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-community-tool'] } }
+    }));
     // bundled plugin: symlink whose target names a launcher bundle marker
     const bundled = join(modules, 'dsh-archive-manager');
     await symlink('/Applications/Deepseek Harness Launcher.app/Contents/Resources/DSHArchiveManager', bundled);
-    // user plugin: a real directory with package.json
+    // user plugin (in bundles): a real directory with package.json
     const user = join(modules, 'dsh-community-tool');
     await mkdir(user, { recursive: true });
     await writeFile(join(user, 'package.json'), JSON.stringify({ name: 'dsh-community-tool', version: '1.2.3', description: 'A community tool' }));
+    // ordinary npm dependency present in node_modules — must NOT be listed
+    const lib = join(modules, 'lodash-es');
+    await mkdir(lib, { recursive: true });
+    await writeFile(join(lib, 'package.json'), JSON.stringify({ name: 'lodash-es', version: '4.17.21', description: 'Lodash modules' }));
     // non-plugin: directory without package.json — must be skipped
     const junk = join(modules, 'junk-dir');
     await mkdir(junk, { recursive: true });
@@ -77,6 +88,8 @@ test('listInstalledPlugins 只收录 node_modules 下有 package.json 的条目�
     assert.equal(userItem.source, 'user');
     assert.equal(userItem.version, '1.2.3');
     assert.equal(items.some(item => item.name === 'junk-dir'), false);
+    // lodash-es is a dependency, not a plugin — it must never appear
+    assert.equal(items.some(item => item.name === 'lodash-es'), false);
     const brokenItem = items.find(item => item.name === 'dsh-memory-plugin');
     assert.equal(brokenItem.broken, true);
     assert.equal(brokenItem.source, 'broken');
@@ -95,6 +108,12 @@ test('installPlugin 已安装的纯 repo 插件直接返回 alreadyInstalled，�
   try {
     const modules = join(dshHome, 'profiles', 'web', 'node_modules');
     await mkdir(modules, { recursive: true });
+    // the plugin is listed as a bundle layer in the profile manifest
+    await writeFile(join(dshHome, 'profiles', 'web', 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', private: true,
+      dependencies: { 'dsh-foo': 'file:/x' },
+      dsh: { profile: { bundles: ['dsh-foo'] } }
+    }));
     const existing = join(modules, 'dsh-foo');
     await mkdir(existing, { recursive: true });
     await writeFile(join(existing, 'package.json'), JSON.stringify({ name: 'dsh-foo', version: '1.0.0' }));

@@ -76,28 +76,73 @@ async function listScopedModules(modulesDir) {
   return entries;
 }
 
+/** Official core profile layers that ship with dsh and are not user plugins. */
+const CORE_BUNDLES = new Set(['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-headless']);
+
+/** Resolve a package name (`name` or `@scope/name`) inside a modules dir. */
+async function resolveModule(modulesDir, packageName) {
+  const path = join(modulesDir, packageName);
+  try { await fs.access(path); return { path, package: packageName }; } catch { return null; }
+}
+
 /**
- * List the plugins actually present in the web profile's node_modules.
- * Entries whose package.json cannot be read (e.g. a dangling symlink left by a
- * failed install) are reported as `broken` so the UI can offer a cleanup,
- * instead of being silently skipped.
+ * List the plugins a user can manage. A plugin is either a user bundle listed
+ * in the profile manifest's `dsh.profile.bundles` (dsh's own notion of a
+ * plugin layer), one of the launcher's bundled plugins, or a broken leftover
+ * of a failed install. Ordinary npm dependencies (d3, lodash, …) that happen
+ * to sit in node_modules are NOT plugins and must never be listed.
  * @returns {Promise<Array<{name:string,version:string|null,description:string,source:'bundled'|'user'|'broken',broken?:boolean}>>}
  */
 export async function listInstalledPlugins() {
-  const entries = await listScopedModules(profilesWebModules());
+  const modulesDir = profilesWebModules();
+  // 1) User plugin layer: read the profile manifest's bundle list.
+  const manifestPath = join(modulesDir, '..', 'package.json');
+  let bundles = [];
+  try {
+    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+    bundles = manifest.dsh?.profile?.bundles ?? [];
+  } catch { /* no manifest yet */ }
+
   const out = [];
-  for (const entry of entries) {
+  const seen = new Set();
+  const seenBundles = new Set();
+  for (const bundleName of bundles) {
+    if (CORE_BUNDLES.has(bundleName)) continue;
+    seenBundles.add(bundleName);
+    const entry = await resolveModule(modulesDir, bundleName);
+    if (!entry) continue;
     const meta = await readPackageMeta(entry.path);
     if (meta?.name) {
       const target = await linkTarget(entry.path);
       const source = target && BUNDLED_MARKERS.some(marker => target.includes(marker)) ? 'bundled' : 'user';
+      seen.add(meta.name);
       out.push({ name: meta.name, version: meta.version, description: meta.description, source });
-    } else if (entry.isLink) {
-      // A dangling symlink left by a failed install: report it so the UI can
-      // offer a cleanup, instead of silently skipping it.
+    }
+  }
+
+  // 2) Launcher-bundled plugins (symlinked into node_modules, not in bundles).
+  const entries = await listScopedModules(modulesDir);
+  for (const entry of entries) {
+    const target = await linkTarget(entry.path);
+    if (target && BUNDLED_MARKERS.some(marker => target.includes(marker))) {
+      const meta = await readPackageMeta(entry.path);
+      if (meta?.name && !seen.has(meta.name)) {
+        seen.add(meta.name);
+        out.push({ name: meta.name, version: meta.version, description: meta.description, source: 'bundled' });
+      }
+    }
+  }
+
+  // 3) Broken leftovers: dangling symlinks that do not back a real bundle.
+  for (const entry of entries) {
+    if (!entry.isLink || seen.has(entry.package)) continue;
+    const meta = await readPackageMeta(entry.path);
+    if (!meta?.name) {
+      seen.add(entry.package);
       out.push({ name: entry.package, version: null, description: '安装不完整或已损坏，可清理后重新安装', source: 'broken', broken: true });
     }
   }
+
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
 }
@@ -342,6 +387,20 @@ export async function uninstallPlugin(name) {
   }
 }
 
+/** Uninstall several plugins, reporting the outcome of each. */
+export async function uninstallPlugins(names) {
+  const results = [];
+  for (const name of names) {
+    try {
+      const result = await uninstallPlugin(name);
+      results.push({ name, ok: result.ok, error: result.error, note: result.note });
+    } catch (error) {
+      results.push({ name, ok: false, error: String(error?.message || error) });
+    }
+  }
+  return { ok: results.every(result => result.ok), results };
+}
+
 /**
  * Remove a leftover of a failed install (dangling symlink / partial checkout)
  * from the profile's node_modules. Only a bare package path (optionally under
@@ -487,6 +546,15 @@ export function apply(ctx) {
             const value = await body(req);
             if (!value?.name) { json(res, 400, { error: '缺少插件名' }); return; }
             json(res, 200, await uninstallPlugin(value.name));
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/uninstall-many', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            const names = Array.isArray(value?.names) ? value.names.filter(name => typeof name === 'string' && name) : [];
+            if (names.length === 0) { json(res, 400, { error: '缺少要卸载的插件' }); return; }
+            json(res, 200, await uninstallPlugins(names));
           } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/cleanup', handler: async (req, res) => {

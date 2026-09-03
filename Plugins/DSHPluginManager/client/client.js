@@ -31,6 +31,9 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
 .dsh-pm-notice{background:rgba(82,196,26,.08);border-radius:6px;color:var(--dsw-alias-state-success-primary);font-size:12px;margin-bottom:10px;padding:8px 10px}
 .dsh-pm-empty{color:var(--dsw-alias-label-tertiary);font-size:13px;padding:40px 0;text-align:center}
 .dsh-pm-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.dsh-pm-check{accent-color:var(--dsw-alias-brand-primary);cursor:pointer;flex:0 0 16px;height:16px;margin:0;width:16px}
+.dsh-pm-bulkbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.dsh-pm-bulkbar .dsh-pm-tool{font-size:12px;padding:4px 10px}
 .dsh-pm-search{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);border-radius:8px;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;flex:1 1 220px;min-width:180px;padding:7px 12px}
 .dsh-pm-search:focus{border-color:var(--dsw-alias-brand-primary);outline:none}
 .dsh-pm-chips{display:flex;gap:6px;flex-wrap:wrap}
@@ -135,6 +138,8 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
     const [detail, setDetail] = React.useState(null)
     const [busy, setBusy] = React.useState('')
     const [confirmUninstall, setConfirmUninstall] = React.useState(null)
+    const [selected, setSelected] = React.useState(new Set())
+    const [confirmBatch, setConfirmBatch] = React.useState(false)
     const [error, setError] = React.useState('')
     const [notice, setNotice] = React.useState('')
     const autoRefreshed = React.useRef(false)
@@ -194,6 +199,36 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
         .catch(e => setError(String(e.message || e))).finally(() => setBusy(''))
     }
 
+    const manageable = installed.filter(item => !item.broken && item.source !== 'bundled')
+    const selectedNames = manageable.filter(item => selected.has(item.name)).map(item => item.name)
+    const toggleSelect = (name) => {
+      const next = new Set(selected)
+      if (next.has(name)) next.delete(name); else next.add(name)
+      setSelected(next)
+    }
+    const toggleSelectAll = () => {
+      if (manageable.length > 0 && selectedNames.length === manageable.length) setSelected(new Set())
+      else setSelected(new Set(manageable.map(item => item.name)))
+    }
+    const toggleInvert = () => {
+      const next = new Set(selected)
+      manageable.forEach(item => { if (next.has(item.name)) next.delete(item.name); else next.add(item.name) })
+      setSelected(next)
+    }
+    const uninstallManyGo = () => {
+      if (selectedNames.length === 0) return
+      setBusy('uninstall-many'); setConfirmBatch(false); setError(''); setNotice('')
+      fetch('/dsh-plugin-manager/uninstall-many', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ names: selectedNames }) })
+        .then(r => r.json()).then(v => {
+          if (v.error) throw Error(v.error)
+          const failed = (v.results || []).filter(r => !r.ok)
+          setNotice(failed.length === 0 ? `已卸载 ${selectedNames.length} 个插件，重启 dsh 后生效` : `部分卸载失败：${failed.map(f => f.name).join('、')}`)
+          setSelected(new Set())
+          return loadInstalled()
+        })
+        .catch(e => setError(String(e.message || e))).finally(() => setBusy(''))
+    }
+
     const plugins = (market?.plugins || []).filter(plugin => {
       const term = normalizeText(search)
       const inTerm = !term || normalizeText(plugin.name + ' ' + plugin.repo + ' ' + plugin.descriptionEn + ' ' + plugin.descriptionZh).includes(term)
@@ -204,17 +239,23 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
     else if (sort === 'newest') plugins.sort((a, b) => String(b.addedDate || '').localeCompare(String(a.addedDate || '')))
     else plugins.sort((a, b) => (b.stars || 0) - (a.stars || 0))
 
-    const installedRows = installed.map(item => h('div', { className: 'dsh-pm-row', key: item.name },
-      h('div', { className: 'dsh-pm-row-main' },
-        h('div', { className: 'dsh-pm-row-title' }, item.name),
-        h('div', { className: 'dsh-pm-row-meta' }, `${item.description || '无描述'}${item.version ? ` · v${item.version}` : ''}`)),
-      item.source === 'bundled' ? h('span', { className: 'dsh-pm-badge' }, '内置') : null,
-      item.broken ? h('span', { className: 'dsh-pm-badge', style: { borderColor: 'var(--dsw-alias-state-error-primary)', color: 'var(--dsw-alias-state-error-primary)' } }, '损坏') : null,
-      item.broken
-        ? h('button', { className: 'dsh-pm-row-action', disabled: busy === 'cleanup-' + item.name, onClick: () => cleanupBroken(item), title: '清理损坏的安装残留' }, busy === 'cleanup-' + item.name ? '清理中…' : '清理')
-        : item.source === 'bundled'
-          ? h('button', { className: 'dsh-pm-row-action', disabled: true, title: '内置插件不可卸载' }, '—')
-          : h('button', { className: 'dsh-pm-row-action', disabled: busy === 'uninstall', onClick: () => requestUninstall(item), title: '卸载' }, '卸载')))
+    const installedRows = installed.map(item => {
+      const selectable = !item.broken && item.source !== 'bundled'
+      return h('div', { className: 'dsh-pm-row', key: item.name },
+        selectable
+          ? h('input', { type: 'checkbox', className: 'dsh-pm-check', checked: selected.has(item.name), onChange: () => toggleSelect(item.name), 'aria-label': '选择 ' + item.name })
+          : h('span', { className: 'dsh-pm-check', 'aria-hidden': true }),
+        h('div', { className: 'dsh-pm-row-main' },
+          h('div', { className: 'dsh-pm-row-title' }, item.name),
+          h('div', { className: 'dsh-pm-row-meta' }, `${item.description || '无描述'}${item.version ? ` · v${item.version}` : ''}`)),
+        item.source === 'bundled' ? h('span', { className: 'dsh-pm-badge' }, '内置') : null,
+        item.broken ? h('span', { className: 'dsh-pm-badge', style: { borderColor: 'var(--dsw-alias-state-error-primary)', color: 'var(--dsw-alias-state-error-primary)' } }, '损坏') : null,
+        item.broken
+          ? h('button', { className: 'dsh-pm-row-action', disabled: busy === 'cleanup-' + item.name, onClick: () => cleanupBroken(item), title: '清理损坏的安装残留' }, busy === 'cleanup-' + item.name ? '清理中…' : '清理')
+          : item.source === 'bundled'
+            ? h('button', { className: 'dsh-pm-row-action', disabled: true, title: '内置插件不可卸载' }, '—')
+            : h('button', { className: 'dsh-pm-row-action', disabled: busy === 'uninstall' || busy === 'uninstall-many', onClick: () => requestUninstall(item), title: '卸载' }, '卸载'))
+    })
 
     const marketCards = plugins.map(plugin => {
       const isInstalled = installedKey(plugin, installed)
@@ -289,8 +330,20 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
             h('div', { className: 'dsh-pm-confirm-actions' },
               h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setConfirmUninstall(null), disabled: busy === 'uninstall' }, '取消'),
               h('button', { className: 'dsh-pm-confirm-danger', onClick: confirmUninstallGo, disabled: busy === 'uninstall' }, busy === 'uninstall' ? '卸载中…' : '确认卸载'))),
+          confirmBatch && h('div', { className: 'dsh-pm-confirm' },
+            h('div', { className: 'dsh-pm-confirm-title' }, `确认卸载选中的 ${selectedNames.length} 个插件？`),
+            h('div', { className: 'dsh-pm-confirm-copy' }, '卸载后需要重启 dsh 才能生效。'),
+            h('div', { className: 'dsh-pm-confirm-actions' },
+              h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setConfirmBatch(false), disabled: busy === 'uninstall-many' }, '取消'),
+              h('button', { className: 'dsh-pm-confirm-danger', onClick: uninstallManyGo, disabled: busy === 'uninstall-many' }, busy === 'uninstall-many' ? '卸载中…' : '确认卸载'))),
           tab === 'installed'
-            ? (installed.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '还没有已安装的插件，去插件市场看看吧') : h('div', { className: 'dsh-pm-list' }, installedRows))
+            ? (installed.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '还没有已安装的插件，去插件市场看看吧')
+               : h('div', null,
+                   h('div', { className: 'dsh-pm-bulkbar' },
+                     h('button', { className: 'dsh-pm-tool', onClick: toggleSelectAll }, manageable.length > 0 && selectedNames.length === manageable.length ? '取消全选' : '全选'),
+                     h('button', { className: 'dsh-pm-tool', onClick: toggleInvert }, '反选'),
+                     h('button', { className: 'dsh-pm-tool', disabled: selectedNames.length === 0 || busy === 'uninstall-many', onClick: () => setConfirmBatch(true), style: selectedNames.length > 0 ? { color: 'var(--dsw-alias-state-error-primary)' } : undefined }, `批量卸载${selectedNames.length ? ` (${selectedNames.length})` : ''}`)),
+                   h('div', { className: 'dsh-pm-list' }, installedRows)))
             : marketTab,
           drawer)))
   }
