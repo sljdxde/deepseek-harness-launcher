@@ -93,6 +93,9 @@ rg -Fq '安装进度：正在下载 npm 依赖' "$ROOT/Sources/DSHInstallWindowC
 rg -Fq '安装完成后会自动打开 DeepSeek Harness Web 页面' "$ROOT/Sources/DSHInstallWindowController.swift"
 rg -Fq '打开 Deepseek Harness' "$ROOT/Sources/main.swift"
 rg -Fq '退出 Deepseek Harness' "$ROOT/Sources/main.swift"
+rg -Fq '重启 dsh' "$ROOT/Sources/main.swift"
+rg -q 'restartDSH' "$ROOT/Sources/main.swift"
+rg -q 'stopDHL \{.*start\(\)' "$ROOT/Sources/main.swift"
 if rg -Fq 'menuRowItem(title: "打开 Deepseek Harness Launcher"' "$ROOT/Sources/main.swift" || rg -Fq 'menuRowItem(title: "退出 Deepseek Harness Launcher"' "$ROOT/Sources/main.swift"; then
   echo "menu labels must use the shorter Deepseek Harness name" >&2
   exit 1

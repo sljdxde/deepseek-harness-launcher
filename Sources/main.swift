@@ -164,6 +164,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         let open = menuRowItem(title: "打开 Deepseek Harness", action: #selector(openDHL), keyEquivalent: "o")
         let port = menuRowItem(title: "端口：未运行", action: nil, enabled: { false }); port.tag = 1001
         portMenuRow = port.view as? MenuRowView
+        let restart = menuRowItem(title: "重启 dsh", action: #selector(restartDSH), keyEquivalent: "r")
         let update = menuRowItem(title: "检查更新", action: #selector(checkForUpdates))
         update.tag = 1002; updateMenuItem = update; updateMenuRow = update.view as? MenuRowView
         let dshUpdate = menuRowItem(title: "检查 dsh 更新", action: #selector(checkDSHForUpdates))
@@ -171,7 +172,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         let settingsItem = makeSettingsMenuItem()
         let logs = menuRowItem(title: "打开日志", action: #selector(openLogs), keyEquivalent: "l")
         let quit = menuRowItem(title: "退出 Deepseek Harness", action: #selector(quit), keyEquivalent: "q")
-        [open, port, NSMenuItem.separator(), update, dshUpdate, settingsItem, logs, quit].forEach(menu.addItem)
+        [open, port, restart, NSMenuItem.separator(), update, dshUpdate, settingsItem, logs, quit].forEach(menu.addItem)
         return menu
     }
 
@@ -380,6 +381,23 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 completion?()
             }
+        }
+    }
+
+    /// Restart the managed dsh instance: stop every managed process, then start
+    /// fresh (reuses the installed runtime; triggers an upgrade only when a
+    /// bundled dsh version differs).
+    @objc private func restartDSH() {
+        guard dshInstallHandle == nil else {
+            showInfo(title: "正在安装或更新 dsh", message: "请等待当前安装/更新完成后再重启。")
+            return
+        }
+        setPortMenuTitle("正在重启 dsh…")
+        appendLogString("用户请求重启 dsh…\n")
+        stopDHL { [weak self] in
+            guard let self else { return }
+            self.appendLogString("dsh 已停止，正在重新启动…\n")
+            self.start()
         }
     }
 
