@@ -1,0 +1,430 @@
+<section style="max-width:677px;margin:0 auto;background:#FFFFFF;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;color:#52525B;line-height:1.8;letter-spacing:0.3px;overflow-x:hidden;">
+
+  <!-- ========== 1. 开头引言卡片（组件2）========== -->
+  <section style="margin:10px 10px 40px;padding:32px 24px 24px;border-top:1px solid #E4E4E7;border-bottom:1px solid #E4E4E7;background:#FFFFFF;">
+    <p style="font-size:11px;color:#A1A1AA;letter-spacing:2px;margin:0 0 18px;font-weight:400;">
+      <span leaf="">QUOTE</span>
+    </p>
+    <p style="font-size:18px;font-weight:700;color:#27272A;margin:0 0 8px;line-height:1.7;letter-spacing:0.5px;">
+      <span leaf="">用一行原生 Swift 代码，把 DeepSeek Harness 变成 macOS 菜单栏里那个</span>
+      <span style="border-bottom:2px solid #F97316;font-weight:700;color:#27272A;"><span leaf="">「点开即用、关掉就走」</span></span>
+      <span leaf="">的常驻工具——不套 WebView，不内嵌浏览器，不捆绑 Node 运行时。</span>
+    </p>
+  </section>
+
+  <!-- ========== 2. 前言导读（组件3）========== -->
+  <section style="padding:0 10px 40px;">
+    <p style="font-size:11px;color:#A1A1AA;margin:0 0 16px;letter-spacing:2px;">
+      <span leaf="">本文看点</span>
+    </p>
+    <section style="display:flex;justify-content:space-between;">
+      <section style="flex:1;background:#FAFAFA;border-top:1px solid #E4E4E7;padding:18px 12px 16px;margin-right:8px;">
+        <p style="font-size:11px;color:#A1A1AA;font-weight:500;margin:0 0 8px;letter-spacing:1px;"><span leaf="">01</span></p>
+        <p style="font-size:13px;font-weight:700;color:#27272A;margin:0;line-height:1.5;"><span leaf="">痛点：macOS 上跑 Harness 的真实困境</span></p>
+      </section>
+      <section style="flex:1;background:#FAFAFA;border-top:1px solid #E4E4E7;padding:18px 12px 16px;margin-right:8px;">
+        <p style="font-size:11px;color:#A1A1AA;font-weight:500;margin:0 0 8px;letter-spacing:1px;"><span leaf="">02</span></p>
+        <p style="font-size:13px;font-weight:700;color:#27272A;margin:0;line-height:1.5;"><span leaf="">设计核心：原生 Swift 薄壳 + Patch 增强注入</span></p>
+      </section>
+      <section style="flex:1;background:#FAFAFA;border-top:1px solid #E4E4E7;padding:18px 12px 16px;">
+        <p style="font-size:11px;color:#A1A1AA;font-weight:500;margin:0 0 8px;letter-spacing:1px;"><span leaf="">03</span></p>
+        <p style="font-size:13px;font-weight:700;color:#27272A;margin:0;line-height:1.5;"><span leaf="">效果展示：四环节 GIF 演示</span></p>
+      </section>
+    </section>
+  </section>
+
+  <!-- ========== 第一章：痛点（组件5，首章 margin-top:16px）========== -->
+  <section style="margin-top:16px;margin-bottom:32px;padding:0 10px;">
+    <section style="position:relative;padding-bottom:20px;border-bottom:1px solid #E4E4E7;">
+      <p style="font-size:48px;font-weight:900;color:#E4E4E7;margin:0;line-height:1;letter-spacing:-2px;">
+        <span leaf="">01</span>
+      </p>
+      <section style="margin-top:-8px;">
+        <p style="font-size:10px;color:#A1A1AA;font-weight:500;letter-spacing:3px;margin:0 0 6px;text-transform:uppercase;">
+          <span leaf="">PAIN POINTS</span>
+        </p>
+        <h3 style="font-size:20px;font-weight:800;color:#27272A;margin:0;letter-spacing:0.5px;line-height:1.4;">
+          <span leaf="">痛点：在 macOS 上跑 Harness，为什么总感觉「差点意思」</span>
+        </h3>
+      </section>
+    </section>
+
+    <!-- 第一章正文 -->
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">如果你一直在用 </span>
+      <span style="border-bottom:2px solid #52525B;font-weight:600;color:#27272A;"><span leaf="">@deepseek-ai/dsh</span></span>
+      <span leaf=""> 做本地 AI Agent 开发，大概率踩过这些坑：</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">命令行启动太原始</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">每次都要手敲 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">npx @deepseek-ai/dsh web</span></span>
+      <span leaf="">，自己管进程生命周期。终端一关、窗口一关，Harness 就没了；忘了关呢？后台留一堆孤儿 node/npm 进程，端口还被占着。</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">官方桌面版太重</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf=""></span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">deepseek-harness-desktop</span></span>
+      <span leaf=""> 用 Tauri 2 打包，自带 WebView 外壳和完整 Node 运行时。功能全，但对一个「只想在本地跑 Harness」的 macOS 用户来说，体量大、内存高、启动慢——你并不需要它帮你管多版本内核，你的系统上已经有 Node 了。</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">没有菜单栏入口</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">想打开 Harness 得翻终端、敲命令、等启动。没有全局快捷键，没有开机自启，没有「就绪后自动开浏览器」。它只是一个命令，不是一个工具。</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">归档会话管理弱</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">Harness 跑久了，归档列表越来越长。想清理？得去翻 session 目录、手动删文件、改 workspace.json——稍有不慎就索引错乱。</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">插件生态分散</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">社区有 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">awesome-dsh-plugin</span></span>
+      <span leaf=""> 一堆好插件，但安装全靠手动跑 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">dsh plugin install</span></span>
+      <span leaf="">，装了什么、版本多少、怎么卸载，没有一个统一界面。</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">更新两条线各管各的</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf=""></span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">@deepseek-ai/dsh</span></span>
+      <span leaf=""> 发新版你得自己留意 npm；启动器自身有没有更新也得自己去 GitHub 看。没有自动检查，没有一键升级。</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">进程生命周期没人管</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">停止 Harness 时直接 kill pid？可能漏杀子进程；重启时旧进程没退干净？端口冲突。SIGTERM / SIGKILL 的级联终止、精确匹配启动器自身路径与 patch 身份——这些事不该由人肉来做。</span>
+    </p>
+  </section>
+
+  <!-- 章节分割线（组件4） -->
+  <section style="padding:0 10px;">
+    <section style="height:1px;background:#E4E4E7;margin:0;">
+      <span leaf=""><br></span>
+    </section>
+  </section>
+
+  <!-- ========== 第二章：设计核心（组件5）========== -->
+  <section style="margin-top:56px;margin-bottom:32px;padding:0 10px;">
+    <section style="position:relative;padding-bottom:20px;border-bottom:1px solid #E4E4E7;">
+      <p style="font-size:48px;font-weight:900;color:#E4E4E7;margin:0;line-height:1;letter-spacing:-2px;">
+        <span leaf="">02</span>
+      </p>
+      <section style="margin-top:-8px;">
+        <p style="font-size:10px;color:#A1A1AA;font-weight:500;letter-spacing:3px;margin:0 0 6px;text-transform:uppercase;">
+          <span leaf="">DESIGN CORE</span>
+        </p>
+        <h3 style="font-size:20px;font-weight:800;color:#27272A;margin:0;letter-spacing:0.5px;line-height:1.4;">
+          <span leaf="">设计核心：做一层「恰到好处」的原生薄壳</span>
+        </h3>
+      </section>
+    </section>
+
+    <!-- 第二章正文 -->
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">Deepseek Harness Launcher（简称 DHL）的定位非常明确：</span>
+      <strong style="color:#27272A;"><span leaf="">它是第三种、且是 macOS 专属的轻量方案</span></strong>
+      <span leaf="">——在「命令行裸跑」和「Tauri 桌面版」之间，找到一条最适合 macOS 用户的路。</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">纯原生 Swift / AppKit，零 WebView</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">整个启动器用 </span>
+      <span style="border-bottom:2px solid #52525B;font-weight:600;color:#27272A;"><span leaf="">Swift + AppKit</span></span>
+      <span leaf=""> 写成，编译为 Universal 2（arm64 + x86_64）。它是 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">LSUIElement</span></span>
+      <span leaf=""> 类型的菜单栏应用——不在 Dock 占格，随系统外观（浅色/深色）自动切换，内存占用极低。不套 WebView、不用 Electron、不打包 Tauri，就是一份干净的原生 macOS 代码。</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">只做薄壳，不替代内核</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">DHL </span>
+      <strong style="color:#27272A;"><span leaf="">不携带 Node 运行时，也不管理多个 dsh 内核版本</span></strong>
+      <span leaf="">。它的职责只有一件事：在你已经装好 Node 和 npm 的 macOS 上，把 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">@deepseek-ai/dsh</span></span>
+      <span leaf=""> 拉起来、管好、并注入一点增强。Harness 原有的 profile、会话、其他插件——全部仍由 dsh 自己管理，DHL 绝不越界。</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">低内存的可靠安装</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">首次启动时，DHL 把 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">@deepseek-ai/dsh</span></span>
+      <span leaf=""> 安装到 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">~/.dsh/runtime</span></span>
+      <span leaf="">。关键设计：使用 App 内置锁定版本的 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">package-lock.json</span></span>
+      <span leaf="">，走 </span>
+      <span style="border-bottom:2px solid #52525B;font-weight:600;color:#27272A;"><span leaf="">npm ci</span></span>
+      <span leaf="">（而非 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">npm install</span></span>
+      <span leaf="">）做依赖复放。峰值内存仅 0.3～0.6GB（CI 门禁硬限 1GB），默认优先国内镜像、失败自动回退官方源。后续启动直接复用固定 runtime，不再触发 npx 的解析开销。</span>
+    </p>
+
+    <!-- npm ci 命令代码块（通用库 1a 深色） -->
+    <section style="margin:0 0 20px;border-radius:8px;overflow:hidden;background:#1E293B;box-shadow:0 4px 16px -8px rgba(15,23,42,0.4);">
+      <section style="display:flex;align-items:center;padding:9px 14px;background:#0F172A;">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#FF5F56;margin-right:7px;font-size:0;line-height:0;overflow:hidden;">.</span>
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#FFBD2E;margin-right:7px;font-size:0;line-height:0;overflow:hidden;">.</span>
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#27C93F;font-size:0;line-height:0;overflow:hidden;">.</span>
+        <span style="margin-left:12px;font-size:12px;color:#64748B;font-family:Consolas,Monaco,monospace;letter-spacing:1px;"><span leaf="">bash</span></span>
+      </section>
+      <section style="padding:11px 14px;">
+        <p style="margin:0;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:13px;line-height:1.6;color:#E2E8F0;"><span leaf="">npm ci --prefix ~/.dsh/runtime --no-audit --no-fund \</span></p>
+        <p style="margin:0;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:13px;line-height:1.6;color:#E2E8F0;"><span leaf="">　　--prefer-offline --registry &lt;registry&gt;</span></p>
+      </section>
+    </section>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">智能端口管理与优雅生命周期</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">启动前扫描 3080 到 3099 端口：发现正在响应的 Harness 实例就直接复用；否则绑定第一个可用端口。停止或更新时，对 Harness 进程组执行 </span>
+      <span style="border-bottom:2px solid #52525B;font-weight:600;color:#27272A;"><span leaf="">SIGTERM → SIGKILL 级联终止</span></span>
+      <span leaf="">（含超时兜底），并通过精确匹配启动器自身路径与 patch 参数来识别目标进程——不误杀、不残留。</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">通过 Cordis Patch 注入增强，不污染用户配置</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">DHL 不改写你已有的 Cordis 配置文件。它在启动时通过 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">--patch</span></span>
+      <span leaf=""> 注入自己的 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">cordis.patch.yml</span></span>
+      <span leaf="">，以软链接方式把内置插件（归档管理 DSHArchiveManager、插件市场 DSHPluginManager）挂进 dsh 的插件目录。卸载 DHL 时只移除自有资源链接，你的会话、profile、其他插件数据完整保留。</span>
+    </p>
+  </section>
+
+  <!-- 章节分割线 -->
+  <section style="padding:0 10px;">
+    <section style="height:1px;background:#E4E4E7;margin:0;">
+      <span leaf=""><br></span>
+    </section>
+  </section>
+
+  <!-- ========== 第三章：解决问题（组件5）========== -->
+  <section style="margin-top:56px;margin-bottom:32px;padding:0 10px;">
+    <section style="position:relative;padding-bottom:20px;border-bottom:1px solid #E4E4E7;">
+      <p style="font-size:48px;font-weight:900;color:#E4E4E7;margin:0;line-height:1;letter-spacing:-2px;">
+        <span leaf="">03</span>
+      </p>
+      <section style="margin-top:-8px;">
+        <p style="font-size:10px;color:#A1A1AA;font-weight:500;letter-spacing:3px;margin:0 0 6px;text-transform:uppercase;">
+          <span leaf="">SOLUTION</span>
+        </p>
+        <h3 style="font-size:20px;font-weight:800;color:#27272A;margin:0;letter-spacing:0.5px;line-height:1.4;">
+          <span leaf="">解决问题：每个痛点，都有一个对应的解</span>
+        </h3>
+      </section>
+    </section>
+
+    <!-- 第三章：表格映射（组件12 表格） -->
+    <section style="margin:0 10px 24px;overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <thead>
+          <tr>
+            <th style="background:#27272A;color:#fff;font-weight:700;padding:10px 12px;text-align:left;"><span leaf="">你遇到的麻烦</span></th>
+            <th style="background:#27272A;color:#fff;font-weight:700;padding:10px 12px;text-align:left;"><span leaf="">DHL 怎么解决</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;"><span leaf="">每次手敲命令启动</span></td>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;"><span leaf="">菜单栏图标常驻，点击「打开」即可；Spotlight / Raycast 搜索 <code style="background:#F4F4F5;color:#27272A;padding:1px 4px;border-radius:3px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:13px;"><span leaf="">dsh</span></code> 或 <code style="background:#F4F4F5;color:#27272A;padding:1px 4px;border-radius:3px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:13px;"><span leaf="">dhl</span></code> 秒启</span></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;background:#FAFAFA;"><span leaf="">全局快捷呼出</span></td>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;background:#FAFAFA;"><span leaf="">默认 ⌃⌥D，任意应用中一键呼出浏览器到 Harness 界面；可在设置中自定义录制</span></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;"><span leaf="">进程残留 / 端口冲突</span></td>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;"><span leaf="">级联 SIGTERM→SIGKILL 终止 + 精确路径匹配；退出时彻底清理</span></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;background:#FAFAFA;"><span leaf="">安装重 / 慢 / 易失败</span></td>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;background:#FAFAFA;"><span leaf="">锁定 runtime + npm ci 低内存路径 + 镜像回退 + 原子替换；安装窗口实时显示进度</span></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;"><span leaf="">归档会话难管理</span></td>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;"><span leaf="">内置 <strong style="color:#27272A;"><span leaf="">DSHArchiveManager</span></strong> 面板：列出归档会话、显示工作区与后代数量、支持单条/批量删除（带二次确认）</span></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;background:#FAFAFA;"><span leaf="">插件分散难管理</span></td>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;background:#FAFAFA;"><span leaf="">内置 <strong style="color:#27272A;"><span leaf="">DSHPluginManager</span></strong> 插件市场：已安装 / 插件市场双页，来自 awesome-dsh-plugin 数据，一键安装/卸载</span></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;"><span leaf="#">更新要自己跟进</span></td>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;"><span leaf="">启动器自更新（对接 GitHub Releases，下载 DMG 并自替换）；dsh 版本异步检查，有新版本菜单栏提示</span></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;background:#FAFAFA;"><span leaf="">没有开机自启</span></td>
+            <td style="padding:10px 12px;border-bottom:1px solid #E4E4E7;color:#52525B;background:#FAFAFA;"><span leaf="">通过 LaunchAgent（com.local.dhl-launcher）实现登录项，设置中一键开关</span></td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px;color:#52525B;"><span leaf="">不知道运行状态</span></td>
+            <td style="padding:10px 12px;color:#52525B;"><span leaf="">菜单栏实时显示当前端口（未运行则显示「未运行」）；所有日志写入 ~/Library/Logs/Deepseek Harness Launcher/dhl.log</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </section>
+
+  <!-- 章节分割线 -->
+  <section style="padding:0 10px;">
+    <section style="height:1px;background:#E4E4E7;margin:0;">
+      <span leaf=""><br></span>
+    </section>
+  </section>
+
+  <!-- ========== 第四章：效果展示（组件5）========== -->
+  <section style="margin-top:56px;margin-bottom:32px;padding:0 10px;">
+    <section style="position:relative;padding-bottom:20px;border-bottom:1px solid #E4E4E7;">
+      <p style="font-size:48px;font-weight:900;color:#E4E4E7;margin:0;line-height:1;letter-spacing:-2px;">
+        <span leaf="">04</span>
+      </p>
+      <section style="margin-top:-8px;">
+        <p style="font-size:10px;color:#A1A1AA;font-weight:500;letter-spacing:3px;margin:0 0 6px;text-transform:uppercase;">
+          <span leaf="">DEMO</span>
+        </p>
+        <h3 style="font-size:20px;font-weight:800;color:#27272A;margin:0;letter-spacing:0.5px;line-height:1.4;">
+          <span leaf="">效果展示</span>
+        </h3>
+      </section>
+    </section>
+
+    <!-- 架构图（组件14 图片容器） -->
+    <section style="border:1px solid #E4E4E7;padding:4px;margin:0 10px 12px;">
+      <section style="margin:0;overflow:hidden;">
+        <span leaf=""><img src="assets/architecture.png" style="max-width:100%;height:auto;display:block;margin:0 auto;"></span>
+      </section>
+    </section>
+    <p style="font-size:12px;color:#A1A1AA;text-align:center;margin:0 10px 28px;letter-spacing:0.5px;">
+      <span leaf="">— DHL 架构总览：原生菜单栏薄壳 → dsh web profile → 浏览器呈现</span>
+    </p>
+
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">上图是 DHL 的整体架构：原生菜单栏 App 作为薄壳，拉起 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">~/.dsh/runtime</span></span>
+      <span leaf=""> 中的 dsh web profile，注入归档管理与插件市场增强 patch，最终通过系统默认浏览器呈现 Harness 界面。端口 3080–3099 智能复用，无 patch 时基础模式降级运行。</span>
+    </p>
+
+    <!-- GIF 1：安装流程（通用库 2c 待补素材占位） -->
+    <section style="margin:0 0 24px;padding:30px 20px;border:1.5px dashed #DAD7D2;border-radius:14px;background:#FAFAF8;text-align:center;">
+      <p style="margin:0 0 10px;font-size:26px;line-height:1;"><span leaf="">🎬</span></p>
+      <p style="margin:0;font-size:14px;font-weight:700;color:#9CA3AF;letter-spacing:1px;"><span leaf="">待补素材</span></p>
+      <p style="margin:8px 0 0;font-size:13px;color:#B8B5B0;line-height:1.7;"><span leaf="">此处插入：安装流程演示 GIF（首次启动安装窗口与 npm ci 进度）</span></p>
+    </section>
+
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">首次启动 DHL 时，如果检测到 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">~/.dsh/runtime</span></span>
+      <span leaf=""> 不存在，会弹出安装窗口。窗口实时读取 npm 输出，显示当前操作阶段（解析/下载/写入/校验）、已下载数量和已等待时长。安装走 </span>
+      <span style="border-bottom:2px solid #52525B;font-weight:600;color:#27272A;"><span leaf="">npm ci 低内存路径</span></span>
+      <span leaf="">，默认优先 npmmirror 镜像，失败自动回退 npmjs。整个过程峰值内存控制在 0.6GB 以内，CI 有 1GB 硬门禁把关。</span>
+    </p>
+
+    <!-- GIF 2：启动与运行 -->
+    <section style="margin:0 0 24px;padding:30px 20px;border:1.5px dashed #DAD7D2;border-radius:14px;background:#FAFAF8;text-align:center;">
+      <p style="margin:0 0 10px;font-size:26px;line-height:1;"><span leaf="">🎬</span></p>
+      <p style="margin:0;font-size:14px;font-weight:700;color:#9CA3AF;letter-spacing:1px;"><span leaf="">待补素材</span></p>
+      <p style="margin:8px 0 0;font-size:13px;color:#B8B5B0;line-height:1.7;"><span leaf="">此处插入：启动与运行演示 GIF（菜单栏图标 → 端口显示 → 浏览器打开）</span></p>
+    </section>
+
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">安装完成后，DHL 进入正常运行状态：菜单栏出现图标并实时显示端口号（如「端口：3080」）。点击菜单项「打开 Deepseek Harness」或按下全局快捷键 </span>
+      <span style="border-bottom:2px solid #52525B;font-weight:600;color:#27272A;"><span leaf="">⌃⌥D</span></span>
+      <span leaf="">，系统默认浏览器自动跳转到 Harness Web 界面。已有标签页时聚焦原标签，不重复新开。设置中可配置「就绪后自动打开浏览器」开关。</span>
+    </p>
+
+    <!-- GIF 3：日常运行 -->
+    <section style="margin:0 0 24px;padding:30px 20px;border:1.5px dashed #DAD7D2;border-radius:14px;background:#FAFAF8;text-align:center;">
+      <p style="margin:0 0 10px;font-size:26px;line-height:1;"><span leaf="">🎬</span></p>
+      <p style="margin:0;font-size:14px;font-weight:700;color:#9CA3AF;letter-spacing:1px;"><span leaf="">待补素材</span></p>
+      <p style="margin:8px 0 0;font-size:13px;color:#B8B5B0;line-height:1.7;"><span leaf="">此处插入：日常运行演示 GIF（菜单栏操作、设置窗口、日志查看）</span></p>
+    </section>
+
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">日常使用中，DHL 静默驻留在菜单栏。右键/左键点击图标可查看端口状态、打开日志、检查更新、进入设置。设置窗口提供：自动更新开关与频率、浏览器自动打开、开机自启、全局快捷键录制。所有 stdout/stderr 与生命周期事件完整记录到日志文件，排障时一键「打开日志」即可定位问题。</span>
+    </p>
+
+    <!-- GIF 4：新功能介绍 -->
+    <section style="margin:0 0 24px;padding:30px 20px;border:1.5px dashed #DAD7D2;border-radius:14px;background:#FAFAF8;text-align:center;">
+      <p style="margin:0 0 10px;font-size:26px;line-height:1;"><span leaf="">🎬</span></p>
+      <p style="margin:0;font-size:14px;font-weight:700;color:#9CA3AF;letter-spacing:1px;"><span leaf="">待补素材</span></p>
+      <p style="margin:8px 0 0;font-size:13px;color:#B8B5B0;line-height:1.7;"><span leaf="">此处插入：新功能介绍 GIF（归档管理面板 + 插件市场操作）</span></p>
+    </section>
+
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">两大内置增强功能均通过 Cordis patch 注入，不影响 Harness 原有配置：</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">归档管理面板（DSHArchiveManager）</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">在 Harness Web 界面侧边栏新增入口，展示所有归档会话及其工作区、后代数量。支持单选/全选、单条删除与批量删除，二次确认后永久清除（先移入临时暂存区再原子清理，失败自动回滚）。</span>
+    </p>
+
+    <p style="font-size:15px;font-weight:800;color:#27272A;margin:28px 0 14px;padding-left:12px;border-left:3px solid #52525B;line-height:1.4;">
+      <span leaf="">插件市场（DSHPluginManager）</span>
+    </p>
+    <p style="margin-bottom:22px;font-size:15px;line-height:1.8;text-align:justify;color:#52525B;letter-spacing:0.3px;">
+      <span leaf="">侧边栏「插件管理」入口，含「已安装」与「插件市场」两个页面。市场数据来自 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">awesome-dsh-plugin</span></span>
+      <span leaf="">，支持分类浏览、搜索、按星级/下载量排序、一键安装。安装/卸载通过 </span>
+      <span style="background:#F4F4F5;color:#27272A;padding:2px 6px;border-radius:4px;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:14px;"><span leaf="">dsh plugin --profile web</span></span>
+      <span leaf=""> 执行，缺 pnpm 时自动用 corepack 自举。</span>
+    </p>
+  </section>
+
+  <!-- ========== END 分割线（组件15）========== -->
+  <section style="padding:0 10px;">
+    <section style="text-align:center;margin:0 0 36px;">
+      <section style="display:flex;align-items:center;justify-content:center;">
+        <span style="height:1px;width:48px;background:#E4E4E7;margin-right:16px;"><span leaf=""><br></span></span>
+        <span style="font-size:10px;color:#A1A1AA;letter-spacing:4px;font-weight:500;"><span leaf="">END</span></span>
+        <span style="height:1px;width:48px;background:#E4E4E7;margin-left:16px;"><span leaf=""><br></span></span>
+      </section>
+    </section>
+  </section>
+
+  <!-- ========== 尾部签名区（组件16）========== -->
+  <section style="padding:0 10px 24px;">
+    <section style="border-top:1px solid #E4E4E7;padding-top:28px;">
+      <p style="margin-bottom:16px;font-size:15px;line-height:1.8;color:#52525B;text-align:justify;">
+        <span leaf="">我是 {{作者名}}，{{一句话简介}}。</span>
+      </p>
+      <p style="margin-bottom:0;font-size:15px;line-height:1.8;color:#52525B;text-align:justify;">
+        <span leaf="">如果你觉得今天这篇有收获，欢迎</span>
+        <strong style="color:#27272A;"><span leaf="">点赞、在看、转发</span></strong>
+        <span leaf="">三连，我们下篇见。</span>
+      </p>
+    </section>
+  </section>
+
+</section>
