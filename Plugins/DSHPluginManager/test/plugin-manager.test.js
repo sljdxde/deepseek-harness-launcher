@@ -64,9 +64,14 @@ test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依�
       dependencies: { 'dsh-community-tool': 'file:/x', 'lodash-es': '1.0.0' },
       dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-community-tool'] } }
     }));
-    // bundled plugin: symlink whose target names a launcher bundle marker
+    // bundled plugin: symlink whose target names a launcher bundle marker.
+    // The fixture target must exist on every machine (CI has no installed
+    // app); a dangling symlink would classify as 'broken' instead.
+    const bundleFixture = join(dshHome, 'fixtures', 'DSHArchiveManager');
+    await mkdir(bundleFixture, { recursive: true });
+    await writeFile(join(bundleFixture, 'package.json'), JSON.stringify({ name: 'dsh-archive-manager', version: '0.1.0', description: 'Bundled fixture' }));
     const bundled = join(modules, 'dsh-archive-manager');
-    await symlink('/Applications/Deepseek Harness Launcher.app/Contents/Resources/DSHArchiveManager', bundled);
+    await symlink(bundleFixture, bundled);
     // user plugin (in bundles): a real directory with package.json
     const user = join(modules, 'dsh-community-tool');
     await mkdir(user, { recursive: true });
