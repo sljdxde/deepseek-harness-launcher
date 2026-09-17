@@ -92,7 +92,7 @@ private final class MenuRowView: NSView {
     }
 }
 
-final class DHLLauncher: NSObject, NSApplicationDelegate {
+final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private var process: Process?
     private var selectedPort: Int?
@@ -114,6 +114,16 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
     private var dshInstallHandle: DSHRuntimeInstallHandle?
     private var dshInstallProgressTracker: DSHInstallProgressTracker?
     private var terminateAfterDSHInstall = false
+    // 会话完成提醒：内置 dsh-session-notify 插件把主会话 turn/end 记录在
+    // Harness 侧，启动器轮询后以菜单栏角标（Foxmail 风格）+ 菜单区块呈现。
+    private let sessionNotifyStore = SessionNotifyStore()
+    private var sessionNotifyMenuItems: [NSMenuItem] = []
+    private var sessionNotifyFailureStreak = 0
+    private var sessionNotifyUnavailableLogged = false
+    // dsh 重启瞬间（stop → start）可能同端口先后起两条轮询链，代际号让旧链自灭。
+    private var sessionNotifyLoopID = 0
+    private var browserOpenInFlight = false
+    private var lastBrowserOpenAt = Date.distantPast
     private let settings = LauncherSettings.shared
     private let updateService = UpdateService()
     private let dshUpdateService = DSHVersionService()
@@ -128,10 +138,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
     private var rootURL: URL { URL(fileURLWithPath: FileManager.default.currentDirectoryPath).deletingLastPathComponent().appendingPathComponent("deepseek-harness-launcher") }
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
     private var pluginManagerURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHPluginManager") ?? rootURL.appendingPathComponent("Plugins/DSHPluginManager") }
+    private var sessionNotifyPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSessionNotify") ?? rootURL.appendingPathComponent("Plugins/DSHSessionNotify") }
     private var bundledPlugins: [BundledPlugin] {
         [
             BundledPlugin(linkName: "dsh-archive-manager", bundleMarker: "DSHArchiveManager", url: pluginURL),
-            BundledPlugin(linkName: "dsh-plugin-manager", bundleMarker: "DSHPluginManager", url: pluginManagerURL)
+            BundledPlugin(linkName: "dsh-plugin-manager", bundleMarker: "DSHPluginManager", url: pluginManagerURL),
+            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL)
         ]
     }
     private var patchPath: String { pluginURL.appendingPathComponent("cordis.patch.yml").path }
@@ -155,6 +167,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         statusItem.button?.image = makeStatusImage()
         statusItem.button?.toolTip = "\(LauncherBrand.fullName) (\(LauncherBrand.shortName))"
         statusItem.menu = makeMenu()
+        statusItem.menu?.delegate = self
     }
 
     private func makeMenu() -> NSMenu {
@@ -276,98 +289,118 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
     }
 
     private func openWebPage(on port: Int) {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return }
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        configuration.createsNewApplicationInstance = true
-        NSWorkspace.shared.open(url, configuration: configuration) { [weak self] _, error in
-            guard let error else { return }
-            DispatchQueue.main.async {
-                self?.appendLogString("打开 DeepSeek Harness Web 页面失败：\(error.localizedDescription)\n")
+        guard !browserOpenInFlight, Date().timeIntervalSince(lastBrowserOpenAt) > 2,
+              let url = URL(string: "http://127.0.0.1:\(port)/") else { return }
+        browserOpenInFlight = true
+        // 连接仅是页面存在的启发式信号，不代表能选中具体标签页。
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let clientPIDs = Set(self.lsofConnections(toPort: port).map(\.pid))
+            let table = self.processTable()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.state == .running, self.selectedPort == port else {
+                    self.browserOpenInFlight = false
+                    return
+                }
+                if self.activateBrowserConnected(clientPIDs: clientPIDs, table: table, port: port) {
+                    self.browserOpenInFlight = false
+                    return
+                }
+                let configuration = NSWorkspace.OpenConfiguration()
+                configuration.activates = true
+                configuration.createsNewApplicationInstance = false
+                NSWorkspace.shared.open(url, configuration: configuration) { [weak self] _, error in
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        self.browserOpenInFlight = false
+                        if let error {
+                            self.appendLogString("打开 Deepseek Harness Web 页面失败：\(error.localizedDescription)\n")
+                        } else {
+                            self.lastBrowserOpenAt = Date()
+                        }
+                    }
+                }
             }
         }
     }
 
-    private func focusExistingBrowserTab(for url: URL) -> Bool {
-        let supportedBrowserIDs = [
-            "com.google.chrome",
-            "com.apple.safari",
-            "com.microsoft.edgemac",
-            "com.brave.browser",
-            "company.thebrowser.browser",
-            "com.vivaldi.vivaldi",
-            "com.operasoftware.opera",
-            "org.chromium.chromium",
-            "com.apple.safaritechnologypreview"
-        ]
-        var browserIDs = NSWorkspace.shared.runningApplications
-            .compactMap(\.bundleIdentifier)
-            .filter { supportedBrowserIDs.contains($0.lowercased()) }
-        if let defaultAppURL = NSWorkspace.shared.urlForApplication(toOpen: url),
-           let defaultBundleID = Bundle(url: defaultAppURL)?.bundleIdentifier,
-           supportedBrowserIDs.contains(defaultBundleID.lowercased()),
-           !browserIDs.contains(where: { $0.caseInsensitiveCompare(defaultBundleID) == .orderedSame }) {
-            browserIDs.append(defaultBundleID)
+    /// 找出正在访问 Harness 端口的浏览器并前置它。检测走 `lsof` 客户端连接 +
+    /// `ps` 父子链定位浏览器主进程：零权限、不触发任何 TCC 授权弹窗。
+    /// 注意：连接数只能说明「有浏览器连着页面」，无法选中具体标签页；
+    /// 多显示器/多窗口下表现为浏览器被激活，但不保证切到 Harness 标签。
+    private func activateBrowserConnected(clientPIDs: Set<Int32>, table: [Int32: (ppid: Int32, command: String)], port: Int) -> Bool {
+        guard !clientPIDs.isEmpty else { return false }
+        // Chromium 的连接常记在 Helper(Network) 等子进程名下，且这类
+        // 进程不是 AppKit 意义上的「应用」；沿父子链向上找到浏览器
+        // 主进程再激活。
+        for pid in clientPIDs.sorted() {
+            guard let mainPID = walkToMainAppPID(startingAt: pid, table: table) else { continue }
+            guard let app = NSRunningApplication(processIdentifier: mainPID),
+                  app.bundleIdentifier != Bundle.main.bundleIdentifier else { continue }
+            if app.executableURL?.path.contains("/node") == true { continue }
+            guard app.activate(options: []) else { continue }
+            appendLogString("检测到 \(app.localizedName ?? "浏览器") 正在连接 Harness 端口 \(port)，已前置浏览器（不切换标签页）\n")
+            return true
         }
-        for bundleID in browserIDs {
-            guard let script = browserFocusScript(for: bundleID, url: url) else { continue }
-            var error: NSDictionary?
-            if let result = NSAppleScript(source: script)?.executeAndReturnError(&error), result.booleanValue {
-                return true
-            }
-        }
+        appendLogString("端口 \(port) 有客户端连接但未找到对应浏览器进程\n")
         return false
     }
 
-    private func browserFocusScript(for bundleID: String, url: URL) -> String? {
-        let absoluteURL = url.absoluteString
-        let targetURL = absoluteURL.hasSuffix("/") ? String(absoluteURL.dropLast()) : absoluteURL
-        let safeTargetURL = targetURL.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        switch bundleID.lowercased() {
-        case "com.google.chrome", "com.microsoft.edgemac", "com.brave.browser", "com.operasoftware.opera", "org.chromium.chromium", "com.vivaldi.vivaldi", "company.thebrowser.browser":
-            return """
-            tell application id "\(bundleID)"
-                activate
-                set targetURL to "\(safeTargetURL)"
-                repeat with w in windows
-                    repeat with i from 1 to (count of tabs of w)
-                        set t to tab i of w
-                        try
-                            set tabURL to (URL of t) as text
-                            if tabURL is targetURL or tabURL starts with (targetURL & "/") or tabURL starts with (targetURL & "?") then
-                                set active tab index of w to i
-                                set index of w to 1
-                                return true
-                            end if
-                        end try
-                    end repeat
-                end repeat
-                return false
-            end tell
-            """
-        case "com.apple.safari", "com.apple.safaritechnologypreview":
-            return """
-            tell application id "\(bundleID)"
-                activate
-                set targetURL to "\(safeTargetURL)"
-                repeat with w in windows
-                    repeat with t in tabs of w
-                        try
-                            set tabURL to (URL of t) as text
-                            if tabURL is targetURL or tabURL starts with (targetURL & "/") or tabURL starts with (targetURL & "?") then
-                                set current tab of w to t
-                                set index of w to 1
-                                return true
-                            end if
-                        end try
-                    end repeat
-                end repeat
-                return false
-            end tell
-            """
-        default:
-            return nil
+    private struct LsofEntry { let pid: Int32; let command: String; let name: String }
+
+    /// 同步跑一次 lsof。lsof -i 在连接多时可能超过几十毫秒，调用方应放到
+    /// 后台队列执行，避免阻塞主线程。
+    private func lsofConnections(toPort port: Int) -> [LsofEntry] {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        // -iTCP:@127.0.0.1:port 只看连到该端口的连接；-n 不做 DNS 反查（快）
+        task.arguments = ["-nP", "-a", "-iTCP:\(port)", "-sTCP:ESTABLISHED", "-Fpn"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do { try task.run() } catch { return [] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+        let pids = BrowserConnectionSupport.clientPIDs(output, port: port)
+        return pids.map { LsofEntry(pid: $0, command: "", name: "") }.sorted { $0.pid < $1.pid }
+    }
+
+    /// 一次 `ps` 拉全表：pid -> (ppid, 命令路径)，供向上找主进程用。
+    private func processTable() -> [Int32: (ppid: Int32, command: String)] {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-axo", "pid=,ppid=,command="]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do { try task.run() } catch { return [:] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        guard let output = String(data: data, encoding: .utf8) else { return [:] }
+        var table: [Int32: (Int32, String)] = [:]
+        for line in output.split(separator: "\n") {
+            let columns = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard columns.count >= 3,
+                  let pid = Int32(columns[0]), let ppid = Int32(columns[1]) else { continue }
+            // command 可能带空格（含 .app 路径），取剩余全部列
+            let command = columns[2...].joined(separator: " ")
+            table[pid] = (ppid, command)
         }
+        return table
+    }
+
+    /// 沿父子链向上找第一个「真正的应用」（AppKit 能识别的浏览器主进程）。
+    /// 最多上溯 6 层，防止 ps 时序抖动导致死循环。
+    private func walkToMainAppPID(startingAt pid: Int32, table: [Int32: (ppid: Int32, command: String)]) -> Int32? {
+        var applications: [Int32: String] = [:]
+        for app in NSWorkspace.shared.runningApplications {
+            applications[app.processIdentifier] = app.bundleIdentifier ?? ""
+        }
+        return BrowserConnectionSupport.browserPID(
+            start: pid, parents: table.mapValues { $0.ppid }, applications: applications
+        )
     }
 
     private func stopDHL(completion: (() -> Void)? = nil) {
@@ -552,10 +585,55 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
     private func presentUpdate(manifest: UpdateManifest) {
         let alert = NSAlert()
         alert.messageText = "发现 \(LauncherBrand.fullName) 新版本 v\(manifest.version)"
-        alert.informativeText = manifest.notes?.isEmpty == false ? manifest.notes! : "下载更新包后，在 Finder 中打开并安装。"
+        if let notes = manifest.notes, !notes.isEmpty, let accessory = makeReleaseNotesView(notes) {
+            alert.informativeText = updatePublishedText(manifest.publishedAt)
+            alert.accessoryView = accessory
+        } else {
+            alert.informativeText = "下载更新包后，在 Finder 中打开并安装。"
+        }
         alert.addButton(withTitle: "下载更新")
         alert.addButton(withTitle: "稍后")
         if alert.runModal() == .alertFirstButtonReturn { downloadUpdate(manifest) }
+    }
+
+    /// GitHub Release 的正文是 Markdown；用 ReleaseNotesSupport 渲染成带标题、
+    /// 列表与行内样式的只读文本，避免把 `##`、`**` 原样甩给用户。
+    private func makeReleaseNotesView(_ markdown: String) -> NSView? {
+        let width: CGFloat = 430
+        let height: CGFloat = min(300, max(140, CGFloat(markdown.split(separator: "\n").count) * 18))
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 0, height: 2)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textStorage?.setAttributedString(ReleaseNotesMarkdown.attributedString(from: markdown))
+        textView.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        textView.minSize = NSSize(width: width, height: height)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+
+        let scroll = NSScrollView()
+        scroll.documentView = textView
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .lineBorder
+        scroll.backgroundColor = .textBackgroundColor
+        scroll.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        return scroll
+    }
+
+    private func updatePublishedText(_ raw: String?) -> String {
+        guard let raw else { return "更新说明如下。" }
+        let iso = ISO8601DateFormatter()
+        guard let date = iso.date(from: raw) else { return "更新说明如下。" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return "发布于 \(formatter.string(from: date))。"
     }
 
     private func downloadUpdate(_ manifest: UpdateManifest) {
@@ -661,6 +739,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
                     self.selectedPort = port
                     self.setState(.running)
                     self.monitorArchivePlugin(port: port)
+                    self.monitorSessionNotify(port: port)
                     self.openBrowserWhenReadyIfNeeded()
                 case .launch(let port):
                     self.launch(port: port)
@@ -897,6 +976,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
             if let body, self.isHarnessWebBody(body) {
                 self.setState(.running)
                 self.monitorArchivePlugin(port: port)
+                self.monitorSessionNotify(port: port)
                 self.openBrowserWhenReadyIfNeeded()
             } else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
@@ -995,12 +1075,137 @@ final class DHLLauncher: NSObject, NSApplicationDelegate {
         // 基于上游 deepseek-harness-desktop 的菜单栏图标（干净单 path 剪影），
         // 作为 template 接入：深色菜单栏自动显示为白色、浅色为黑色。
         guard let url = Bundle.main.url(forResource: "menubar-creature", withExtension: "png"),
-              let image = NSImage(contentsOf: url) else {
+              let base = NSImage(contentsOf: url) else {
             return NSImage(size: NSSize(width: 18, height: 18))
         }
-        image.size = NSSize(width: 20, height: 20)
-        image.isTemplate = true
+        let unread = sessionNotifyStore.unreadCount
+        guard unread > 0, let badge = makeSessionNotifyBadgeImage(base: base, text: SessionNotifyStore.badgeText(for: unread)) else {
+            statusItem.length = NSStatusItem.squareLength
+            let image = base.copy() as! NSImage
+            image.size = NSSize(width: 20, height: 20)
+            image.isTemplate = true
+            return image
+        }
+        statusItem.length = NSStatusItem.variableLength
+        return badge
+    }
+
+    /// Foxmail 式未读角标：template 剪影按菜单栏明暗手动着色，右下角叠一枚
+    /// 红色胶囊 + 白色数字。template 机制无法只给局部上色，因此合成图关闭
+    /// template 并在每次轮询/打开菜单时重绘，外观切换后最多滞后一个轮询周期。
+    private func makeSessionNotifyBadgeImage(base: NSImage, text: String) -> NSImage? {
+        let iconSide: CGFloat = 18
+        let badgeFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold)
+        let textSize = (text as NSString).size(withAttributes: [.font: badgeFont])
+        let badgeHeight: CGFloat = 11
+        let badgeWidth = max(badgeHeight, ceil(textSize.width) + 6)
+        let size = NSSize(width: iconSide + badgeWidth - 3, height: iconSide + 2)
+
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let iconRect = NSRect(x: 0, y: size.height - iconSide, width: iconSide, height: iconSide)
+        base.draw(in: iconRect)
+        let appearance = statusItem.button?.window?.effectiveAppearance ?? NSApp.effectiveAppearance
+        let isDark = appearance.bestMatch(from: [NSAppearance.Name.aqua, NSAppearance.Name.darkAqua]) == .darkAqua
+        (isDark ? NSColor.white : NSColor.black).setFill()
+        iconRect.fill(using: .sourceAtop)
+
+        let badgeRect = NSRect(x: size.width - badgeWidth, y: 0, width: badgeWidth, height: badgeHeight)
+        NSColor.systemRed.setFill()
+        NSBezierPath(roundedRect: badgeRect, xRadius: badgeHeight / 2, yRadius: badgeHeight / 2).fill()
+        let textPoint = NSPoint(
+            x: badgeRect.midX - textSize.width / 2,
+            y: badgeRect.midY - textSize.height / 2
+        )
+        (text as NSString).draw(at: textPoint, withAttributes: [.font: badgeFont, .foregroundColor: NSColor.white])
+        image.unlockFocus()
+        image.isTemplate = false
         return image
+    }
+
+    // MARK: - 会话完成提醒
+
+    /// 每次轮询有新完成事件时重建菜单顶部的「会话完成」区块；打开菜单
+    /// (menuNeedsUpdate) 时也刷新一次，保证区块与角标和当前外观一致。
+    private func rebuildSessionNotifyMenuSection() {
+        guard let menu = statusItem.menu else { return }
+        for item in sessionNotifyMenuItems { menu.removeItem(item) }
+        sessionNotifyMenuItems = []
+        let events = sessionNotifyStore.recent(limit: 6)
+        guard !events.isEmpty else {
+            statusItem.button?.image = makeStatusImage()
+            return
+        }
+        var items: [NSMenuItem] = [NSMenuItem.separator()]
+        let header = menuRowItem(title: "会话完成（\(sessionNotifyStore.unreadCount) 条未读）", action: nil, enabled: { false })
+        items.append(header)
+        for event in events {
+            let row = menuRowItem(title: SessionNotifyStore.menuTitle(for: event), action: #selector(openSessionFromNotify(_:)))
+            row.representedObject = event.sessionId
+            items.append(row)
+        }
+        items.append(menuRowItem(title: "清除完成提醒", action: #selector(clearSessionNotify)))
+        items.append(NSMenuItem.separator())
+        for (offset, item) in items.enumerated() {
+            menu.insertItem(item, at: offset)
+            sessionNotifyMenuItems.append(item)
+        }
+        statusItem.button?.image = makeStatusImage()
+    }
+
+    /// 轮询内置 dsh-session-notify 插件：仅在本启动器管理的 Harness 上存在；
+    /// 复用外部实例时接口 404，静默降级（与归档插件的基础模式一致）。
+    private func monitorSessionNotify(port: Int) {
+        sessionNotifyLoopID += 1
+        sessionNotifyFailureStreak = 0
+        pollSessionNotify(port: port, loopID: sessionNotifyLoopID)
+    }
+
+    private func pollSessionNotify(port: Int, loopID: Int) {
+        guard loopID == sessionNotifyLoopID, state == .running, selectedPort == port,
+              let url = URL(string: "http://127.0.0.1:\(port)/dsh-session-notify/events?after=\(sessionNotifyStore.pollAfterSeq)") else { return }
+        ServiceProbe.body(at: url, timeout: 2) { [weak self] body in
+            guard let self, loopID == self.sessionNotifyLoopID, self.state == .running, self.selectedPort == port else { return }
+            if let feed = body.flatMap(SessionNotifyFeed.parse) {
+                self.sessionNotifyFailureStreak = 0
+                let fresh = self.sessionNotifyStore.ingest(feed)
+                if !fresh.isEmpty {
+                    self.appendLogString("收到 \(fresh.count) 条会话完成提醒（\(SessionNotifyStore.reasonLabel(fresh.last?.reason ?? ""))）\n")
+                    self.rebuildSessionNotifyMenuSection()
+                }
+            } else {
+                self.sessionNotifyFailureStreak += 1
+                if self.sessionNotifyFailureStreak == 40 && !self.sessionNotifyUnavailableLogged {
+                    self.sessionNotifyUnavailableLogged = true
+                    self.appendLogString("会话完成通知插件不可用（当前 Harness 未加载内置插件），重启 dsh 后可用\n")
+                }
+            }
+            // 轮询顺带重绘角标，外观切换后最多滞后一个轮询周期。
+            statusItem.button?.image = makeStatusImage()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                self.pollSessionNotify(port: port, loopID: loopID)
+            }
+        }
+    }
+
+    @objc private func openSessionFromNotify(_ sender: NSMenuItem) {
+        sessionNotifyStore.markAllRead()
+        rebuildSessionNotifyMenuSection()
+        appendLogString("用户查看会话完成提醒：\(sender.representedObject as? String ?? "")\n")
+        if state == .running, let port = selectedPort {
+            openWebPage(on: port)
+        } else {
+            openDHL()
+        }
+    }
+
+    @objc private func clearSessionNotify() {
+        sessionNotifyStore.markAllRead()
+        rebuildSessionNotifyMenuSection()
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        rebuildSessionNotifyMenuSection()
     }
 }
 

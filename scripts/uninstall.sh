@@ -106,9 +106,17 @@ remove_apps
 remove_backups
 remove_dsh_runtime
 
-PLUGIN_LINK="$HOME/.dsh/profiles/web/node_modules/dsh-archive-manager"
-if [[ -L "$PLUGIN_LINK" ]]; then
-  TARGET="$(readlink "$PLUGIN_LINK" || true)"
-  if [[ "$TARGET" == *"DSHArchiveManager"* ]]; then /bin/rm -f "$PLUGIN_LINK"; echo "Removed plugin link $PLUGIN_LINK"; fi
-fi
+# Only remove links that still point into one of our app bundles; anything
+# else is a user-installed plugin with the same name and must be preserved.
+for PLUGIN_SPEC in "dsh-archive-manager:DSHArchiveManager" "dsh-plugin-manager:DSHPluginManager" "dsh-session-notify:DSHSessionNotify"; do
+  PLUGIN_NAME="${PLUGIN_SPEC%%:*}"
+  PLUGIN_MARKER="${PLUGIN_SPEC##*:}"
+  for MODULES_DIR in "$HOME/.dsh/profiles/web/node_modules" "$HOME/.dsh/profiles/node_modules"; do
+    PLUGIN_LINK="$MODULES_DIR/$PLUGIN_NAME"
+    if [[ -L "$PLUGIN_LINK" ]]; then
+      TARGET="$(readlink "$PLUGIN_LINK" || true)"
+      if [[ "$TARGET" == *"$PLUGIN_MARKER"* ]]; then /bin/rm -f "$PLUGIN_LINK"; echo "Removed plugin link $PLUGIN_LINK"; fi
+    fi
+  done
+done
 echo "Deepseek Harness Launcher 的 ~/.dsh 数据保持不变。"

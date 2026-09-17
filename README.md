@@ -35,13 +35,14 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 10 | **全局快捷呼出** | 任意应用中按 `⌃⌥D`（可在设置中录制更换）直接呼出 Deepseek Harness 浏览器窗口；已有标签页时聚焦原标签，不再重复新开。 |
 | 11 | **启动时检测 dsh 更新** | 应用启动后异步检查 npm 上 `@deepseek-ai/dsh` 的最新版本，不阻塞启动；有新版本时菜单栏提示并可跳转 npm 查看。 |
 | 12 | **内置插件管理（DSHPluginManager）** | 侧边栏新增「插件管理」入口，含「已安装」与「插件市场」两个页面：已安装插件可查看/卸载；市场数据来自 `awesome-dsh-plugin`（分类、搜索、按星级/下载排序、一键安装）。安装/卸载通过 `dsh plugin --profile web` 执行，缺 pnpm 时自动用 corepack 自举，安装后提示重启 dsh 生效。 |
+| 13 | **会话完成通知（DSHSessionNotify）** | 内置服务端插件监听主会话 `turn/end`（方案同社区 dsh-notify 插件，但不弹系统通知）。会话回合结束时，菜单栏图标显示 Foxmail 式红色未读角标，菜单顶部列出最近完成/出错/中止的会话（时间 · 标题 · 结果），点击条目打开 Harness 页面并清除角标，也可一键「清除完成提醒」。 |
 
 **边界与取舍**：
 
 - 仅支持 macOS（无 Windows / Linux）；
 - 不捆绑 Node 运行时，也不管理多个 dsh 内核版本；需要用户系统中已有可用的 `node` 与 `npm`。
 - 首次启动会显示安装窗口；依赖下载可能需要几分钟，安装成功后后续启动直接复用 `~/.dsh/runtime`。
-- Deepseek Harness Launcher 只添加自己的内置插件链接（归档管理、插件管理）与临时 patch；Harness 原有 profile、会话及其他插件仍由 dsh 管理。
+- Deepseek Harness Launcher 只添加自己的内置插件链接（归档管理、插件管理、会话完成通知）与临时 patch；Harness 原有 profile、会话及其他插件仍由 dsh 管理。
 
 ---
 
@@ -120,10 +121,11 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 
 | 菜单项 | 快捷键 | 作用 |
 |--------|--------|------|
-| 打开 Deepseek Harness | ⌘O | 打开当前端口的 Harness 界面；未运行时自动启动 |
+| 会话完成（N 条未读） | — | 仅在有未读完成提醒时出现：列出最近完成的会话（时间 · 标题 · 结果），点击条目打开 Harness 并清除角标，或「清除完成提醒」 |
+| 打开 Deepseek Harness | ⌘O | 打开当前端口的 Harness 界面；未运行时自动启动。浏览器里已有 Harness 标签页（127.0.0.1 或 localhost）时直接聚焦原标签，否则才新开 |
 | 全局呼出 Deepseek Harness | ⌃⌥D | 任意应用中呼出，可在设置中录制更换 |
 | 端口：xxxx | — | 实时显示当前运行端口（未运行则显示「未运行」） |
-| 检查更新 | — | 手动检查 GitHub Releases |
+| 检查更新 | — | 手动检查 GitHub Releases，更新说明按 Markdown 渲染展示 |
 | 设置… | ⌘, | 自动更新、检查频率、就绪开浏览器、开机启动 |
 | 打开日志 | ⌘L | 打开 `~/Library/Logs/Deepseek Harness Launcher/dhl.log` |
 | 退出 Deepseek Harness | ⌘Q | 退出并终止 Harness 后台进程 |
@@ -132,7 +134,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 
 - 设置项：自动检查更新、检查频率、Harness 就绪后自动打开浏览器、登录 macOS 时自动启动 Deepseek Harness Launcher、全局快捷呼出快捷键。
 - 默认值：自动检查更新开启、每 6 小时检查一次、启动后约 8 秒做首次后台检查；就绪后自动打开浏览器开启；开机启动关闭；全局快捷键启用，默认 `⌃⌥D`。检查间隔最小为 1 小时。
-- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.1.0`，仅当 Release 版本号更高时提示。
+- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.0`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
 - 启动器自身更新和 `@deepseek-ai/dsh` 更新是两条独立链路；dsh 检查只比较 npm 最新版本并提示，不修改 npm 缓存。
 - GitHub API 返回 `403`（通常是未认证限流）时，启动器会回退读取 Releases Atom feed 来比较版本；没有已发布 Release 时，手动检查会显示「暂无可用更新」。
 - 可用更新必须携带名为 `Deepseek.Harness.Launcher.dmg` 的 Release asset（GitHub 不接受空格，会把文件名里的空格改为点）。下载保存到 `~/Downloads/Deepseek Harness Launcher-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先终止后台、替换当前 App、再重新启动 Deepseek Harness。
@@ -159,6 +161,16 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 ### 升级兼容性
 
 早期 DSH/DHL 安装可能在 `~/.dsh/profiles/web/node_modules/dsh-archive-manager` 留下一个指向旧 `DSH.app` 的失效软链接。Deepseek Harness Launcher 会自动替换指向自身 `DSHArchiveManager` 资源的旧链接，避免 `ERR_MODULE_NOT_FOUND`。若同名条目不是 Deepseek Harness Launcher 自己的链接或目录，Deepseek Harness Launcher 不会覆盖它，以免破坏第三方插件。
+
+---
+
+## 会话完成通知插件（DSHSessionNotify）
+
+- 位置：`Plugins/DSHSessionNotify/`（`lib/index.js` 服务端插件 + `cordis.patch.yml` 注入声明），随归档插件的 patch 一起生效。
+- 检测方式与社区 `dsh-notify` 插件一致：订阅 Harness 服务端 `session/event` 事件流，主会话（非 subagent）回合结束时记录一条完成事件；不同点在于不弹系统通知，而是通过 `GET /dsh-session-notify/events?after=<seq>` 暴露给启动器轮询（仅 127.0.0.1，不出机器）。
+- 呈现：菜单栏图标叠加 Foxmail 式红色未读角标（99 封顶显示 `99+`）；菜单顶部「会话完成」区块列出最近 6 条（时间 · 会话标题 · 结果：已完成/出错/已中止/达到 token 上限/被阻塞）。点击条目打开 Harness 页面并清空角标，也可「清除完成提醒」。
+- 语义：角标 = 未读完成事件数，直到用户点击或清除才会归零；dsh 重启（序列号归零）不会重复计数。Harness 侧仅保留最近 50 条事件，内存占用可忽略。
+- 可用性：仅当启动器自己启动/重启 dsh（带内置 patch）时可用；复用外部 Harness 或升级后未重启 dsh 时接口不存在，启动器静默降级并在日志记录一次。此时菜单栏不会出现角标，不影响其他功能。
 
 ---
 

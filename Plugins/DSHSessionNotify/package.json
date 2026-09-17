@@ -1,0 +1,16 @@
+{
+  "name": "dsh-session-notify",
+  "version": "0.1.0",
+  "description": "会话完成通知（内置）：主会话回合结束时记录事件，供启动器菜单栏角标轮询",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" }
+  }
+}

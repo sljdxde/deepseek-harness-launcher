@@ -8,8 +8,9 @@ SDK="$(xcrun --show-sdk-path 2>/dev/null || true)"
 
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
-swiftc "$ROOT/Installer/main.swift" -o "$ROOT/build/DHLInstaller-arm64" -sdk "$SDK" -target arm64-apple-macos12.0
-swiftc "$ROOT/Installer/main.swift" -o "$ROOT/build/DHLInstaller-x86_64" -sdk "$SDK" -target x86_64-apple-macos12.0
+source "$ROOT/scripts/swift-slice.sh"
+build_swift_slice "$SDK" arm64-apple-macos12.0 "$ROOT/build/DHLInstaller-arm64" "$ROOT/Installer/main.swift"
+build_swift_slice "$SDK" x86_64-apple-macos12.0 "$ROOT/build/DHLInstaller-x86_64" "$ROOT/Installer/main.swift"
 lipo -create "$ROOT/build/DHLInstaller-arm64" "$ROOT/build/DHLInstaller-x86_64" -output "$OUT/Contents/MacOS/DHLInstaller"
 cp "$ROOT/Resources/InstallerInfo.plist" "$OUT/Contents/Info.plist"
 cp "$ROOT/scripts/install-from-app.sh" "$OUT/Contents/Resources/install-from-app.sh"

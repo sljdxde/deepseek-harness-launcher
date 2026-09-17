@@ -15,7 +15,7 @@ const marketRepoDir = () => join(marketRoot(), 'repo');
 
 const MARKET_REPO_URL = 'https://github.com/awesome-dsh-plugin/awesome-dsh-plugin.git';
 /** Bundle the launcher ships with; symlink targets contain one of these names. */
-const BUNDLED_MARKERS = ['DSHArchiveManager', 'DSHPluginManager'];
+const BUNDLED_MARKERS = ['DSHArchiveManager', 'DSHPluginManager', 'DSHSessionNotify'];
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**

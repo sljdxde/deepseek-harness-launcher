@@ -4,6 +4,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 node --check "$ROOT/Plugins/DSHArchiveManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/running-session-ids.test.js"
+node --check "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+node --test "$ROOT/Plugins/DSHSessionNotify/test/session-notify.test.js"
 if rg -q 'stopRunningAgents|需要二次确认删除|只能删除已归档' "$ROOT/Plugins/DSHArchiveManager/lib/index.js"; then
   echo "archive deletion must not perform runtime or archive-state validation" >&2
   exit 1
@@ -29,6 +31,20 @@ rg -q 'ensurePnpmPath' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'corepack' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'pnpm-bin' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'dsh-plugin-manager' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"
+# 会话完成通知：插件随启动器打包、patch 注入并由菜单栏轮询。
+rg -q 'dsh-session-notify' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"
+rg -Fq 'DSHSessionNotify' "$ROOT/scripts/build-app.sh" "$ROOT/scripts/build-universal.sh" "$ROOT/Sources/main.swift"
+rg -Fq 'BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL)' "$ROOT/Sources/main.swift"
+rg -q '/dsh-session-notify/events' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Sources/main.swift"
+rg -q 'monitorSessionNotify' "$ROOT/Sources/main.swift"
+rg -q 'makeSessionNotifyBadgeImage' "$ROOT/Sources/main.swift"
+rg -q 'dsh-session-notify' "$ROOT/scripts/uninstall.sh"
+rg -q 'DSHSessionNotify' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+if rg -Fq 'alert.informativeText = manifest.notes' "$ROOT/Sources/main.swift"; then
+  echo "update notes must be rendered as markdown, not dumped into informativeText" >&2
+  exit 1
+fi
+rg -q 'ReleaseNotesMarkdown.attributedString' "$ROOT/Sources/main.swift"
 rg -Fq 'DSHPluginManager' "$ROOT/scripts/build-app.sh" "$ROOT/scripts/build-universal.sh" "$ROOT/Sources/main.swift"
 rg -q 'window.isOpaque = true' "$ROOT/Sources/SettingsWindowController.swift"
 rg -q 'visualEffect.blendingMode = .withinWindow' "$ROOT/Sources/SettingsWindowController.swift"
@@ -52,7 +68,8 @@ plutil -lint "$ROOT/Resources/Info.plist"
 plutil -extract CFBundleExecutable raw "$ROOT/Resources/Info.plist" | grep -qx 'DHL'
 plutil -extract CFBundleDisplayName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
 plutil -extract CFBundleName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
-plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/Info.plist" | grep -qx '0.1.0'
+plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/Info.plist" | grep -qx '0.3.0'
+plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/InstallerInfo.plist" | grep -qx '0.3.0'
 rg -Fq '正在安装 DHL' "$ROOT/Installer/main.swift"
 rg -Fq '已更新，正在重新启动 DHL' "$ROOT/Installer/main.swift"
 zsh -n "$ROOT/scripts/install.sh"
@@ -67,6 +84,7 @@ rg -q "prune_backups" "$ROOT/scripts/install-from-app.sh"
 rg -q "xattr -dr com.apple.quarantine" "$ROOT/scripts/install-from-app.sh"
 zsh -n "$ROOT/scripts/Install DHL.command"
 zsh -n "$ROOT/scripts/build-installer-app.sh"
+zsh -n "$ROOT/scripts/swift-slice.sh"
 zsh -n "$ROOT/scripts/build-dmg.sh"
 "$ROOT/scripts/test-installer.sh"
 rg -q 'signal_processes launcher_pids KILL' "$ROOT/scripts/install-from-app.sh"
@@ -113,10 +131,18 @@ rg -q 'progress\.isIndeterminate = true' "$ROOT/Sources/DSHInstallWindowControll
 rg -q 'openWhenReady' "$ROOT/Sources/main.swift"
 rg -q 'openBrowserWhenReadyIfNeeded' "$ROOT/Sources/main.swift"
 rg -q 'installWindow\.present\(\)' "$ROOT/Sources/main.swift"
-rg -q 'tell application id' "$ROOT/Sources/main.swift"
-rg -q 'safeTargetURL' "$ROOT/Sources/main.swift"
-rg -q 'runningApplications' "$ROOT/Sources/main.swift"
-rg -q 'createsNewApplicationInstance = true' "$ROOT/Sources/main.swift"
+rg -q 'NSRunningApplication' "$ROOT/Sources/main.swift"
+rg -q 'createsNewApplicationInstance = false' "$ROOT/Sources/main.swift"
+# Web 入口复用已有页面：用 lsof 客户端连接 + ps 父子链找浏览器主进程并激活
+# （零权限、不触发 TCC 授权弹窗），找不到才新开标签页。禁止再引入 AppleScript
+# 控制浏览器（会弹自动化授权框，拒绝后还无法关闭）。
+rg -q 'BrowserConnectionSupport' "$ROOT/Sources/main.swift"
+rg -q 'clientPIDs' "$ROOT/Sources/BrowserConnectionSupport.swift"
+rg -q 'browserPID' "$ROOT/Sources/BrowserConnectionSupport.swift"
+rg -Fq 'BrowserConnectionTests' "$ROOT/scripts/test-browser-connection.swift"
+xcrun swiftc -o /tmp/dsh-test-browser-connection "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/scripts/test-browser-connection.swift" -framework AppKit
+/tmp/dsh-test-browser-connection
+rg -Fq 'tell application id' "$ROOT/Sources/main.swift" && { echo "FAIL: AppleScript browser control must not return"; exit 1; } || true
 rg -q -- '--registry' "$ROOT/Sources/DSHRuntimeSupport.swift"
 if rg -q 'npx --prefer-offline --yes @deepseek-ai/dsh' "$ROOT/Sources/main.swift" "$ROOT/Sources/DSHUpdateSupport.swift"; then
   echo "launcher must not bootstrap dsh through npx" >&2
@@ -197,6 +223,10 @@ fi
 mkdir -p "$ROOT/build"
 swiftc "$ROOT/scripts/test-update-support.swift" "$ROOT/Sources/UpdateSupport.swift" -o "$ROOT/build/test-update-support"
 "$ROOT/build/test-update-support"
+swiftc "$ROOT/scripts/test-release-notes.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" -o "$ROOT/build/test-release-notes"
+"$ROOT/build/test-release-notes"
+swiftc "$ROOT/scripts/test-session-notify.swift" "$ROOT/Sources/SessionNotifySupport.swift" -o "$ROOT/build/test-session-notify"
+"$ROOT/build/test-session-notify"
 swiftc "$ROOT/scripts/test-launcher-support.swift" "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/Sources/LogSupport.swift" -o "$ROOT/build/test-launcher-support"
 "$ROOT/build/test-launcher-support"
 swiftc "$ROOT/scripts/test-global-hotkey.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-global-hotkey"

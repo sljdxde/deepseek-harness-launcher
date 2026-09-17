@@ -29,15 +29,17 @@ Deepseek Harness Launcher is a third, macOS-only option: a Swift/AppKit menu-bar
 | 7 | **Managed process lifecycle** | Stop and update paths send `SIGTERM` to the managed Harness process group and fall back to `SIGKILL` after a timeout. Matching is restricted to the launcher and npm/node processes using its patch. |
 | 8 | **Native settings window** | Configure automatic update checks, the interval, browser opening after readiness, and launch at login. |
 | 9 | **Live state and logs** | The current port is shown in the menu. stdout, stderr, and lifecycle records are written to `~/Library/Logs/Deepseek Harness Launcher/dhl.log`. |
-| 10 | **Global quick summon** | Press `Control-Option-D` (record a custom combination in Settings) from any app to summon the Deepseek Harness browser window, focusing the existing tab instead of opening a new one. |
+| 10 | **Global quick summon** | Press `Control-Option-D` (record a custom combination in Settings) from any app to summon the Deepseek Harness browser window, focusing the existing tab instead of opening a new one. Every web entry point (menu, hotkey, session-notification click) reuses an open Harness tab (127.0.0.1 or localhost) and only opens a new one when none exists; a one-time browser-automation permission is requested on first use. |
 | 11 | **Startup dsh update check** | After launch, asynchronously checks the latest `@deepseek-ai/dsh` version on npm without blocking startup, and shows a menu-bar hint when a newer version is available. |
+| 12 | **Built-in plugin manager** | Adds a Plugin Manager entry to the Harness Web sidebar with Installed and Marketplace pages: view/uninstall installed plugins, or browse the `awesome-dsh-plugin` marketplace (categories, search, sort by stars/downloads, one-click install). Install/uninstall run through `dsh plugin --profile web`, bootstrapping pnpm via corepack when missing. |
+| 13 | **Session-completion notifications** | A bundled server plugin watches root-session `turn/end` events (the same approach as the community dsh-notify plugin, but without OS popups). When a turn finishes, the menu-bar icon gains a Foxmail-style red unread badge and the menu lists recent completions/errors/aborts (time · title · outcome); clicking an entry opens Harness and clears the badge, or clear everything with one click. |
 
 **Scope and trade-offs**
 
 - macOS only; Windows and Linux are not supported.
 - Node and npm must already be usable on the host. Deepseek Harness Launcher does not manage multiple dsh runtime versions.
 - The first start shows an installation window and can take several minutes; later starts reuse `~/.dsh/runtime`.
-- Deepseek Harness Launcher only adds its own archive-plugin link and temporary patch. Existing Harness profiles, sessions, and other plugins remain managed by dsh.
+- Deepseek Harness Launcher only adds its own bundled-plugin links (archive manager, plugin manager, session notifications) and temporary patches. Existing Harness profiles, sessions, and other plugins remain managed by dsh.
 
 ---
 

@@ -4,3 +4,6 @@
 - insert:
     - id: dsh-plugin-manager
       name: 'dsh-plugin-manager'
+- insert:
+    - id: dsh-session-notify
+      name: 'dsh-session-notify'
