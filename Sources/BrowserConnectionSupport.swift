@@ -9,12 +9,13 @@ enum BrowserOpenIntent {
 
 /// What to do once the connected browser (if any) is known.
 struct BrowserOpenPlan {
-    /// Bring the already-connected browser forward before handing it the URL.
+    /// Bring the already-connected browser forward without creating a second
+    /// Harness tab. Selecting a specific browser tab requires browser
+    /// automation permission, so this launcher deliberately does not attempt it.
     let activatesConnectedBrowser: Bool
-    /// Always true. Raising the browser alone is what caused "the browser opens
-    /// but never jumps to the page": the URL has to reach the browser so it can
-    /// focus the existing Harness tab (or open one) instead of leaving whatever
-    /// tab was last active in front.
+    /// A URL is only opened when no Harness page is connected. Passing the same
+    /// URL to Chrome through NSWorkspace does not select an existing tab; it
+    /// creates another one.
     let opensURL: Bool
 }
 
@@ -28,7 +29,7 @@ enum BrowserConnectionSupport {
     }
 
     static func plan(connectedBrowser: Bool) -> BrowserOpenPlan {
-        BrowserOpenPlan(activatesConnectedBrowser: connectedBrowser, opensURL: true)
+        BrowserOpenPlan(activatesConnectedBrowser: connectedBrowser, opensURL: !connectedBrowser)
     }
 
     /// Drop duplicate opens only. An in-flight open is skipped for every intent;

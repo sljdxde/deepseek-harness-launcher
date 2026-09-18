@@ -5,7 +5,9 @@ node --check "$ROOT/Plugins/DSHArchiveManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/running-session-ids.test.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+node --check "$ROOT/Plugins/DSHSessionNotify/client/client.js"
 node --test "$ROOT/Plugins/DSHSessionNotify/test/session-notify.test.js"
+node --test "$ROOT/Plugins/DSHSessionNotify/test/client.test.js"
 if rg -q 'stopRunningAgents|需要二次确认删除|只能删除已归档' "$ROOT/Plugins/DSHArchiveManager/lib/index.js"; then
   echo "archive deletion must not perform runtime or archive-state validation" >&2
   exit 1
@@ -36,6 +38,11 @@ rg -q 'dsh-session-notify' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"
 rg -Fq 'DSHSessionNotify' "$ROOT/scripts/build-app.sh" "$ROOT/scripts/build-universal.sh" "$ROOT/Sources/main.swift"
 rg -Fq 'BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL)' "$ROOT/Sources/main.swift"
 rg -q '/dsh-session-notify/events' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Sources/main.swift"
+rg -q '/dsh-session-notify/open' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Sources/main.swift"
+rg -q '/dsh-session-notify/commands/claim' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+rg -q 'ctx\.sessions\.open' "$ROOT/Plugins/DSHSessionNotify/client/client.js"
+rg -q '"\./client": "\./client/client.js"' "$ROOT/Plugins/DSHSessionNotify/package.json"
+rg -q '"client"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q 'monitorSessionNotify' "$ROOT/Sources/main.swift"
 rg -q 'makeSessionNotifyBadgeImage' "$ROOT/Sources/main.swift"
 rg -q 'dsh-session-notify' "$ROOT/scripts/uninstall.sh"
@@ -45,6 +52,10 @@ if rg -Fq 'alert.informativeText = manifest.notes' "$ROOT/Sources/main.swift"; t
   exit 1
 fi
 rg -q 'ReleaseNotesMarkdown.attributedString' "$ROOT/Sources/main.swift"
+rg -q 'UpdateDownloadWindowController' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateDownloadWindowController.swift"
+rg -q 'UpdateDownloadProgress' "$ROOT/Sources/UpdateSupport.swift"
+rg -q 'miniaturizable' "$ROOT/Sources/UpdateDownloadWindowController.swift"
+rg -q 'onProgress' "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift"
 rg -Fq 'DSHPluginManager' "$ROOT/scripts/build-app.sh" "$ROOT/scripts/build-universal.sh" "$ROOT/Sources/main.swift"
 rg -q 'window.isOpaque = true' "$ROOT/Sources/SettingsWindowController.swift"
 rg -q 'visualEffect.blendingMode = .withinWindow' "$ROOT/Sources/SettingsWindowController.swift"
@@ -68,8 +79,8 @@ plutil -lint "$ROOT/Resources/Info.plist"
 plutil -extract CFBundleExecutable raw "$ROOT/Resources/Info.plist" | grep -qx 'DHL'
 plutil -extract CFBundleDisplayName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
 plutil -extract CFBundleName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
-plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/Info.plist" | grep -qx '0.3.0'
-plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/InstallerInfo.plist" | grep -qx '0.3.0'
+plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/Info.plist" | grep -qx '0.3.1'
+plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/InstallerInfo.plist" | grep -qx '0.3.1'
 rg -Fq '正在安装 DHL' "$ROOT/Installer/main.swift"
 rg -Fq '已更新，正在重新启动 DHL' "$ROOT/Installer/main.swift"
 zsh -n "$ROOT/scripts/install.sh"
@@ -91,7 +102,10 @@ rg -q 'signal_processes launcher_pids KILL' "$ROOT/scripts/install-from-app.sh"
 rg -q 'signal_processes dsh_pids KILL' "$ROOT/scripts/install-from-app.sh"
 rg -q 'wait_for_processes launcher_pids' "$ROOT/scripts/install-from-app.sh"
 rg -q 'Previous app backup' "$ROOT/scripts/install-from-app.sh"
-rg -q 'DHL_SKIP_BUNDLE_QUIT' "$ROOT/scripts/install-from-app.sh"
+if rg -q 'tell application id|DHL_SKIP_BUNDLE_QUIT|DSH_SKIP_BUNDLE_QUIT' "$ROOT/scripts/install-from-app.sh"; then
+  echo "installer must stop old processes without Apple Events" >&2
+  exit 1
+fi
 rg -q 'ensureBundledPluginLinks' "$ROOT/Sources/main.swift"
 rg -q 'ensureBundledPluginLink' "$ROOT/Sources/ArchivePluginSupport.swift"
 rg -q 'BundledPlugin\(' "$ROOT/Sources/main.swift"
@@ -133,16 +147,18 @@ rg -q 'openBrowserWhenReadyIfNeeded' "$ROOT/Sources/main.swift"
 rg -q 'installWindow\.present\(\)' "$ROOT/Sources/main.swift"
 rg -q 'NSRunningApplication' "$ROOT/Sources/main.swift"
 rg -q 'createsNewApplicationInstance = false' "$ROOT/Sources/main.swift"
-# Web 入口复用已有页面：用 lsof 客户端连接 + ps 父子链找浏览器主进程并激活
-# （零权限、不触发 TCC 授权弹窗），找不到才新开标签页。禁止再引入 AppleScript
-# 控制浏览器（会弹自动化授权框，拒绝后还无法关闭）。
+# Web 入口复用已有页面：用 lsof 客户端连接 + ps 父子链找浏览器主进程，
+# 命中后由 Apple Events 选中已有 Harness 标签，避免 NSWorkspace.open 重复创建标签页。
 rg -q 'BrowserConnectionSupport' "$ROOT/Sources/main.swift"
 rg -q 'clientPIDs' "$ROOT/Sources/BrowserConnectionSupport.swift"
 rg -q 'browserPID' "$ROOT/Sources/BrowserConnectionSupport.swift"
+rg -q 'BrowserAutomationSupport' "$ROOT/Sources/main.swift"
+rg -q 'NSAppleScript' "$ROOT/Sources/BrowserAutomationSupport.swift"
+rg -q 'browserFocusScript' "$ROOT/Sources/BrowserAutomationSupport.swift"
+plutil -extract NSAppleEventsUsageDescription raw "$ROOT/Resources/Info.plist" | grep -q '定位并打开已存在的 Deepseek Harness'
 rg -Fq 'BrowserConnectionTests' "$ROOT/scripts/test-browser-connection.swift"
-xcrun swiftc -o /tmp/dsh-test-browser-connection "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/scripts/test-browser-connection.swift" -framework AppKit
+xcrun swiftc -o /tmp/dsh-test-browser-connection "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/BrowserAutomationSupport.swift" "$ROOT/scripts/test-browser-connection.swift" -framework AppKit
 /tmp/dsh-test-browser-connection
-rg -Fq 'tell application id' "$ROOT/Sources/main.swift" && { echo "FAIL: AppleScript browser control must not return"; exit 1; } || true
 rg -q -- '--registry' "$ROOT/Sources/DSHRuntimeSupport.swift"
 if rg -q 'npx --prefer-offline --yes @deepseek-ai/dsh' "$ROOT/Sources/main.swift" "$ROOT/Sources/DSHUpdateSupport.swift"; then
   echo "launcher must not bootstrap dsh through npx" >&2

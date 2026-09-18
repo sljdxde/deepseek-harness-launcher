@@ -66,7 +66,7 @@ kill -0 "$NPX_PID" 2>/dev/null || {
 # This fixture intentionally contains only installation data, not a runnable
 # application. The installer behavior under test is process shutdown and
 # replacement, so suppress Finder launch after a successful replacement.
-DHL_SKIP_BUNDLE_QUIT=1 DHL_SKIP_GLOBAL_CLEANUP=1 "$INSTALLER" "$SOURCE" "$DEST" --no-open
+DHL_SKIP_GLOBAL_CLEANUP=1 "$INSTALLER" "$SOURCE" "$DEST" --no-open
 wait "$PID" 2>/dev/null || true
 PID=""
 for _ in {1..20}; do

@@ -29,9 +29,10 @@ struct BrowserConnectionTests {
         precondition(BrowserConnectionSupport.browserPID(start: 20, parents: parents, applications: apps) == nil)
         precondition(BrowserConnectionSupport.browserPID(start: 30, parents: parents, applications: apps) == nil)
         precondition(BrowserConnectionSupport.browserPID(start: 99, parents: parents, applications: apps) == nil)
-        // A detected browser must still receive the URL: raising the app alone
-        // leaves whatever tab was last active in front (the historical bug).
-        precondition(BrowserConnectionSupport.plan(connectedBrowser: true).opensURL)
+        // A detected Harness page must be activated without handing the URL to
+        // Chrome again: NSWorkspace.open creates a duplicate tab instead of
+        // selecting the already-open Harness tab.
+        precondition(!BrowserConnectionSupport.plan(connectedBrowser: true).opensURL)
         precondition(BrowserConnectionSupport.plan(connectedBrowser: true).activatesConnectedBrowser)
         precondition(BrowserConnectionSupport.plan(connectedBrowser: false).opensURL)
         precondition(!BrowserConnectionSupport.plan(connectedBrowser: false).activatesConnectedBrowser)
@@ -44,6 +45,26 @@ struct BrowserConnectionTests {
         precondition(BrowserConnectionSupport.pageURL(port: 3080)?.absoluteString == "http://127.0.0.1:3080/")
         precondition(BrowserConnectionSupport.pageURL(port: 3081, path: "/sessions")?.absoluteString == "http://127.0.0.1:3081/sessions")
         precondition(BrowserConnectionSupport.pageURL(port: 0) == nil)
-        print("PASS: connection direction, exact port, IPv6, deduplication, malformed records, helper ancestry, cycles, non-browser exclusion, always-navigate plan, intent throttle, page URL")
+        let harnessURL = URL(string: "http://127.0.0.1:3080/")!
+        let localURLs = BrowserAutomationSupport.localHarnessURLStrings(for: harnessURL)
+        precondition(localURLs.contains("http://127.0.0.1:3080/"))
+        precondition(localURLs.contains("http://localhost:3080/"))
+        precondition(localURLs.contains("http://[::1]:3080/"))
+        let chromeScript = BrowserAutomationSupport.browserFocusScript(
+            bundleIdentifier: "com.google.Chrome", targetURL: harnessURL
+        )
+        precondition(chromeScript?.contains("tell application id \"com.google.Chrome\"") == true)
+        precondition(chromeScript?.contains("active tab index") == true)
+        precondition(chromeScript?.contains("repeat with tabIndex from") == true)
+        precondition(chromeScript?.contains("index of browserTab") == false)
+        precondition(chromeScript?.contains("http://localhost:3080/") == true)
+        precondition(NSAppleScript(source: chromeScript!) != nil)
+        let safariScript = BrowserAutomationSupport.browserFocusScript(
+            bundleIdentifier: "com.apple.Safari", targetURL: harnessURL
+        )
+        precondition(safariScript?.contains("current tab of browserWindow") == true)
+        precondition(NSAppleScript(source: safariScript!) != nil)
+        precondition(BrowserAutomationSupport.browserFocusScript(bundleIdentifier: "org.mozilla.firefox", targetURL: harnessURL) == nil)
+        print("PASS: connection direction, exact port, IPv6, deduplication, malformed records, helper ancestry, cycles, non-browser exclusion, existing-browser reuse, intent throttle, page URL, browser automation scripts")
     }
 }

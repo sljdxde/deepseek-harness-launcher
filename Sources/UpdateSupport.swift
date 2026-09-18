@@ -8,6 +8,16 @@ struct UpdateManifest: Codable {
     let publishedAt: String?
 }
 
+struct UpdateDownloadProgress: Equatable {
+    let bytesWritten: Int64
+    let totalBytes: Int64?
+
+    var fraction: Double? {
+        guard let totalBytes, totalBytes > 0 else { return nil }
+        return min(1, max(0, Double(bytesWritten) / Double(totalBytes)))
+    }
+}
+
 enum UpdateCheckResult {
     case noPublishedRelease
     case current
@@ -202,6 +212,78 @@ final class UpdateService {
     private let session: URLSession
     private let releasesURL: URL
     private let feedURL: URL
+    private var activeDownload: DownloadDelegate?
+
+    private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
+        let destination: URL
+        let onProgress: (UpdateDownloadProgress) -> Void
+        let completion: (Result<URL, Error>) -> Void
+        var session: URLSession?
+        private var didFinish = false
+
+        init(
+            destination: URL,
+            onProgress: @escaping (UpdateDownloadProgress) -> Void,
+            completion: @escaping (Result<URL, Error>) -> Void
+        ) {
+            self.destination = destination
+            self.onProgress = onProgress
+            self.completion = completion
+        }
+
+        func start(url: URL) {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 30
+            configuration.timeoutIntervalForResource = 60 * 60
+            let session = URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
+            self.session = session
+            session.downloadTask(with: url).resume()
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            downloadTask: URLSessionDownloadTask,
+            didWriteData bytesWritten: Int64,
+            totalBytesWritten: Int64,
+            totalBytesExpectedToWrite: Int64
+        ) {
+            let total = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : nil
+            onProgress(UpdateDownloadProgress(bytesWritten: totalBytesWritten, totalBytes: total))
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            downloadTask: URLSessionDownloadTask,
+            didFinishDownloadingTo location: URL
+        ) {
+            do {
+                try copyReplacing(source: location, destination: destination)
+                let bytes = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? NSNumber)?.int64Value ?? 0
+                onProgress(UpdateDownloadProgress(bytesWritten: bytes, totalBytes: bytes > 0 ? bytes : nil))
+                finish(.success(destination))
+            } catch {
+                finish(.failure(error))
+            }
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            if let error { finish(.failure(error)) }
+        }
+
+        private func finish(_ result: Result<URL, Error>) {
+            guard !didFinish else { return }
+            didFinish = true
+            session?.invalidateAndCancel()
+            completion(result)
+        }
+
+        private func copyReplacing(source: URL, destination: URL) throws {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: source, to: destination)
+        }
+    }
 
     init(
         releasesURL: URL = UpdateService.latestReleaseAPIURL,
@@ -306,7 +388,11 @@ final class UpdateService {
         }.resume()
     }
 
-    func download(_ manifest: UpdateManifest, completion: @escaping (Result<URL, Error>) -> Void) {
+    func download(
+        _ manifest: UpdateManifest,
+        onProgress: @escaping (UpdateDownloadProgress) -> Void = { _ in },
+        completion: @escaping (Result<URL, Error>) -> Void
+    ) {
         guard let url = URL(string: manifest.dmgURL), ["http", "https", "file"].contains(url.scheme?.lowercased() ?? "") else {
             DispatchQueue.main.async { completion(.failure(UpdateError.invalidDownloadURL)) }
             return
@@ -318,20 +404,21 @@ final class UpdateService {
 
         if url.scheme?.lowercased() == "file" {
             do {
+                let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+                onProgress(UpdateDownloadProgress(bytesWritten: 0, totalBytes: bytes > 0 ? bytes : nil))
                 try copyReplacing(source: url, destination: destination)
+                onProgress(UpdateDownloadProgress(bytesWritten: bytes, totalBytes: bytes > 0 ? bytes : nil))
                 DispatchQueue.main.async { completion(.success(destination)) }
             } catch { DispatchQueue.main.async { completion(.failure(error)) } }
             return
         }
 
-        session.downloadTask(with: url) { temporaryURL, _, error in
-            if let error { DispatchQueue.main.async { completion(.failure(error)) }; return }
-            guard let temporaryURL else { DispatchQueue.main.async { completion(.failure(UpdateError.missingDownload)) }; return }
-            do {
-                try self.copyReplacing(source: temporaryURL, destination: destination)
-                DispatchQueue.main.async { completion(.success(destination)) }
-            } catch { DispatchQueue.main.async { completion(.failure(error)) } }
-        }.resume()
+        let delegate = DownloadDelegate(destination: destination, onProgress: onProgress) { [weak self] result in
+            self?.activeDownload = nil
+            completion(result)
+        }
+        activeDownload = delegate
+        delegate.start(url: url)
     }
 
     private func finishGitHubCheck(data: Data, currentVersion: String, completion: @escaping (UpdateCheckResult) -> Void) {

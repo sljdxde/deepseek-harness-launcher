@@ -27,12 +27,12 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 2 | **内置归档管理插件（DSHArchiveManager）** | 通过 `--patch` 注入 Cordis patch，在 Harness Web 界面提供「归档管理」面板：列出归档会话、单条/批量删除（带二次确认）、显示工作区与后代数量。 |
 | 3 | **智能端口管理（3080–3099）** | 启动前从 3080 扫描到 3099：发现正在响应的 Harness 就复用；否则使用第一个可绑定端口。若复用实例没有归档插件，Harness 仍可使用，日志会记录为基础模式。 |
 | 4 | **首次安装可靠，后续启动稳定** | 首次启动前将 `@deepseek-ai/dsh` 完整安装到 `~/.dsh/runtime`，使用 peer-dependency 完整解析、临时目录安装和原子替换；默认优先较快的 npm 镜像，失败后回退官方源。后续直接运行固定 runtime，不使用易留下半安装缓存的 npx。 |
-| 5 | **原生应用内自更新** | 直接对接本仓库 GitHub Releases，菜单内「检查更新」可下载 `Deepseek.Harness.Launcher.dmg`（GitHub 自动将空格存为点）并自替换重启（支持自动定时检查 + 频率设置）。 |
+| 5 | **原生应用内自更新** | 直接对接本仓库 GitHub Releases，菜单内「检查更新」可显示版本/下载进度并下载 `Deepseek.Harness.Launcher.dmg`（GitHub 自动将空格存为点），随后自替换重启（支持自动定时检查 + 频率设置）。 |
 | 6 | **开机自启动** | 通过 `LaunchAgent`（`com.local.dhl-launcher`）实现登录 macOS 自动拉起，可在设置中开关。 |
 | 7 | **优雅的进程生命周期** | 停止 / 更新前对 Harness 进程组做 `SIGTERM → SIGKILL` 级联终止（含超时兜底），并精确匹配 launcher 自身路径与运行该 patch 的 npm/node 进程，避免误杀或残留孤儿进程。 |
 | 8 | **原生设置窗口** | 自动更新开关与频率、就绪后是否自动开浏览器、开机启动；与系统外观一致。 |
 | 9 | **实时状态 + 日志** | 菜单栏实时显示当前运行端口；所有 stdout/stderr 与生命周期事件写入 `~/Library/Logs/Deepseek Harness Launcher/dhl.log`，一键「打开日志」。 |
-| 10 | **全局快捷呼出** | 任意应用中按 `⌃⌥D`（可在设置中录制更换）直接呼出 Deepseek Harness 浏览器窗口；已有标签页时聚焦原标签，不再重复新开。 |
+| 10 | **全局快捷呼出** | 任意应用中按 `⌃⌥D`（可在设置中录制更换）直接呼出 Deepseek Harness 浏览器窗口；检测到已有 Harness 页面时选中并前置原标签，不再重复新开。 |
 | 11 | **启动时检测 dsh 更新** | 应用启动后异步检查 npm 上 `@deepseek-ai/dsh` 的最新版本，不阻塞启动；有新版本时菜单栏提示并可跳转 npm 查看。 |
 | 12 | **内置插件管理（DSHPluginManager）** | 侧边栏新增「插件管理」入口，含「已安装」与「插件市场」两个页面：已安装插件可查看/卸载；市场数据来自 `awesome-dsh-plugin`（分类、搜索、按星级/下载排序、一键安装）。安装/卸载通过 `dsh plugin --profile web` 执行，缺 pnpm 时自动用 corepack 自举，安装后提示重启 dsh 生效。 |
 | 13 | **会话完成通知（DSHSessionNotify）** | 内置服务端插件监听主会话 `turn/end`（方案同社区 dsh-notify 插件，但不弹系统通知）。会话回合结束时，菜单栏图标显示 Foxmail 式红色未读角标，菜单顶部列出最近完成/出错/中止的会话（时间 · 标题 · 结果），点击条目打开 Harness 页面并清除角标，也可一键「清除完成提醒」。 |
@@ -121,8 +121,8 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 
 | 菜单项 | 快捷键 | 作用 |
 |--------|--------|------|
-| 会话完成（N 条未读） | — | 仅在有未读完成提醒时出现：列出最近完成的会话（时间 · 标题 · 结果），点击条目打开 Harness 并清除角标，或「清除完成提醒」 |
-| 打开 Deepseek Harness | ⌘O | 打开当前端口的 Harness 界面；未运行时自动启动。浏览器里已有 Harness 标签页（127.0.0.1 或 localhost）时直接聚焦原标签，否则才新开 |
+| 会话完成（N 条未读） | — | 仅在有未读完成提醒时出现：列出最近完成的会话（时间 · 标题 · 结果），点击条目选中 Harness 原标签、打开对应会话并清除角标，或「清除完成提醒」 |
+| 打开 Deepseek Harness | ⌘O | 打开当前端口的 Harness 界面；未运行时自动启动。浏览器里已有 Harness 页面时选中原标签，否则才新开；首次复用标签时 macOS 会请求允许启动器控制浏览器 |
 | 全局呼出 Deepseek Harness | ⌃⌥D | 任意应用中呼出，可在设置中录制更换 |
 | 端口：xxxx | — | 实时显示当前运行端口（未运行则显示「未运行」） |
 | 检查更新 | — | 手动检查 GitHub Releases，更新说明按 Markdown 渲染展示 |
@@ -134,10 +134,10 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 
 - 设置项：自动检查更新、检查频率、Harness 就绪后自动打开浏览器、登录 macOS 时自动启动 Deepseek Harness Launcher、全局快捷呼出快捷键。
 - 默认值：自动检查更新开启、每 6 小时检查一次、启动后约 8 秒做首次后台检查；就绪后自动打开浏览器开启；开机启动关闭；全局快捷键启用，默认 `⌃⌥D`。检查间隔最小为 1 小时。
-- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.0`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
+- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.1`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
 - 启动器自身更新和 `@deepseek-ai/dsh` 更新是两条独立链路；dsh 检查只比较 npm 最新版本并提示，不修改 npm 缓存。
 - GitHub API 返回 `403`（通常是未认证限流）时，启动器会回退读取 Releases Atom feed 来比较版本；没有已发布 Release 时，手动检查会显示「暂无可用更新」。
-- 可用更新必须携带名为 `Deepseek.Harness.Launcher.dmg` 的 Release asset（GitHub 不接受空格，会把文件名里的空格改为点）。下载保存到 `~/Downloads/Deepseek Harness Launcher-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先终止后台、替换当前 App、再重新启动 Deepseek Harness。
+- 可用更新必须携带名为 `Deepseek.Harness.Launcher.dmg` 的 Release asset（GitHub 不接受空格，会把文件名里的空格改为点）。下载期间显示可最小化/关闭的进度窗口，关闭窗口不取消下载；下载保存到 `~/Downloads/Deepseek Harness Launcher-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先终止后台、替换当前 App、再重新启动 Deepseek Harness。
 
 ### 卸载
 
@@ -168,7 +168,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 
 - 位置：`Plugins/DSHSessionNotify/`（`lib/index.js` 服务端插件 + `cordis.patch.yml` 注入声明），随归档插件的 patch 一起生效。
 - 检测方式与社区 `dsh-notify` 插件一致：订阅 Harness 服务端 `session/event` 事件流，主会话（非 subagent）回合结束时记录一条完成事件；不同点在于不弹系统通知，而是通过 `GET /dsh-session-notify/events?after=<seq>` 暴露给启动器轮询（仅 127.0.0.1，不出机器）。
-- 呈现：菜单栏图标叠加 Foxmail 式红色未读角标（99 封顶显示 `99+`）；菜单顶部「会话完成」区块列出最近 6 条（时间 · 会话标题 · 结果：已完成/出错/已中止/达到 token 上限/被阻塞）。点击条目打开 Harness 页面并清空角标，也可「清除完成提醒」。
+- 呈现：菜单栏图标叠加 Foxmail 式红色未读角标（99 封顶显示 `99+`）；菜单顶部「会话完成」区块列出最近 6 条（时间 · 会话标题 · 结果：已完成/出错/已中止/达到 token 上限/被阻塞）。点击条目会选中已打开的 Harness 标签并打开对应会话，也可「清除完成提醒」。首次使用时 macOS 会询问是否允许启动器控制 Chrome/Safari；拒绝、外部实例或不支持的浏览器会降级为原来的打开/前置页面行为。
 - 语义：角标 = 未读完成事件数，直到用户点击或清除才会归零；dsh 重启（序列号归零）不会重复计数。Harness 侧仅保留最近 50 条事件，内存占用可忽略。
 - 可用性：仅当启动器自己启动/重启 dsh（带内置 patch）时可用；复用外部 Harness 或升级后未重启 dsh 时接口不存在，启动器静默降级并在日志记录一次。此时菜单栏不会出现角标，不影响其他功能。
 

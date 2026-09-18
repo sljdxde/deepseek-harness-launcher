@@ -47,16 +47,20 @@ function makeHarness() {
     logger: host.logger,
   };
   const emit = (event, ...args) => (listeners.get(event) || []).forEach(listener => listener(...args));
-  const call = async (path, { method = 'GET', url = path } = {}) => {
+  const call = async (path, { method = 'GET', url = path, body: requestBody = undefined } = {}) => {
     const handler = routes.get(path);
     assert.ok(handler, `route ${path} registered`);
-    let status = 0; let headers = null; let body = null;
+    let status = 0; let headers = null; let responseBody = null;
     const res = {
       writeHead: (code, head) => { status = code; headers = head; },
-      end: payload => { body = payload ?? ''; },
+      end: payload => { responseBody = payload ?? ''; },
     };
-    await handler({ method, url }, res);
-    return { status, headers, body, json: () => JSON.parse(body) };
+    const request = { method, url };
+    if (requestBody !== undefined) {
+      request[Symbol.asyncIterator] = async function* () { yield Buffer.from(requestBody); };
+    }
+    await handler(request, res);
+    return { status, headers, body: responseBody, json: () => JSON.parse(responseBody) };
   };
   return { ctx, emit, call, hasRoute: path => routes.has(path), dispose: () => teardown.forEach(fn => fn()) };
 }
@@ -117,6 +121,73 @@ test('events 路由拒绝非 GET 请求', async () => {
   apply(harness.ctx);
   const response = await call('/dsh-session-notify/events', { method: 'POST' });
   assert.equal(response.status, 405);
+});
+
+test('open 命令可被浏览器 client 领取并确认，且同一会话去重', async () => {
+  const harness = makeHarness();
+  apply(harness.ctx);
+
+  const first = await harness.call('/dsh-session-notify/open', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId: 'root-1' }),
+  });
+  assert.equal(first.status, 200);
+  const command = first.json().command;
+  assert.equal(command.sessionId, 'root-1');
+  assert.equal(typeof command.commandId, 'string');
+  // Hidden Chromium tabs can be timer-throttled, so the client gets several
+  // minutes rather than one polling interval to claim this command.
+  assert.equal(command.expiresAt - command.createdAt, 5 * 60 * 1000);
+
+  const duplicate = await harness.call('/dsh-session-notify/open', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId: 'root-1' }),
+  });
+  assert.equal(duplicate.json().command.commandId, command.commandId);
+
+  const listed = await harness.call('/dsh-session-notify/commands');
+  assert.deepEqual(listed.json().items.map(item => item.commandId), [command.commandId]);
+
+  const deferred = await harness.call('/dsh-session-notify/commands/claim', {
+    method: 'POST',
+    body: JSON.stringify({ commandId: command.commandId, clientId: 'background-browser', visible: false }),
+  });
+  assert.equal(deferred.status, 409);
+  assert.match(deferred.json().error, /visible Harness tab/);
+
+  const claimed = await harness.call('/dsh-session-notify/commands/claim', {
+    method: 'POST',
+    body: JSON.stringify({ commandId: command.commandId, clientId: 'browser-a', visible: true }),
+  });
+  assert.equal(claimed.status, 200);
+  assert.equal(claimed.json().command.sessionId, 'root-1');
+
+  const busy = await harness.call('/dsh-session-notify/commands/claim', {
+    method: 'POST',
+    body: JSON.stringify({ commandId: command.commandId, clientId: 'browser-b', visible: true }),
+  });
+  assert.equal(busy.status, 409);
+
+  const wrongAck = await harness.call('/dsh-session-notify/commands/ack', {
+    method: 'POST',
+    body: JSON.stringify({ commandId: command.commandId, clientId: 'browser-b' }),
+  });
+  assert.equal(wrongAck.status, 409);
+
+  const ack = await harness.call('/dsh-session-notify/commands/ack', {
+    method: 'POST',
+    body: JSON.stringify({ commandId: command.commandId, clientId: 'browser-a' }),
+  });
+  assert.equal(ack.status, 200);
+  assert.deepEqual((await harness.call('/dsh-session-notify/commands')).json().items, []);
+});
+
+test('命令路由拒绝缺失 sessionId 和非 POST 请求', async () => {
+  const harness = makeHarness();
+  apply(harness.ctx);
+  assert.equal((await harness.call('/dsh-session-notify/open', { method: 'GET' })).status, 405);
+  const invalid = await harness.call('/dsh-session-notify/open', { method: 'POST', body: '{}' });
+  assert.equal(invalid.status, 400);
 });
 
 test('缓冲区封顶 50 条，seq 持续递增不回绕', async () => {

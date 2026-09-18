@@ -127,14 +127,9 @@ signal_processes() {
 }
 
 stop_existing_dsh() {
-  # Ask the UI process to exit first, but never wait for an old, stuck build
-  # to acknowledge the Apple event. The targeted signal path below is the
-  # authoritative fallback before replacement.
-  if [[ "${DHL_SKIP_BUNDLE_QUIT:-${DSH_SKIP_BUNDLE_QUIT:-0}}" != "1" ]]; then
-    osascript -e 'ignoring application responses' -e 'tell application id "com.local.dhl-launcher" to quit' -e 'end ignoring' >/dev/null 2>&1 || true
-    osascript -e 'ignoring application responses' -e 'tell application id "com.local.dsh-launcher" to quit' -e 'end ignoring' >/dev/null 2>&1 || true
-  fi
-
+  # Stop by matching our own processes and sending signals. This avoids Apple
+  # Events entirely, so installing never asks for automation permission just
+  # to close an older launcher instance.
   if ! wait_for_processes launcher_pids 15; then
     print "Deepseek Harness Launcher did not exit normally; terminating it..."
     signal_processes launcher_pids TERM

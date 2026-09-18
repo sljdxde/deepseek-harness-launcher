@@ -32,6 +32,8 @@ struct UpdateSupportChecks {
         precondition(compareVersions("0.1.1", "0.1.2") == .orderedAscending)
         precondition(compareVersions("1.0", "1.0.0") == .orderedSame)
         precondition(compareVersions("2.0.0", "1.9.9") == .orderedDescending)
+        precondition(UpdateDownloadProgress(bytesWritten: 24, totalBytes: 59).fraction! > 0.4)
+        precondition(UpdateDownloadProgress(bytesWritten: 24, totalBytes: nil).fraction == nil)
 
         let manifestURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dhl-update-manifest-\(ProcessInfo.processInfo.processIdentifier).json")
         let manifest = "{\"tag_name\":\"v9.9.9\",\"name\":\"Deepseek Harness Launcher v9.9.9\",\"body\":\"test\",\"published_at\":\"2026-09-01T00:00:00Z\",\"assets\":[{\"name\":\"Deepseek.Harness.Launcher.dmg\",\"browser_download_url\":\"file:///tmp/Deepseek%20Harness%20Launcher.dmg\"}]}"

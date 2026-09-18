@@ -6,6 +6,8 @@
  *
  *   GET /dsh-session-notify/events?after=<seq>
  *     → { bootId, seq, items: [{ seq, sessionId, title, reason, at }] }
+ *   POST /dsh-session-notify/open { sessionId }
+ *     → queues a short-lived browser navigation command
  *
  * The launcher polls this route while the harness is running and turns new
  * events into a Foxmail-style unread badge on its menu bar icon plus a
@@ -28,6 +30,18 @@ export const name = 'dsh-session-notify';
 
 /** Events kept for polling; the launcher caps its own unread list as well. */
 const BUFFER_LIMIT = 50;
+
+/**
+ * Background Chromium tabs can be timer-throttled. Keep a command long
+ * enough for an already-open Harness page to wake up and consume it.
+ */
+const COMMAND_LIMIT = 20;
+const COMMAND_TTL_MS = 5 * 60 * 1000;
+const COMMAND_CLAIM_TTL_MS = 15 * 1000;
+// The launcher selects the Harness tab before queueing an open command. Give
+// that visible client a brief head start so a background duplicate tab cannot
+// claim the command first and navigate out of sight.
+const VISIBLE_CLIENT_GRACE_MS = 2 * 1000;
 
 /** Fold the last `session/title` from a session's event log for display. */
 function sessionTitle(session) {
@@ -68,6 +82,84 @@ function json(response, value) {
   response.end(JSON.stringify(value));
 }
 
+function jsonStatus(response, status, value) {
+  response.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' });
+  response.end(JSON.stringify(value));
+}
+
+async function body(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+}
+
+function commandView(command) {
+  return {
+    commandId: command.commandId,
+    sessionId: command.sessionId,
+    createdAt: command.createdAt,
+    expiresAt: command.expiresAt,
+  };
+}
+
+function createCommandQueue() {
+  const commands = [];
+
+  function prune(now = Date.now()) {
+    for (let index = commands.length - 1; index >= 0; index -= 1) {
+      const command = commands[index];
+      if (command.expiresAt <= now) commands.splice(index, 1);
+      else if (command.claimedUntil && command.claimedUntil <= now) {
+        command.claimedBy = null;
+        command.claimedUntil = 0;
+      }
+    }
+  }
+
+  return {
+    enqueue(sessionId, now = Date.now()) {
+      prune(now);
+      const existing = commands.find(command => command.sessionId === sessionId);
+      if (existing) return existing;
+      const command = {
+        commandId: randomUUID(),
+        sessionId,
+        createdAt: now,
+        expiresAt: now + COMMAND_TTL_MS,
+        visibleUntil: now + VISIBLE_CLIENT_GRACE_MS,
+        claimedBy: null,
+        claimedUntil: 0,
+      };
+      commands.push(command);
+      if (commands.length > COMMAND_LIMIT) commands.splice(0, commands.length - COMMAND_LIMIT);
+      return command;
+    },
+    list(now = Date.now()) {
+      prune(now);
+      return commands.filter(command => !command.claimedBy).map(commandView);
+    },
+    claim(commandId, clientId, visible, now = Date.now()) {
+      prune(now);
+      const command = commands.find(item => item.commandId === commandId);
+      if (!command) return { kind: 'missing' };
+      if (command.claimedBy && command.claimedBy !== clientId) return { kind: 'busy' };
+      if (!visible && command.visibleUntil > now) return { kind: 'deferred' };
+      command.claimedBy = clientId;
+      command.claimedUntil = now + COMMAND_CLAIM_TTL_MS;
+      return { kind: 'claimed', command: commandView(command) };
+    },
+    ack(commandId, clientId, now = Date.now()) {
+      prune(now);
+      const index = commands.findIndex(item => item.commandId === commandId);
+      if (index < 0) return 'missing';
+      const command = commands[index];
+      if (command.claimedBy !== clientId) return 'forbidden';
+      commands.splice(index, 1);
+      return 'acknowledged';
+    },
+  };
+}
+
 /**
  * Plugin entry: buffer root-session turn ends and serve them to the launcher.
  * @param {import("@deepseek-ai/cordis").Context} ctx - host plugin context.
@@ -76,6 +168,7 @@ export function apply(ctx) {
   const bootId = randomUUID();
   let seq = 0;
   const items = [];
+  const commands = createCommandQueue();
 
   ctx.on('session/event', (session, event) => {
     try {
@@ -104,7 +197,69 @@ export function apply(ctx) {
           json(res, { bootId, seq, items: after > 0 ? items.filter(item => item.seq > after) : [...items] });
         },
       });
-      return () => dispose();
+      const openDispose = host.webServer.register({
+        kind: 'exact',
+        path: '/dsh-session-notify/open',
+        handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            const sessionId = typeof value.sessionId === 'string' ? value.sessionId.trim() : '';
+            if (!sessionId) { jsonStatus(res, 400, { error: 'sessionId is required' }); return; }
+            json(res, { command: commandView(commands.enqueue(sessionId)) });
+          } catch (error) {
+            jsonStatus(res, 400, { error: String(error?.message || error) });
+          }
+        },
+      });
+      const listDispose = host.webServer.register({
+        kind: 'exact',
+        path: '/dsh-session-notify/commands',
+        handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          json(res, { items: commands.list() });
+        },
+      });
+      const claimDispose = host.webServer.register({
+        kind: 'exact',
+        path: '/dsh-session-notify/commands/claim',
+        handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            const commandId = typeof value.commandId === 'string' ? value.commandId.trim() : '';
+            const clientId = typeof value.clientId === 'string' ? value.clientId.trim() : '';
+            if (!commandId || !clientId) { jsonStatus(res, 400, { error: 'commandId and clientId are required' }); return; }
+            const result = commands.claim(commandId, clientId, value.visible === true);
+            if (result.kind === 'missing') { jsonStatus(res, 404, { error: 'command not found' }); return; }
+            if (result.kind === 'busy') { jsonStatus(res, 409, { error: 'command already claimed' }); return; }
+            if (result.kind === 'deferred') { jsonStatus(res, 409, { error: 'waiting for visible Harness tab' }); return; }
+            json(res, { command: result.command });
+          } catch (error) {
+            jsonStatus(res, 400, { error: String(error?.message || error) });
+          }
+        },
+      });
+      const ackDispose = host.webServer.register({
+        kind: 'exact',
+        path: '/dsh-session-notify/commands/ack',
+        handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            const commandId = typeof value.commandId === 'string' ? value.commandId.trim() : '';
+            const clientId = typeof value.clientId === 'string' ? value.clientId.trim() : '';
+            if (!commandId || !clientId) { jsonStatus(res, 400, { error: 'commandId and clientId are required' }); return; }
+            const result = commands.ack(commandId, clientId);
+            if (result === 'missing') { jsonStatus(res, 404, { error: 'command not found' }); return; }
+            if (result === 'forbidden') { jsonStatus(res, 409, { error: 'command claim mismatch' }); return; }
+            json(res, { ok: true });
+          } catch (error) {
+            jsonStatus(res, 400, { error: String(error?.message || error) });
+          }
+        },
+      });
+      return () => [dispose, openDispose, listDispose, claimDispose, ackDispose].forEach(disposeRoute => disposeRoute());
     }, 'dsh-session-notify: routes');
   });
 }

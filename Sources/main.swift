@@ -105,6 +105,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var settingsWindow: SettingsWindowController?
     private var pendingUpdate: UpdateManifest?
     private var updateCheckInFlight = false
+    private var updateDownloadInFlight = false
+    private var updateDownloadWindow: UpdateDownloadWindowController?
     private var updateMenuItem: NSMenuItem?
     private var updateMenuRow: MenuRowView?
     private var dshUpdateMenuItem: NSMenuItem?
@@ -122,8 +124,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var sessionNotifyUnavailableLogged = false
     // dsh 重启瞬间（stop → start）可能同端口先后起两条轮询链，代际号让旧链自灭。
     private var sessionNotifyLoopID = 0
+    // A notification can be clicked while dsh is still starting. Keep the
+    // target until the Harness page and its client are ready.
+    private var pendingSessionId: String?
     private var browserOpenInFlight = false
     private var lastBrowserOpenAt = Date.distantPast
+    private var pendingBrowserOpenCompletions: [() -> Void] = []
     private let settings = LauncherSettings.shared
     private let updateService = UpdateService()
     private let dshUpdateService = DSHVersionService()
@@ -267,6 +273,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openDHL() {
+        openDHLForSession(nil)
+    }
+
+    private func openDHLForSession(_ sessionId: String?) {
+        pendingSessionId = sessionId.flatMap { $0.isEmpty ? nil : $0 }
         if let installWindow = dshInstallWindow {
             openWhenReady = true
             installWindow.present()
@@ -277,7 +288,22 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if state == .stopped || state == .failed { start() }
             return
         }
-        openWebPage(on: port)
+        let target = pendingSessionId
+        pendingSessionId = nil
+        openWebPage(on: port) { [weak self] in
+            guard let target else { return }
+            self?.requestSessionOpen(sessionId: target, port: port)
+        }
+    }
+
+    /// Hand a target session to the Harness client. This is best-effort: an
+    /// external Harness may not have the bundled plugin, in which case the
+    /// caller still opens the normal Harness home page.
+    private func requestSessionOpen(sessionId: String, port: Int) {
+        guard !sessionId.isEmpty,
+              let url = URL(string: "http://127.0.0.1:\(port)/dsh-session-notify/open"),
+              let body = try? JSONSerialization.data(withJSONObject: ["sessionId": sessionId]) else { return }
+        ServiceProbe.postJSON(at: url, body: body, timeout: 1)
     }
 
     private func openBrowserWhenReadyIfNeeded() {
@@ -285,16 +311,36 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         didAutoOpenBrowser = true
         openWhenReady = false
         guard state == .running, let port = selectedPort else { return }
-        openWebPage(on: port, intent: .automatic)
+        let target = pendingSessionId
+        pendingSessionId = nil
+        openWebPage(on: port, intent: .automatic) { [weak self] in
+            guard let target else { return }
+            self?.requestSessionOpen(sessionId: target, port: port)
+        }
     }
 
     /// 打开 Harness 页面。`intent` 决定节流策略：菜单点击/热键永远生效，
     /// 后端就绪后的自动打开仍受 2 秒冷却保护，避免连开多个标签页。
-    private func openWebPage(on port: Int, path: String = "/", intent: BrowserOpenIntent = .manual) {
-        guard let url = BrowserConnectionSupport.pageURL(port: port, path: path) else { return }
+    private func openWebPage(
+        on port: Int,
+        path: String = "/",
+        intent: BrowserOpenIntent = .manual,
+        completion: @escaping () -> Void = {}
+    ) {
+        guard let url = BrowserConnectionSupport.pageURL(port: port, path: path) else {
+            completion()
+            return
+        }
         guard !BrowserConnectionSupport.shouldDefer(
             intent: intent, inFlight: browserOpenInFlight, lastOpenAt: lastBrowserOpenAt, now: Date()
-        ) else { return }
+        ) else {
+            if browserOpenInFlight {
+                pendingBrowserOpenCompletions.append(completion)
+            } else {
+                completion()
+            }
+            return
+        }
         browserOpenInFlight = true
         // 连接仅是页面存在的启发式信号，用于挑出该把 URL 交给哪个浏览器。
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -304,63 +350,95 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 guard self.state == .running, self.selectedPort == port else {
-                    self.browserOpenInFlight = false
+                    self.finishBrowserOpen(port: port, error: nil, completion: completion)
                     return
                 }
                 let browser = self.browserConnected(clientPIDs: clientPIDs, table: table, port: port)
-                self.deliverPage(url, to: browser, port: port)
+                self.deliverPage(url, to: browser, port: port, completion: completion)
             }
         }
     }
 
-    /// 把 URL 真正交给浏览器：优先交给已经在访问 Harness 的那个浏览器（它会
-    /// 聚焦已打开的 Harness 标签页，而不是在默认浏览器里另开一份），否则交给
-    /// 默认浏览器。两条路都会导航到 URL —— 以前命中「浏览器已连接」时只把
-    /// 浏览器前置、不发 URL，于是页面永远停在原来那个标签上。
-    private func deliverPage(_ url: URL, to browser: NSRunningApplication?, port: Int) {
-        let plan = BrowserConnectionSupport.plan(connectedBrowser: browser != nil)
-        guard plan.opensURL else { browserOpenInFlight = false; return }
+    /// 检测到已有 Harness 页面时，先用 Apple Events 选中匹配的标签页，
+    /// 不再把 URL 重新交给浏览器。后者在 Chromium/Safari 中会创建重复
+    /// 标签页；自动化被拒绝或浏览器不支持时，降级为仅前置浏览器。
+    private func deliverPage(
+        _ url: URL,
+        to browser: NSRunningApplication?,
+        port: Int,
+        completion: @escaping () -> Void
+    ) {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         configuration.createsNewApplicationInstance = false
-        let openInDefaultBrowser = { [weak self] in
+        let openInBrowser = { [weak self] in
             guard let self else { return }
+            if let bundleID = browser?.bundleIdentifier,
+               let browserURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                NSWorkspace.shared.open([url], withApplicationAt: browserURL, configuration: configuration) { [weak self] _, error in
+                    DispatchQueue.main.async {
+                        self?.finishBrowserOpen(port: port, error: error, completion: completion)
+                    }
+                }
+                return
+            }
             NSWorkspace.shared.open(url, configuration: configuration) { [weak self] _, error in
-                DispatchQueue.main.async { self?.finishBrowserOpen(port: port, error: error) }
+                DispatchQueue.main.async {
+                    self?.finishBrowserOpen(port: port, error: error, completion: completion)
+                }
             }
         }
-        if plan.activatesConnectedBrowser { browser?.activate(options: []) }
-        // 同一个 URL 交给已经打开它的浏览器时，Chrome/Safari 会切到既有标签页。
-        guard let bundleID = browser?.bundleIdentifier,
-              let browserURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            appendLogString("未检测到已连接 Harness 的浏览器，用默认浏览器打开 \(url.absoluteString)\n")
-            openInDefaultBrowser()
+
+        if let browser {
+            let browserName = browser.localizedName ?? "浏览器"
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let result = BrowserAutomationSupport.focusHarnessTab(
+                    bundleIdentifier: browser.bundleIdentifier, targetURL: url
+                )
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    switch result {
+                    case .focused:
+                        self.appendLogString("检测到 \(browserName) 已连接 Harness 端口 \(port)，已定位并前置 Harness 标签页\n")
+                    case .missing:
+                        _ = browser.activate(options: [.activateIgnoringOtherApps])
+                        self.appendLogString("检测到 \(browserName) 已连接 Harness 端口 \(port)，但未找到匹配标签页；已前置浏览器\n")
+                    case .unsupported:
+                        _ = browser.activate(options: [.activateIgnoringOtherApps])
+                        self.appendLogString("检测到 \(browserName) 已连接 Harness 端口 \(port)，该浏览器不支持标签定位；已前置浏览器\n")
+                    case .failed(let message):
+                        _ = browser.activate(options: [.activateIgnoringOtherApps])
+                        self.appendLogString("定位 \(browserName) Harness 标签页失败（\(message)）；已前置浏览器\n")
+                    }
+                    self.finishBrowserOpen(port: port, error: nil, completion: completion)
+                }
+            }
             return
         }
-        appendLogString("检测到 \(browser?.localizedName ?? "浏览器") 已连接 Harness 端口 \(port)，在该浏览器中打开 \(url.absoluteString)（复用已有标签页）\n")
-        NSWorkspace.shared.open([url], withApplicationAt: browserURL, configuration: configuration) { [weak self] _, error in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                guard let error else { self.finishBrowserOpen(port: port, error: nil); return }
-                self.appendLogString("在 \(bundleID) 中打开失败（\(error.localizedDescription)），回退默认浏览器\n")
-                openInDefaultBrowser()
-            }
-        }
+        appendLogString("未检测到已连接 Harness 的浏览器，用默认浏览器打开 \(url.absoluteString)\n")
+        openInBrowser()
     }
 
-    private func finishBrowserOpen(port: Int, error: Error?) {
+    private func finishBrowserOpen(
+        port: Int,
+        error: Error?,
+        completion: @escaping () -> Void = {}
+    ) {
         browserOpenInFlight = false
         if let error {
             appendLogString("打开 Deepseek Harness Web 页面失败：\(error.localizedDescription)\n")
         } else {
             lastBrowserOpenAt = Date()
         }
+        let completions = pendingBrowserOpenCompletions
+        pendingBrowserOpenCompletions = []
+        completion()
+        completions.forEach { $0() }
     }
 
     /// 找出正在访问 Harness 端口的浏览器。检测走 `lsof` 客户端连接 +
-    /// `ps` 父子链定位浏览器主进程：零权限、不触发任何 TCC 授权弹窗。
-    /// 注意：连接数只能说明「有浏览器连着页面」，无法选中具体标签页 ——
-    /// 选中靠的是把 URL 交给该浏览器，让它自己定位到对应标签页。
+    /// `ps` 父子链定位浏览器主进程，不需要任何授权。标签页选择只在
+    /// 已命中浏览器且用户主动打开 Harness 时才通过 Apple Events 执行。
     private func browserConnected(clientPIDs: Set<Int32>, table: [Int32: (ppid: Int32, command: String)], port: Int) -> NSRunningApplication? {
         guard !clientPIDs.isEmpty else { return nil }
         // Chromium 的连接常记在 Helper(Network) 等子进程名下，且这类
@@ -436,7 +514,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func stopDHL(completion: (() -> Void)? = nil) {
         cancelDSHInstall()
         let trackedPID = process?.processIdentifier ?? 0
-        process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false; setState(.stopped)
+        process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false; pendingSessionId = nil; setState(.stopped)
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var pids = self?.managedDSHPIDs() ?? []
             if trackedPID > 0 && !pids.contains(trackedPID) { pids.insert(trackedPID, at: 0) }
@@ -561,6 +639,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func checkForUpdates() {
+        if updateDownloadInFlight {
+            updateDownloadWindow?.present()
+            return
+        }
         if let pendingUpdate { presentUpdate(manifest: pendingUpdate); return }
         performUpdateCheck(interactive: true)
     }
@@ -667,9 +749,22 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func downloadUpdate(_ manifest: UpdateManifest) {
+        guard !updateDownloadInFlight else {
+            updateDownloadWindow?.present()
+            return
+        }
+        updateDownloadInFlight = true
         setUpdateMenuTitle("正在下载更新…")
-        updateService.download(manifest) { [weak self] result in
+        let progressWindow = UpdateDownloadWindowController(version: manifest.version)
+        updateDownloadWindow = progressWindow
+        progressWindow.present()
+        updateService.download(manifest, onProgress: { [weak progressWindow] progress in
+            progressWindow?.update(progress)
+        }) { [weak self, weak progressWindow] result in
             guard let self else { return }
+            self.updateDownloadInFlight = false
+            progressWindow?.dismiss()
+            self.updateDownloadWindow = nil
             switch result {
             case .success(let url):
                 self.setUpdateMenuTitle("更新可用：v\(manifest.version)")
@@ -1219,13 +1314,17 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openSessionFromNotify(_ sender: NSMenuItem) {
+        let sessionId = sender.representedObject as? String
         sessionNotifyStore.markAllRead()
         rebuildSessionNotifyMenuSection()
-        appendLogString("用户查看会话完成提醒：\(sender.representedObject as? String ?? "")\n")
+        appendLogString("用户查看会话完成提醒：\(sessionId ?? "")\n")
         if state == .running, let port = selectedPort {
-            openWebPage(on: port)
+            openWebPage(on: port) { [weak self] in
+                guard let sessionId else { return }
+                self?.requestSessionOpen(sessionId: sessionId, port: port)
+            }
         } else {
-            openDHL()
+            openDHLForSession(sessionId)
         }
     }
 
