@@ -58,17 +58,20 @@ launcher_pids() {
   # Match the launcher executable itself, or a shell whose first script
   # argument is the launcher executable. A parent shell that merely contains
   # the app path in unrelated arguments must not match.
-  ps -axo pid=,state=,command= | awk -v launcher="$launcher" -v legacy_dhl_launcher="$legacy_dhl_launcher" -v legacy_launcher="$legacy_launcher" '
+  # DHL_STOP_SCOPE=target (regression tests) restricts matching to the
+  # destination being installed so a test run never SIGTERMs the really
+  # installed launcher from /Applications.
+  ps -axo pid=,state=,command= | awk -v launcher="$launcher" -v legacy_dhl_launcher="$legacy_dhl_launcher" -v legacy_launcher="$legacy_launcher" -v scoped="${DHL_STOP_SCOPE:-}" '
     $2 !~ /^Z/ {
       cmd = $0
       sub(/^[ \t]*[0-9]+[ \t]+[^ \t]+[ \t]+/, "", cmd)
       direct = (cmd == launcher || index(cmd, launcher) == 1 ||
-        (cmd !~ /^\/bin\/(zsh|bash|sh) / && cmd ~ /^\/.*\/Deepseek Harness Launcher\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/) ||
-        (cmd !~ /^\/bin\/(zsh|bash|sh) / && cmd ~ /^\/.*\/DHL\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/) ||
-        (cmd !~ /^\/bin\/(zsh|bash|sh) / && cmd ~ /^\/.*\/DSH\.app\/Contents\/MacOS\/DSH([[:space:]]|$)/))
-      shell = (cmd ~ /^\/bin\/(zsh|bash|sh) \/.*\/Deepseek Harness Launcher\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/ ||
-        cmd ~ /^\/bin\/(zsh|bash|sh) \/.*\/DHL\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/ ||
-        cmd ~ /^\/bin\/(zsh|bash|sh) \/.*\/DSH\.app\/Contents\/MacOS\/DSH([[:space:]]|$)/)
+        (scoped != "target" && cmd !~ /^\/bin\/(zsh|bash|sh) / && cmd ~ /^\/.*\/Deepseek Harness Launcher\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/) ||
+        (scoped != "target" && cmd !~ /^\/bin\/(zsh|bash|sh) / && cmd ~ /^\/.*\/DHL\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/) ||
+        (scoped != "target" && cmd !~ /^\/bin\/(zsh|bash|sh) / && cmd ~ /^\/.*\/DSH\.app\/Contents\/MacOS\/DSH([[:space:]]|$)/))
+      shell = ((scoped != "target" && cmd ~ /^\/bin\/(zsh|bash|sh) \/.*\/Deepseek Harness Launcher\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/) ||
+        (scoped != "target" && cmd ~ /^\/bin\/(zsh|bash|sh) \/.*\/DHL\.app\/Contents\/MacOS\/DHL([[:space:]]|$)/) ||
+        (scoped != "target" && cmd ~ /^\/bin\/(zsh|bash|sh) \/.*\/DSH\.app\/Contents\/MacOS\/DSH([[:space:]]|$)/))
       if (direct || shell) print $1
     }'
 }
@@ -82,12 +85,14 @@ dsh_pids() {
   local runtime_staging="$USER_HOME/.dsh/runtime.installing-"
   # npm/node are used by older builds; dsh is the fixed-runtime executable in
   # current builds. Restricting the executable field avoids matching this scan.
-  ps -axo pid=,state=,command= | awk -v patch="$patch" -v legacy_dhl_patch="$legacy_dhl_patch" -v legacy_patch="$legacy_patch" -v runtime_dsh="$runtime_dsh" -v runtime_root="$runtime_root" -v runtime_staging="$runtime_staging" \
+  # DHL_STOP_SCOPE=target drops the generic patch/runtime matches so only the
+  # destination's own patch scope is stopped (see launcher_pids above).
+  ps -axo pid=,state=,command= | awk -v patch="$patch" -v legacy_dhl_patch="$legacy_dhl_patch" -v legacy_patch="$legacy_patch" -v runtime_dsh="$runtime_dsh" -v runtime_root="$runtime_root" -v runtime_staging="$runtime_staging" -v scoped="${DHL_STOP_SCOPE:-}" \
     '$2 !~ /^Z/ {
       executable = ($3 == "npm" || $3 == "npx" || $3 == "node" || $3 == "dsh" || $3 ~ /\/(npm|npx|node|dsh)$/)
       managed = index($0, patch) || index($0, legacy_dhl_patch) || index($0, legacy_patch) ||
-        index($0, "DSHArchiveManager/cordis.patch.yml") || index($0, "@deepseek-ai/dsh") ||
-        index($0, runtime_dsh) || index($0, runtime_root) || index($0, runtime_staging)
+        (scoped != "target" && (index($0, "DSHArchiveManager/cordis.patch.yml") || index($0, "@deepseek-ai/dsh") ||
+        index($0, runtime_dsh) || index($0, runtime_root) || index($0, runtime_staging)))
       if (executable && managed) print $1
     }'
 }

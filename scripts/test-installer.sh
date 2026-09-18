@@ -13,7 +13,10 @@ rg -q 'signal_processes launcher_pids KILL' "$INSTALLER"
 rg -q 'signal_processes dsh_pids KILL' "$INSTALLER"
 rg -q 'wait_for_processes launcher_pids' "$INSTALLER"
 
-WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/dsh-installer-test.XXXXXX")"
+# pwd -P normalizes TMPDIR's trailing slash (…/T//dsh-installer-test): the
+# scoped process matcher compares ps argv against the installer's resolved
+# paths, so both sides must use the same normalized form.
+WORKDIR="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/dsh-installer-test.XXXXXX")" && pwd -P)"
 PID=""
 NPX_PID=""
 cleanup() {
@@ -66,7 +69,10 @@ kill -0 "$NPX_PID" 2>/dev/null || {
 # This fixture intentionally contains only installation data, not a runnable
 # application. The installer behavior under test is process shutdown and
 # replacement, so suppress Finder launch after a successful replacement.
-DHL_SKIP_GLOBAL_CLEANUP=1 "$INSTALLER" "$SOURCE" "$DEST" --no-open
+# DHL_STOP_SCOPE=target keeps process shutdown scoped to the fixture: a test
+# run must never SIGTERM the really installed launcher/backend (that is what
+# used to make the menu-bar app "auto quit" during regression runs).
+DHL_STOP_SCOPE=target DHL_SKIP_GLOBAL_CLEANUP=1 "$INSTALLER" "$SOURCE" "$DEST" --no-open
 wait "$PID" 2>/dev/null || true
 PID=""
 for _ in {1..20}; do

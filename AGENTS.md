@@ -69,7 +69,10 @@
 
 ## 其他约定
 
-- 全量回归入口：`./scripts/test.sh`，提交前必须全绿。
+- 全量回归入口：`./scripts/test.sh`，提交前必须全绿。回归运行**不得停止真实
+  安装的 launcher/dsh**：安装器测试通过 `DHL_STOP_SCOPE=target` 把进程停止
+  限定在临时目标目录内，禁止移除该作用域限制（否则每次跑测试都会杀掉用户
+  正在使用的菜单栏应用，表现为"自动退出"）。
 - 浏览器标签复用：禁止用 AppleScript 做"发现浏览器"的第一步（会触发自动化
   授权）；仅允许在 lsof 连接检测确认浏览器已连接后，用 AppleScript 精确选中
   标签，且必须保留降级路径（详见 `Sources/BrowserConnectionSupport.swift` 与

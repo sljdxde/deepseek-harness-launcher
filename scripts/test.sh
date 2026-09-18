@@ -104,6 +104,8 @@ zsh -n "$ROOT/scripts/build-installer-app.sh"
 zsh -n "$ROOT/scripts/swift-slice.sh"
 zsh -n "$ROOT/scripts/build-dmg.sh"
 "$ROOT/scripts/test-installer.sh"
+# 安装器测试必须限定进程停止作用域：禁止回归运行杀掉真实安装的 launcher/dsh。
+rg -q 'DHL_STOP_SCOPE' "$ROOT/scripts/install-from-app.sh" "$ROOT/scripts/test-installer.sh"
 rg -q 'signal_processes launcher_pids KILL' "$ROOT/scripts/install-from-app.sh"
 rg -q 'signal_processes dsh_pids KILL' "$ROOT/scripts/install-from-app.sh"
 rg -q 'wait_for_processes launcher_pids' "$ROOT/scripts/install-from-app.sh"
