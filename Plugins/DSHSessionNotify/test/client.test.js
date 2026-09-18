@@ -38,9 +38,10 @@ test('client 领取命令后打开目标会话并确认', async () => {
   };
   context.fetch = async (url, options = {}) => {
     requests.push([url, options]);
-    if (url.endsWith('/commands')) return { ok: true, json: async () => ({ items: [{ commandId: 'c1', sessionId: 'target-session' }] }) };
-    if (url.endsWith('/commands/claim')) return { ok: true, json: async () => ({ command: { commandId: 'c1', sessionId: 'target-session' } }) };
-    if (url.endsWith('/commands/ack')) return { ok: true, json: async () => ({ ok: true }) };
+    const path = String(url).split('?')[0];
+    if (path.endsWith('/commands')) return { ok: true, json: async () => ({ items: [{ commandId: 'c1', sessionId: 'target-session' }] }) };
+    if (path.endsWith('/commands/claim')) return { ok: true, json: async () => ({ command: { commandId: 'c1', sessionId: 'target-session' } }) };
+    if (path.endsWith('/commands/ack')) return { ok: true, json: async () => ({ ok: true }) };
     return { ok: false, json: async () => ({}) };
   };
 
@@ -48,7 +49,9 @@ test('client 领取命令后打开目标会话并确认', async () => {
   await new Promise(resolve => setImmediate(resolve));
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(opened, ['target-session']);
-  assert.equal(requests.filter(([url]) => url.endsWith('/commands/claim')).length, 1);
+  // commands 轮询携带 clientId：服务端以此维护页面存活心跳。
+  assert.equal(requests.filter(([url]) => String(url).includes('clientId=')).length >= 1, true);
+  assert.equal(requests.filter(([url]) => String(url).split('?')[0].endsWith('/commands/claim')).length, 1);
   assert.equal(requests.filter(([url]) => url.endsWith('/commands/ack')).length, 1);
   const claim = requests.find(([url]) => url.endsWith('/commands/claim'));
   assert.equal(JSON.parse(claim[1].body).visible, true);
@@ -91,9 +94,10 @@ test('后台 Harness 页面也会领取命令并尝试聚焦自身', async () =>
   };
   context.fetch = async (url, options = {}) => {
     requests.push([url, options]);
-    if (url.endsWith('/commands')) return { ok: true, json: async () => ({ items: [{ commandId: 'c2', sessionId: 'background-session' }] }) };
-    if (url.endsWith('/commands/claim')) return { ok: true, json: async () => ({ command: { commandId: 'c2', sessionId: 'background-session' } }) };
-    if (url.endsWith('/commands/ack')) return { ok: true, json: async () => ({ ok: true }) };
+    const path = String(url).split('?')[0];
+    if (path.endsWith('/commands')) return { ok: true, json: async () => ({ items: [{ commandId: 'c2', sessionId: 'background-session' }] }) };
+    if (path.endsWith('/commands/claim')) return { ok: true, json: async () => ({ command: { commandId: 'c2', sessionId: 'background-session' } }) };
+    if (path.endsWith('/commands/ack')) return { ok: true, json: async () => ({ ok: true }) };
     return { ok: false, json: async () => ({}) };
   };
 

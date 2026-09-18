@@ -8,6 +8,10 @@
  *     → { bootId, seq, items: [{ seq, sessionId, title, reason, at }] }
  *   POST /dsh-session-notify/open { sessionId }
  *     → queues a short-lived browser navigation command
+ *   GET /dsh-session-notify/presence
+ *     → { active, clients }: does an injected Harness page poll right now?
+ *   POST /dsh-session-notify/presence/bye { clientId }
+ *     → the page went away (pagehide); drops the client from presence
  *
  * The launcher polls this route while the harness is running and turns new
  * events into a Foxmail-style unread badge on its menu bar icon plus a
@@ -42,6 +46,37 @@ const COMMAND_CLAIM_TTL_MS = 15 * 1000;
 // that visible client a brief head start so a background duplicate tab cannot
 // claim the command first and navigate out of sight.
 const VISIBLE_CLIENT_GRACE_MS = 2 * 1000;
+/**
+ * A Harness page counts as open while its injected client polls, and stops
+ * counting the moment it reports a pagehide (tab/window closed). Chrome
+ * keep-alive keeps sockets ESTABLISHED long after every tab closed, so the
+ * launcher must not rely on socket checks alone to decide whether a new page
+ * has to be opened. The TTL only covers abnormal exits where no pagehide
+ * fired; hidden tabs poll at least once a minute, so 90s is safely above it.
+ */
+export const PRESENCE_TTL_MS = 90 * 1000;
+
+export function createPresenceTracker(ttlMs = PRESENCE_TTL_MS) {
+  const lastSeen = new Map();
+  return {
+    touch(clientId, now = Date.now()) {
+      if (clientId) lastSeen.set(clientId, now);
+    },
+    bye(clientId) {
+      if (clientId) lastSeen.delete(clientId);
+    },
+    active(now = Date.now()) {
+      for (const [clientId, seen] of lastSeen) {
+        if (now - seen > ttlMs) lastSeen.delete(clientId);
+      }
+      return lastSeen.size > 0;
+    },
+    clients(now = Date.now()) {
+      this.active(now);
+      return lastSeen.size;
+    },
+  };
+}
 
 /** Fold the last `session/title` from a session's event log for display. */
 function sessionTitle(session) {
@@ -169,6 +204,7 @@ export function apply(ctx) {
   let seq = 0;
   const items = [];
   const commands = createCommandQueue();
+  const presence = createPresenceTracker();
 
   ctx.on('session/event', (session, event) => {
     try {
@@ -217,6 +253,10 @@ export function apply(ctx) {
         path: '/dsh-session-notify/commands',
         handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          try {
+            const clientId = new URL(req.url, 'http://127.0.0.1').searchParams.get('clientId');
+            if (clientId) presence.touch(clientId);
+          } catch { /* a poll without clientId still gets the queue */ }
           json(res, { items: commands.list() });
         },
       });
@@ -259,7 +299,29 @@ export function apply(ctx) {
           }
         },
       });
-      return () => [dispose, openDispose, listDispose, claimDispose, ackDispose].forEach(disposeRoute => disposeRoute());
+      const presenceDispose = host.webServer.register({
+        kind: 'exact',
+        path: '/dsh-session-notify/presence',
+        handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          json(res, { active: presence.active(), clients: presence.clients() });
+        },
+      });
+      const byeDispose = host.webServer.register({
+        kind: 'exact',
+        path: '/dsh-session-notify/presence/bye',
+        handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            presence.bye(typeof value.clientId === 'string' ? value.clientId.trim() : '');
+            json(res, { ok: true });
+          } catch (error) {
+            jsonStatus(res, 400, { error: String(error?.message || error) });
+          }
+        },
+      });
+      return () => [dispose, openDispose, listDispose, claimDispose, ackDispose, presenceDispose, byeDispose].forEach(disposeRoute => disposeRoute());
     }, 'dsh-session-notify: routes');
   });
 }

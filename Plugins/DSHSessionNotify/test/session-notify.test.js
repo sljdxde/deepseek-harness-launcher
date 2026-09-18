@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { name, apply, summarizeTurnEnd } from '../lib/index.js';
+import { name, apply, summarizeTurnEnd, createPresenceTracker, PRESENCE_TTL_MS } from '../lib/index.js';
 
 /** A session whose event log ends with a `session/title`. */
 function makeSession({ id = 'sess-1234-abcd', origin = undefined, title = null, events = [] } = {}) {
@@ -216,4 +216,64 @@ test('插件卸载时移除路由与监听器', async () => {
 
 test('插件导出名称与路由路径稳定（启动器轮询依赖）', () => {
   assert.equal(name, 'dsh-session-notify');
+});
+
+test('presence 追踪器：touch 生效、bye 即时离场、超时自动过期', () => {
+  const tracker = createPresenceTracker(90_000);
+  assert.equal(tracker.active(0), false);
+
+  tracker.touch('page-a', 0);
+  assert.equal(tracker.active(89_999), true);
+  assert.equal(tracker.clients(89_999), 1);
+  assert.equal(tracker.active(90_001), false);
+
+  tracker.touch('page-a', 0);
+  tracker.touch('page-b', 0);
+  tracker.bye('page-a');
+  assert.equal(tracker.clients(0), 1);
+  tracker.bye('page-b');
+  assert.equal(tracker.active(0), false);
+
+  // 空/缺失 clientId 不产生心跳。
+  tracker.touch('', 0);
+  tracker.touch(undefined, 0);
+  assert.equal(tracker.active(0), false);
+  // TTL 必须高于后台标签页的定时器节流周期（隐藏标签页最低约 1 次/分钟）。
+  assert.ok(PRESENCE_TTL_MS > 60_000);
+});
+
+test('commands 轮询即心跳，presence/bye 即离场（启动器判定依赖）', async () => {
+  const harness = makeHarness();
+  const { call } = harness;
+  apply(harness.ctx);
+
+  const presence = async () => (await call('/dsh-session-notify/presence')).json();
+
+  assert.deepEqual((await presence()).active, false);
+
+  // 页面轮询 commands 时带上 clientId → 服务端记为在线。
+  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1' });
+  assert.deepEqual(await presence(), { active: true, clients: 1 });
+
+  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-2' });
+  assert.deepEqual((await presence()).clients, 2);
+
+  // 页面关闭触发 pagehide → sendBeacon bye → 立即离场。
+  const bye = await call('/dsh-session-notify/presence/bye', {
+    method: 'POST',
+    body: JSON.stringify({ clientId: 'page-1' }),
+  });
+  assert.deepEqual(bye.json(), { ok: true });
+  assert.deepEqual((await presence()).clients, 1);
+
+  await call('/dsh-session-notify/presence/bye', { method: 'POST', body: JSON.stringify({ clientId: 'page-2' }) });
+  assert.deepEqual((await presence()).active, false);
+});
+
+test('presence 路由拒绝非 GET、bye 拒绝非 POST', async () => {
+  const harness = makeHarness();
+  const { call } = harness;
+  apply(harness.ctx);
+  assert.equal((await call('/dsh-session-notify/presence', { method: 'POST' })).status, 405);
+  assert.equal((await call('/dsh-session-notify/presence/bye', { method: 'GET' })).status, 405);
 });

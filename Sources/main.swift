@@ -342,21 +342,36 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         browserOpenInFlight = true
-        // 连接仅是页面存在的启发式信号，用于挑出该把 URL 交给哪个浏览器。
+        // 连接仅是页面存在的启发式信号（keep-alive 会在标签页全关后仍保持
+        // 连接一段时间），配合注入客户端的 presence 心跳才能准确判断。
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             let clientPIDs = Set(self.lsofConnections(toPort: port).map(\.pid))
             let table = self.processTable()
+            let pagePresence = self.pagePresence(port: port)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 guard self.state == .running, self.selectedPort == port else {
                     self.finishBrowserOpen(port: port, error: nil, completion: completion)
                     return
                 }
+                if let active = pagePresence, !active {
+                    self.appendLogString("Harness 页面已全部关闭，重新打开页面\n")
+                    self.deliverPage(url, to: nil, port: port, completion: completion)
+                    return
+                }
                 let browser = self.browserConnected(clientPIDs: clientPIDs, table: table, port: port)
                 self.deliverPage(url, to: browser, port: port, completion: completion)
             }
         }
+    }
+
+    /// 查询注入客户端的页面心跳。nil = 接口不存在（外部 Harness / 旧插件），
+    /// 此时保留「有连接就前置浏览器」的降级行为。
+    private func pagePresence(port: Int) -> Bool? {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/dsh-session-notify/presence") else { return nil }
+        guard let body = ServiceProbe.body(at: url, timeout: 1) else { return nil }
+        return BrowserConnectionSupport.presenceActive(body)
     }
 
     /// 检测到已有 Harness 页面时，先用 Apple Events 选中匹配的标签页，

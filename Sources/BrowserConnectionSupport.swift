@@ -32,6 +32,18 @@ enum BrowserConnectionSupport {
         BrowserOpenPlan(activatesConnectedBrowser: connectedBrowser, opensURL: !connectedBrowser)
     }
 
+    /// GET /dsh-session-notify/presence 的响应解析：注入客户端的心跳汇总。
+    /// Chrome keep-alive 会在标签页全部关闭后仍保持一段时间的 ESTABLISHED
+    /// 连接，socket 检测因此可能高估「页面还开着」；心跳不存在时必须新开
+    /// 页面。返回 nil 表示响应缺失或非法（外部 Harness / 旧插件），调用方
+    /// 保持「有连接就前置」的降级行为。
+    static func presenceActive(_ body: String?) -> Bool? {
+        guard let body, let data = body.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let active = object["active"] as? Bool else { return nil }
+        return active
+    }
+
     /// Drop duplicate opens only. An in-flight open is skipped for every intent;
     /// the 2s cool-down applies to the automatic open alone so that repeated
     /// menu clicks are never swallowed.

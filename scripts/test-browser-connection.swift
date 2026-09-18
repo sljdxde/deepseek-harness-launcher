@@ -45,6 +45,13 @@ struct BrowserConnectionTests {
         precondition(BrowserConnectionSupport.pageURL(port: 3080)?.absoluteString == "http://127.0.0.1:3080/")
         precondition(BrowserConnectionSupport.pageURL(port: 3081, path: "/sessions")?.absoluteString == "http://127.0.0.1:3081/sessions")
         precondition(BrowserConnectionSupport.pageURL(port: 0) == nil)
+        // presence 心跳解析：标签页全关（active=false）必须触发重新打开页面；
+        // 缺失/非法响应返回 nil，保持「有连接就前置」的降级行为。
+        precondition(BrowserConnectionSupport.presenceActive(#"{"active":true,"clients":2}"#) == true)
+        precondition(BrowserConnectionSupport.presenceActive(#"{"active":false,"clients":0}"#) == false)
+        precondition(BrowserConnectionSupport.presenceActive("{}") == nil)
+        precondition(BrowserConnectionSupport.presenceActive("not json") == nil)
+        precondition(BrowserConnectionSupport.presenceActive(nil) == nil)
         let harnessURL = URL(string: "http://127.0.0.1:3080/")!
         let localURLs = BrowserAutomationSupport.localHarnessURLStrings(for: harnessURL)
         precondition(localURLs.contains("http://127.0.0.1:3080/"))
