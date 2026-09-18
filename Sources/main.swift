@@ -285,14 +285,18 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         didAutoOpenBrowser = true
         openWhenReady = false
         guard state == .running, let port = selectedPort else { return }
-        openWebPage(on: port)
+        openWebPage(on: port, intent: .automatic)
     }
 
-    private func openWebPage(on port: Int) {
-        guard !browserOpenInFlight, Date().timeIntervalSince(lastBrowserOpenAt) > 2,
-              let url = URL(string: "http://127.0.0.1:\(port)/") else { return }
+    /// 打开 Harness 页面。`intent` 决定节流策略：菜单点击/热键永远生效，
+    /// 后端就绪后的自动打开仍受 2 秒冷却保护，避免连开多个标签页。
+    private func openWebPage(on port: Int, path: String = "/", intent: BrowserOpenIntent = .manual) {
+        guard let url = BrowserConnectionSupport.pageURL(port: port, path: path) else { return }
+        guard !BrowserConnectionSupport.shouldDefer(
+            intent: intent, inFlight: browserOpenInFlight, lastOpenAt: lastBrowserOpenAt, now: Date()
+        ) else { return }
         browserOpenInFlight = true
-        // 连接仅是页面存在的启发式信号，不代表能选中具体标签页。
+        // 连接仅是页面存在的启发式信号，用于挑出该把 URL 交给哪个浏览器。
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             let clientPIDs = Set(self.lsofConnections(toPort: port).map(\.pid))
@@ -303,34 +307,62 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.browserOpenInFlight = false
                     return
                 }
-                if self.activateBrowserConnected(clientPIDs: clientPIDs, table: table, port: port) {
-                    self.browserOpenInFlight = false
-                    return
-                }
-                let configuration = NSWorkspace.OpenConfiguration()
-                configuration.activates = true
-                configuration.createsNewApplicationInstance = false
-                NSWorkspace.shared.open(url, configuration: configuration) { [weak self] _, error in
-                    DispatchQueue.main.async {
-                        guard let self else { return }
-                        self.browserOpenInFlight = false
-                        if let error {
-                            self.appendLogString("打开 Deepseek Harness Web 页面失败：\(error.localizedDescription)\n")
-                        } else {
-                            self.lastBrowserOpenAt = Date()
-                        }
-                    }
-                }
+                let browser = self.browserConnected(clientPIDs: clientPIDs, table: table, port: port)
+                self.deliverPage(url, to: browser, port: port)
             }
         }
     }
 
-    /// 找出正在访问 Harness 端口的浏览器并前置它。检测走 `lsof` 客户端连接 +
+    /// 把 URL 真正交给浏览器：优先交给已经在访问 Harness 的那个浏览器（它会
+    /// 聚焦已打开的 Harness 标签页，而不是在默认浏览器里另开一份），否则交给
+    /// 默认浏览器。两条路都会导航到 URL —— 以前命中「浏览器已连接」时只把
+    /// 浏览器前置、不发 URL，于是页面永远停在原来那个标签上。
+    private func deliverPage(_ url: URL, to browser: NSRunningApplication?, port: Int) {
+        let plan = BrowserConnectionSupport.plan(connectedBrowser: browser != nil)
+        guard plan.opensURL else { browserOpenInFlight = false; return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = false
+        let openInDefaultBrowser = { [weak self] in
+            guard let self else { return }
+            NSWorkspace.shared.open(url, configuration: configuration) { [weak self] _, error in
+                DispatchQueue.main.async { self?.finishBrowserOpen(port: port, error: error) }
+            }
+        }
+        if plan.activatesConnectedBrowser { browser?.activate(options: []) }
+        // 同一个 URL 交给已经打开它的浏览器时，Chrome/Safari 会切到既有标签页。
+        guard let bundleID = browser?.bundleIdentifier,
+              let browserURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            appendLogString("未检测到已连接 Harness 的浏览器，用默认浏览器打开 \(url.absoluteString)\n")
+            openInDefaultBrowser()
+            return
+        }
+        appendLogString("检测到 \(browser?.localizedName ?? "浏览器") 已连接 Harness 端口 \(port)，在该浏览器中打开 \(url.absoluteString)（复用已有标签页）\n")
+        NSWorkspace.shared.open([url], withApplicationAt: browserURL, configuration: configuration) { [weak self] _, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard let error else { self.finishBrowserOpen(port: port, error: nil); return }
+                self.appendLogString("在 \(bundleID) 中打开失败（\(error.localizedDescription)），回退默认浏览器\n")
+                openInDefaultBrowser()
+            }
+        }
+    }
+
+    private func finishBrowserOpen(port: Int, error: Error?) {
+        browserOpenInFlight = false
+        if let error {
+            appendLogString("打开 Deepseek Harness Web 页面失败：\(error.localizedDescription)\n")
+        } else {
+            lastBrowserOpenAt = Date()
+        }
+    }
+
+    /// 找出正在访问 Harness 端口的浏览器。检测走 `lsof` 客户端连接 +
     /// `ps` 父子链定位浏览器主进程：零权限、不触发任何 TCC 授权弹窗。
-    /// 注意：连接数只能说明「有浏览器连着页面」，无法选中具体标签页；
-    /// 多显示器/多窗口下表现为浏览器被激活，但不保证切到 Harness 标签。
-    private func activateBrowserConnected(clientPIDs: Set<Int32>, table: [Int32: (ppid: Int32, command: String)], port: Int) -> Bool {
-        guard !clientPIDs.isEmpty else { return false }
+    /// 注意：连接数只能说明「有浏览器连着页面」，无法选中具体标签页 ——
+    /// 选中靠的是把 URL 交给该浏览器，让它自己定位到对应标签页。
+    private func browserConnected(clientPIDs: Set<Int32>, table: [Int32: (ppid: Int32, command: String)], port: Int) -> NSRunningApplication? {
+        guard !clientPIDs.isEmpty else { return nil }
         // Chromium 的连接常记在 Helper(Network) 等子进程名下，且这类
         // 进程不是 AppKit 意义上的「应用」；沿父子链向上找到浏览器
         // 主进程再激活。
@@ -339,12 +371,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let app = NSRunningApplication(processIdentifier: mainPID),
                   app.bundleIdentifier != Bundle.main.bundleIdentifier else { continue }
             if app.executableURL?.path.contains("/node") == true { continue }
-            guard app.activate(options: []) else { continue }
-            appendLogString("检测到 \(app.localizedName ?? "浏览器") 正在连接 Harness 端口 \(port)，已前置浏览器（不切换标签页）\n")
-            return true
+            return app
         }
         appendLogString("端口 \(port) 有客户端连接但未找到对应浏览器进程\n")
-        return false
+        return nil
     }
 
     private struct LsofEntry { let pid: Int32; let command: String; let name: String }

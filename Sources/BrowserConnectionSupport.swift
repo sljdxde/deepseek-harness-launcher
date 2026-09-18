@@ -1,7 +1,45 @@
 import Foundation
 
+/// Who asked for the page. Manual clicks must always navigate; the automatic
+/// open that fires when the backend becomes ready may be throttled.
+enum BrowserOpenIntent {
+    case manual
+    case automatic
+}
+
+/// What to do once the connected browser (if any) is known.
+struct BrowserOpenPlan {
+    /// Bring the already-connected browser forward before handing it the URL.
+    let activatesConnectedBrowser: Bool
+    /// Always true. Raising the browser alone is what caused "the browser opens
+    /// but never jumps to the page": the URL has to reach the browser so it can
+    /// focus the existing Harness tab (or open one) instead of leaving whatever
+    /// tab was last active in front.
+    let opensURL: Bool
+}
+
 /// Pure parsing/selection helpers. A socket is a heuristic, not a tab inventory.
 enum BrowserConnectionSupport {
+    /// The web entry point of a Harness instance.
+    static func pageURL(port: Int, path: String = "/") -> URL? {
+        guard port > 0, port < 65536 else { return nil }
+        let suffix = path.isEmpty || path == "/" ? "/" : (path.hasPrefix("/") ? path : "/" + path)
+        return URL(string: "http://127.0.0.1:\(port)\(suffix)")
+    }
+
+    static func plan(connectedBrowser: Bool) -> BrowserOpenPlan {
+        BrowserOpenPlan(activatesConnectedBrowser: connectedBrowser, opensURL: true)
+    }
+
+    /// Drop duplicate opens only. An in-flight open is skipped for every intent;
+    /// the 2s cool-down applies to the automatic open alone so that repeated
+    /// menu clicks are never swallowed.
+    static func shouldDefer(intent: BrowserOpenIntent, inFlight: Bool, lastOpenAt: Date, now: Date) -> Bool {
+        if inFlight { return true }
+        guard intent == .automatic else { return false }
+        return now.timeIntervalSince(lastOpenAt) < 2
+    }
+
     static let browserBundleIDs: Set<String> = [
         "com.google.chrome", "com.apple.safari", "com.microsoft.edgemac",
         "com.brave.browser", "company.thebrowser.browser", "com.vivaldi.vivaldi",

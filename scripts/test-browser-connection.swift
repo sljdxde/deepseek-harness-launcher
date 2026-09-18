@@ -29,6 +29,21 @@ struct BrowserConnectionTests {
         precondition(BrowserConnectionSupport.browserPID(start: 20, parents: parents, applications: apps) == nil)
         precondition(BrowserConnectionSupport.browserPID(start: 30, parents: parents, applications: apps) == nil)
         precondition(BrowserConnectionSupport.browserPID(start: 99, parents: parents, applications: apps) == nil)
-        print("PASS: connection direction, exact port, IPv6, deduplication, malformed records, helper ancestry, cycles, non-browser exclusion")
+        // A detected browser must still receive the URL: raising the app alone
+        // leaves whatever tab was last active in front (the historical bug).
+        precondition(BrowserConnectionSupport.plan(connectedBrowser: true).opensURL)
+        precondition(BrowserConnectionSupport.plan(connectedBrowser: true).activatesConnectedBrowser)
+        precondition(BrowserConnectionSupport.plan(connectedBrowser: false).opensURL)
+        precondition(!BrowserConnectionSupport.plan(connectedBrowser: false).activatesConnectedBrowser)
+        let now = Date()
+        // Manual clicks are never swallowed by the throttle; only in-flight opens are.
+        precondition(!BrowserConnectionSupport.shouldDefer(intent: .manual, inFlight: false, lastOpenAt: now, now: now))
+        precondition(BrowserConnectionSupport.shouldDefer(intent: .manual, inFlight: true, lastOpenAt: .distantPast, now: now))
+        precondition(BrowserConnectionSupport.shouldDefer(intent: .automatic, inFlight: false, lastOpenAt: now.addingTimeInterval(-0.5), now: now))
+        precondition(!BrowserConnectionSupport.shouldDefer(intent: .automatic, inFlight: false, lastOpenAt: now.addingTimeInterval(-5), now: now))
+        precondition(BrowserConnectionSupport.pageURL(port: 3080)?.absoluteString == "http://127.0.0.1:3080/")
+        precondition(BrowserConnectionSupport.pageURL(port: 3081, path: "/sessions")?.absoluteString == "http://127.0.0.1:3081/sessions")
+        precondition(BrowserConnectionSupport.pageURL(port: 0) == nil)
+        print("PASS: connection direction, exact port, IPv6, deduplication, malformed records, helper ancestry, cycles, non-browser exclusion, always-navigate plan, intent throttle, page URL")
     }
 }
