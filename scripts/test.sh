@@ -79,8 +79,14 @@ plutil -lint "$ROOT/Resources/Info.plist"
 plutil -extract CFBundleExecutable raw "$ROOT/Resources/Info.plist" | grep -qx 'DHL'
 plutil -extract CFBundleDisplayName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
 plutil -extract CFBundleName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
-plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/Info.plist" | grep -qx '0.3.1'
-plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/InstallerInfo.plist" | grep -qx '0.3.1'
+# 版本号规则见 AGENTS.md：正式 x.y.z；提测 x.y.z-a.b；开发 x.y.z-a.b-SNAPSHOT。
+# 门禁只校验格式规则与两处 plist 一致性，不锁定具体版本号。
+APP_VERSION="$(plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/Info.plist")"
+INSTALLER_VERSION="$(plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/InstallerInfo.plist")"
+VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+\.[0-9]+(-SNAPSHOT)?)?$'
+echo "$APP_VERSION" | grep -Eqx "$VERSION_PATTERN" || { echo "Info.plist 版本不符合 AGENTS.md 规则: $APP_VERSION" >&2; exit 1; }
+echo "$INSTALLER_VERSION" | grep -Eqx "$VERSION_PATTERN" || { echo "InstallerInfo.plist 版本不符合 AGENTS.md 规则: $INSTALLER_VERSION" >&2; exit 1; }
+[[ "$APP_VERSION" == "$INSTALLER_VERSION" ]] || { echo "版本不一致: $APP_VERSION vs $INSTALLER_VERSION" >&2; exit 1; }
 rg -Fq '正在安装 DHL' "$ROOT/Installer/main.swift"
 rg -Fq '已更新，正在重新启动 DHL' "$ROOT/Installer/main.swift"
 zsh -n "$ROOT/scripts/install.sh"

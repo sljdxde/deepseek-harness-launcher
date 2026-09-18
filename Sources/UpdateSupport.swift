@@ -25,16 +25,70 @@ enum UpdateCheckResult {
     case failed(String)
 }
 
+/// Version forms follow AGENTS.md: official releases are `x.y.z`, test
+/// submissions are `x.y.z-a.b`, and in-development builds are
+/// `x.y.z-a.b-SNAPSHOT`. Ranking within one base version: SNAPSHOT build <
+/// its submission < official release; test suffixes compare numerically
+/// component by component; the base `x.y.z` always dominates the suffix. A
+/// development or submission build is therefore never prompted to "update"
+/// onto an older official version. Unparsable numeric components fall back
+/// to 0, as before.
 func compareVersions(_ lhs: String, _ rhs: String) -> ComparisonResult {
-    let left = lhs.split(separator: ".").map { Int($0) ?? 0 }
-    let right = rhs.split(separator: ".").map { Int($0) ?? 0 }
-    for index in 0..<max(left.count, right.count) {
-        let l = index < left.count ? left[index] : 0
-        let r = index < right.count ? right[index] : 0
+    let left = parseVersion(lhs)
+    let right = parseVersion(rhs)
+    for index in 0..<max(left.base.count, right.base.count) {
+        let l = index < left.base.count ? left.base[index] : 0
+        let r = index < right.base.count ? right.base[index] : 0
         if l < r { return .orderedAscending }
         if l > r { return .orderedDescending }
     }
+    switch (left.testSuffix, right.testSuffix) {
+    case (nil, .some):
+        return .orderedDescending
+    case (.some, nil):
+        return .orderedAscending
+    case (.some(let l), .some(let r)):
+        for index in 0..<max(l.count, r.count) {
+            let a = index < l.count ? l[index] : 0
+            let b = index < r.count ? r[index] : 0
+            if a < b { return .orderedAscending }
+            if a > b { return .orderedDescending }
+        }
+        if left.isSnapshot != right.isSnapshot {
+            return left.isSnapshot ? .orderedAscending : .orderedDescending
+        }
+    default:
+        break
+    }
+    // 后缀与正式态一致、仅 SNAPSHOT 标记不同时（裸 x.y.z-SNAPSHOT 的兜底）。
+    if left.isSnapshot != right.isSnapshot {
+        return left.isSnapshot ? .orderedAscending : .orderedDescending
+    }
     return .orderedSame
+}
+
+private struct ParsedVersion {
+    let base: [Int]
+    let testSuffix: [Int]?
+    let isSnapshot: Bool
+}
+
+private func parseVersion(_ value: String) -> ParsedVersion {
+    var base: [Int] = []
+    var suffix: [Int]?
+    var isSnapshot = false
+    for token in value.split(separator: "-") {
+        let components = token.split(separator: ".").map { Int($0) }
+        if base.isEmpty && components.allSatisfy({ $0 != nil }) {
+            base = components.map { $0! }
+        } else if token == "SNAPSHOT" || components.contains(nil) {
+            // 任何文本性后缀（SNAPSHOT / rc.2 / beta）都排在同 base 正式版之前。
+            isSnapshot = true
+        } else {
+            suffix = components.map { $0! }
+        }
+    }
+    return ParsedVersion(base: base, testSuffix: suffix, isSnapshot: isSnapshot)
 }
 
 final class LauncherSettings {

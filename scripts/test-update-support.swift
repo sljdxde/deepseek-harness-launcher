@@ -32,6 +32,16 @@ struct UpdateSupportChecks {
         precondition(compareVersions("0.1.1", "0.1.2") == .orderedAscending)
         precondition(compareVersions("1.0", "1.0.0") == .orderedSame)
         precondition(compareVersions("2.0.0", "1.9.9") == .orderedDescending)
+        // 版本规则（AGENTS.md）：正式 x.y.z；提测 x.y.z-a.b；开发 x.y.z-a.b-SNAPSHOT。
+        // 同 base 内排序：SNAPSHOT < 提测 < 正式；后缀按数字逐位比较；base 优先。
+        precondition(compareVersions("1.2.3-1.1-SNAPSHOT", "1.2.3-1.1") == .orderedAscending)
+        precondition(compareVersions("1.2.3-1.1", "1.2.3-1.2-SNAPSHOT") == .orderedAscending)
+        precondition(compareVersions("1.2.3-1.1", "1.2.3-1.2") == .orderedAscending)
+        precondition(compareVersions("1.2.3-1.2", "1.2.3") == .orderedAscending)
+        precondition(compareVersions("1.2.3-1.10", "1.2.3-1.9") == .orderedDescending)
+        precondition(compareVersions("1.2.2-9.9", "1.2.3-1.1-SNAPSHOT") == .orderedAscending)
+        precondition(compareVersions("1.2.3-1.1-SNAPSHOT", "1.2.2") == .orderedDescending)
+        precondition(compareVersions("1.2.3-1.1", "1.2.4") == .orderedAscending)
         precondition(UpdateDownloadProgress(bytesWritten: 24, totalBytes: 59).fraction! > 0.4)
         precondition(UpdateDownloadProgress(bytesWritten: 24, totalBytes: nil).fraction == nil)
 
