@@ -104,7 +104,8 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.version.outputs.tag }}"
-          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' 'Resources/Info.plist')"
+          # ubuntu 上没有 PlistBuddy，用 python3 标准库读 plist（Info.plist 为 XML 格式）。
+          VERSION="$(python3 -c "import plistlib; print(plistlib.load(open('Resources/Info.plist','rb'))['CFBundleShortVersionString'])")"
           if [[ "$TAG" != "v$VERSION" ]]; then
             echo "::error::Tag $TAG does not match bundle version $VERSION. Official releases must tag the exact x.y.z version (no test iteration suffix); see AGENTS.md."
             exit 1
