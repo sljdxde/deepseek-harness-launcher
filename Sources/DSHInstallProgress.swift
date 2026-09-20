@@ -19,10 +19,10 @@ final class DSHInstallProgressTracker {
         var title: String {
             switch self {
             case .preparing: return "准备 npm 安装"
-            case .resolving: return "解析 dsh 依赖"
-            case .downloading: return "下载 dsh 依赖"
+            case .resolving: return "解析依赖"
+            case .downloading: return "下载依赖"
             case .installing: return "写入本地 runtime"
-            case .validating: return "校验 dsh 安装"
+            case .validating: return "校验安装"
             }
         }
     }

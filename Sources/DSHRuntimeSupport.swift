@@ -117,13 +117,16 @@ enum DSHRuntimeSupport {
         return DSHVersionParser.version(from: output)
     }
 
-    /// True when a healthy runtime is installed but the bundled lockfile pins a
-    /// different dsh version: an app update shipped a newer runtime spec, so a
-    /// low-memory lockfile reinstall (`npm ci`) should refresh the runtime.
+    /// True when the bundled lockfile pins a NEWER dsh version than the one
+    /// installed: an app update shipped a newer runtime spec, so a low-memory
+    /// lockfile reinstall (`npm ci`) should refresh the runtime. A bundled
+    /// version older than the installed one (e.g. the user updated dsh from the
+    /// menu) must NOT trigger a reinstall — that would silently downgrade the
+    /// manual update back to the bundled pin on the next launch.
     static func needsRuntimeUpgrade(environment: [String: String] = LauncherEnvironment.nodeEnvironment()) -> Bool {
         guard isInstalled(), let bundled = bundledDSHVersion() else { return false }
         guard let installed = installedDSHVersion(environment: environment) else { return false }
-        return bundled != installed
+        return compareVersions(bundled, installed) == .orderedDescending
     }
 
     /// npm can emit a lot of output during a first install; only the tail is
@@ -154,6 +157,52 @@ enum DSHRuntimeSupport {
 
     static var executableURL: URL {
         runtimeURL.appendingPathComponent("node_modules/.bin/dsh")
+    }
+
+    /// 版本定向更新（菜单触发的 dsh 更新）前保留的旧 runtime 快照。
+    /// 新版本启动失败（如插件不兼容）时可用 performRollback() 一键回退；
+    /// 新版本启动成功后由调用方 discardRollback() 清理。
+    static var rollbackURL: URL {
+        runtimeURL.deletingLastPathComponent().appendingPathComponent("runtime.rollback", isDirectory: true)
+    }
+
+    static func hasRollback() -> Bool {
+        fileManager.fileExists(atPath: rollbackURL.path)
+    }
+
+    static func discardRollback() {
+        try? fileManager.removeItem(at: rollbackURL)
+    }
+
+    /// 回退快照内 dsh 的版本号（读它的 package.json），用于确认弹窗文案；
+    /// 读取失败返回 nil，弹窗显示「未知版本」。
+    static func rollbackVersion() -> String? {
+        let manifest = rollbackURL.appendingPathComponent("node_modules/@deepseek-ai/dsh/package.json")
+        guard let data = try? Data(contentsOf: manifest),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let version = json["version"] as? String else { return nil }
+        return version
+    }
+
+    /// 把回退快照换回成现行 runtime（现行新版本被移除）。换入失败时恢复
+    /// 原状并返回 false，调用方按常规失败流程处理。
+    static func performRollback() -> Bool {
+        guard hasRollback(), isInstalled() else { return false }
+        let root = runtimeURL.deletingLastPathComponent()
+        let retired = root.appendingPathComponent("runtime.retired-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try fileManager.moveItem(at: runtimeURL, to: retired)
+            do {
+                try fileManager.moveItem(at: rollbackURL, to: runtimeURL)
+                try? fileManager.removeItem(at: retired)
+                return true
+            } catch {
+                try? fileManager.moveItem(at: retired, to: runtimeURL)
+                return false
+            }
+        } catch {
+            return false
+        }
     }
 
     static func isInstalled() -> Bool {
@@ -244,6 +293,7 @@ enum DSHRuntimeSupport {
         npmPath: String,
         environment: [String: String],
         force: Bool = false,
+        packageSpec: String? = nil,
         onOutput: @escaping (String) -> Void,
         completion: @escaping (Result<URL, Error>) -> Void
     ) -> DSHRuntimeInstallHandle {
@@ -258,7 +308,11 @@ enum DSHRuntimeSupport {
             return handle
         }
         if force {
-            onOutput("检测到新的 dsh 版本，开始低内存更新（npm ci，锁定版本）\n")
+            if let packageSpec {
+                onOutput("开始安装 \(packageSpec)（npm install，指定版本）\n")
+            } else {
+                onOutput("检测到新的 dsh 版本，开始低内存更新（npm ci，锁定版本）\n")
+            }
         }
         let root = runtimeURL.deletingLastPathComponent()
         do {
@@ -277,6 +331,7 @@ enum DSHRuntimeSupport {
             index: 0,
             root: root,
             handle: handle,
+            packageSpec: packageSpec,
             onOutput: onOutput,
             completion: completion
         )
@@ -291,7 +346,8 @@ enum DSHRuntimeSupport {
         ) else { return }
         for entry in entries {
             let name = entry.lastPathComponent
-            guard name.hasPrefix("runtime.installing-") || name.hasPrefix("runtime.previous-") else { continue }
+            // runtime.rollback 是版本更新的回退快照，刻意保留，不在清理之列
+            guard name.hasPrefix("runtime.installing-") || name.hasPrefix("runtime.previous-") || name.hasPrefix("runtime.retired-") else { continue }
             try? fileManager.removeItem(at: entry)
         }
     }
@@ -303,6 +359,7 @@ enum DSHRuntimeSupport {
         index: Int,
         root: URL,
         handle: DSHRuntimeInstallHandle,
+        packageSpec: String?,
         onOutput: @escaping (String) -> Void,
         completion: @escaping (Result<URL, Error>) -> Void
     ) {
@@ -330,8 +387,10 @@ enum DSHRuntimeSupport {
         // already-resolved dependency set instead of re-running npm's memory
         // hungry peer-resolution, cutting first-install peak RSS from ~3GB to
         // well under 1GB. Only staging gets the spec; the fixed runtime is
-        // still atomically swapped in as before.
-        let bundledSpec = bundledRuntimeSpec
+        // still atomically swapped in as before. An explicit packageSpec
+        // (menu-triggered dsh update) wins over the bundled pin — the whole
+        // point of that path is to install a version the lockfile may not pin.
+        let bundledSpec = packageSpec == nil ? bundledRuntimeSpec : nil
         if let bundledSpec {
             let stagedPackage = staging.appendingPathComponent("package.json")
             let stagedLock = staging.appendingPathComponent("package-lock.json")
@@ -348,6 +407,13 @@ enum DSHRuntimeSupport {
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: npmPath)
+        // A version-targeted install (menu-triggered update) chases a freshly
+        // published version; cached packuments predate it and prefer-offline
+        // serves them WITHOUT revalidation, turning the resolution into a
+        // phantom ETARGET ("no matching version") even though the registry has
+        // the package. Such installs must revalidate metadata. Lockfile `npm
+        // ci` replay and the bare fallback keep prefer-offline for cache hits.
+        let preferOffline = packageSpec == nil
         if fileManager.fileExists(atPath: staging.appendingPathComponent("package-lock.json").path) {
             task.arguments = [
                 "ci", "--prefix", staging.path,
@@ -358,14 +424,15 @@ enum DSHRuntimeSupport {
             task.arguments = [
                 "install", "--prefix", staging.path,
                 "--no-package-lock", "--no-audit", "--no-fund", "--progress",
-                "--prefer-offline", "--registry", registry,
-                "@deepseek-ai/dsh"
+                preferOffline ? "--prefer-offline" : "--no-prefer-offline",
+                "--registry", registry,
+                packageSpec ?? "@deepseek-ai/dsh"
             ]
         }
         task.currentDirectoryURL = fileManager.homeDirectoryForCurrentUser
         var attemptEnvironment = environment
         attemptEnvironment["npm_config_registry"] = registry
-        attemptEnvironment["npm_config_prefer_offline"] = "true"
+        attemptEnvironment["npm_config_prefer_offline"] = preferOffline ? "true" : "false"
         attemptEnvironment["npm_config_progress"] = "true"
         attemptEnvironment["npm_config_color"] = "false"
         // Resolving the 100+ package dsh tree needs more than Node's default
@@ -427,6 +494,7 @@ enum DSHRuntimeSupport {
                     index: index + 1,
                     root: root,
                     handle: handle,
+                    packageSpec: packageSpec,
                     onOutput: onOutput,
                     completion: completion
                 )
@@ -447,6 +515,7 @@ enum DSHRuntimeSupport {
                     index: index + 1,
                     root: root,
                     handle: handle,
+                    packageSpec: packageSpec,
                     onOutput: onOutput,
                     completion: completion
                 )
@@ -468,6 +537,7 @@ enum DSHRuntimeSupport {
                     index: index + 1,
                     root: root,
                     handle: handle,
+                    packageSpec: packageSpec,
                     onOutput: onOutput,
                     completion: completion
                 )
@@ -487,7 +557,14 @@ enum DSHRuntimeSupport {
                     try fileManager.moveItem(at: runtimeURL, to: backup)
                     do {
                         try fileManager.moveItem(at: staging, to: runtimeURL)
-                        try? fileManager.removeItem(at: backup)
+                        if packageSpec != nil {
+                            // 版本定向更新：保留旧 runtime 作为回退快照，直到
+                            // 新版本证明能启动（启动成功后 discardRollback）。
+                            try? fileManager.removeItem(at: rollbackURL)
+                            try? fileManager.moveItem(at: backup, to: rollbackURL)
+                        } else {
+                            try? fileManager.removeItem(at: backup)
+                        }
                     } catch {
                         try? fileManager.moveItem(at: backup, to: runtimeURL)
                         throw error

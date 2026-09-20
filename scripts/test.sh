@@ -137,7 +137,7 @@ rg -Fq '安装进度：正在下载 npm 依赖' "$ROOT/Sources/DSHInstallWindowC
 rg -Fq '安装完成后会自动打开 DeepSeek Harness Web 页面' "$ROOT/Sources/DSHInstallWindowController.swift"
 rg -Fq '打开 Deepseek Harness' "$ROOT/Sources/main.swift"
 rg -Fq '退出 Deepseek Harness' "$ROOT/Sources/main.swift"
-rg -Fq '重启 dsh' "$ROOT/Sources/main.swift"
+rg -Fq '重启 Deepseek Harness' "$ROOT/Sources/main.swift"
 rg -q 'restartDSH' "$ROOT/Sources/main.swift"
 rg -q 'stopDHL \{' "$ROOT/Sources/main.swift"
 if rg -Fq 'menuRowItem(title: "打开 Deepseek Harness Launcher"' "$ROOT/Sources/main.swift" || rg -Fq 'menuRowItem(title: "退出 Deepseek Harness Launcher"' "$ROOT/Sources/main.swift"; then
@@ -218,7 +218,7 @@ fi
 rg -q '启动超过 10 分钟' "$ROOT/Sources/main.swift"
 rg -q 'DSHRuntimeSupport.isInstalled' "$ROOT/Sources/DSHUpdateSupport.swift"
 rg -q 'runtime.installing-' "$ROOT/Sources/main.swift" "$ROOT/scripts/install-from-app.sh" "$ROOT/scripts/uninstall.sh"
-rg -q '正在安装 dsh' "$ROOT/Sources/main.swift"
+rg -q '正在安装 Deepseek Harness' "$ROOT/Sources/main.swift"
 rg -q '"web",' "$ROOT/Sources/main.swift"
 rg -Fq 'npx @deepseek-ai/dsh web' "$ROOT/Sources/main.swift" "$ROOT/README.md"
 if rg -q 'func applicationWillTerminate' "$ROOT/Sources/main.swift"; then
@@ -236,7 +236,7 @@ rg -Fq '"view", "@deepseek-ai/dsh", "version"' "$ROOT/Sources/DSHUpdateSupport.s
 rg -Fq 'scheduleDSHUpdateCheck' "$ROOT/Sources/main.swift"
 rg -Fq 'ServiceProbe.body' "$ROOT/Sources/main.swift"
 rg -Fq 'nodeEnvironment' "$ROOT/Sources/LauncherEnvironment.swift"
-rg -Fq '检查 dsh 更新' "$ROOT/Sources/main.swift"
+rg -Fq '检查 Deepseek Harness 更新' "$ROOT/Sources/main.swift"
 rg -Fq 'globalHotKeyEnabled' "$ROOT/Sources/UpdateSupport.swift"
 rg -Fq '请按下快捷键' "$ROOT/Sources/SettingsWindowController.swift"
 rg -Fq 'globalHotKeyManager' "$ROOT/Sources/main.swift"

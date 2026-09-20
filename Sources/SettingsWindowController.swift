@@ -6,7 +6,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let onCheckNow: () -> Void
     private let settings = LauncherSettings.shared
 
-    private let autoUpdateCheckbox = NSButton(checkboxWithTitle: "自动检查更新", target: nil, action: nil)
+    private let autoUpdateCheckbox = NSButton(checkboxWithTitle: "自动检测启动器（DHL）更新", target: nil, action: nil)
     private let openBrowserCheckbox = NSButton(checkboxWithTitle: "就绪后自动打开浏览器", target: nil, action: nil)
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动", target: nil, action: nil)
     private let globalHotKeyCheckbox = NSButton(checkboxWithTitle: "启用全局快捷键呼出", target: nil, action: nil)
@@ -236,7 +236,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let versionLabel = makeLabel("当前版本 v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0")", size: 12, weight: .regular, color: .secondaryLabelColor)
         root.addSubview(versionLabel)
 
-        let checkButton = NSButton(title: "检查更新", target: self, action: #selector(checkNow))
+        let checkButton = NSButton(title: "检测启动器（DHL）更新", target: self, action: #selector(checkNow))
         checkButton.bezelStyle = .rounded
         checkButton.controlSize = .regular
         checkButton.setContentHuggingPriority(.required, for: .horizontal)

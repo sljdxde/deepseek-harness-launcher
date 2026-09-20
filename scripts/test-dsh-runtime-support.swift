@@ -16,6 +16,9 @@ struct DSHRuntimeSupportChecks {
             try testLockfileCIInstall(fakeNPM: fakeNPM)
             try testBundledVersionParsing()
             try testUpgradeReinstall(fakeNPM: fakeNPM)
+            try testBundledOlderDoesNotDowngrade(fakeNPM: fakeNPM)
+            try testExplicitVersionInstall(fakeNPM: fakeNPM)
+            try testUpdateKeepsRollbackSnapshot(fakeNPM: fakeNPM)
             try testCapturedOutputIsBounded()
             try testHasHarnessInstall()
             try fileManager.removeItem(at: temp)
@@ -46,6 +49,7 @@ struct DSHRuntimeSupportChecks {
           {
             echo "NODE_OPTIONS=$NODE_OPTIONS"
             echo "npm_config_registry=$npm_config_registry"
+            echo "npm_config_prefer_offline=$npm_config_prefer_offline"
             echo "ARGS=$*"
           } >> "$FAKE_NPM_ENV_FILE"
         fi
@@ -122,6 +126,9 @@ struct DSHRuntimeSupportChecks {
         let expectedOptions = "--max-old-space-size=\(DSHRuntimeSupport.npmMaxOldSpaceSizeMB)"
         guard recorded.contains("NODE_OPTIONS=\(expectedOptions)") else {
             throw TestError("npm NODE_OPTIONS 未携带内存上限 \(expectedOptions)，实际：\(recorded)")
+        }
+        guard recorded.contains("npm_config_prefer_offline=true") else {
+            throw TestError("默认安装路径应保持 prefer-offline（命中缓存），实际：\(recorded)")
         }
         try FileManager.default.removeItem(at: DSHRuntimeSupport.runtimeURL)
     }
@@ -224,6 +231,153 @@ struct DSHRuntimeSupportChecks {
         guard output.contains("检测到新的 dsh 版本") else {
             throw TestError("升级重装缺少升级提示")
         }
+        try FileManager.default.removeItem(at: DSHRuntimeSupport.runtimeURL)
+    }
+
+    // Manual-update protection: the bundled lockfile pinning an OLDER dsh
+    // version than the installed one (the user updated dsh from the menu) must
+    // NOT count as a runtime upgrade — a forced `npm ci` here would silently
+    // downgrade the manual update on the next launch.
+    private static func testBundledOlderDoesNotDowngrade(fakeNPM: URL) throws {
+        // 前置：先装一个健康 runtime（fake npm 安装出的 dsh 自报 0.1.1-rc.2），
+        // 否则 isInstalled() 为假会让 needsRuntimeUpgrade 空过、断言失效。
+        let first = runInstall(fakeNPM: fakeNPM, environment: [:])
+        guard case .success = first else {
+            throw TestError("防降级检查的前置安装未成功")
+        }
+        let specDir = fakeNPM.deletingLastPathComponent().appendingPathComponent("spec-older")
+        try FileManager.default.createDirectory(at: specDir, withIntermediateDirectories: true)
+        let package = specDir.appendingPathComponent("package.json")
+        let lock = specDir.appendingPathComponent("package-lock.json")
+        try Data(#"{"name":"dsh-runtime","version":"1.0.0"}"#.utf8).write(to: package)
+        try Data(#"{"name":"dsh-runtime","version":"1.0.0","packages":{"node_modules/@deepseek-ai/dsh":{"version":"0.0.9"}}}"#.utf8).write(to: lock)
+        DSHRuntimeSupport.bundledRuntimeOverride = (package, lock)
+        defer { DSHRuntimeSupport.bundledRuntimeOverride = nil }
+        // fake npm 安装出的 dsh 自报版本 0.1.1-rc.2，比 bundled 钉住的 0.0.9 新
+        guard !DSHRuntimeSupport.needsRuntimeUpgrade(environment: [:]) else {
+            throw TestError("bundled 版本更旧时不应判定为需要升级（会降级手动更新）")
+        }
+        try FileManager.default.removeItem(at: DSHRuntimeSupport.runtimeURL)
+    }
+
+    // Menu-triggered update path: an explicit packageSpec must install exactly
+    // that spec via `npm install`, ignoring the bundled lockfile even when one
+    // is present — `npm ci` would replay the bundled pin instead of the target.
+    private static func testExplicitVersionInstall(fakeNPM: URL) throws {
+        let envFile = fakeNPM.deletingLastPathComponent().appendingPathComponent("env-explicit.txt")
+        let specDir = fakeNPM.deletingLastPathComponent().appendingPathComponent("spec-explicit")
+        try FileManager.default.createDirectory(at: specDir, withIntermediateDirectories: true)
+        let package = specDir.appendingPathComponent("package.json")
+        let lock = specDir.appendingPathComponent("package-lock.json")
+        try Data(#"{"name":"dsh-runtime","version":"1.0.0"}"#.utf8).write(to: package)
+        try Data(#"{"name":"dsh-runtime","version":"1.0.0","packages":{"node_modules/@deepseek-ai/dsh":{"version":"0.2.0"}}}"#.utf8).write(to: lock)
+        DSHRuntimeSupport.bundledRuntimeOverride = (package, lock)
+        defer { DSHRuntimeSupport.bundledRuntimeOverride = nil }
+
+        let box = ResultBox()
+        var output = ""
+        _ = DSHRuntimeSupport.install(
+            npmPath: fakeNPM.path,
+            environment: ["DHL_NPM_REGISTRY": "https://npm.example.test", "FAKE_NPM_ENV_FILE": envFile.path],
+            force: true,
+            packageSpec: "@deepseek-ai/dsh@9.9.9",
+            onOutput: { output += $0 },
+            completion: { box.value = $0 }
+        )
+        waitForResult(box)
+        guard case .success = box.value else {
+            throw TestError("指定版本安装未成功")
+        }
+        guard let recorded = try? String(contentsOfFile: envFile.path, encoding: .utf8) else {
+            throw TestError("指定版本安装未记录 npm 参数")
+        }
+        guard recorded.contains("ARGS=install "), recorded.contains("@deepseek-ai/dsh@9.9.9") else {
+            throw TestError("指定版本安装未使用 npm install <spec>，参数：\(recorded)")
+        }
+        guard !recorded.contains("ci ") else {
+            throw TestError("指定版本安装不应走 npm ci（会装回 bundled 锁定版本），参数：\(recorded)")
+        }
+        // 指定版本更新必须重新校验包元数据：prefer-offline 会直接用缓存里
+        // 还没有新版本的旧 packument，把安装变成幻影 ETARGET。
+        guard recorded.contains("--no-prefer-offline"), recorded.contains("npm_config_prefer_offline=false") else {
+            throw TestError("指定版本安装必须禁用 prefer-offline 以刷新元数据，实际：\(recorded)")
+        }
+        guard output.contains("开始安装 @deepseek-ai/dsh@9.9.9") else {
+            throw TestError("指定版本安装缺少目标版本提示")
+        }
+        // 指定版本更新会保留旧 runtime 作为回退快照，测试结束后清理
+        DSHRuntimeSupport.discardRollback()
+        try FileManager.default.removeItem(at: DSHRuntimeSupport.runtimeURL)
+    }
+
+    // Rollback safety net: a version-targeted update must keep the previous
+    // runtime as a snapshot; performRollback swaps it back; discardRollback
+    // cleans it. The snapshot must carry the OLD bits (marker proves it), and
+    // non-targeted installs (first install / lockfile upgrade) keep deleting
+    // the old runtime as before.
+    private static func testUpdateKeepsRollbackSnapshot(fakeNPM: URL) throws {
+        // 1) 前置：装一个健康 runtime 并植入版本标记
+        let first = runInstall(fakeNPM: fakeNPM, environment: [:])
+        guard case .success = first else {
+            throw TestError("回退测试的前置安装未成功")
+        }
+        let markerDir = DSHRuntimeSupport.runtimeURL.appendingPathComponent("node_modules/@deepseek-ai/dsh", isDirectory: true)
+        try FileManager.default.createDirectory(at: markerDir, withIntermediateDirectories: true)
+        let marker = markerDir.appendingPathComponent("package.json")
+        try Data(#"{"name":"@deepseek-ai/dsh","version":"0.1.1"}"#.utf8).write(to: marker)
+
+        // 2) 版本定向更新 → 快照存在且版本可读，现行 runtime 标记消失
+        let box = ResultBox()
+        _ = DSHRuntimeSupport.install(
+            npmPath: fakeNPM.path,
+            environment: [:],
+            force: true,
+            packageSpec: "@deepseek-ai/dsh@9.9.9",
+            onOutput: { _ in },
+            completion: { box.value = $0 }
+        )
+        waitForResult(box)
+        guard case .success = box.value else {
+            throw TestError("回退测试的更新安装未成功")
+        }
+        guard DSHRuntimeSupport.hasRollback() else {
+            throw TestError("版本定向更新后未保留回退快照")
+        }
+        guard DSHRuntimeSupport.rollbackVersion() == "0.1.1" else {
+            throw TestError("回退快照版本读取失败：\(DSHRuntimeSupport.rollbackVersion() ?? "nil")")
+        }
+        guard !FileManager.default.fileExists(atPath: marker.path) else {
+            throw TestError("更新后现行 runtime 不应仍带旧版本标记")
+        }
+
+        // 3) 回退 → 旧标记回到现行位置，快照清空，runtime 健康
+        guard DSHRuntimeSupport.performRollback() else {
+            throw TestError("回退换入失败")
+        }
+        guard FileManager.default.fileExists(atPath: marker.path), DSHRuntimeSupport.isInstalled() else {
+            throw TestError("回退后现行 runtime 未恢复为旧版本")
+        }
+        guard !DSHRuntimeSupport.hasRollback() else {
+            throw TestError("回退后快照应被消费")
+        }
+
+        // 4) 非定向安装（force 升级路径）不保留快照
+        let upgradeBox = ResultBox()
+        _ = DSHRuntimeSupport.install(
+            npmPath: fakeNPM.path,
+            environment: [:],
+            force: true,
+            onOutput: { _ in },
+            completion: { upgradeBox.value = $0 }
+        )
+        waitForResult(upgradeBox)
+        guard case .success = upgradeBox.value else {
+            throw TestError("非定向升级安装未成功")
+        }
+        guard !DSHRuntimeSupport.hasRollback() else {
+            throw TestError("非定向安装不应保留回退快照")
+        }
+        DSHRuntimeSupport.discardRollback()
         try FileManager.default.removeItem(at: DSHRuntimeSupport.runtimeURL)
     }
 

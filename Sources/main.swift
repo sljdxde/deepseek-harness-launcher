@@ -4,7 +4,7 @@ import Darwin
 
 private enum LauncherState { case stopped, checking, running, failed }
 private enum PortChoice { case reuse(Int), launch(Int) }
-private enum DSHInstallMode { case firstInstall, upgrade, repair }
+private enum DSHInstallMode: Equatable { case firstInstall, upgrade, repair, dshUpdate(version: String) }
 
 // macOS 26 may add a semantic icon column to menu groups (notably for
 // "设置…"). Drawing every actionable row through the same view keeps the
@@ -130,10 +130,18 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var browserOpenInFlight = false
     private var lastBrowserOpenAt = Date.distantPast
     private var pendingBrowserOpenCompletions: [() -> Void] = []
+    // dsh 0.1.5-rc.2 起 Web 首页需要 token 认证：进程启动时在 stdout 打印
+    // `dsh web: http://127.0.0.1:<port>/?token=…`。打开浏览器必须用这个
+    // 带 token 的入口 URL（首次访问换取绑定域名的 cookie）；旧版无 token，
+    // 打印的 URL 同样可用。stdout 回调在后台线程，读写需持 webURLLock。
+    private let webURLLock = NSLock()
+    private var authenticatedWebURL: URL?
     private let settings = LauncherSettings.shared
     private let updateService = UpdateService()
     private let dshUpdateService = DSHVersionService()
     private var dshUpdateCheckInFlight = false
+    // 最近一次检查发现的可用更新：菜单再次点击时直接进入更新确认，免二次联网检查。
+    private var dshAvailableUpdate: (current: String, latest: String)?
     private let logLock = NSLock()
     private lazy var globalHotKeyManager = GlobalHotKeyManager { [weak self] in
         self?.openDHL()
@@ -183,10 +191,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let open = menuRowItem(title: "打开 Deepseek Harness", action: #selector(openDHL), keyEquivalent: "o")
         let port = menuRowItem(title: "端口：未运行", action: nil, enabled: { false }); port.tag = 1001
         portMenuRow = port.view as? MenuRowView
-        let restart = menuRowItem(title: "重启 dsh", action: #selector(restartDSH), keyEquivalent: "r")
-        let update = menuRowItem(title: "检查更新", action: #selector(checkForUpdates))
+        let restart = menuRowItem(title: "重启 Deepseek Harness", action: #selector(restartDSH), keyEquivalent: "r")
+        let update = menuRowItem(title: "检测启动器（DHL）更新", action: #selector(checkForUpdates))
         update.tag = 1002; updateMenuItem = update; updateMenuRow = update.view as? MenuRowView
-        let dshUpdate = menuRowItem(title: "检查 dsh 更新", action: #selector(checkDSHForUpdates))
+        let dshUpdate = menuRowItem(title: "检查 Deepseek Harness 更新", action: #selector(checkDSHForUpdates))
         dshUpdate.tag = 1003; dshUpdateMenuItem = dshUpdate; dshUpdateMenuRow = dshUpdate.view as? MenuRowView
         let settingsItem = makeSettingsMenuItem()
         let logs = menuRowItem(title: "打开日志", action: #selector(openLogs), keyEquivalent: "l")
@@ -232,43 +240,82 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func checkDSHForUpdates() {
+        guard dshInstallHandle == nil else {
+            showInfo(title: "正在安装或更新 Deepseek Harness", message: "请等待当前安装/更新完成后再试。")
+            return
+        }
+        // 已知有更新时直接进入更新确认，避免重复联网检查。
+        if let update = dshAvailableUpdate {
+            presentDSHUpdate(current: update.current, latest: update.latest)
+            return
+        }
         performDSHUpdateCheck(interactive: true)
     }
 
     private func performDSHUpdateCheck(interactive: Bool) {
         guard DSHRuntimeSupport.isInstalled() else {
-            setDSHUpdateMenuTitle("检查 dsh 更新")
+            setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
             return
         }
         guard !dshUpdateCheckInFlight else { return }
         dshUpdateCheckInFlight = true
-        if interactive { setDSHUpdateMenuTitle("正在检查 dsh 更新…") }
+        if interactive { setDSHUpdateMenuTitle("正在检查 Deepseek Harness 更新…") }
         dshUpdateService.check { [weak self] result in
             guard let self else { return }
             self.dshUpdateCheckInFlight = false
             switch result {
             case .available(let current, let latest):
-                self.setDSHUpdateMenuTitle("dsh 更新可用：v\(latest)")
+                self.dshAvailableUpdate = (current, latest)
+                self.setDSHUpdateMenuTitle("Deepseek Harness 更新可用：v\(latest)")
                 if interactive { self.presentDSHUpdate(current: current, latest: latest) }
             case .current(let version):
-                self.setDSHUpdateMenuTitle("检查 dsh 更新")
-                if interactive { self.showInfo(title: "dsh 已是最新版本", message: "当前版本：v\(version)") }
+                self.dshAvailableUpdate = nil
+                self.setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
+                if interactive { self.showInfo(title: "Deepseek Harness 已是最新版本", message: "当前版本：v\(version)") }
             case .failed(let message):
-                self.setDSHUpdateMenuTitle("检查 dsh 更新")
+                self.dshAvailableUpdate = nil
+                self.setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
                 self.appendLogString("dsh 更新检查失败：\(message)\n")
-                if interactive { self.showInfo(title: "检查 dsh 更新失败", message: message) }
+                if interactive { self.showInfo(title: "检查 Deepseek Harness 更新失败", message: message) }
             }
         }
     }
 
     private func presentDSHUpdate(current: String, latest: String) {
         let alert = NSAlert()
-        alert.messageText = "发现 dsh 新版本 v\(latest)"
-        alert.informativeText = "当前使用 v\(current)。dsh 随 App 内置：更新 \(LauncherBrand.fullName) 到包含 v\(latest) 的版本后，下次启动会自动完成低内存升级。也可前往 npm 查看更新说明。"
-        alert.addButton(withTitle: "打开 npm")
-        alert.addButton(withTitle: "关闭")
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(URL(string: "https://www.npmjs.com/package/@deepseek-ai/dsh")!)
+        alert.messageText = "发现 Deepseek Harness 新版本 v\(latest)"
+        alert.informativeText = state == .running
+            ? "当前使用 v\(current)。立即更新会下载新版本并自动重启 Deepseek Harness，会话与归档数据不受影响。"
+            : "当前使用 v\(current)。立即更新会下载新版本，下次启动 Deepseek Harness 时生效。"
+        alert.addButton(withTitle: "立即更新")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        updateDSHNow(to: latest)
+    }
+
+    /// 菜单「立即更新」：从 npm 安装指定版本替换 runtime。dsh 正在运行/启动中时
+    /// 先停止再更新，完成后自动重启回到运行状态；未运行则只更新，下次启动生效。
+    private func updateDSHNow(to version: String) {
+        guard dshInstallHandle == nil else {
+            showInfo(title: "正在安装或更新 Deepseek Harness", message: "请等待当前安装/更新完成后再试。")
+            return
+        }
+        let wasActive = state == .running || state == .checking
+        let port = selectedPort ?? basePort
+        let beginInstall: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.setState(.checking)
+            let environment = LauncherEnvironment.nodeEnvironment(preferOffline: false)
+            guard let npmPath = LauncherEnvironment.executablePath(named: "npm", environment: environment) else {
+                self.fail("未找到 npm。请先安装 Node.js（包含 npm），或把 Node 加入标准安装路径后重试")
+                return
+            }
+            self.beginDSHInstall(port: port, npmPath: npmPath, environment: environment, mode: .dshUpdate(version: version), relaunchAfterInstall: wasActive)
+        }
+        if wasActive {
+            stopDHL(completion: beginInstall)
+        } else {
+            beginInstall()
         }
     }
 
@@ -327,7 +374,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         intent: BrowserOpenIntent = .manual,
         completion: @escaping () -> Void = {}
     ) {
-        guard let url = BrowserConnectionSupport.pageURL(port: port, path: path) else {
+        guard let url = webRootURL(for: port, path: path) else {
             completion()
             return
         }
@@ -364,6 +411,34 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.deliverPage(url, to: browser, port: port, completion: completion)
             }
         }
+    }
+
+    /// 打开页面用的入口 URL：dsh 打印过带 token 的认证入口就优先用它
+    /// （0.1.5-rc.2 起首页 401，裸 URL 打不开），否则回退裸地址（旧版）。
+    /// token 只对根路径有效，非根 path 一律走裸地址（插件路由无需认证）。
+    private func webRootURL(for port: Int, path: String = "/") -> URL? {
+        if path == "/" {
+            webURLLock.lock()
+            let authenticated = authenticatedWebURL
+            webURLLock.unlock()
+            if let authenticated, authenticated.port == port {
+                return authenticated
+            }
+        }
+        return BrowserConnectionSupport.pageURL(port: port, path: path)
+    }
+
+    /// 从 dsh stdout 捕获 `dsh web: <url>` 入口行（含 0.1.5-rc.2 起的
+    /// ?token= 认证参数）。URL 是进程生命周期内有效的认证入口，任何时刻
+    /// 交给浏览器都能完成 token → cookie 兑换。
+    private func captureWebURL(from output: String, port: Int) {
+        guard let range = output.range(of: #"dsh web: (https?://[^\s\x{4e00}-\x{9fff}]+)"#, options: [.regularExpression]) else { return }
+        guard let url = URL(string: String(output[range].dropFirst("dsh web: ".count))) else { return }
+        guard url.port == port else { return }
+        webURLLock.lock()
+        authenticatedWebURL = url
+        webURLLock.unlock()
+        appendLogString("捕获 Web 认证入口 URL\n")
     }
 
     /// 查询注入客户端的页面心跳。nil = 接口不存在（外部 Harness / 旧插件），
@@ -529,7 +604,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func stopDHL(completion: (() -> Void)? = nil) {
         cancelDSHInstall()
         let trackedPID = process?.processIdentifier ?? 0
-        process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false; pendingSessionId = nil; setState(.stopped)
+        process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false; pendingSessionId = nil
+        // 旧进程的 token 随进程失效，重开后必须用新进程打印的入口 URL。
+        webURLLock.lock(); authenticatedWebURL = nil; webURLLock.unlock()
+        setState(.stopped)
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var pids = self?.managedDSHPIDs() ?? []
             if trackedPID > 0 && !pids.contains(trackedPID) { pids.insert(trackedPID, at: 0) }
@@ -545,10 +623,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// bundled dsh version differs).
     @objc private func restartDSH() {
         guard dshInstallHandle == nil else {
-            showInfo(title: "正在安装或更新 dsh", message: "请等待当前安装/更新完成后再重启。")
+            showInfo(title: "正在安装或更新 Deepseek Harness", message: "请等待当前安装/更新完成后再重启。")
             return
         }
-        setPortMenuTitle("正在重启 dsh…")
+        setPortMenuTitle("正在重启 Deepseek Harness…")
         appendLogString("用户请求重启 dsh…\n")
         stopDHL { [weak self] in
             guard let self else { return }
@@ -669,7 +747,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func scheduleAutoUpdateChecks() {
         autoUpdateTimer?.invalidate(); autoUpdateTimer = nil
         guard settings.autoUpdateEnabled else {
-            setUpdateMenuTitle("检查更新")
+            setUpdateMenuTitle("检测启动器（DHL）更新")
             return
         }
         let interval = settings.updateIntervalHours * 3600
@@ -684,7 +762,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func performUpdateCheck(interactive: Bool) {
         guard !updateCheckInFlight else { return }
         updateCheckInFlight = true
-        if interactive { setUpdateMenuTitle("正在检查更新…") }
+        if interactive { setUpdateMenuTitle("正在检测启动器更新…") }
         updateService.check(currentVersion: currentVersion) { [weak self] result in
             guard let self else { return }
             self.updateCheckInFlight = false
@@ -695,16 +773,16 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if interactive { self.presentUpdate(manifest: manifest) }
             case .current:
                 self.pendingUpdate = nil
-                self.setUpdateMenuTitle("检查更新")
+                self.setUpdateMenuTitle("检测启动器（DHL）更新")
                 if interactive { self.showInfo(title: "已是最新版本", message: "当前版本：v\(self.currentVersion)") }
             case .noPublishedRelease:
                 self.pendingUpdate = nil
-                self.setUpdateMenuTitle("检查更新")
+                self.setUpdateMenuTitle("检测启动器（DHL）更新")
                 if interactive { self.showInfo(title: "暂无可用更新", message: "项目暂未发布可下载安装的 \(LauncherBrand.fullName) 版本。") }
             case .failed(let message):
-                self.setUpdateMenuTitle("检查更新")
+                self.setUpdateMenuTitle("检测启动器（DHL）更新")
                 self.appendLogString("更新检查失败：\(message)\n")
-                if interactive { self.showInfo(title: "检查更新失败", message: message) }
+                if interactive { self.showInfo(title: "检测启动器更新失败", message: message) }
             }
         }
     }
@@ -802,7 +880,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func installUpdateAndRestart(_ dmgURL: URL) {
         if dshInstallHandle != nil {
-            showInfo(title: "正在安装 dsh", message: "首次安装尚未完成，请等待安装结束后再更新 Deepseek Harness Launcher。")
+            showInfo(title: "正在安装 Deepseek Harness", message: "首次安装尚未完成，请等待安装结束后再更新 Deepseek Harness Launcher。")
             return
         }
         appendLogString("用户确认安装更新：\(dmgURL.path)\n")
@@ -902,6 +980,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func isHarnessWebBody(_ body: String) -> Bool {
+        // dsh 0.1.5-rc.2 起根路径对未认证请求返回 401 固定文案，服务实际
+        // 已就绪；旧版返回含产品标识的 HTML。两者都视为「这是在跑的 dsh」。
+        if body.localizedCaseInsensitiveContains("dsh web authentication required") { return true }
         // The Web UI HTML does not reliably contain the product title; use
         // stable DeepSeek/dsh asset markers instead.
         return body.localizedCaseInsensitiveContains("deepseek") &&
@@ -957,7 +1038,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         let alert = NSAlert()
-        alert.messageText = "首次安装 dsh"
+        alert.messageText = "首次安装 Deepseek Harness"
         alert.informativeText = "首次安装会下载较多 npm 依赖，可能需要几分钟。启动器会优先尝试更快的镜像，失败后自动回退到官方源。"
         alert.alertStyle = .informational
         alert.addButton(withTitle: "开始安装")
@@ -969,42 +1050,78 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         beginDSHInstall(port: port, npmPath: npmPath, environment: environment, mode: .firstInstall)
     }
 
-    private func beginDSHInstall(port: Int, npmPath: String, environment: [String: String], mode: DSHInstallMode) {
+    private func beginDSHInstall(
+        port: Int,
+        npmPath: String,
+        environment: [String: String],
+        mode: DSHInstallMode,
+        relaunchAfterInstall: Bool = true
+    ) {
+        let updateVersion: String?
+        if case .dshUpdate(let version) = mode { updateVersion = version } else { updateVersion = nil }
         let isUpgrade = mode == .upgrade
         let isRepair = mode == .repair
-        if isUpgrade {
-            setPortMenuTitle("正在更新 dsh（可能需要几分钟）…")
+        let isDSHUpdate = updateVersion != nil
+        switch mode {
+        case .upgrade:
+            setPortMenuTitle("正在更新 Deepseek Harness（可能需要几分钟）…")
             appendLogString("检测到新版本 dsh，开始低内存更新（npm ci，按锁定版本）…\n")
-        } else if isRepair {
-            setPortMenuTitle("正在修复 dsh 运行环境…")
+        case .repair:
+            setPortMenuTitle("正在修复 Deepseek Harness 运行环境…")
             appendLogString("检测到已有 DeepSeek Harness 数据但运行环境缺失，开始重建 runtime（npm ci，保留用户数据）…\n")
-        } else {
-            setPortMenuTitle("正在安装 dsh（首次可能需要几分钟）…")
+        case .firstInstall:
+            setPortMenuTitle("正在安装 Deepseek Harness（首次可能需要几分钟）…")
             appendLogString("本地未检测到 DeepSeek Harness，开始执行下载安装。官方命令：npx @deepseek-ai/dsh web\n")
+        case .dshUpdate(let version):
+            setPortMenuTitle("正在更新 Deepseek Harness 到 v\(version)（可能需要几分钟）…")
+            appendLogString("用户请求更新 dsh：开始下载 v\(version)（npm install，指定版本）…\n")
         }
-        let installWindow = DSHInstallWindowController(commandText: isUpgrade ? "更新命令：npm ci（锁定版本）" : isRepair ? "重建运行环境：npm ci（锁定版本）" : "安装命令：npx @deepseek-ai/dsh web") { [weak self] in
+        let commandText: String
+        let initialStatus: String
+        let initialDetail: String
+        switch mode {
+        case .upgrade:
+            commandText = "更新命令：npm ci（锁定版本）"
+            initialStatus = "检测到新的 Deepseek Harness 版本"
+            initialDetail = "正在更新 runtime，请保持网络连接。"
+        case .repair:
+            commandText = "重建运行环境：npm ci（锁定版本）"
+            initialStatus = "检测到已有 Deepseek Harness 数据，正在重建运行环境"
+            initialDetail = "正在重建 runtime，你的会话、归档与插件数据不会受影响。"
+        case .firstInstall:
+            commandText = "安装命令：npx @deepseek-ai/dsh web"
+            initialStatus = "本地未检测到 Deepseek Harness"
+            initialDetail = "正在执行下载安装，请保持网络连接。"
+        case .dshUpdate(let version):
+            commandText = "更新命令：npm install @deepseek-ai/dsh@\(version)"
+            initialStatus = "正在更新 Deepseek Harness 到 v\(version)"
+            initialDetail = "正在下载并安装新版本，请保持网络连接。"
+        }
+        let installWindow = DSHInstallWindowController(commandText: commandText) { [weak self] in
             self?.cancelDSHInstall()
         }
         dshInstallWindow = installWindow
         dshInstallProgressTracker = DSHInstallProgressTracker()
         installWindow.present()
-        installWindow.update(
-            status: isUpgrade ? "检测到新的 dsh 版本" : isRepair ? "检测到已有 dsh 数据，正在重建运行环境" : "本地未检测到 DeepSeek Harness",
-            detail: isUpgrade ? "正在更新 runtime，请保持网络连接。" : isRepair ? "正在重建 runtime，你的会话、归档与插件数据不会受影响。" : "正在执行下载安装，请保持网络连接。",
-            percentage: nil
-        )
-        dshInstallHandle = DSHRuntimeSupport.install(npmPath: npmPath, environment: environment, force: isUpgrade || isRepair, onOutput: { [weak self, weak installWindow] text in
-            self?.appendLog(Data(text.utf8), prefix: "npm")
-            guard let self else { return }
-            let snapshot = self.dshInstallProgressTracker?.consume(text)
-            DispatchQueue.main.async {
-                installWindow?.update(
-                    status: isUpgrade ? "正在更新 dsh…" : isRepair ? "正在重建运行环境…" : "正在安装 dsh…",
-                    detail: snapshot?.detail,
-                    percentage: snapshot?.percentage
-                )
+        installWindow.update(status: initialStatus, detail: initialDetail, percentage: nil)
+        dshInstallHandle = DSHRuntimeSupport.install(
+            npmPath: npmPath,
+            environment: environment,
+            force: isUpgrade || isRepair || isDSHUpdate,
+            packageSpec: updateVersion.map { "@deepseek-ai/dsh@\($0)" },
+            onOutput: { [weak self, weak installWindow] text in
+                self?.appendLog(Data(text.utf8), prefix: "npm")
+                guard let self else { return }
+                let snapshot = self.dshInstallProgressTracker?.consume(text)
+                DispatchQueue.main.async {
+                    installWindow?.update(
+                        status: isRepair ? "正在重建运行环境…" : (isUpgrade || isDSHUpdate) ? "正在更新 Deepseek Harness…" : "正在安装 Deepseek Harness…",
+                        detail: snapshot?.detail,
+                        percentage: snapshot?.percentage
+                    )
+                }
             }
-        }) { [weak self, weak installWindow] result in
+        ) { [weak self, weak installWindow] result in
             guard let self else { return }
             self.dshInstallHandle = nil
             self.dshInstallProgressTracker = nil
@@ -1012,14 +1129,39 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.dshInstallWindow = nil
             switch result {
             case .success(let executableURL):
+                if isDSHUpdate {
+                    self.dshAvailableUpdate = nil
+                    self.setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
+                    if relaunchAfterInstall, self.state != .stopped {
+                        self.appendLogString("dsh 更新完成，正在同步更新已安装插件…\n")
+                        self.updateProfilePlugins(executableURL: executableURL, environment: environment) {
+                            self.appendLogString("dsh 更新完成，正在重新启动…\n")
+                            self.launchInstalledDSH(port: self.selectedPort ?? port, executableURL: executableURL, environment: environment)
+                        }
+                    } else {
+                        self.setState(.stopped)
+                        self.appendLogString("dsh 已更新到 v\(updateVersion ?? "")，下次启动生效\n")
+                        self.showInfo(title: "Deepseek Harness 已更新", message: "已更新到 v\(updateVersion ?? "")，下次启动时生效。")
+                    }
+                    return
+                }
                 guard self.state != .stopped else { return }
+                if isUpgrade, relaunchAfterInstall {
+                    // App 内置锁文件升级同样是 dsh 版本变化，插件需要跟上
+                    self.appendLogString("dsh runtime 安装完成，正在同步更新已安装插件…\n")
+                    self.updateProfilePlugins(executableURL: executableURL, environment: environment) {
+                        self.launchInstalledDSH(port: self.selectedPort ?? port, executableURL: executableURL, environment: environment)
+                    }
+                    return
+                }
                 self.appendLogString("dsh runtime 安装完成，开始启动…\n")
                 self.launchInstalledDSH(port: self.selectedPort ?? port, executableURL: executableURL, environment: environment)
             case .failure(let error):
                 self.openWhenReady = false
                 if case .cancelled = error as? DSHRuntimeError {
-                    self.appendLogString(isUpgrade ? "dsh 更新已取消，原 runtime 保持不变\n" : isRepair ? "dsh 运行环境重建已取消，用户数据保持不变\n" : "dsh 首次安装已取消，临时安装目录已清理\n")
-                } else if self.state != .stopped {
+                    self.appendLogString(isUpgrade || isDSHUpdate ? "dsh 更新已取消，原 runtime 保持不变\n" : isRepair ? "dsh 运行环境重建已取消，用户数据保持不变\n" : "dsh 首次安装已取消，临时安装目录已清理\n")
+                } else if self.state != .stopped || isDSHUpdate {
+                    // 手动更新流程即使外部已置为 stopped，也要明确告知更新结果
                     self.showDSHInstallFailure(error)
                 }
             }
@@ -1030,12 +1172,99 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// dsh 版本更新后同步更新 profile 里已安装的插件。插件依赖的
+    /// @deepseek-ai/* peer 随 dsh 版本演进，旧插件会因 API 移除而加载失败
+    /// （0.1.5-rc.2 移除 dsh-settings 的 settingsNamespace 导出即是一例，
+    /// 导致 dsh 完全无法启动）。通过 dsh 自带的 plugin 子命令（转发
+    /// pnpm）执行 `update --latest`：file:/github: 等本地与固定源依赖
+    /// 不受影响。失败只记日志，不阻塞启动——插件更新是尽力而为的增强。
+    private func updateProfilePlugins(executableURL: URL, environment: [String: String], completion: @escaping () -> Void) {
+        var env = environment
+        let pnpmBin = DSHRuntimeSupport.dshHomeURL.appendingPathComponent("pnpm-bin", isDirectory: true)
+        env["PATH"] = "\(pnpmBin.path):\(env["PATH"] ?? "")"
+        let task = Process()
+        task.executableURL = executableURL
+        task.arguments = ["plugin", "--profile", "web", "update", "--latest"]
+        task.currentDirectoryURL = DSHRuntimeSupport.dshHomeURL
+        task.environment = env
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            if let text = String(data: data, encoding: .utf8) { self?.appendLog(Data(text.utf8), prefix: "plugin-update") }
+        }
+        var finished = false
+        let finish: (String) -> Void = { [weak self] note in
+            guard !finished else { return }
+            finished = true
+            pipe.fileHandleForReading.readabilityHandler = nil
+            if let self {
+                self.appendLogString("\(note)（插件更新输出已记入日志）\n")
+            }
+            DispatchQueue.main.async { completion() }
+        }
+        task.terminationHandler = { terminated in
+            finish(terminated.terminationStatus == 0 ? "插件同步更新完成" : "插件同步更新失败（exit \(terminated.terminationStatus)），继续启动 dsh")
+        }
+        do {
+            try task.run()
+            // pnpm 偶发网络挂起时不能卡住启动：超时按失败处理并继续。
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 300) { [weak task] in
+                guard let task, task.isRunning else { return }
+                task.terminate()
+                finish("插件同步更新超时（5 分钟），继续启动 dsh")
+            }
+        } catch {
+            appendLogString("无法启动插件更新命令：\(error.localizedDescription)，继续启动 dsh\n")
+            finish("插件同步更新未能启动")
+        }
+    }
+
     private func cancelDSHInstall() {
         guard dshInstallHandle != nil else { return }
         dshInstallWindow?.markCancelling()
         dshInstallHandle?.cancel()
         appendLogString("用户取消 dsh 安装，临时安装目录将被清理\n")
         if state == .checking { setState(.stopped) }
+    }
+
+    /// 版本定向更新后的启动失败兜底：保留了回退快照时，询问用户是否回退
+    /// 到更新前版本并重启。返回 true 表示已接管（回退并重启），调用方应
+    /// 跳过常规失败流程。典型场景：新 dsh 移除了插件依赖的 API，插件加载
+    /// 失败导致进程起不来——回退旧版本立即恢复可用。
+    private func offerUpdateRollbackIfNeeded(reason: String) -> Bool {
+        guard DSHRuntimeSupport.hasRollback() else { return false }
+        let previous = DSHRuntimeSupport.rollbackVersion() ?? "未知版本"
+        let alert = NSAlert()
+        alert.messageText = "Deepseek Harness 新版本启动失败"
+        alert.informativeText = "\(reason)。\n可能是已安装的插件与新版本不兼容（具体原因见日志）。\n是否回退到更新前的 v\(previous) 并重新启动？"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "回退并重启")
+        alert.addButton(withTitle: "查看日志")
+        alert.addButton(withTitle: "保持新版本")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            guard DSHRuntimeSupport.performRollback() else {
+                appendLogString("dsh 回退失败（快照换入异常），按常规失败处理\n")
+                return false
+            }
+            appendLogString("dsh 新版本启动失败，已回退到 v\(previous)，正在重新启动…\n")
+            process = nil
+            selectedPort = nil
+            setState(.stopped)
+            start()
+            return true
+        case .alertSecondButtonReturn:
+            openLogs()
+            return false
+        default:
+            return false
+        }
     }
 
     private func launchInstalledDSH(port: Int, executableURL: URL, environment: [String: String]) {
@@ -1054,7 +1283,14 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         task.standardOutput = stdoutPipe; task.standardError = stderrPipe
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            if data.isEmpty { handle.readabilityHandler = nil } else { self?.appendLog(data, prefix: "stdout") }
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+            } else {
+                self?.appendLog(data, prefix: "stdout")
+                if let text = String(data: data, encoding: .utf8) {
+                    self?.captureWebURL(from: text, port: port)
+                }
+            }
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -1075,6 +1311,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard let self, self.state != .stopped else { return }
                 self.process = nil
                 self.selectedPort = nil
+                // 版本更新后的首次启动失败优先提供回退，而非直接报错
+                if self.state == .checking, self.offerUpdateRollbackIfNeeded(reason: "\(LauncherBrand.fullName) 进程已退出（code=\(terminatedProcess.terminationStatus)）") { return }
                 self.fail("\(LauncherBrand.fullName) 进程已退出，请查看日志")
             }
         }
@@ -1082,7 +1320,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try task.run()
             process = task; selectedPort = port; didAutoOpenBrowser = false; pollUntilReady(port: port, startedAt: Date())
         } catch {
-            fail("无法启动 dsh：\(error.localizedDescription)")
+            fail("无法启动 Deepseek Harness：\(error.localizedDescription)")
         }
     }
 
@@ -1104,17 +1342,23 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // mistake that startup phase for a dead Harness process.
         guard elapsed < 10 * 60 else {
             terminateProcessGroup(pid: process?.processIdentifier ?? 0)
+            if offerUpdateRollbackIfNeeded(reason: "\(LauncherBrand.fullName) 启动超过 10 分钟") { return }
             fail("\(LauncherBrand.fullName) 启动超过 10 分钟，请检查网络和日志")
             return
         }
         if Int(elapsed) > 0 && Int(elapsed) % 30 == 0 {
-            setPortMenuTitle("正在安装或启动 dsh（已等待 \(Int(elapsed)) 秒）…")
+            setPortMenuTitle("正在安装或启动 Deepseek Harness（已等待 \(Int(elapsed)) 秒）…")
         }
         guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return }
         ServiceProbe.body(at: url) { [weak self] body in
             guard let self, self.state != .stopped else { return }
             if let body, self.isHarnessWebBody(body) {
                 self.setState(.running)
+                // 新版本 dsh 首次启动成功：回退快照完成使命，释放磁盘
+                if DSHRuntimeSupport.hasRollback() {
+                    DSHRuntimeSupport.discardRollback()
+                    self.appendLogString("dsh 新版本启动成功，已清理回退快照\n")
+                }
                 self.monitorArchivePlugin(port: port)
                 self.monitorSessionNotify(port: port)
                 self.openBrowserWhenReadyIfNeeded()
@@ -1187,7 +1431,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appendLogString("dsh 安装失败，建议手动执行：\(command)\n")
         setState(.failed)
         let alert = NSAlert()
-        alert.messageText = "dsh 安装失败"
+        alert.messageText = "Deepseek Harness 安装失败"
         alert.informativeText = "\(Self.summarizedInstallError(error.localizedDescription))\n\n如果 npm 持续下载失败，请在终端手动执行下面的官方命令，完成后重新打开 Deepseek Harness Launcher：\n\n\(command)"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "复制命令")

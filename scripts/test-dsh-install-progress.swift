@@ -11,18 +11,18 @@ struct DSHInstallProgressChecks {
 
         _ = tracker.consume("npm sill idealTree buildDeps\n")
         let resolving = tracker.snapshot()
-        precondition(resolving.detail.contains("解析 dsh 依赖"))
+        precondition(resolving.detail.contains("解析依赖"))
 
         let downloading = tracker.consume(
             "npm http fetch GET 200 https://registry.npmjs.org/a 120ms (cache miss)\n" +
             "npm http fetch GET 200 https://registry.npmjs.org/b 140ms (cache miss)\n"
         )
-        precondition(downloading.detail.contains("下载 dsh 依赖"))
+        precondition(downloading.detail.contains("下载依赖"))
         precondition(downloading.detail.contains("2 条成功下载记录"))
         precondition(downloading.percentage == nil)
 
         let partial = tracker.consume("npm sill reify")
-        precondition(partial.detail.contains("下载 dsh 依赖"))
+        precondition(partial.detail.contains("下载依赖"))
         let installing = tracker.consume("\n")
         precondition(installing.detail.contains("写入本地 runtime"))
 
@@ -63,7 +63,7 @@ struct DSHInstallProgressChecks {
         precondition(fractional.detail.contains("66.67%"))
 
         let completed = tracker.consume("added 42 packages in 3s\n")
-        precondition(completed.detail.contains("校验 dsh 安装"))
+        precondition(completed.detail.contains("校验安装"))
         precondition(completed.percentage == 100)
 
         print("dsh install progress checks passed")

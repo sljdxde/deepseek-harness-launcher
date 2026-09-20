@@ -27,7 +27,7 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 2 | **内置归档管理插件（DSHArchiveManager）** | 通过 `--patch` 注入 Cordis patch，在 Harness Web 界面提供「归档管理」面板：列出归档会话、单条/批量删除（带二次确认）、显示工作区与后代数量。 |
 | 3 | **智能端口管理（3080–3099）** | 启动前从 3080 扫描到 3099：发现正在响应的 Harness 就复用；否则使用第一个可绑定端口。若复用实例没有归档插件，Harness 仍可使用，日志会记录为基础模式。 |
 | 4 | **首次安装可靠，后续启动稳定** | 首次启动前将 `@deepseek-ai/dsh` 完整安装到 `~/.dsh/runtime`，使用 peer-dependency 完整解析、临时目录安装和原子替换；默认优先较快的 npm 镜像，失败后回退官方源。后续直接运行固定 runtime，不使用易留下半安装缓存的 npx。 |
-| 5 | **原生应用内自更新** | 直接对接本仓库 GitHub Releases，菜单内「检查更新」可显示版本/下载进度并下载 `Deepseek.Harness.Launcher.dmg`（GitHub 自动将空格存为点），随后自替换重启（支持自动定时检查 + 频率设置）。 |
+| 5 | **原生应用内自更新** | 直接对接本仓库 GitHub Releases，菜单内「检测启动器（DHL）更新」可显示版本/下载进度并下载 `Deepseek.Harness.Launcher.dmg`（GitHub 自动将空格存为点），随后自替换重启（支持自动定时检查 + 频率设置）。 |
 | 6 | **开机自启动** | 通过 `LaunchAgent`（`com.local.dhl-launcher`）实现登录 macOS 自动拉起，可在设置中开关。 |
 | 7 | **优雅的进程生命周期** | 停止 / 更新前对 Harness 进程组做 `SIGTERM → SIGKILL` 级联终止（含超时兜底），并精确匹配 launcher 自身路径与运行该 patch 的 npm/node 进程，避免误杀或残留孤儿进程。 |
 | 8 | **原生设置窗口** | 自动更新开关与频率、就绪后是否自动开浏览器、开机启动；与系统外观一致。 |
@@ -125,16 +125,16 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 | 打开 Deepseek Harness | ⌘O | 打开当前端口的 Harness 界面；未运行时自动启动。浏览器里已有 Harness 页面时选中原标签，否则才新开；首次复用标签时 macOS 会请求允许启动器控制浏览器 |
 | 全局呼出 Deepseek Harness | ⌃⌥D | 任意应用中呼出，可在设置中录制更换 |
 | 端口：xxxx | — | 实时显示当前运行端口（未运行则显示「未运行」） |
-| 检查更新 | — | 手动检查 GitHub Releases，更新说明按 Markdown 渲染展示 |
+| 检测启动器（DHL）更新 | — | 手动检查 GitHub Releases，更新说明按 Markdown 渲染展示 |
 | 设置… | ⌘, | 自动更新、检查频率、就绪开浏览器、开机启动 |
 | 打开日志 | ⌘L | 打开 `~/Library/Logs/Deepseek Harness Launcher/dhl.log` |
 | 退出 Deepseek Harness | ⌘Q | 退出并终止 Harness 后台进程 |
 
 ### 设置与更新
 
-- 设置项：自动检查更新、检查频率、Harness 就绪后自动打开浏览器、登录 macOS 时自动启动 Deepseek Harness Launcher、全局快捷呼出快捷键。
-- 默认值：自动检查更新开启、每 6 小时检查一次、启动后约 8 秒做首次后台检查；就绪后自动打开浏览器开启；开机启动关闭；全局快捷键启用，默认 `⌃⌥D`。检查间隔最小为 1 小时。
-- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.2`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
+- 设置项：自动检测启动器（DHL）更新、检查频率、Harness 就绪后自动打开浏览器、登录 macOS 时自动启动 Deepseek Harness Launcher、全局快捷呼出快捷键。
+- 默认值：自动检测启动器（DHL）更新开启、每 6 小时检查一次、启动后约 8 秒做首次后台检查；就绪后自动打开浏览器开启；开机启动关闭；全局快捷键启用，默认 `⌃⌥D`。检查间隔最小为 1 小时。
+- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.3`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
 - 启动器自身更新和 `@deepseek-ai/dsh` 更新是两条独立链路；dsh 检查只比较 npm 最新版本并提示，不修改 npm 缓存。
 - GitHub API 返回 `403`（通常是未认证限流）时，启动器会回退读取 Releases Atom feed 来比较版本；没有已发布 Release 时，手动检查会显示「暂无可用更新」。
 - 可用更新必须携带名为 `Deepseek.Harness.Launcher.dmg` 的 Release asset（GitHub 不接受空格，会把文件名里的空格改为点）。下载期间显示可最小化/关闭的进度窗口，关闭窗口不取消下载；下载保存到 `~/Downloads/Deepseek Harness Launcher-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先终止后台、替换当前 App、再重新启动 Deepseek Harness。

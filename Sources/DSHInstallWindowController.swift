@@ -28,7 +28,7 @@ final class DSHInstallWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "dsh 安装"
+        window.title = "Deepseek Harness 安装"
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
