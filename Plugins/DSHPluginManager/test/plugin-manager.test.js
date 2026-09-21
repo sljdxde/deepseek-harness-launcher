@@ -3,7 +3,7 @@ import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parsePluginYml, installCandidates, listInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath } from '../lib/index.js';
+import { parsePluginYml, installCandidates, listInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin } from '../lib/index.js';
 
 test('parsePluginYml 解析 awesome-dsh-plugin 的插件条目格式', () => {
   const text = `url: https://github.com/1624318455/dsh-plugin-tavily
@@ -277,4 +277,61 @@ test('hasCommandOnPath 只认可可执行文件', async () => {
     process.env.PATH = previousPath;
     await rm(dshHome, { recursive: true, force: true });
   }
+});
+
+test('cleanupPluginSources 卸载后删除 file: 引用的源码目录，保留仍被引用与外部目录', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-src-'));
+  process.env.DSH_HOME = dshHome;
+
+  try {
+    const profileDir = join(dshHome, 'profiles', 'web');
+    const sources = join(profileDir, 'plugin-sources');
+    const dirA = join(sources, 'authorA-repoA');
+    const dirB = join(sources, 'authorB-repoB');
+    const external = join(profileDir, 'outside-sources');
+    for (const dir of [dirA, dirB, external]) { await mkdir(dir, { recursive: true }); await writeFile(join(dir, 'package.json'), '{}'); }
+    const before = {
+      dependencies: {
+        'pkg-a': `file:${dirA}`,
+        'pkg-b': `file:${dirB}`,
+        'pkg-ext': `file:${external}`,
+        'pkg-npm': '^1.0.0'
+      }
+    };
+    // 卸载后：pkg-a 的引用消失；pkg-b 仍被其他依赖（pkg-b2）指向同一目录
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'pkg-b2': `file:${dirB}`, 'pkg-ext': `file:${external}`, 'pkg-npm': '^1.0.0' }
+    }));
+
+    const removed = await cleanupPluginSources(before, ['pkg-a', 'pkg-b', 'pkg-ext', 'pkg-npm']);
+    assert.deepEqual(removed, [dirA]);
+    await assert.rejects(access(dirA));
+    await access(dirB);   // 仍被 pkg-b2 引用，保留
+    await access(external); // plugin-sources 之外的 file: 依赖不动
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('cleanupPluginSources 无 manifest 或无依赖时为空操作', async () => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-src2-'));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = dshHome;
+  try {
+    assert.deepEqual(await cleanupPluginSources(null, ['pkg-a']), []);
+    assert.deepEqual(await cleanupPluginSources({}, ['pkg-a']), []);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('updatePlugin 拒绝非法插件名', async () => {
+  const result = await updatePlugin('../escape');
+  assert.equal(result.ok, false);
+  assert.match(result.error, /非法/);
 });

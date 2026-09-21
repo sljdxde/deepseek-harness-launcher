@@ -101,6 +101,18 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Manual menu clicks must always be allowed to open a fresh browser page.
     private var didAutoOpenBrowser = false
     private var openWhenReady = false
+    /// 重启 dsh 后待完成的一次「页面接管」：新进程就绪时把已打开的浏览器
+    /// 标签页导航到新 token 入口。旧标签持有的是旧进程的认证，仅前置会
+    /// 留下一张死页面，用户看来就像「重启没有生效」。
+    private var relaunchingAfterRestart = false
+    /// 菜单栏图标旁的短暂状态文案（如「正在重启…」/「已重启 ✓」）。
+    /// 点击菜单项后菜单即关闭，反馈必须出现在菜单栏本身才能被看见；
+    /// makeStatusImage 重建图标时按此保持 variableLength 不裁剪文案。
+    private var statusTitleOverride: String?
+    // 插件兼容性检查：代际号随停止/重启递增，让旧调度自灭（与轮询链同理）；
+    // 已提示过的插件记入集合，避免同一次运行为同一插件反复弹窗。
+    private var pluginCompatGeneration = 0
+    private var pluginCompatAlerted = Set<String>()
     private var autoUpdateTimer: Timer?
     private var settingsWindow: SettingsWindowController?
     private var pendingUpdate: UpdateManifest?
@@ -354,13 +366,26 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func openBrowserWhenReadyIfNeeded() {
-        guard !didAutoOpenBrowser, settings.openBrowserOnReady || openWhenReady else { return }
+        guard !didAutoOpenBrowser, settings.openBrowserOnReady || openWhenReady || relaunchingAfterRestart else { return }
         didAutoOpenBrowser = true
         openWhenReady = false
+        // 重启后的接管只消费一次：关旧标签页、开新页面。dsh 会话全部
+        // 持久化，不加这个可见循环用户无法分辨重启是否真的发生。
+        let restartTakeover = relaunchingAfterRestart
+        relaunchingAfterRestart = false
         guard state == .running, let port = selectedPort else { return }
         let target = pendingSessionId
         pendingSessionId = nil
-        openWebPage(on: port, intent: .automatic) { [weak self] in
+        if restartTakeover {
+            let stamp = String(formatLogTimestamp().dropFirst(11).prefix(8)) // HH:mm:ss
+            setPortMenuTitle("端口：\(port) · 已重启 \(stamp)")
+            showStatusTitle("已重启 ✓", autoDismissAfter: 6)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                guard let self, self.state == .running, self.selectedPort == port else { return }
+                self.setPortMenuTitle("端口：\(port)")
+            }
+        }
+        openWebPage(on: port, intent: .automatic, restartTakeover: restartTakeover) { [weak self] in
             guard let target else { return }
             self?.requestSessionOpen(sessionId: target, port: port)
         }
@@ -368,10 +393,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// 打开 Harness 页面。`intent` 决定节流策略：菜单点击/热键永远生效，
     /// 后端就绪后的自动打开仍受 2 秒冷却保护，避免连开多个标签页。
+    /// `restartTakeover`：重启 dsh 后为 true——先关闭旧的 Harness 标签页，
+    /// 再打开新进程入口页面，构成可见的「先退出再打开」循环。
     private func openWebPage(
         on port: Int,
         path: String = "/",
         intent: BrowserOpenIntent = .manual,
+        restartTakeover: Bool = false,
         completion: @escaping () -> Void = {}
     ) {
         guard let url = webRootURL(for: port, path: path) else {
@@ -408,7 +436,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     return
                 }
                 let browser = self.browserConnected(clientPIDs: clientPIDs, table: table, port: port)
-                self.deliverPage(url, to: browser, port: port, completion: completion)
+                self.deliverPage(url, to: browser, port: port, restartTakeover: restartTakeover, completion: completion)
             }
         }
     }
@@ -432,9 +460,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// ?token= 认证参数）。URL 是进程生命周期内有效的认证入口，任何时刻
     /// 交给浏览器都能完成 token → cookie 兑换。
     private func captureWebURL(from output: String, port: Int) {
-        guard let range = output.range(of: #"dsh web: (https?://[^\s\x{4e00}-\x{9fff}]+)"#, options: [.regularExpression]) else { return }
-        guard let url = URL(string: String(output[range].dropFirst("dsh web: ".count))) else { return }
-        guard url.port == port else { return }
+        guard let url = HarnessWebCompatibility.webEntryURL(fromOutput: output, port: port) else { return }
         webURLLock.lock()
         authenticatedWebURL = url
         webURLLock.unlock()
@@ -452,11 +478,16 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 检测到已有 Harness 页面时，先用 Apple Events 选中匹配的标签页，
     /// 不再把 URL 重新交给浏览器。后者在 Chromium/Safari 中会创建重复
     /// 标签页；自动化被拒绝或浏览器不支持时，降级为仅前置浏览器。
+    /// 例外：`restartTakeover`（重启 dsh 后）会先关闭匹配的旧标签页，再
+    /// 打开新进程的入口页面——dsh 的会话/工作区全部持久化，仅刷新页面看
+    /// 起来与重启前完全一样，「先退出再打开」的可见循环才能让用户确认
+    /// 重启真的发生了。
     private func deliverPage(
         _ url: URL,
         to browser: NSRunningApplication?,
         port: Int,
-        completion: @escaping () -> Void
+        restartTakeover: Bool = false,
+        completion: @escaping () -> Void = {}
     ) {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
@@ -482,6 +513,30 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let browser {
             let browserName = browser.localizedName ?? "浏览器"
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                // 重启接管：先关旧标签页，再新开页面（关不掉也照常新开，
+                // 保证重启后总有一张可用的新页面）。
+                if restartTakeover {
+                    let close = BrowserAutomationSupport.closeHarnessTab(
+                        bundleIdentifier: browser.bundleIdentifier, targetURL: url
+                    )
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        switch close {
+                        case .closed:
+                            self.appendLogString("dsh 已重启，已关闭 \(browserName) 的旧 Harness 标签页，正在打开新页面\n")
+                        case .missing:
+                            self.appendLogString("dsh 已重启，未找到 \(browserName) 的旧 Harness 标签页，直接打开新页面\n")
+                        case .unsupported:
+                            self.appendLogString("dsh 已重启，\(browserName) 不支持标签关闭，直接打开新页面（旧标签可手动关闭）\n")
+                        case .failed(let message):
+                            self.appendLogString("dsh 已重启，关闭 \(browserName) 旧标签页失败（\(message)），直接打开新页面\n")
+                        case .focused:
+                            break
+                        }
+                        openInBrowser()
+                    }
+                    return
+                }
                 let result = BrowserAutomationSupport.focusHarnessTab(
                     bundleIdentifier: browser.bundleIdentifier, targetURL: url
                 )
@@ -499,6 +554,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     case .failed(let message):
                         _ = browser.activate(options: [.activateIgnoringOtherApps])
                         self.appendLogString("定位 \(browserName) Harness 标签页失败（\(message)）；已前置浏览器\n")
+                    case .closed:
+                        break
                     }
                     self.finishBrowserOpen(port: port, error: nil, completion: completion)
                 }
@@ -605,6 +662,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cancelDSHInstall()
         let trackedPID = process?.processIdentifier ?? 0
         process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false; pendingSessionId = nil
+        pluginCompatGeneration += 1
         // 旧进程的 token 随进程失效，重开后必须用新进程打印的入口 URL。
         webURLLock.lock(); authenticatedWebURL = nil; webURLLock.unlock()
         setState(.stopped)
@@ -627,12 +685,20 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         setPortMenuTitle("正在重启 Deepseek Harness…")
+        // 点击后菜单立即关闭，重启过程（约 4 秒）的反馈只能放在菜单栏本身，
+        // 否则用户只看到页面卡一下、无从分辨重启是否发生。
+        showStatusTitle("正在重启…")
         appendLogString("用户请求重启 dsh…\n")
         stopDHL { [weak self] in
             guard let self else { return }
             self.appendLogString("dsh 已停止，正在重新启动…\n")
             self.start()
         }
+        // stopDHL 的同步段会清空 openWhenReady，置位必须放在其后。重启完成后
+        // 接管已打开的页面：旧 token 随旧进程失效，必须让浏览器加载新进程的
+        // 入口 URL，否则用户看到的还是重启前的旧页面。
+        openWhenReady = true
+        relaunchingAfterRestart = true
     }
 
     private func managedDSHPIDs() -> [Int32] {
@@ -959,6 +1025,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.monitorArchivePlugin(port: port)
                     self.monitorSessionNotify(port: port)
                     self.openBrowserWhenReadyIfNeeded()
+                    self.schedulePluginCompatibilityCheck(port: port)
                 case .launch(let port):
                     self.launch(port: port)
                 }
@@ -980,13 +1047,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func isHarnessWebBody(_ body: String) -> Bool {
-        // dsh 0.1.5-rc.2 起根路径对未认证请求返回 401 固定文案，服务实际
-        // 已就绪；旧版返回含产品标识的 HTML。两者都视为「这是在跑的 dsh」。
-        if body.localizedCaseInsensitiveContains("dsh web authentication required") { return true }
-        // The Web UI HTML does not reliably contain the product title; use
-        // stable DeepSeek/dsh asset markers instead.
-        return body.localizedCaseInsensitiveContains("deepseek") &&
-            body.localizedCaseInsensitiveContains("dsh")
+        HarnessWebCompatibility.isHarnessWebBody(body)
     }
 
     private func dshHasArchivePlugin(on port: Int) -> Bool {
@@ -1062,6 +1123,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let isUpgrade = mode == .upgrade
         let isRepair = mode == .repair
         let isDSHUpdate = updateVersion != nil
+        // 重启若转入安装/更新流程，反馈由安装窗口接管，菜单栏文案不再适用。
+        showStatusTitle(nil)
         switch mode {
         case .upgrade:
             setPortMenuTitle("正在更新 Deepseek Harness（可能需要几分钟）…")
@@ -1362,6 +1425,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.monitorArchivePlugin(port: port)
                 self.monitorSessionNotify(port: port)
                 self.openBrowserWhenReadyIfNeeded()
+                self.schedulePluginCompatibilityCheck(port: port)
             } else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                     self.pollUntilReady(port: port, startedAt: startedAt)
@@ -1385,6 +1449,165 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 self.monitorArchivePlugin(port: port, attempts: attempts + 1)
             }
+        }
+    }
+
+    // MARK: - 插件兼容性检查
+
+    private struct PluginInstalledList: Decodable {
+        let items: [PluginCompatibilitySupport.InstalledPlugin]
+    }
+
+    /// 启动/重启进入 running 后调度一次兼容性检查。dsh 加载插件需要几秒
+    /// （monitorArchivePlugin 同样给了约 10 秒窗口），过早探测会把「还在
+    /// 加载」误判成「未加载」。代际号随停止/重启递增，旧调度自动失效。
+    private func schedulePluginCompatibilityCheck(port: Int) {
+        pluginCompatGeneration += 1
+        let generation = pluginCompatGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            guard let self,
+                  self.state == .running, self.selectedPort == port,
+                  generation == self.pluginCompatGeneration else { return }
+            self.runPluginCompatibilityCheck(port: port)
+        }
+    }
+
+    private func runPluginCompatibilityCheck(port: Int) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var issues: [PluginCompatibilitySupport.Issue] = []
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            // 插件管理器可用才说明这是启动器管理的实例（内置插件已链接）；
+            // 外部/旧实例没有这些路由，静默跳过，避免把正常降级误报成问题。
+            if let body = ServiceProbe.body(at: URL(string: "http://127.0.0.1:\(port)/dsh-plugin-manager/installed") ?? URL(fileURLWithPath: "/"), timeout: 3),
+               let data = body.data(using: .utf8),
+               let list = try? JSONDecoder().decode(PluginInstalledList.self, from: data) {
+                issues += PluginCompatibilitySupport.scan(
+                    plugins: list.items,
+                    profileModules: home.appendingPathComponent(".dsh/profiles/web/node_modules"),
+                    runtimeModules: home.appendingPathComponent(".dsh/runtime/node_modules")
+                )
+                // 内置插件接口缺失 = 没随当前 dsh 加载（启动时补链接也救不回
+                // 的场景：dsh 版本演进移除了插件依赖的 API）。
+                let archiveOK = (ServiceProbe.body(at: URL(string: "http://127.0.0.1:\(port)/dsh-archive-manager/archives") ?? URL(fileURLWithPath: "/"), timeout: 3) ?? "").contains("items")
+                if !archiveOK {
+                    issues.append(PluginCompatibilitySupport.Issue(
+                        pluginName: "dsh-archive-manager", version: nil,
+                        reason: "归档管理插件未随当前 dsh 加载", userPlugin: false
+                    ))
+                }
+                let notifyOK = (ServiceProbe.body(at: URL(string: "http://127.0.0.1:\(port)/dsh-session-notify/events") ?? URL(fileURLWithPath: "/"), timeout: 3) ?? "").contains("bootId")
+                if !notifyOK {
+                    issues.append(PluginCompatibilitySupport.Issue(
+                        pluginName: "dsh-session-notify", version: nil,
+                        reason: "会话完成通知插件未随当前 dsh 加载", userPlugin: false
+                    ))
+                }
+            }
+            guard !issues.isEmpty else { return }
+            DispatchQueue.main.async {
+                guard let self, self.state == .running, self.selectedPort == port else { return }
+                self.appendLogString("检测到 \(issues.count) 个插件兼容性问题：\(issues.map(\.pluginName).joined(separator: "、"))\n")
+                self.presentPluginIssues(issues)
+            }
+        }
+    }
+
+    /// 逐个呈现兼容性问题；「忽略」只对本次启动器运行生效。
+    private func presentPluginIssues(_ issues: [PluginCompatibilitySupport.Issue]) {
+        guard !issues.isEmpty else { return }
+        var remaining = issues
+        let issue = remaining.removeFirst()
+        if pluginCompatAlerted.contains(issue.pluginName) {
+            presentPluginIssues(remaining)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "插件可能与当前 dsh 版本不兼容"
+        let versionSuffix = issue.version.map { "（v\($0)）" } ?? ""
+        alert.informativeText = "\(issue.pluginName)\(versionSuffix)：\(issue.reason)。\n\n\(issue.userPlugin ? "可尝试升级到适配版本，或卸载该插件；操作后需重启 dsh 生效。" : "可重启 dsh 重试加载；若持续出现，请更新启动器以获取适配的内置插件。")"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: issue.userPlugin ? "升级插件" : "重启 dsh")
+        if issue.userPlugin { alert.addButton(withTitle: "卸载插件") }
+        alert.addButton(withTitle: "忽略")
+        let answer = alert.runModal()
+        if issue.userPlugin {
+            switch answer {
+            case .alertFirstButtonReturn: upgradePluginIssue(issue, remaining: remaining)
+            case .alertSecondButtonReturn: uninstallPluginIssue(issue, remaining: remaining)
+            default:
+                pluginCompatAlerted.insert(issue.pluginName)
+                presentPluginIssues(remaining)
+            }
+        } else {
+            switch answer {
+            case .alertFirstButtonReturn:
+                appendLogString("用户选择重启 dsh 以重试加载内置插件\n")
+                restartDSH()
+            default:
+                pluginCompatAlerted.insert(issue.pluginName)
+                presentPluginIssues(remaining)
+            }
+        }
+    }
+
+    /// 调插件管理器的升级接口（dsh plugin update，pnpm 可能跑几分钟）。
+    private func upgradePluginIssue(_ issue: PluginCompatibilitySupport.Issue, remaining: [PluginCompatibilitySupport.Issue]) {
+        guard let port = selectedPort,
+              let url = URL(string: "http://127.0.0.1:\(port)/dsh-plugin-manager/update") else {
+            presentPluginIssues(remaining)
+            return
+        }
+        appendLogString("正在升级插件 \(issue.pluginName)…\n")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = PluginCompatibilitySupport.postPluginCommand(url: url, name: issue.pluginName, timeout: 300)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if result.ok {
+                    self.appendLogString("插件 \(issue.pluginName) 升级流程完成\n")
+                    self.askRestartAfterPluginChange(plugin: issue.pluginName, remaining: remaining)
+                } else {
+                    self.appendLogString("插件 \(issue.pluginName) 升级失败：\(result.error)\n")
+                    self.showInfo(title: "插件升级失败", message: "\(issue.pluginName)：\(result.error)")
+                    self.presentPluginIssues(remaining)
+                }
+            }
+        }
+    }
+
+    private func uninstallPluginIssue(_ issue: PluginCompatibilitySupport.Issue, remaining: [PluginCompatibilitySupport.Issue]) {
+        guard let port = selectedPort,
+              let url = URL(string: "http://127.0.0.1:\(port)/dsh-plugin-manager/uninstall") else {
+            presentPluginIssues(remaining)
+            return
+        }
+        appendLogString("正在卸载插件 \(issue.pluginName)…\n")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = PluginCompatibilitySupport.postPluginCommand(url: url, name: issue.pluginName, timeout: 300)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if result.ok {
+                    self.pluginCompatAlerted.remove(issue.pluginName)
+                    self.appendLogString("插件 \(issue.pluginName) 已卸载\n")
+                    self.askRestartAfterPluginChange(plugin: issue.pluginName, remaining: remaining)
+                } else {
+                    self.appendLogString("插件 \(issue.pluginName) 卸载失败：\(result.error)\n")
+                    self.showInfo(title: "插件卸载失败", message: "\(issue.pluginName)：\(result.error)")
+                    self.presentPluginIssues(remaining)
+                }
+            }
+        }
+    }
+
+    private func askRestartAfterPluginChange(plugin: String, remaining: [PluginCompatibilitySupport.Issue]) {
+        let alert = NSAlert()
+        alert.messageText = "重启 dsh 使变更生效"
+        alert.informativeText = "\(plugin) 的变更需要重启 dsh 后生效。现在重启吗？"
+        alert.addButton(withTitle: "立即重启")
+        alert.addButton(withTitle: "稍后")
+        if alert.runModal() == .alertFirstButtonReturn {
+            restartDSH()
+        } else {
+            presentPluginIssues(remaining)
         }
     }
 
@@ -1421,6 +1644,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func fail(_ message: String) {
         openWhenReady = false
+        showStatusTitle(nil)
         appendLogString("\(message)\n"); setState(.failed)
         let alert = NSAlert(); alert.messageText = "\(LauncherBrand.fullName) 启动失败"; alert.informativeText = message; alert.alertStyle = .warning; alert.addButton(withTitle: "打开日志"); alert.addButton(withTitle: "关闭")
         if alert.runModal() == .alertFirstButtonReturn { openLogs() }
@@ -1463,15 +1687,30 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return NSImage(size: NSSize(width: 18, height: 18))
         }
         let unread = sessionNotifyStore.unreadCount
+        // 有角标或状态文案时菜单栏占位必须可变长，否则标题会被裁剪。
+        statusItem.length = (unread > 0 || statusTitleOverride != nil)
+            ? NSStatusItem.variableLength : NSStatusItem.squareLength
         guard unread > 0, let badge = makeSessionNotifyBadgeImage(base: base, text: SessionNotifyStore.badgeText(for: unread)) else {
-            statusItem.length = NSStatusItem.squareLength
             let image = base.copy() as! NSImage
             image.size = NSSize(width: 20, height: 20)
             image.isTemplate = true
             return image
         }
-        statusItem.length = NSStatusItem.variableLength
         return badge
+    }
+
+    /// 在菜单栏图标旁显示一段短暂的反馈文案。title 为 nil 时清除。
+    /// dismissAfter 秒后自动清除（用于「已重启 ✓」这类确认性提示）；
+    /// 期间若被新的状态文案替换，旧定时器不会误清。
+    private func showStatusTitle(_ title: String?, autoDismissAfter dismissAfter: TimeInterval? = nil) {
+        statusTitleOverride = title
+        statusItem.button?.title = title ?? ""
+        statusItem.button?.image = makeStatusImage()
+        guard let dismissAfter else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + dismissAfter) { [weak self] in
+            guard let self, self.statusTitleOverride == title else { return }
+            self.showStatusTitle(nil)
+        }
     }
 
     /// Foxmail 式未读角标：template 剪影按菜单栏明暗手动着色，右下角叠一枚

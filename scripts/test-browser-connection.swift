@@ -72,6 +72,22 @@ struct BrowserConnectionTests {
         precondition(safariScript?.contains("current tab of browserWindow") == true)
         precondition(NSAppleScript(source: safariScript!) != nil)
         precondition(BrowserAutomationSupport.browserFocusScript(bundleIdentifier: "org.mozilla.firefox", targetURL: harnessURL) == nil)
-        print("PASS: connection direction, exact port, IPv6, deduplication, malformed records, helper ancestry, cycles, non-browser exclusion, existing-browser reuse, intent throttle, page URL, browser automation scripts")
+        // 重启接管：先关闭匹配的旧标签页（dsh 会话全部持久化，仅刷新看
+        // 不出重启发生过），再由启动器新开入口页面。匹配仍按去 query 的
+        // 本地地址进行，任何 token 打开的标签都能匹配。
+        let entryURL = URL(string: "http://127.0.0.1:3080/?token=newtoken")!
+        let chromeClose = BrowserAutomationSupport.browserCloseScript(
+            bundleIdentifier: "com.google.Chrome", targetURL: entryURL
+        )
+        precondition(chromeClose?.contains("close browserTab") == true)
+        precondition(chromeClose?.contains("return \"closed\"") == true)
+        precondition(chromeClose?.contains("http://localhost:3080/?token=newtoken") == false) // 匹配地址不带 token
+        precondition(BrowserAutomationSupport.browserFocusScript(bundleIdentifier: "com.google.Chrome", targetURL: harnessURL)?.contains("close browserTab") == false)
+        let safariClose = BrowserAutomationSupport.browserCloseScript(
+            bundleIdentifier: "com.apple.Safari", targetURL: entryURL
+        )
+        precondition(safariClose?.contains("close browserTab") == true)
+        precondition(NSAppleScript(source: chromeClose!) != nil)
+        print("PASS: connection direction, exact port, IPv6, deduplication, malformed records, helper ancestry, cycles, non-browser exclusion, existing-browser reuse, intent throttle, page URL, browser automation scripts, restart tab close")
     }
 }

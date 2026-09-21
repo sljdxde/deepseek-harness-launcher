@@ -109,6 +109,21 @@ URL 换取绑定域名的签名 cookie；未认证请求一律 401 固定文案�
   不清理 `runtime.rollback`（刻意保留），但会清理 `runtime.retired-*`
   换入过程残留。
 
+### 8. 归档管理空列表：历史格式会话被新版列表跳过
+
+更新到 dsh 0.1.5-rc.2 后「归档管理」显示 0 条。排查结论：归档标记
+（`~/.dsh/storages/workspace.json` 的 `archivedSessionIds`，22 条）完好，
+但 0.1.x 时代的会话是 generation 0 格式（`session.jsonl[.zstd]`，
+header `version: 0`），新版 `sessionPersistence.list()` 对无法识别的
+历史格式**静默跳过**（当前格式 v3，`session.v3.jsonl[.zstd]`），旧会话
+全部从列表消失，归档插件求交集后为空。
+
+修复：归档管理插件对归档标记中 persistence 看不到的会话做**磁盘兜底
+扫描**——读取会话目录里版本最高的 generation 文件首行 header（zstd 用
+Node 22 `node:zlib` 原生解码），合成进 headers；被引用的父会话一并读取
+以保证子树关系完整。数据零改动；会话在新版 dsh 下被打开时仍会走官方
+迁移写出 v3 文件。`deleteTrees` 共用同一合并视图，旧归档可正常删除。
+
 ## 三、测试
 
 - `scripts/test-dsh-runtime-support.swift` 新增：
@@ -121,5 +136,8 @@ URL 换取绑定域名的签名 cookie；未认证请求一律 401 固定文案�
   - `testUpdateKeepsRollbackSnapshot`：版本定向更新保留快照且可读版本、
     `performRollback` 换回旧位并消费快照、非定向安装不保留快照；
   - `testInstallEnvironment` 追加断言：默认安装路径保持
-    prefer-offline 不变。
+    prefer-offline 不变；
+  - `Plugins/DSHArchiveManager/test/legacy-session-headers.test.js`：
+    v0（zstd/纯文本）会话从磁盘兜底合并进归档列表、父会话子树计数、
+    persistence 可见时行为不变。
 - 全量回归：`./scripts/test.sh`。

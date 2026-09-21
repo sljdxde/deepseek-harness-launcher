@@ -28,7 +28,16 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
 .dsh-pm-close{font-size:20px;line-height:20px}
 .dsh-pm-body{flex:1;overflow-y:auto;padding:16px 18px 28px}
 .dsh-pm-error{background:rgba(220,50,47,.08);border-radius:6px;color:var(--dsw-alias-state-error-primary);font-size:12px;margin-bottom:10px;padding:8px 10px}
-.dsh-pm-notice{background:rgba(82,196,26,.08);border-radius:6px;color:var(--dsw-alias-state-success-primary);font-size:12px;margin-bottom:10px;padding:8px 10px}
+.dsh-pm-toasts{display:flex;flex-direction:column;gap:8px;left:50%;max-width:min(520px,calc(100% - 48px));pointer-events:none;position:absolute;top:62px;transform:translateX(-50%);z-index:2147483003}
+.dsh-pm-toast{align-items:flex-start;animation:dsh-pm-toast-in .18s ease-out;border-radius:10px;box-shadow:0 10px 34px rgba(0,0,0,.28);box-sizing:border-box;color:#fff;display:flex;font-size:13px;gap:10px;line-height:20px;padding:10px 14px;pointer-events:auto}
+.dsh-pm-toast-success{background:#2f9e44}
+.dsh-pm-toast-error{background:#d6333c}
+.dsh-pm-toast-info{background:#3a6ea8}
+.dsh-pm-toast-icon{flex:none;font-weight:700}
+.dsh-pm-toast-text{flex:1;min-width:0;word-break:break-word}
+.dsh-pm-toast-close{background:transparent;border:0;border-radius:6px;color:rgba(255,255,255,.85);cursor:pointer;font:inherit;font-size:14px;line-height:20px;padding:0 2px}
+.dsh-pm-toast-close:hover{color:#fff}
+@keyframes dsh-pm-toast-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 .dsh-pm-empty{color:var(--dsw-alias-label-tertiary);font-size:13px;padding:40px 0;text-align:center}
 .dsh-pm-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .dsh-pm-check{accent-color:var(--dsw-alias-brand-primary);cursor:pointer;flex:0 0 16px;height:16px;margin:0;width:16px}
@@ -96,6 +105,41 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
   }
 
   function normalizeText(value) { return (value || '').toLowerCase() }
+
+  /// Toast 队列：安装/卸载/清理/刷新等操作结果用浮层提示呈现并自动消失。
+  /// 纯逻辑（计时器通过 schedule 注入），与 React 解耦，可直接单测：
+  /// 成功/提示 3.2s 自动消失，失败 6s（读清错误需要更长时间）。
+  function createToastStore(schedule = (fn, ms) => setTimeout(fn, ms)) {
+    let nextId = 0
+    let items = []
+    const listeners = new Set()
+    const emit = () => { for (const notify of listeners) notify(items) }
+    return {
+      push(kind, text) {
+        const id = ++nextId
+        items = [...items, { id, kind, text }]
+        emit()
+        schedule(() => { items = items.filter(toast => toast.id !== id); emit() }, kind === 'error' ? 6000 : 3200)
+        return id
+      },
+      dismiss(id) { items = items.filter(toast => toast.id !== id); emit() },
+      subscribe(listener) { listeners.add(listener); listener(items); return () => listeners.delete(listener) },
+      snapshot: () => items,
+    }
+  }
+
+  const TOAST_ICON = { success: '✓', error: '✕', info: 'ⓘ' }
+
+  function Toasts({ store }) {
+    const [items, setItems] = React.useState(store.snapshot())
+    React.useEffect(() => store.subscribe(setItems), [store])
+    if (items.length === 0) return null
+    return h('div', { className: 'dsh-pm-toasts', role: 'status', 'aria-live': 'polite' },
+      items.map(toast => h('div', { key: toast.id, className: `dsh-pm-toast dsh-pm-toast-${toast.kind}` },
+        h('span', { className: 'dsh-pm-toast-icon', 'aria-hidden': true }, TOAST_ICON[toast.kind] || 'ⓘ'),
+        h('span', { className: 'dsh-pm-toast-text' }, toast.text),
+        h('button', { className: 'dsh-pm-toast-close', onClick: () => store.dismiss(toast.id), 'aria-label': '关闭提示' }, '×'))))
+  }
   function formatNumber(value) {
     if (!value) return '0'
     if (value >= 1000) return `${(value / 1000).toFixed(1)}k`
@@ -141,7 +185,8 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
     const [selected, setSelected] = React.useState(new Set())
     const [confirmBatch, setConfirmBatch] = React.useState(false)
     const [error, setError] = React.useState('')
-    const [notice, setNotice] = React.useState('')
+    const toastStore = React.useMemo(() => createToastStore(), [])
+    const toast = (kind, text) => toastStore.push(kind, text)
     const autoRefreshed = React.useRef(false)
     const loadInstalled = () => fetch('/dsh-plugin-manager/installed', { cache: 'no-store' })
       .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); setInstalled(v.items || []); setError('') })
@@ -159,33 +204,34 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
     const refreshMarket = () => {
       setBusy('refresh')
       fetch('/dsh-plugin-manager/refresh', { method: 'POST' })
-        .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); setNotice(`市场已刷新：${v.count} 个插件`); return loadMarket() })
-        .catch(e => setError(String(e.message || e))).finally(() => setBusy(''))
+        .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); toast('success', `市场已刷新：${v.count} 个插件`); return loadMarket() })
+        .catch(e => toast('error', `刷新市场失败：${String(e.message || e)}`)).finally(() => setBusy(''))
     }
     const install = (plugin) => {
-      setBusy(plugin.id); setError(''); setNotice('')
+      setBusy(plugin.id)
       fetch('/dsh-plugin-manager/install', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: plugin.url, name: plugin.name }) })
         .then(r => r.json()).then(v => {
           if (v.error) throw Error(v.error)
           if (!v.ok) throw Error(v.error || '安装失败')
-          setNotice(v.alreadyInstalled ? `${plugin.name} 已在已安装列表中` : `已安装 ${plugin.name}，重启 dsh 后生效`)
+          if (v.alreadyInstalled) toast('info', `${plugin.name} 已安装过，无需重复安装`)
+          else toast('success', `已安装 ${plugin.name}，重启 dsh 后生效`)
           setDetail(null)
           return loadInstalled()
         })
-        .catch(e => setError(String(e.message || e))).finally(() => setBusy(''))
+        .catch(e => toast('error', `安装失败：${String(e.message || e)}`)).finally(() => setBusy(''))
     }
     const cleanupBroken = (item) => {
-      setBusy('cleanup-' + item.name); setError(''); setNotice('')
+      setBusy('cleanup-' + item.name)
       fetch('/dsh-plugin-manager/cleanup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: item.name }) })
         .then(r => r.json()).then(v => {
           if (v.error) throw Error(v.error)
           if (!v.ok) throw Error(v.error || '清理失败')
-          setNotice(`已清理损坏的安装 ${item.name}`)
+          toast('success', `已清理损坏的安装 ${item.name}`)
           return loadInstalled()
         })
-        .catch(e => setError(String(e.message || e))).finally(() => setBusy(''))
+        .catch(e => toast('error', `清理失败：${String(e.message || e)}`)).finally(() => setBusy(''))
     }
-    const requestUninstall = (item) => { setError(''); setNotice(''); setConfirmUninstall(item) }
+    const requestUninstall = (item) => { setError(''); setConfirmUninstall(item) }
     const confirmUninstallGo = () => {
       if (!confirmUninstall) return
       setBusy('uninstall'); setConfirmUninstall(null)
@@ -193,10 +239,10 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
         .then(r => r.json()).then(v => {
           if (v.error) throw Error(v.error)
           if (!v.ok) throw Error(v.error || '卸载失败')
-          setNotice(`已卸载 ${confirmUninstall.name}，重启 dsh 后生效`)
+          toast('success', `已卸载 ${confirmUninstall.name}，重启 dsh 后生效`)
           return loadInstalled()
         })
-        .catch(e => setError(String(e.message || e))).finally(() => setBusy(''))
+        .catch(e => toast('error', `卸载失败：${String(e.message || e)}`)).finally(() => setBusy(''))
     }
 
     const manageable = installed.filter(item => !item.broken && item.source !== 'bundled')
@@ -217,16 +263,21 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
     }
     const uninstallManyGo = () => {
       if (selectedNames.length === 0) return
-      setBusy('uninstall-many'); setConfirmBatch(false); setError(''); setNotice('')
+      setBusy('uninstall-many'); setConfirmBatch(false)
       fetch('/dsh-plugin-manager/uninstall-many', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ names: selectedNames }) })
         .then(r => r.json()).then(v => {
           if (v.error) throw Error(v.error)
           const failed = (v.results || []).filter(r => !r.ok)
-          setNotice(failed.length === 0 ? `已卸载 ${selectedNames.length} 个插件，重启 dsh 后生效` : `部分卸载失败：${failed.map(f => f.name).join('、')}`)
+          if (failed.length === 0) toast('success', `已卸载 ${selectedNames.length} 个插件，重启 dsh 后生效`)
+          else {
+            toast('error', `卸载失败：${failed.map(f => f.name).join('、')}`)
+            const done = selectedNames.filter(name => !failed.some(f => f.name === name))
+            if (done.length > 0) toast('success', `已卸载 ${done.length} 个插件，重启 dsh 后生效`)
+          }
           setSelected(new Set())
           return loadInstalled()
         })
-        .catch(e => setError(String(e.message || e))).finally(() => setBusy(''))
+        .catch(e => toast('error', `批量卸载失败：${String(e.message || e)}`)).finally(() => setBusy(''))
     }
 
     const plugins = (market?.plugins || []).filter(plugin => {
@@ -312,6 +363,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
     return h('div', null,
       h('div', { className: 'dsh-pm-backdrop', onClick: () => { if (!busy) { onClose() } } }),
       h('div', { className: 'dsh-pm-page', role: 'dialog', 'aria-modal': 'true', 'aria-label': '插件管理' },
+        h(Toasts, { store: toastStore }),
         h('div', { className: 'dsh-pm-header' },
           h('button', { className: 'dsh-pm-back', onClick: () => { if (!busy) onClose() }, 'aria-label': '返回' }, '← 返回'),
           h('strong', null, '插件管理'),
@@ -323,7 +375,6 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
           h('button', { className: 'dsh-pm-tool dsh-pm-close', onClick: () => { if (!busy) onClose() }, 'aria-label': '关闭' }, '×')),
         h('div', { className: 'dsh-pm-body' },
           error && h('div', { className: 'dsh-pm-error' }, error),
-          notice && h('div', { className: 'dsh-pm-notice' }, notice),
           confirmUninstall && h('div', { className: 'dsh-pm-confirm' },
             h('div', { className: 'dsh-pm-confirm-title' }, `确认卸载 ${confirmUninstall.name}？`),
             h('div', { className: 'dsh-pm-confirm-copy' }, '卸载后需要重启 dsh 才能生效。'),
@@ -352,5 +403,6 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
     ensureStyles()
     ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({ name: 'sidebar.footer.action', id: NS, order: 60, label: '插件管理' }, PluginTrigger))
   }
-  return { inject: ['slots', 'locale'], apply }
+  // createToastStore 仅为单测导出（vm 加载后可取用），宿主只消费 inject/apply。
+  return { inject: ['slots', 'locale'], apply, createToastStore }
 }})

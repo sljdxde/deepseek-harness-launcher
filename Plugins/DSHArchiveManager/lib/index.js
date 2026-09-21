@@ -1,19 +1,120 @@
 import { promises as fs } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { createZstdDecompress } from 'node:zlib';
 
 const home = () => process.env.DSH_HOME || join(homedir(), '.dsh');
 const workspaceFile = () => join(home(), 'storages', 'workspace.json');
 const sessionRoot = () => join(home(), 'sessions');
 
+// dsh 0.1.5-rc.2 起会话格式为 v3（session.v3.jsonl[.zstd]），其
+// sessionPersistence.list() 会静默跳过无法识别的历史格式；0.1.x 时代写入的
+// generation 0 会话（session.jsonl[.zstd]，header.version === 0）因此从列表
+// 消失，归档管理随之显示为空。这里的兜底直接扫描磁盘上的会话目录，读取
+// generation 文件首行的 header（zstd 用 node:zlib 原生解码），把旧格式会话
+// 补回列表；数据本身不做任何改动。
+const LEGACY_LOG_FILENAME = /^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$/u;
+
+async function readFirstLine(filePath, isZstd) {
+  return await new Promise((resolve) => {
+    const file = createReadStream(filePath);
+    let source = file;
+    if (isZstd) {
+      const decoder = createZstdDecompress();
+      file.pipe(decoder);
+      source = decoder;
+    }
+    let buffer = '';
+    const finish = (value) => {
+      source.destroy();
+      file.close();
+      resolve(value);
+    };
+    source.on('data', (chunk) => {
+      buffer += chunk.toString('utf8');
+      const newline = buffer.indexOf('\n');
+      if (newline >= 0) finish(buffer.slice(0, newline));
+    });
+    source.on('end', () => finish(buffer || null));
+    source.on('error', () => finish(null));
+  });
+}
+
+/** 目录里版本最高的 generation 日志；不存在返回 null。 */
+async function latestGeneration(dir) {
+  let entries;
+  try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return null; }
+  let best = null;
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const match = LEGACY_LOG_FILENAME.exec(entry.name);
+    if (!match) continue;
+    const version = match[1] === undefined ? 0 : Number(match[1]);
+    if (best === null || version > best.version) best = { path: join(dir, entry.name), isZstd: match[2] === '.zstd', version };
+  }
+  return best;
+}
+
+/** 读取一个会话目录的 header；文件缺失或首行不是合法 JSON 时返回 null。 */
+async function readSessionHeader(dir) {
+  const generation = await latestGeneration(dir);
+  if (!generation) return null;
+  const first = await readFirstLine(generation.path, generation.isZstd);
+  if (!first) return null;
+  try {
+    const header = JSON.parse(first);
+    if (typeof header?.id !== 'string') return null;
+    return header;
+  } catch { return null; }
+}
+
+/**
+ * persistence.list() 的合并视图：当前格式会话以 persistence 为准，再对
+ * `wantedIds` 里 persistence 看不到的会话做磁盘兜底扫描（dsh 官方列表会
+ * 跳过历史格式）。`wantedIds` 为空或全部已见时零额外 IO。
+ */
+async function listHeaders(persistence, wantedIds = []) {
+  const headers = await persistence.list();
+  const merged = headers.map(header => ({ ...header, id: String(header.id) }));
+  const seen = new Set(merged.map(header => header.id));
+  const need = new Set([...new Set(wantedIds.map(String))].filter(id => !seen.has(id)));
+  if (need.size === 0) return merged;
+  // 先收集磁盘上的候选会话目录；历史 header 可能携带 parentSession，为让
+  // 树关系完整，被引用的父会话也一并读取（最多四层，防深链）。
+  const candidates = [];
+  async function walk(dir, depth) {
+    let entries;
+    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const path = join(dir, entry.name);
+      if (entry.name.startsWith('session-')) { candidates.push({ path, name: entry.name }); continue; }
+      if (depth < 4) await walk(path, depth + 1);
+    }
+  }
+  await walk(sessionRoot(), 0);
+  for (let pass = 0; pass < 4 && need.size > 0; pass += 1) {
+    const round = [...need];
+    need.clear();
+    for (const candidate of candidates) {
+      if (!round.includes(candidate.name)) continue;
+      const header = await readSessionHeader(candidate.path);
+      if (!header) continue;
+      const id = String(header.id);
+      if (seen.has(id)) continue;
+      merged.push({ ...header, id });
+      seen.add(id);
+      const parent = header.parentSession === undefined ? undefined : String(header.parentSession);
+      if (parent !== undefined && !seen.has(parent)) need.add(parent);
+    }
+  }
+  return merged;
+}
+
 async function readWorkspace() {
   try { return JSON.parse(await fs.readFile(workspaceFile(), 'utf8')); }
   catch { return { global: { archivedSessionIds: [] }, tables: { workspaces: {} } }; }
-}
-
-async function listHeaders(persistence) {
-  const headers = await persistence.list();
-  return headers.map(header => ({ ...header, id: String(header.id) }));
 }
 
 function descendants(headers, rootId) {
@@ -36,9 +137,10 @@ function workspaceTitle(workspace, sessionId) {
   return Object.values(workspace.tables?.workspaces || {}).find(row => row.sessionIds?.includes(sessionId))?.title || '未分组';
 }
 
-async function listArchives(services) {
-  const [workspace, headers] = await Promise.all([readWorkspace(), listHeaders(services.sessionPersistence)]);
+export async function listArchives(services) {
+  const workspace = await readWorkspace();
   const archived = new Set((workspace.global?.archivedSessionIds || []).map(String));
+  const headers = await listHeaders(services.sessionPersistence, [...archived]);
   const byId = new Map(headers.map(header => [String(header.id), header]));
   const query = services.get('sessionQuery');
   return await Promise.all([...archived].filter(id => byId.has(id)).map(async id => {
@@ -118,7 +220,7 @@ function hasSelectedAncestor(headers, rootId, selected) {
 }
 
 export async function deleteTrees(services, rootIds) {
-  const headers = await listHeaders(services.sessionPersistence);
+  const headers = await listHeaders(services.sessionPersistence, rootIds);
   const requested = [...new Set(rootIds.map(String).filter(Boolean))];
   const selected = new Set(requested);
   const roots = requested.filter(root => !hasSelectedAncestor(headers, root, selected));
@@ -141,8 +243,53 @@ export async function deleteTrees(services, rootIds) {
   return { roots, deleted: ids, directories: directories.length, cleanupPending: false };
 }
 
+/**
+ * Sessions that should be auto-archived when the workspace `workspaceId` is
+ * deleted: everything still listed in that workspace row and not yet in the
+ * global archive set. Pure so it can be unit-tested without a registry.
+ */
+export function workspaceAutoArchiveIds(state, workspaceId) {
+  const row = state.tables?.workspaces?.[String(workspaceId)];
+  if (!row) return [];
+  const archived = new Set((state.global?.archivedSessionIds || []).map(String));
+  return (row.sessionIds || []).map(String).filter(id => !archived.has(id));
+}
+
+/**
+ * Wrap `workspaceRegistry.delete` so deleting a workspace archives its
+ * remaining sessions instead of dropping them into the ungrouped bucket.
+ * dsh core keeps `global.archivedSessionIds` across workspace deletion, so
+ * the sessions land in the archive view as soon as the workspace is gone —
+ * the user no longer has to archive them one by one afterwards. Archiving
+ * is best-effort: any failure (unknown session, storage fault) falls back to
+ * the stock "becomes ungrouped" behavior and never blocks the delete itself.
+ * @param {object} registry - the injected workspaceRegistry service.
+ * @returns {() => void} disposer restoring the original method.
+ */
+export function patchWorkspaceDeleteForAutoArchive(registry, readState = readWorkspace) {
+  if (!registry || typeof registry.delete !== 'function' || typeof registry.archiveSession !== 'function') {
+    return () => {};
+  }
+  const original = registry.delete;
+  const hadOwn = Object.prototype.hasOwnProperty.call(registry, 'delete');
+  const bound = original.bind(registry);
+  registry.delete = async function deleteWithAutoArchive(id, ...rest) {
+    try {
+      const ids = workspaceAutoArchiveIds(await readState(), String(id));
+      for (const sessionId of ids) {
+        try { await registry.archiveSession(sessionId); } catch { /* unknown sessions keep the ungrouped fallback */ }
+      }
+    } catch { /* archiving must never block the delete */ }
+    return await bound(id, ...rest);
+  };
+  return () => {
+    if (hadOwn) registry.delete = original;
+    else delete registry.delete;
+  };
+}
+
 function json(response, status, value) {
-  response.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' });
+  response.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf8' });
   response.end(JSON.stringify(value));
 }
 
@@ -156,6 +303,8 @@ export function apply(ctx) {
   ctx.inject(['webServer', 'sessionPersistence', 'workspaceRegistry'], host => {
     host.effect(() => {
       const disposers = [
+        // 删除工作区前先把其会话转入归档区（见 patchWorkspaceDeleteForAutoArchive）。
+        patchWorkspaceDeleteForAutoArchive(host.workspaceRegistry),
         host.webServer.register({ kind: 'exact', path: '/dsh-archive-manager/archives', handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
           try { json(res, 200, { items: await listArchives(host) }); } catch (error) { json(res, 500, { error: String(error?.message || error) }); }

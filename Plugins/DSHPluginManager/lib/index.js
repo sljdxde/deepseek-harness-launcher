@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
@@ -406,10 +406,48 @@ export async function installPlugin(entry) {
   return { ok: false, error: lastError || '安装失败' };
 }
 
+async function readProfileManifest() {
+  const manifestPath = join(profilesWebModules(), '..', 'package.json');
+  try { return JSON.parse(await fs.readFile(manifestPath, 'utf8')); } catch { return null; }
+}
+
+/**
+ * 卸载后清理 git 安装路径留下的源码目录：`author/repo`（回退）与
+ * `author/repo#subdir` 插件会被克隆到 `~/.dsh/profiles/web/plugin-sources/`
+ * 并以 `file:` 依赖安装；`pnpm remove` 只删 node_modules 与依赖记录，
+ * 源码目录会永远留在磁盘上。这里在卸载成功后删除对应目录——仅当它是
+ * 本次卸载的依赖原样引用、且没有其他依赖仍指向同一目录时。
+ * @param {object|null} before - 卸载前读到的 profile manifest。
+ * @param {string[]} names - 刚刚卸载的包名列表。
+ * @returns {Promise<string[]>} 实际删除的目录（用于提示与测试）。
+ */
+export async function cleanupPluginSources(before, names) {
+  const removed = [];
+  if (!before?.dependencies) return removed;
+  const root = resolve(join(profilesWebModules(), '..', 'plugin-sources'));
+  const after = await readProfileManifest();
+  const remainingSpecs = new Set(Object.values(after?.dependencies ?? {}).map(String));
+  for (const name of names) {
+    const spec = String(before.dependencies[name] ?? '');
+    if (!spec.startsWith('file:')) continue;
+    const dir = resolve(spec.slice('file:'.length));
+    if (!dir.startsWith(root + sep)) continue; // 只清理我们自己克隆的目录，防止误删任意 file: 依赖
+    if (remainingSpecs.has(spec)) continue;    // 其他依赖仍引用同一目录
+    try {
+      await fs.rm(dir, { recursive: true, force: true });
+      removed.push(dir);
+    } catch { /* 清理尽力而为，不影响卸载结果 */ }
+  }
+  return removed;
+}
+
 export async function uninstallPlugin(name) {
+  const before = await readProfileManifest();
   try {
     const result = await pluginCommand(['remove', name]);
-    return { ok: true, note: result.note };
+    const removedSources = await cleanupPluginSources(before, [name]);
+    const note = removedSources.length > 0 ? `${result.note}；已清理插件源码目录` : result.note;
+    return { ok: true, note, removedSources };
   } catch (error) {
     return { ok: false, error: String(error?.message || error) };
   }
@@ -427,6 +465,23 @@ export async function uninstallPlugins(names) {
     }
   }
   return { ok: results.every(result => result.ok), results };
+}
+
+/**
+ * Upgrade one installed plugin to its latest version via `dsh plugin update`.
+ * @param {string} name - package name as listed by listInstalledPlugins.
+ * @returns {Promise<{ok:boolean,note?:string,error?:string}>}
+ */
+export async function updatePlugin(name) {
+  if (typeof name !== 'string' || !/^[@a-zA-Z0-9._/-]+$/.test(name) || name.includes('..')) {
+    return { ok: false, error: '非法的插件名' };
+  }
+  try {
+    const result = await pluginCommand(['update', name]);
+    return { ok: true, note: result.note };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
 }
 
 /**
@@ -568,14 +623,22 @@ export function apply(ctx) {
             json(res, 200, await installPlugin({ url: value.url, name: value.name }));
           } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
-        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/uninstall', handler: async (req, res) => {
-          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
-          try {
-            const value = await body(req);
-            if (!value?.name) { json(res, 400, { error: '缺少插件名' }); return; }
-            json(res, 200, await uninstallPlugin(value.name));
-          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
-        }}),
+                host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/uninstall', handler: async (req, res) => {
+                if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+                try {
+                  const value = await body(req);
+                  if (!value?.name) { json(res, 400, { error: '缺少插件名' }); return; }
+                  json(res, 200, await uninstallPlugin(value.name));
+                } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+              }}),
+                host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/update', handler: async (req, res) => {
+                if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+                try {
+                  const value = await body(req);
+                  if (!value?.name) { json(res, 400, { error: '缺少插件名' }); return; }
+                  json(res, 200, await updatePlugin(value.name));
+                } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+              }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/uninstall-many', handler: async (req, res) => {
           if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
           try {
