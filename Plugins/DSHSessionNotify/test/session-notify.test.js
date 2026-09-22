@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { name, apply, summarizeTurnEnd, sessionLabelFromId, createPresenceTracker, PRESENCE_TTL_MS } from '../lib/index.js';
+import { name, apply, summarizeTurnEnd, summarizeTurnStart, sessionLabelFromId, createPresenceTracker, PRESENCE_TTL_MS } from '../lib/index.js';
 
 /** A session whose event log ends with a `session/title`. */
 function makeSession({ id = 'sess-1234-abcd', origin = undefined, title = null, events = [] } = {}) {
@@ -79,6 +79,33 @@ test('summarizeTurnEnd 只记录主会话的 turn/end', () => {
   assert.equal(summarizeTurnEnd(makeSession(), { type: 'session/title', data: { title: 'x' } }), null);
   // reason 缺失时按 completed 展示。
   assert.equal(summarizeTurnEnd(makeSession(), { type: 'turn/end', data: {} }).reason, 'completed');
+});
+
+test('被打断（aborted）的回合不算完成', () => {
+  // 用户插话 / 排队消息 / 按停止都会让回合以 aborted 收尾，而会话往往立刻继续跑。
+  assert.equal(summarizeTurnEnd(makeSession({ title: 'x' }), { type: 'turn/end', data: { reason: { kind: 'aborted', reason: { kind: 'user' } } } }), null);
+  assert.equal(summarizeTurnEnd(makeSession({ title: 'x' }), { type: 'turn/end', data: { reason: { kind: 'aborted' } } }), null);
+  // 真收尾仍然记录。
+  assert.equal(summarizeTurnEnd(makeSession({ title: 'x' }), turnEnd('completed')).reason, 'completed');
+  assert.equal(summarizeTurnEnd(makeSession({ title: 'x' }), turnEnd('error')).reason, 'error');
+});
+
+test('新一轮开始记为 resumed，用来撤销该会话的未读完成提醒', () => {
+  const resumed = summarizeTurnStart(makeSession({ id: 'session-1335d7ff', title: '排队消息' }), { type: 'turn/start', data: { turn: 2 } });
+  assert.deepEqual({ sessionId: resumed.sessionId, title: resumed.title, kind: resumed.kind }, {
+    sessionId: 'session-1335d7ff', title: '排队消息', kind: 'resumed',
+  });
+  // 子会话与无关事件都不记。
+  assert.equal(summarizeTurnStart(makeSession({ origin: 'subagent' }), { type: 'turn/start', data: {} }), null);
+  assert.equal(summarizeTurnStart(makeSession(), { type: 'turn/end', data: {} }), null);
+
+  const harness = makeHarness();
+  apply(harness.ctx);
+  harness.emit('session/event', makeSession({ id: 'session-aaaa', title: '长任务' }), turnEnd('completed'));
+  harness.emit('session/event', makeSession({ id: 'session-aaaa', title: '长任务' }), { type: 'turn/start', data: { turn: 2 } });
+  return harness.call('/dsh-session-notify/events').then(response => {
+    assert.deepEqual(response.json().items.map(item => [item.seq, item.kind]), [[1, 'completion'], [2, 'resumed']]);
+  });
 });
 
 test('summarizeTurnEnd 标题回退到会话 ID 前缀', () => {

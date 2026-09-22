@@ -128,12 +128,29 @@ export function summarizeTurnEnd(session, event, now = Date.now()) {
   if (session?.header?.origin === 'subagent') return null;
   const sessionId = String(session?.header?.id ?? session?.id ?? '');
   if (!sessionId) return null;
-  return {
-    sessionId,
-    title: sessionTitle(session),
-    reason: typeof event.data?.reason?.kind === 'string' && event.data.reason.kind ? event.data.reason.kind : 'completed',
-    at: now,
-  };
+  const reason = typeof event.data?.reason?.kind === 'string' && event.data.reason.kind ? event.data.reason.kind : 'completed';
+  // 被打断不是「完成」：用户插话 / 排队消息 / 按停止都会让回合以 `aborted`
+  // （`reason.kind === 'user'`）收尾，而会话往往紧接着带着排队消息继续跑。
+  // 这种事件要是当成完成提醒，角标就会显示一个其实还在干活的会话（而且写着「已中止」）。
+  // 宿主关闭（disposed）同理，都不值得打扰用户。
+  if (reason === 'aborted') return null;
+  return { sessionId, title: sessionTitle(session), reason, at: now, kind: 'completion' };
+}
+
+/**
+ * Pure classifier for one `session/event` pair: a new turn started, so the
+ * session is being worked on again and any completion reminder still held for
+ * it is stale. This is what makes "排队消息" behave: the turn before the queued
+ * message may end `completed` (or `aborted`), but the session immediately runs
+ * again, and a badge claiming it finished would be wrong.
+ * @returns {{sessionId:string,title:string,at:number,kind:'resumed'}|null}
+ */
+export function summarizeTurnStart(session, event, now = Date.now()) {
+  if (!event || event.type !== 'turn/start') return null;
+  if (session?.header?.origin === 'subagent') return null;
+  const sessionId = String(session?.header?.id ?? session?.id ?? '');
+  if (!sessionId) return null;
+  return { sessionId, title: sessionTitle(session), at: now, kind: 'resumed' };
 }
 
 function json(response, value) {
@@ -232,10 +249,10 @@ export function apply(ctx) {
 
   ctx.on('session/event', (session, event) => {
     try {
-      const summary = summarizeTurnEnd(session, event);
-      if (!summary) return;
+      const record = summarizeTurnStart(session, event) ?? summarizeTurnEnd(session, event);
+      if (!record) return;
       seq += 1;
-      items.push({ seq, ...summary });
+      items.push({ seq, ...record });
       if (items.length > BUFFER_LIMIT) items.splice(0, items.length - BUFFER_LIMIT);
     } catch (error) {
       ctx.logger?.warn?.(`[dsh-session-notify] buffer error: ${String(error)}`);

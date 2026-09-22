@@ -1,14 +1,39 @@
 import Foundation
 
-/// One session-completion record produced by the bundled dsh-session-notify
-/// plugin: a root session's `turn/end` with its reason kind and timestamp.
+/// One record produced by the bundled dsh-session-notify plugin: either a root
+/// session's `turn/end` (`kind == "completion"`) or a `user/message` telling the
+/// launcher that the session is being worked on again (`kind == "resumed"`).
 struct SessionNotifyEvent: Codable, Equatable {
     let seq: Int
     let sessionId: String
     let title: String
+    /// Turn end reason kind; empty for `resumed` records.
     let reason: String
     /// Epoch milliseconds (JS `Date.now()` on the plugin side).
     let at: Double
+    let kind: String
+
+    init(seq: Int, sessionId: String, title: String, reason: String, at: Double, kind: String = "completion") {
+        self.seq = seq
+        self.sessionId = sessionId
+        self.title = title
+        self.reason = reason
+        self.at = at
+        self.kind = kind
+    }
+
+    /// 老插件（或手工构造的 fixture）没有 `kind` 字段时按完成提醒处理。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        seq = try container.decode(Int.self, forKey: .seq)
+        sessionId = try container.decode(String.self, forKey: .sessionId)
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        reason = try container.decodeIfPresent(String.self, forKey: .reason) ?? "completed"
+        at = try container.decodeIfPresent(Double.self, forKey: .at) ?? 0
+        kind = try container.decodeIfPresent(String.self, forKey: .kind) ?? "completion"
+    }
+
+    var isResume: Bool { kind == "resumed" }
 }
 
 /// Snapshot returned by `GET /dsh-session-notify/events?after=<seq>`.
@@ -20,6 +45,17 @@ struct SessionNotifyFeed: Codable {
     static func parse(_ body: String) -> SessionNotifyFeed? {
         body.data(using: .utf8).flatMap { try? JSONDecoder().decode(SessionNotifyFeed.self, from: $0) }
     }
+}
+
+/// 一次轮询的结果：`completions` 是新的完成事件；`resumed` 是「用户又在这些会话里
+/// 发了消息」，它们已经把对应的未读提醒撤销掉（角标不该在会话重新开跑后还亮着）。
+struct SessionNotifyIngest {
+    let completions: [SessionNotifyEvent]
+    let resumed: [SessionNotifyEvent]
+
+    var isEmpty: Bool { completions.isEmpty && resumed.isEmpty }
+
+    static let none = SessionNotifyIngest(completions: [], resumed: [])
 }
 
 /// Tracks completion events polled from the harness and the unread badge
@@ -49,27 +85,40 @@ final class SessionNotifyStore {
         Array(events.suffix(limit).reversed())
     }
 
-    /// Merge a polled feed; returns only the events not seen before. A new
-    /// `bootId` means the harness (and its sequence counter) restarted, so the
-    /// cursor resets without re-counting anything as unread.
+    /// Merge a polled feed. A new `bootId` means the harness (and its sequence
+    /// counter) restarted, so the cursor resets without re-counting anything as
+    /// unread. `resumed` records retract the session's unread completion: the
+    /// user posted another message there, so the session is being worked on
+    /// again and a "会话完成" badge for it would be wrong.
     @discardableResult
-    func ingest(_ feed: SessionNotifyFeed) -> [SessionNotifyEvent] {
+    func ingest(_ feed: SessionNotifyFeed) -> SessionNotifyIngest {
         if feed.bootId != bootId {
             bootId = feed.bootId
             lastSeq = 0
         }
-        guard !feed.items.isEmpty else { return [] }
+        guard !feed.items.isEmpty else { return .none }
         let fresh = feed.items.filter { $0.seq > lastSeq }
         lastSeq = max(lastSeq, fresh.map(\.seq).max() ?? 0)
-        guard !fresh.isEmpty else { return [] }
+        guard !fresh.isEmpty else { return .none }
+
+        var completions: [SessionNotifyEvent] = []
+        var resumed: [SessionNotifyEvent] = []
         for event in fresh {
-            // 同一会话的后续完成覆盖前一条：只保留最近一次的时间与原因，
-            // 未读数因此始终等于「有完成提醒的会话个数」。
+            // 同一会话只保留最近一条；随后按事件先后决定「记一条未读」还是「撤掉」。
             events.removeAll { $0.sessionId == event.sessionId }
-            events.append(event)
+            if event.isResume {
+                resumed.append(event)
+            } else if event.reason == "aborted" {
+                // 防御旧插件/旧缓冲：被打断的回合不是完成（用户插话、排队消息、
+                // 按停止都会以 aborted 收尾），会话通常在继续跑，不该亮角标。
+                resumed.append(event)
+            } else {
+                events.append(event)
+                completions.append(event)
+            }
         }
         if events.count > capacity { events.removeFirst(events.count - capacity) }
-        return fresh
+        return SessionNotifyIngest(completions: completions, resumed: resumed)
     }
 
     func markAllRead() {

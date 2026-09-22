@@ -3,19 +3,20 @@ import Foundation
 @main
 struct SessionNotifyChecks {
     static func main() {
-        func event(_ seq: Int, session: String = "s1", reason: String = "completed", at: Double = 0) -> SessionNotifyEvent {
-            SessionNotifyEvent(seq: seq, sessionId: session, title: "会话\(session)", reason: reason, at: at)
+        func event(_ seq: Int, session: String = "s1", reason: String = "completed", at: Double = 0, kind: String = "completion") -> SessionNotifyEvent {
+            SessionNotifyEvent(seq: seq, sessionId: session, title: "会话\(session)", reason: reason, at: at, kind: kind)
         }
 
         // 1. 常规轮询：只返回未见过的 seq，游标前进；未读数按**会话**去重。
         let store = SessionNotifyStore()
         let first = store.ingest(SessionNotifyFeed(bootId: "b1", seq: 2, items: [event(1, session: "a"), event(2, session: "b")]))
-        precondition(first.map(\.seq) == [1, 2])
+        precondition(first.completions.map(\.seq) == [1, 2])
+        precondition(first.resumed.isEmpty)
         precondition(store.unreadCount == 2)
         precondition(store.pollAfterSeq == 2)
         // 同一个会话再结束一轮：计数保持不变，只刷新时间与原因。
         let second = store.ingest(SessionNotifyFeed(bootId: "b1", seq: 3, items: [event(2, session: "b", reason: "error"), event(3, session: "a")]))
-        precondition(second.map(\.seq) == [3])
+        precondition(second.completions.map(\.seq) == [3])
         precondition(store.unreadCount == 2)
         precondition(store.recent(limit: 1).first?.reason == "completed")
 
@@ -33,10 +34,11 @@ struct SessionNotifyChecks {
         // 2. Harness 重启（bootId 变化）：游标归零，不把旧事件重复计数。
         let restarted = store.ingest(SessionNotifyFeed(bootId: "b2", seq: 0, items: []))
         precondition(restarted.isEmpty)
+        precondition(restarted.completions.isEmpty)
         precondition(store.unreadCount == 2)
         precondition(store.pollAfterSeq == 0)
         let afterRestart = store.ingest(SessionNotifyFeed(bootId: "b2", seq: 1, items: [event(1, session: "c")]))
-        precondition(afterRestart.map(\.seq) == [1])
+        precondition(afterRestart.completions.map(\.seq) == [1])
         precondition(store.unreadCount == 3)
 
         // 3. 容量封顶后只保留最新 N 条。
@@ -44,6 +46,29 @@ struct SessionNotifyChecks {
         _ = capped.ingest(SessionNotifyFeed(bootId: "b1", seq: 5, items: (1...5).map { event($0, session: "s\($0)") }))
         precondition(capped.unreadCount == 3)
         precondition(capped.recent(limit: 10).map(\.seq) == [5, 4, 3])
+
+        // 3.5 排队消息：用户在我干活时又发了一条 —— 回合可能先 completed 再被打断，
+        // 但会话马上开跑新一轮，角标不能还亮着「已完成」。
+        let queued = SessionNotifyStore()
+        _ = queued.ingest(SessionNotifyFeed(bootId: "q", seq: 2, items: [
+            event(1, session: "chat", reason: "completed"),
+            event(2, session: "chat", reason: "", kind: "resumed")
+        ]))
+        precondition(queued.unreadCount == 0)            // 同一批里先记后撤 → 净零
+        _ = queued.ingest(SessionNotifyFeed(bootId: "q", seq: 3, items: [event(3, session: "chat", reason: "completed")]))
+        precondition(queued.unreadCount == 1)            // 真的收尾了才算未读
+        let resumed = queued.ingest(SessionNotifyFeed(bootId: "q", seq: 4, items: [event(4, session: "chat", reason: "", kind: "resumed")]))
+        precondition(resumed.resumed.count == 1)
+        precondition(queued.unreadCount == 0)            // 用户又发消息 → 撤销
+
+        // 3.6 旧插件/旧缓冲里的 aborted 事件同样撤销，而不是记成完成。
+        let stale = SessionNotifyStore()
+        _ = stale.ingest(SessionNotifyFeed(bootId: "s", seq: 1, items: [event(1, session: "old", reason: "aborted")]))
+        precondition(stale.unreadCount == 0)
+        _ = stale.ingest(SessionNotifyFeed(bootId: "s", seq: 2, items: [event(2, session: "old", reason: "completed")]))
+        precondition(stale.unreadCount == 1)
+        _ = stale.ingest(SessionNotifyFeed(bootId: "s", seq: 3, items: [event(3, session: "old", reason: "aborted")]))
+        precondition(stale.unreadCount == 0)
 
         // 4. 已读清空。
         capped.markAllRead()

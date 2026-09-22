@@ -289,6 +289,12 @@ rg -Fq 'cornerCurve = .continuous' "$ROOT/Sources/AlertDesign.swift"
 rg -Fq 'events.removeAll { $0.sessionId == event.sessionId }' "$ROOT/Sources/SessionNotifySupport.swift"
 rg -Fq '个会话未读' "$ROOT/Sources/main.swift"
 rg -Fq 'sessionLabelFromId' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+# 排队消息场景：被打断的回合不算完成；新一轮开始（turn/start）要撤销该会话的未读提醒。
+rg -Fq "if (reason === 'aborted') return null;" "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+rg -Fq 'summarizeTurnStart' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+rg -Fq "kind: 'resumed'" "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+rg -Fq 'event.isResume' "$ROOT/Sources/SessionNotifySupport.swift"
+rg -Fq '已撤销其完成提醒' "$ROOT/Sources/main.swift"
 rg -Fq 'snapshotEvents' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 rg -Fq 'selectableUpdates' "$ROOT/scripts/test-dsh-version-support.swift"
 # 自动检查只改菜单标题：不得出现「检查完直接安装」的路径。

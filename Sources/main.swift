@@ -1916,11 +1916,17 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self, loopID == self.sessionNotifyLoopID, self.state == .running, self.selectedPort == port else { return }
             if let feed = body.flatMap(SessionNotifyFeed.parse) {
                 self.sessionNotifyFailureStreak = 0
-                let fresh = self.sessionNotifyStore.ingest(feed)
-                if !fresh.isEmpty {
-                    // fresh 是这一轮新增的 turn/end 事件数；角标按会话去重，所以
-                    // 同一会话连跑多轮时数字不会跟着涨。
-                    self.appendLogString("收到 \(fresh.count) 条会话完成提醒，\(self.sessionNotifyStore.unreadCount) 个会话未读（\(SessionNotifyStore.reasonLabel(fresh.last?.reason ?? ""))）\n")
+                let ingested = self.sessionNotifyStore.ingest(feed)
+                if !ingested.isEmpty {
+                    // completions 是这一轮新增的 turn/end 数；角标按会话去重，所以同一
+                    // 会话连跑多轮时数字不会跟着涨。resumed 是「用户又在该会话里发消息」，
+                    // 对应的未读提醒已被撤销——会话在跑，角标就不该亮。
+                    if !ingested.completions.isEmpty {
+                        self.appendLogString("收到 \(ingested.completions.count) 条会话完成提醒，\(self.sessionNotifyStore.unreadCount) 个会话未读（\(SessionNotifyStore.reasonLabel(ingested.completions.last?.reason ?? ""))）\n")
+                    }
+                    if !ingested.resumed.isEmpty {
+                        self.appendLogString("会话收到新消息，已撤销其完成提醒（\(ingested.resumed.count) 个会话）\n")
+                    }
                     self.rebuildSessionNotifyMenuSection()
                 }
             } else {
