@@ -3,12 +3,22 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
   const h = React.createElement
   const NS = 'dsh-plugin-manager'
   const css = `
-/* dsh sidebar footer actions: stack vertically so archive / plugin manager /
-   future entries appear one per row instead of side by side */
-[class$="_footerActions"]{flex-direction:column}
-[class$="_footerActions"]>*{width:100%}
-.dsh-pm-trigger{align-items:center;appearance:none;background:transparent;border:0;border-radius:8px;color:inherit;cursor:pointer;display:flex;font:inherit;font-size:14px;gap:8px;line-height:22px;margin:4px -2px;min-height:42px;padding:0 10px 0 8px;text-align:left;width:100%}
+/* dsh sidebar footer actions: the shell renders this slot as ONE nowrap row
+   beside Settings, and every occupant claims a full width. With two occupants
+   the second is laid out past the sidebar's right edge — visible in the DOM,
+   clipped on screen — and the 56px rail would put them side by side. So each
+   action claims its own wrapped line instead: the container wraps, every entry
+   is a full-width row when the sidebar is wide, and a 36px icon button in the
+   rail. Reached through the slot marker with :has() rather than the container's
+   hashed CSS-module class, which is not ours to depend on; dsh-tokenledger
+   states the same wrap rule, and identical declarations do not fight. */
+div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
+.dsh-pm-trigger{align-items:center;appearance:none;background:transparent;border:0;border-radius:8px;box-sizing:border-box;color:inherit;cursor:pointer;display:flex;flex:0 0 100%;font:inherit;font-size:14px;gap:8px;line-height:22px;margin:4px -2px;min-height:42px;min-width:0;padding:0 10px 0 8px;text-align:left}
 .dsh-pm-trigger:hover{background:var(--dsw-alias-button-ghost-active-fill)}
+/* Rail (56px): the shell centres every control and its own icons are 36px
+   circles, so the label goes away and the button becomes one too. */
+.dsh-pm-trigger.dsh-pm-trigger-rail{border-radius:50%;corner-shape:round;flex:none;height:36px;justify-content:center;margin:4px 0;min-height:36px;padding:0;width:36px}
+.dsh-pm-trigger.dsh-pm-trigger-rail:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-pm-trigger-icon{display:inline-block;flex:0 0 16px;height:16px;position:relative;width:16px}
 .dsh-pm-trigger-icon:before{background:repeating-linear-gradient(0deg,currentColor 0 2px,transparent 2px 4px);border:1.75px solid currentColor;border-radius:4px;content:"";inset:0;position:absolute}
 .dsh-pm-backdrop{background:rgba(15,18,24,.32);inset:0;position:fixed;z-index:2147483000}
@@ -164,10 +174,13 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-manager', factory: (require) => {
   /// load and its close button would not work).
   function PluginTrigger({ wide, t, onClose }) {
     const [open, setOpen] = React.useState(false)
+    // Only a definite `false` is the rail: during the collapse animation the
+    // shell still reports `wide`, and the row must not flip mid-flight.
+    const rail = wide === false
     return h(React.Fragment, null,
-      h('button', { type: 'button', className: 'dsh-pm-trigger', onClick: () => setOpen(true), title: '插件管理', 'aria-label': '插件管理' },
+      h('button', { type: 'button', className: rail ? 'dsh-pm-trigger dsh-pm-trigger-rail' : 'dsh-pm-trigger', onClick: () => setOpen(true), title: '插件管理', 'aria-label': '插件管理' },
         h('span', { className: 'dsh-pm-trigger-icon', 'aria-hidden': true }),
-        h('span', null, '插件管理')),
+        !rail && h('span', null, '插件管理')),
       open ? h(PluginManagerPage, { wide, t, onClose: () => setOpen(false) }) : null)
   }
 

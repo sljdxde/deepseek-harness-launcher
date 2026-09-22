@@ -1372,6 +1372,17 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.appendLogString("\(LauncherBrand.fullName) 进程退出：code=\(terminatedProcess.terminationStatus), reason=\(terminatedProcess.terminationReason.rawValue)\n")
             DispatchQueue.main.async {
                 guard let self, self.state != .stopped else { return }
+                // 重启/更新会先停掉旧实例、紧接着启动新实例。旧实例的
+                // terminationHandler 在自己的队列上排空管道、写日志，等它回到
+                // 主线程时 state 往往已经从 .stopped 走到 .checking，而 process
+                // 已指向新实例（或已被 stopDHL 清空）。此时若照旧走失败分支，
+                // 用户会在重启成功后收到一条「启动失败／进程已退出」的弹窗，
+                // 并且 pollUntilReady 依赖的 process 引用会被误清。
+                // 只有退出的仍是当前受管进程，才算真正的启动失败。
+                guard self.process === terminatedProcess else {
+                    self.appendLogString("旧实例退出不计入启动失败（当前受管实例已更换）\n")
+                    return
+                }
                 self.process = nil
                 self.selectedPort = nil
                 // 版本更新后的首次启动失败优先提供回退，而非直接报错

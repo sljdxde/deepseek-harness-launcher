@@ -28,6 +28,25 @@ fi
 rg -q 'dsh-plugin-manager' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -q 'sidebar.footer.action' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -q "register\([^\n]*PluginTrigger" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 侧边栏底部动作：宿主把该 slot 渲染成 Settings 旁边的一行 nowrap flex，
+# 两个占位者都声称整行宽，第二个就会被排到侧边栏右边缘之外（DOM 里存在、
+# 屏幕上看不见）。因此每个动作自己占一整行（容器 wrap + flex:0 0 100%），
+# 折叠态（56px 竖栏）退回 36px 圆形图标按钮。
+# 通过 slot 标记的 :has() 命中容器，不得依赖宿主 CSS-module 的哈希类名。
+for client in "$ROOT/Plugins/DSHArchiveManager/client/client.js" "$ROOT/Plugins/DSHPluginManager/client/client.js"; do
+  rg -Fq "div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}" "$client"
+  rg -Fq 'flex:0 0 100%' "$client"
+  rg -q '\-rail\{' "$client"
+done
+if rg -q '\[class\$="_footerActions"\]' "$ROOT/Plugins/DSHArchiveManager/client/client.js" "$ROOT/Plugins/DSHPluginManager/client/client.js"; then
+  echo "sidebar footer layout must not patch the shell's hashed CSS-module class" >&2
+  exit 1
+fi
+# 竖栏里只显示图标，且只在明确的 wide === false 时切换（折叠动画期间保持宽行）。
+rg -Fq "const rail = wide === false" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "rail ? 'dsh-pm-trigger dsh-pm-trigger-rail' : 'dsh-pm-trigger'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '!rail && h' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "wide === false ? 'dsh-archive-trigger dsh-archive-trigger-rail' : 'dsh-archive-trigger'" "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 rg -q '/dsh-plugin-manager/installed' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q '/dsh-plugin-manager/marketplace' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q '/dsh-plugin-manager/install' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
@@ -146,6 +165,10 @@ rg -Fq '退出 Deepseek Harness' "$ROOT/Sources/main.swift"
 rg -Fq '重启 Deepseek Harness' "$ROOT/Sources/main.swift"
 rg -q 'restartDSH' "$ROOT/Sources/main.swift"
 rg -q 'stopDHL \{' "$ROOT/Sources/main.swift"
+# 重启竞态：旧实例的 terminationHandler 可能在新实例已启动后才回到主线程，
+# 必须比对「当前受管进程」身份，否则重启成功也会弹「启动失败」并清空新实例引用。
+rg -Fq 'guard self.process === terminatedProcess else {' "$ROOT/Sources/main.swift"
+rg -Fq '旧实例退出不计入启动失败' "$ROOT/Sources/main.swift"
 if rg -Fq 'menuRowItem(title: "打开 Deepseek Harness Launcher"' "$ROOT/Sources/main.swift" || rg -Fq 'menuRowItem(title: "退出 Deepseek Harness Launcher"' "$ROOT/Sources/main.swift"; then
   echo "menu labels must use the shorter Deepseek Harness name" >&2
   exit 1
