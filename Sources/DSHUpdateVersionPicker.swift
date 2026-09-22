@@ -88,8 +88,12 @@ final class DSHUpdateVersionPicker: NSObject {
         for candidate in candidates {
             popup.addItem(withTitle: Self.title(for: candidate))
         }
-        if let index = candidates.firstIndex(where: { $0.version == selected.version }) {
+        // 下拉显示哪一项，`selection` 就必须是哪一项：传进来的版本不在候选里时
+        // （调用方拿的是上一次检查的结果）退回第一项，避免显示与语义不一致。
+        if !candidates.isEmpty {
+            let index = candidates.firstIndex { $0.version == selected.version } ?? 0
             popup.selectItem(at: index)
+            self.selection = candidates[index]
         }
         detailLabel.font = NSFont.systemFont(ofSize: 11)
         detailLabel.textColor = .secondaryLabelColor
