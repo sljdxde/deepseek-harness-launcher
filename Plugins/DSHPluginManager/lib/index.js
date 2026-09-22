@@ -1044,15 +1044,28 @@ async function readJsonQuiet(path) {
   try { return JSON.parse(await fs.readFile(path, 'utf8')); } catch { return null; }
 }
 
-export async function readUpdateCache() {
-  const cached = await readJsonQuiet(UPDATES_CACHE_FILE());
+/**
+ * 读缓存并**校验**：只保留结构完整的条目（name + status）。探测异常、手工改坏、
+ * 半截写入都可能留下畸形条目，而面板与启动器都直接消费这份数据——历史上一条
+ * `{error}` 就能让调用方读到 undefined。整份没有可用条目就当作"没有缓存"。
+ * @param {{cacheFile?:string}} [options] 单测可指定文件，避免写到真实 profile。
+ */
+export async function readUpdateCache(options = {}) {
+  const cached = await readJsonQuiet(options.cacheFile ?? UPDATES_CACHE_FILE());
   if (!cached || !Array.isArray(cached.inventory)) return null;
-  return cached;
+  const inventory = cached.inventory.filter(item => item && typeof item.name === 'string' && item.name && typeof item.status === 'string' && item.status);
+  if (inventory.length === 0) return null;
+  const checkedAt = typeof cached.checkedAt === 'string' && !Number.isNaN(Date.parse(cached.checkedAt)) ? cached.checkedAt : null;
+  return { ...cached, checkedAt, inventory };
 }
 
-async function writeUpdateCache(value) {
-  await fs.mkdir(profilesWebDir(), { recursive: true });
-  await fs.writeFile(UPDATES_CACHE_FILE(), JSON.stringify(value, null, 2), 'utf8');
+/** 写缓存（同样过滤畸形条目，避免把坏数据落盘后又被读回来）。 */
+export async function writeUpdateCache(value, cacheFile) {
+  const inventory = (Array.isArray(value?.inventory) ? value.inventory : [])
+    .filter(item => item && typeof item.name === 'string' && item.name && typeof item.status === 'string' && item.status);
+  const target = cacheFile ?? UPDATES_CACHE_FILE();
+  await fs.mkdir(join(target, '..'), { recursive: true });
+  await fs.writeFile(target, JSON.stringify({ ...value, inventory }, null, 2), 'utf8');
 }
 
 /** npm 包的 dist-tags（走 pnpm shim，和安装链路同一个 registry/网络栈）。 */
@@ -1235,8 +1248,8 @@ export function readUpdateProgress() {
  * - 缓存新鲜（< 6h）且未 force → 直接返回缓存，不联网；
  * - 否则返回当前缓存（可能为空）并**在后台**刷新，`refreshing: true` 表示还在跑。
  */
-export async function checkPluginUpdates({ force = false, probe = {} } = {}) {
-  const cached = await readUpdateCache();
+export async function checkPluginUpdates({ force = false, probe = {}, cacheFile } = {}) {
+  const cached = await readUpdateCache({ cacheFile });
   const fresh = cached && Date.now() - Date.parse(cached.checkedAt ?? 0) < UPDATES_TTL_MS;
   const needsRefresh = force || !fresh;
 
@@ -1246,7 +1259,7 @@ export async function checkPluginUpdates({ force = false, probe = {} } = {}) {
         const sources = await collectPluginSources();
         const inventory = await runUpdateCheck(sources, probe);
         const payload = { checkedAt: new Date().toISOString(), inventory };
-        await writeUpdateCache(payload);
+        await writeUpdateCache(payload, cacheFile);
         return payload;
       } finally {
         updateCheckInFlight = null;

@@ -18,6 +18,7 @@ import {
   pruneSourceBackups,
   readUpdateCache,
   readUpdateProgress,
+  writeUpdateCache,
   runUpdateCheck,
   summarizeUpdateInventory,
   updatePlugin
@@ -872,5 +873,72 @@ test('进度：批量更新共用一个进度对象（total/done 累加）', asy
     assert.equal(progress.kind, 'batch');
     assert.equal(progress.done, 2);
     assert.equal(readLastBatchUpdate().updated, 2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 回归：缓存必须校验（畸形条目曾让调用方直接崩），且测试不能写进真实 profile
+// ---------------------------------------------------------------------------
+
+test('回归 4：读缓存时丢弃畸形条目，整份没用就当作没有缓存', async () => {
+  await withTempDshHome('dsh-pm-cache-sanity-', async home => {
+    const cacheFile = join(home, 'cache.json');
+    // 缺 name/status 的条目（历史上由探测异常落盘）必须被丢掉
+    await writeUpdateCache({ checkedAt: new Date().toISOString(), inventory: [{ error: 'boom' }] }, cacheFile);
+    assert.equal(await readUpdateCache({ cacheFile }), null);
+
+    // 同一份里既有合法又有畸形：只留合法的
+    await writeUpdateCache({
+      checkedAt: new Date().toISOString(),
+      inventory: [
+        { name: 'ok-plugin', status: 'up-to-date', installedVersion: '1.0.0' },
+        { error: 'boom' },
+        { name: '', status: 'failed' },
+        { name: 'no-status' }
+      ]
+    }, cacheFile);
+    const sanitized = await readUpdateCache({ cacheFile });
+    assert.deepEqual(sanitized.inventory.map(item => item.name), ['ok-plugin']);
+
+    // checkedAt 缺失/非法 → 当作过期，但条目仍可用
+    await writeUpdateCache({ inventory: [{ name: 'p', status: 'up-to-date' }] }, cacheFile);
+    const noStamp = await readUpdateCache({ cacheFile });
+    assert.equal(noStamp.inventory.length, 1);
+    assert.equal(noStamp.checkedAt, null);
+  });
+});
+
+test('回归 5：探测抛错时落盘的条目也必须带 name/status（供面板/启动器安全消费）', async () => {
+  await withTempDshHome('dsh-pm-cache-write-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    await mkdir(join(profile, 'node_modules', 'p'), { recursive: true });
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { p: 'github:o/p' },
+      dsh: { profile: { bundles: ['p'] } }
+    }));
+    await writeFile(join(profile, 'node_modules', 'p', 'package.json'), JSON.stringify({ name: 'p', version: '1.0.0' }));
+    const cacheFile = join(home, 'cache.json');
+
+    // 注入会抛错的 git 探测：这条要落成 failed，而不是没有 name/status 的裸条目
+    await checkPluginUpdates({ force: true, cacheFile, probe: { git: async () => { throw new Error('registry 不可用'); } } });
+    for (let i = 0; i < 100 && !(await readUpdateCache({ cacheFile })); i += 1) await sleep(30);
+    const cached = await readUpdateCache({ cacheFile });
+    assert.ok(cached, '应当写出一份缓存');
+    assert.equal(cached.inventory.length, 1);
+    assert.equal(cached.inventory[0].name, 'p');
+    assert.equal(cached.inventory[0].status, 'failed');
+    assert.match(cached.inventory[0].error, /registry 不可用/);
+    assert.equal(cached.inventory[0].spec, 'github:o/p', '条目要能反查回原始 spec，面板才画得出更新按钮');
+  });
+});
+
+test('回归 6：缓存文件里的畸形 JSON 不能让调用方崩', async () => {
+  await withTempDshHome('dsh-pm-cache-broken-', async home => {
+    const cacheFile = join(home, 'cache.json');
+    await writeFile(cacheFile, '{ this is not json');
+    assert.equal(await readUpdateCache({ cacheFile }), null);
+    await writeFile(cacheFile, JSON.stringify({ checkedAt: 'not-a-date', inventory: 'nope' }));
+    assert.equal(await readUpdateCache({ cacheFile }), null);
   });
 });
