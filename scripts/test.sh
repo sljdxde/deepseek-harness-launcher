@@ -279,6 +279,17 @@ rg -Fq 'skippedDSHVersion' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateSuppo
 rg -Fq 'DSHUpdatePlanner.selectableUpdates' "$ROOT/Sources/main.swift" "$ROOT/Sources/DSHUpdateSupport.swift"
 rg -Fq 'NSPopUpButton' "$ROOT/Sources/DSHUpdateVersionPicker.swift"
 rg -Fq 'DSHUpdateVersionPicker(' "$ROOT/Sources/main.swift"
+# 提示框统一外观：SF Symbol 语气图标 + 圆角信息卡，正文不堆细节。
+rg -Fq 'AlertDesign.style' "$ROOT/Sources/main.swift"
+rg -Fq 'AlertDesign.accessory' "$ROOT/Sources/main.swift"
+rg -Fq 'AlertDesign.card' "$ROOT/Sources/main.swift"
+rg -Fq 'NSImage.SymbolConfiguration' "$ROOT/Sources/AlertDesign.swift"
+rg -Fq 'cornerCurve = .continuous' "$ROOT/Sources/AlertDesign.swift"
+# 会话完成提醒按会话计数：同一会话连跑多轮不能把角标数字刷高。
+rg -Fq 'events.removeAll { $0.sessionId == event.sessionId }' "$ROOT/Sources/SessionNotifySupport.swift"
+rg -Fq '个会话未读' "$ROOT/Sources/main.swift"
+rg -Fq 'sessionLabelFromId' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+rg -Fq 'snapshotEvents' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 rg -Fq 'selectableUpdates' "$ROOT/scripts/test-dsh-version-support.swift"
 # 自动检查只改菜单标题：不得出现「检查完直接安装」的路径。
 if rg -q 'applyDSHUpdateReport.*updateDSHNow|performDSHUpdateCheck.*updateDSHNow' "$ROOT/Sources/main.swift"; then

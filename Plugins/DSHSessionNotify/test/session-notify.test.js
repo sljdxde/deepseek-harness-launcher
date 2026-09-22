@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { name, apply, summarizeTurnEnd, createPresenceTracker, PRESENCE_TTL_MS } from '../lib/index.js';
+import { name, apply, summarizeTurnEnd, sessionLabelFromId, createPresenceTracker, PRESENCE_TTL_MS } from '../lib/index.js';
 
 /** A session whose event log ends with a `session/title`. */
 function makeSession({ id = 'sess-1234-abcd', origin = undefined, title = null, events = [] } = {}) {
@@ -84,6 +84,29 @@ test('summarizeTurnEnd 只记录主会话的 turn/end', () => {
 test('summarizeTurnEnd 标题回退到会话 ID 前缀', () => {
   assert.equal(summarizeTurnEnd(makeSession({ id: 'abcdef123456' }), turnEnd()).title, 'abcdef12');
   assert.equal(summarizeTurnEnd(makeSession({ id: '' }), turnEnd()), null);
+});
+
+test('标题从 snapshotEvents() 读取，回退时剥掉 session-/sess- 前缀', () => {
+  // 宿主会话的真实接口是 snapshotEvents()；标题是异步生成的，早一轮拿不到就回退。
+  const titled = {
+    header: { id: 'session-1335d7ff-aaaa' },
+    snapshotEvents: () => [{ type: 'session/title', data: { title: '重构启动器' } }],
+  };
+  assert.equal(summarizeTurnEnd(titled, turnEnd()).title, '重构启动器');
+
+  // 回退不能切成清一色的 "session-"（所有会话都会变成同一个标签）。
+  assert.equal(sessionLabelFromId('session-1335d7ff-aaaa-bbbb'), '1335d7ff');
+  assert.equal(sessionLabelFromId('sess-1234-abcd'), '1234-abc');
+  assert.equal(sessionLabelFromId('abcdef123456'), 'abcdef12');
+  assert.equal(sessionLabelFromId(''), '(未命名会话)');
+  assert.equal(sessionLabelFromId(undefined), '(未命名会话)');
+
+  // 只有 events 数组的老形态仍然可用。
+  const legacy = { header: { id: 'session-9999' }, events: [{ type: 'session/title', data: { title: '旧形态标题' } }] };
+  assert.equal(summarizeTurnEnd(legacy, turnEnd()).title, '旧形态标题');
+  // snapshotEvents() 抛错时也不能把 completion 记录整个丢掉。
+  const broken = { header: { id: 'session-7777' }, snapshotEvents: () => { throw new Error('no log'); } };
+  assert.equal(summarizeTurnEnd(broken, turnEnd()).title, '7777');
 });
 
 test('apply 注册 events 路由并按 seq 递增返回缓冲区', async () => {

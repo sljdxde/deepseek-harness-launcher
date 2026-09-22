@@ -324,6 +324,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// 更新确认：把所有比当前新的版本列进下拉让用户选（只有一个时退化成单版本提示），
     /// 选项为 更新 / 稍后 / 跳过此版本（跳过会被记住，菜单里仍能看到并随时取消）。
+    /// 卡片里的「来源」行：GitHub Release · 发布于 2026-09-22 / npm next 标签。
+    private static func sourceLine(for candidate: DSHUpdateCandidate) -> String {
+        var text = candidate.source.label
+        if let date = candidate.publishedAt { text += " · 发布于 \(dshDayString(date))" }
+        return text
+    }
+
     private func presentDSHUpdate(report: DSHUpdateReport) {
         let choices = DSHUpdatePlanner.selectableUpdates(report)
         guard let newest = choices.first ?? (report.isUpdate ? report.best : nil) else { return }
@@ -331,39 +338,39 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let chosen = { multiple ? $0 : newest }
 
         let alert = NSAlert()
-        alert.messageText = multiple
-            ? "Deepseek Harness 有 \(choices.count) 个可选更新版本"
-            : "发现 Deepseek Harness 新版本 v\(newest.version)（\(newest.channel.label)）"
-        var lines = ["当前版本：v\(report.current)"]
-        if multiple {
-            lines.append("下拉里是所有比当前版本新的已发布版本，默认选中最新的一版；切换后会显示该版本的来源与说明。")
-        } else {
-            lines.append("最新版本：v\(newest.version) · \(newest.channel.label) · 来源：\(newest.source.label)"
-                + (newest.publishedAt.map { " · \(dshDayString($0))" } ?? ""))
-        }
-        if let stable = report.newestStable, stable.version != newest.version,
-           compareDSHVersions(stable.version, report.current) == .orderedDescending {
-            lines.append("最新正式版：v\(stable.version)（最新版是预发布版本，可在下拉里改选正式版）")
-        }
-        lines.append("")
-        lines.append(state == .running
-            ? "更新会从 npm 下载所选版本并自动重启 Deepseek Harness；会话、归档与插件数据不受影响。也可以先不更新。"
-            : "更新会从 npm 下载所选版本，下次启动 Deepseek Harness 时生效。也可以先不更新。")
-        alert.informativeText = lines.joined(separator: "\n")
+        AlertDesign.style(alert, tone: .update)
+        alert.messageText = multiple ? "Deepseek Harness 有 \(choices.count) 个可选更新版本" : "发现 Deepseek Harness 新版本"
+        // 正文只留一句话：版本号、来源、日期与说明都放进下面的卡片，避免一屏文字墙。
+        alert.informativeText = state == .running
+            ? "更新会从 npm 下载所选版本并自动重启 Deepseek Harness；会话、归档与插件数据不受影响。"
+            : "更新会从 npm 下载所选版本，下次启动 Deepseek Harness 时生效。"
 
+        var rows: [NSView] = []
         var picker: DSHUpdateVersionPicker?
         if multiple {
+            // 下拉里是所有比当前新的已发布版本，默认选中最新的一版。
             let chooser = DSHUpdateVersionPicker(
                 candidates: choices,
                 selected: newest,
-                width: 430,
+                width: AlertDesign.cardWidth - 28,
                 height: releaseNotesHeight(for: newest.notes)
             )
             picker = chooser
-            alert.accessoryView = chooser.view
-        } else if let notes = newest.notes, !notes.isEmpty, let accessory = makeReleaseNotesView(notes) {
-            alert.accessoryView = accessory
+            rows.append(contentsOf: chooser.rows)
+        } else {
+            rows.append(AlertDesign.versionRow(from: report.current, to: newest.version, channel: newest.channel))
+            rows.append(AlertDesign.captionRow("来源：", Self.sourceLine(for: newest)))
+            let pane = makeReleaseNotesText(width: AlertDesign.cardWidth - 28, height: releaseNotesHeight(for: newest.notes))
+            renderReleaseNotes(newest.notes, into: pane.textView)
+            rows.append(pane.scroll)
         }
+
+        var footnote: String?
+        if let stable = report.newestStable, stable.version != newest.version,
+           compareDSHVersions(stable.version, report.current) == .orderedDescending {
+            footnote = "最新正式版是 v\(stable.version)，可在下拉里改选。"
+        }
+        alert.accessoryView = AlertDesign.accessory(card: AlertDesign.card(rows: rows), footnote: footnote)
 
         let selected = { picker.map { chosen($0.selection) } ?? newest }
         let skipState = { DSHUpdatePlanner.isSkipped(version: selected().version, skipped: self.settings.skippedDSHVersion) }
@@ -960,34 +967,36 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func presentUpdate(manifest: UpdateManifest) {
         let alert = NSAlert()
-        alert.messageText = "发现 \(LauncherBrand.fullName) 新版本 v\(manifest.version)"
-        if let notes = manifest.notes, !notes.isEmpty, let accessory = makeReleaseNotesView(notes) {
-            alert.informativeText = updatePublishedText(manifest.publishedAt)
-            alert.accessoryView = accessory
-        } else {
-            alert.informativeText = "下载更新包后，在 Finder 中打开并安装。"
+        AlertDesign.style(alert, tone: .update)
+        alert.messageText = "发现 \(LauncherBrand.fullName) 新版本"
+        alert.informativeText = "下载更新包后由你确认安装；安装会替换当前 App 并重启 Deepseek Harness。"
+
+        var rows: [NSView] = [
+            AlertDesign.versionRow(from: currentVersion, to: manifest.version, channel: nil)
+        ]
+        if let published = updatePublishedCaption(manifest.publishedAt) {
+            rows.append(AlertDesign.captionRow("来源：", "GitHub Release · \(published)"))
         }
+        if let notes = manifest.notes, !notes.isEmpty {
+            let pane = makeReleaseNotesText(width: AlertDesign.cardWidth - 28, height: releaseNotesHeight(for: notes))
+            renderReleaseNotes(notes, into: pane.textView)
+            rows.append(pane.scroll)
+        }
+        alert.accessoryView = AlertDesign.accessory(
+            card: AlertDesign.card(rows: rows),
+            footnote: manifest.notes?.isEmpty == false ? nil : "该版本未提供更新说明。"
+        )
         alert.addButton(withTitle: "下载更新")
         alert.addButton(withTitle: "稍后")
         if alert.runModal() == .alertFirstButtonReturn { downloadUpdate(manifest) }
     }
 
-    /// GitHub Release 的正文是 Markdown；用 ReleaseNotesSupport 渲染成带标题、
-    /// 列表与行内样式的只读文本，避免把 `##`、`**` 原样甩给用户。
-    private func makeReleaseNotesView(_ markdown: String) -> NSView? {
-        guard !markdown.isEmpty else { return nil }
-        let pane = makeReleaseNotesText(width: 430, height: releaseNotesHeight(for: markdown))
-        renderReleaseNotes(markdown, into: pane.textView)
-        return pane.scroll
-    }
-
-    private func updatePublishedText(_ raw: String?) -> String {
-        guard let raw else { return "更新说明如下。" }
+    /// 卡片里的「来源」副标题：把 Release 的发布时间写成一行短文案。
+    private func updatePublishedCaption(_ raw: String?) -> String? {
+        guard let raw else { return nil }
         let iso = ISO8601DateFormatter()
-        guard let date = iso.date(from: raw) else { return "更新说明如下。" }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return "发布于 \(formatter.string(from: date))。"
+        guard let date = iso.date(from: raw) else { return nil }
+        return "发布于 \(dshDayString(date))"
     }
 
     private func downloadUpdate(_ manifest: UpdateManifest) {
@@ -1011,6 +1020,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .success(let url):
                 self.setUpdateMenuTitle("更新可用：v\(manifest.version)")
                 let alert = NSAlert()
+                AlertDesign.style(alert, tone: .success)
                 alert.messageText = "更新包已下载"
                 alert.informativeText = "是否立即安装 v\(manifest.version) 并重启 \(LauncherBrand.fullName)？当前后台进程会先关闭，安装完成后重新启动。"
                 alert.addButton(withTitle: "安装并重启")
@@ -1079,8 +1089,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func showInfo(title: String, message: String) {
-        let alert = NSAlert(); alert.messageText = title; alert.informativeText = message; alert.addButton(withTitle: "好"); alert.runModal()
+    private func showInfo(title: String, message: String, tone: AlertTone = .info) {
+        let alert = NSAlert()
+        AlertDesign.style(alert, tone: tone)
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "好")
+        alert.runModal()
     }
 
     @objc private func quit() {
@@ -1169,6 +1184,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 的前提下重建 runtime，避免误导性的「首次安装」引导。
         if DSHRuntimeSupport.hasHarnessInstall() {
             let alert = NSAlert()
+            AlertDesign.style(alert, tone: .question)
             alert.messageText = "检测到已有 DeepSeek Harness 安装"
             alert.informativeText = "本机已检测到 DeepSeek Harness 数据，但运行环境缺失，将重新安装运行环境（不影响你的会话、归档与插件数据）。启动器会优先尝试更快的镜像，失败后自动回退到官方源。"
             alert.alertStyle = .informational
@@ -1182,6 +1198,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         let alert = NSAlert()
+        AlertDesign.style(alert, tone: .question)
         alert.messageText = "首次安装 Deepseek Harness"
         alert.informativeText = "首次安装会下载较多 npm 依赖，可能需要几分钟。启动器会优先尝试更快的镜像，失败后自动回退到官方源。"
         alert.alertStyle = .informational
@@ -1392,6 +1409,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard DSHRuntimeSupport.hasRollback() else { return false }
         let previous = DSHRuntimeSupport.rollbackVersion() ?? "未知版本"
         let alert = NSAlert()
+        AlertDesign.style(alert, tone: .error)
         alert.messageText = "Deepseek Harness 新版本启动失败"
         alert.informativeText = "\(reason)。\n可能是已安装的插件与新版本不兼容（具体原因见日志）。\n是否回退到更新前的 v\(previous) 并重新启动？"
         alert.alertStyle = .warning
@@ -1621,6 +1639,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         let alert = NSAlert()
+        AlertDesign.style(alert, tone: .warning)
         alert.messageText = "插件可能与当前 dsh 版本不兼容"
         let versionSuffix = issue.version.map { "（v\($0)）" } ?? ""
         alert.informativeText = "\(issue.pluginName)\(versionSuffix)：\(issue.reason)。\n\n\(issue.userPlugin ? "可尝试升级到适配版本，或卸载该插件；操作后需重启 dsh 生效。" : "可重启 dsh 重试加载；若持续出现，请更新启动器以获取适配的内置插件。")"
@@ -1699,6 +1718,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func askRestartAfterPluginChange(plugin: String, remaining: [PluginCompatibilitySupport.Issue]) {
         let alert = NSAlert()
+        AlertDesign.style(alert, tone: .question)
         alert.messageText = "重启 dsh 使变更生效"
         alert.informativeText = "\(plugin) 的变更需要重启 dsh 后生效。现在重启吗？"
         alert.addButton(withTitle: "立即重启")
@@ -1745,7 +1765,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         openWhenReady = false
         showStatusTitle(nil)
         appendLogString("\(message)\n"); setState(.failed)
-        let alert = NSAlert(); alert.messageText = "\(LauncherBrand.fullName) 启动失败"; alert.informativeText = message; alert.alertStyle = .warning; alert.addButton(withTitle: "打开日志"); alert.addButton(withTitle: "关闭")
+        let alert = NSAlert()
+        AlertDesign.style(alert, tone: .error)
+        alert.messageText = "\(LauncherBrand.fullName) 启动失败"
+        alert.informativeText = message
+        alert.addButton(withTitle: "打开日志")
+        alert.addButton(withTitle: "关闭")
         if alert.runModal() == .alertFirstButtonReturn { openLogs() }
     }
 
@@ -1754,6 +1779,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appendLogString("dsh 安装失败，建议手动执行：\(command)\n")
         setState(.failed)
         let alert = NSAlert()
+        AlertDesign.style(alert, tone: .error)
         alert.messageText = "Deepseek Harness 安装失败"
         alert.informativeText = "\(Self.summarizedInstallError(error.localizedDescription))\n\n如果 npm 持续下载失败，请在终端手动执行下面的官方命令，完成后重新打开 Deepseek Harness Launcher：\n\n\(command)"
         alert.alertStyle = .warning
@@ -1859,7 +1885,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         var items: [NSMenuItem] = [NSMenuItem.separator()]
-        let header = menuRowItem(title: "会话完成（\(sessionNotifyStore.unreadCount) 条未读）", action: nil, enabled: { false })
+        let header = menuRowItem(title: "会话完成（\(sessionNotifyStore.unreadCount) 个未读）", action: nil, enabled: { false })
         items.append(header)
         for event in events {
             let row = menuRowItem(title: SessionNotifyStore.menuTitle(for: event), action: #selector(openSessionFromNotify(_:)))
@@ -1892,7 +1918,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.sessionNotifyFailureStreak = 0
                 let fresh = self.sessionNotifyStore.ingest(feed)
                 if !fresh.isEmpty {
-                    self.appendLogString("收到 \(fresh.count) 条会话完成提醒（\(SessionNotifyStore.reasonLabel(fresh.last?.reason ?? ""))）\n")
+                    // fresh 是这一轮新增的 turn/end 事件数；角标按会话去重，所以
+                    // 同一会话连跑多轮时数字不会跟着涨。
+                    self.appendLogString("收到 \(fresh.count) 条会话完成提醒，\(self.sessionNotifyStore.unreadCount) 个会话未读（\(SessionNotifyStore.reasonLabel(fresh.last?.reason ?? ""))）\n")
                     self.rebuildSessionNotifyMenuSection()
                 }
             } else {

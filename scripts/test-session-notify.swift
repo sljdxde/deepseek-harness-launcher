@@ -7,31 +7,41 @@ struct SessionNotifyChecks {
             SessionNotifyEvent(seq: seq, sessionId: session, title: "会话\(session)", reason: reason, at: at)
         }
 
-        // 1. 常规轮询：只返回未见过的 seq，游标前进。
+        // 1. 常规轮询：只返回未见过的 seq，游标前进；未读数按**会话**去重。
         let store = SessionNotifyStore()
-        let first = store.ingest(SessionNotifyFeed(bootId: "b1", seq: 2, items: [event(1), event(2)]))
+        let first = store.ingest(SessionNotifyFeed(bootId: "b1", seq: 2, items: [event(1, session: "a"), event(2, session: "b")]))
         precondition(first.map(\.seq) == [1, 2])
         precondition(store.unreadCount == 2)
         precondition(store.pollAfterSeq == 2)
-        let second = store.ingest(SessionNotifyFeed(bootId: "b1", seq: 3, items: [event(2), event(3)]))
+        // 同一个会话再结束一轮：计数保持不变，只刷新时间与原因。
+        let second = store.ingest(SessionNotifyFeed(bootId: "b1", seq: 3, items: [event(2, session: "b", reason: "error"), event(3, session: "a")]))
         precondition(second.map(\.seq) == [3])
-        precondition(store.unreadCount == 3)
+        precondition(store.unreadCount == 2)
+        precondition(store.recent(limit: 1).first?.reason == "completed")
+
+        // 一个会话连跑 5 轮也只是一个未读会话（这正是角标曾经虚高的原因）。
+        let chatty = SessionNotifyStore()
+        _ = chatty.ingest(SessionNotifyFeed(bootId: "b1", seq: 5, items: (1...5).map { event($0, session: "same") }))
+        precondition(chatty.unreadCount == 1)
+        _ = chatty.ingest(SessionNotifyFeed(bootId: "b1", seq: 9, items: (6...9).map { event($0, session: "same") }))
+        precondition(chatty.unreadCount == 1)
+        precondition(chatty.recent(limit: 5).map(\.seq) == [9])
 
         // recent 最新在前。
-        precondition(store.recent(limit: 2).map(\.seq) == [3, 2])
+        precondition(store.recent(limit: 2).map(\.sessionId) == ["a", "b"])
 
         // 2. Harness 重启（bootId 变化）：游标归零，不把旧事件重复计数。
         let restarted = store.ingest(SessionNotifyFeed(bootId: "b2", seq: 0, items: []))
         precondition(restarted.isEmpty)
-        precondition(store.unreadCount == 3)
+        precondition(store.unreadCount == 2)
         precondition(store.pollAfterSeq == 0)
-        let afterRestart = store.ingest(SessionNotifyFeed(bootId: "b2", seq: 1, items: [event(1)]))
+        let afterRestart = store.ingest(SessionNotifyFeed(bootId: "b2", seq: 1, items: [event(1, session: "c")]))
         precondition(afterRestart.map(\.seq) == [1])
-        precondition(store.unreadCount == 4)
+        precondition(store.unreadCount == 3)
 
         // 3. 容量封顶后只保留最新 N 条。
         let capped = SessionNotifyStore(capacity: 3)
-        _ = capped.ingest(SessionNotifyFeed(bootId: "b1", seq: 5, items: (1...5).map { event($0) }))
+        _ = capped.ingest(SessionNotifyFeed(bootId: "b1", seq: 5, items: (1...5).map { event($0, session: "s\($0)") }))
         precondition(capped.unreadCount == 3)
         precondition(capped.recent(limit: 10).map(\.seq) == [5, 4, 3])
 

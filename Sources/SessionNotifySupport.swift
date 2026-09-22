@@ -25,6 +25,7 @@ struct SessionNotifyFeed: Codable {
 /// Tracks completion events polled from the harness and the unread badge
 /// count shown on the menu bar icon (Foxmail-style: the count stays until
 /// the user acknowledges it by opening a session or clearing the list).
+/// 计数单位是会话，见 `unreadCount`。
 final class SessionNotifyStore {
     private(set) var events: [SessionNotifyEvent] = []
     private var bootId: String?
@@ -35,6 +36,9 @@ final class SessionNotifyStore {
         self.capacity = max(capacity, 1)
     }
 
+    /// 未读会话数：角标与菜单标题都用它。单位是**会话**而不是 turn——一个长
+    /// 会话每回一轮都会写一条 `turn/end`，按事件计数就会出现「1 个会话、9 条
+    /// 未读」这种明显不对的角标。
     var unreadCount: Int { events.count }
 
     /// Sequence cursor for the next poll (`?after=`).
@@ -58,7 +62,12 @@ final class SessionNotifyStore {
         let fresh = feed.items.filter { $0.seq > lastSeq }
         lastSeq = max(lastSeq, fresh.map(\.seq).max() ?? 0)
         guard !fresh.isEmpty else { return [] }
-        events.append(contentsOf: fresh)
+        for event in fresh {
+            // 同一会话的后续完成覆盖前一条：只保留最近一次的时间与原因，
+            // 未读数因此始终等于「有完成提醒的会话个数」。
+            events.removeAll { $0.sessionId == event.sessionId }
+            events.append(event)
+        }
         if events.count > capacity { events.removeFirst(events.count - capacity) }
         return fresh
     }

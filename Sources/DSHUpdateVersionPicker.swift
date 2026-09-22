@@ -23,9 +23,18 @@ func makeReleaseNotesText(width: CGFloat, height: CGFloat) -> (scroll: NSScrollV
     scroll.documentView = textView
     scroll.hasVerticalScroller = true
     scroll.autohidesScrollers = true
-    scroll.borderType = .lineBorder
-    scroll.backgroundColor = .textBackgroundColor
+    // 说明面板放在提示框的圆角卡片里：自带边框会变成「盒中盒」，直接用卡片底色。
+    scroll.borderType = .noBorder
+    scroll.backgroundColor = .clear
+    scroll.drawsBackground = false
     scroll.frame = NSRect(x: 0, y: 0, width: width, height: height)
+    // NSScrollView 没有 intrinsic content size：放进 NSStackView 时只靠 frame 会被
+    // 压成一条细线，必须给显式约束。
+    scroll.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+        scroll.widthAnchor.constraint(equalToConstant: width),
+        scroll.heightAnchor.constraint(equalToConstant: height)
+    ])
     return (scroll, textView)
 }
 
@@ -88,22 +97,30 @@ final class DSHUpdateVersionPicker: NSObject {
         render()
     }
 
-    /// 弹窗的 accessoryView：一行「更新到：<下拉>」+ 一行来源信息 + 说明面板。
+    /// 卡片里的三行：`更新到：<下拉>` / 来源行 / 说明面板。由调用方塞进
+    /// AlertDesign 的圆角卡片，保证和其它提示框长一个样。
+    var rows: [NSView] { [popupRow, detailLabel, notesScrollView] }
+
+    /// 独立预览用（测试与离屏渲染）：三行直接竖排。
     var view: NSView {
+        let stack = NSStackView(views: rows)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.frame = NSRect(x: 0, y: 0, width: notesScrollView.frame.width, height: notesScrollView.frame.height + 54)
+        stack.layoutSubtreeIfNeeded()
+        return stack
+    }
+
+    private var popupRow: NSView {
         let caption = NSTextField(labelWithString: "更新到：")
         caption.font = NSFont.systemFont(ofSize: 12)
+        caption.textColor = .secondaryLabelColor
         let row = NSStackView(views: [caption, popup])
         row.orientation = .horizontal
         row.alignment = .firstBaseline
         row.spacing = 8
-
-        let stack = NSStackView(views: [row, detailLabel, notesScrollView])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 6
-        stack.frame = NSRect(x: 0, y: 0, width: notesScrollView.frame.width, height: notesScrollView.frame.height + 54)
-        stack.layoutSubtreeIfNeeded()
-        return stack
+        return row
     }
 
     @objc private func selectionChanged() {

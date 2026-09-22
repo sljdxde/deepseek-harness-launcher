@@ -78,19 +78,43 @@ export function createPresenceTracker(ttlMs = PRESENCE_TTL_MS) {
   };
 }
 
-/** Fold the last `session/title` from a session's event log for display. */
-function sessionTitle(session) {
-  const events = session?.events;
-  if (Array.isArray(events)) {
-    for (let i = events.length - 1; i >= 0; i -= 1) {
-      const event = events[i];
-      if (event?.type === 'session/title' && typeof event.data?.title === 'string' && event.data.title) {
-        return event.data.title;
-      }
+/**
+ * The session's event log. Host sessions expose `snapshotEvents()`; the plain
+ * `events` array is only a fallback for other compositions.
+ */
+function sessionEvents(session) {
+  if (typeof session?.snapshotEvents === 'function') {
+    try {
+      const events = session.snapshotEvents();
+      if (Array.isArray(events)) return events;
+    } catch {
+      // A session without a readable log still needs the id fallback below.
     }
   }
-  const id = session?.header?.id ?? session?.id;
-  return typeof id === 'string' && id.length > 0 ? id.slice(0, 8) : '(未命名会话)';
+  return Array.isArray(session?.events) ? session.events : [];
+}
+
+/** Fold the last `session/title` from a session's event log for display. */
+function sessionTitle(session) {
+  const events = sessionEvents(session);
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event?.type === 'session/title' && typeof event.data?.title === 'string' && event.data.title) {
+      return event.data.title;
+    }
+  }
+  return sessionLabelFromId(session?.header?.id ?? session?.id);
+}
+
+/**
+ * Fallback label when a session has no title yet (the runtime generates one
+ * asynchronously, so an early turn can beat it): dsh ids look like
+ * `session-<uuid>`, and slicing those raw would label every row "session-".
+ */
+export function sessionLabelFromId(id) {
+  if (typeof id !== 'string' || id.length === 0) return '(未命名会话)';
+  const stripped = id.replace(/^(session|sess|chat)[-_]/i, '');
+  return (stripped.length > 0 ? stripped : id).slice(0, 8);
 }
 
 /**
