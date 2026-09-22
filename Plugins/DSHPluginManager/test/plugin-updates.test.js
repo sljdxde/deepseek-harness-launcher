@@ -1013,11 +1013,13 @@ test('回归 8：更新后复核版本，没生效就删掉包目录强制重装
     }));
 
     const commands = [];
+    const dirGoneOnSecondAdd = [];
     const command = async (args) => {
       commands.push(args);
-      // 第一次 pnpm add 不换版本（模拟 pnpm 没重新物化），删目录后（第二次）才生效
+      // 实测（pnpm 11）：`pnpm add file:<dir>` 对已记录的 file: 依赖直接回
+      // "Already up to date"，不会重新物化——所以重试**必须先删掉包目录**。
+      dirGoneOnSecondAdd.push(!(await exists(installedDir)));
       if (commands.length >= 2) {
-        // 强制重装会先删掉包目录，这里重建（真实场景是 pnpm 重新物化）
         await mkdir(installedDir, { recursive: true });
         await writeFile(join(installedDir, 'package.json'), JSON.stringify({ name: 'demo', version: '2.0.0' }));
       }
@@ -1035,6 +1037,7 @@ test('回归 8：更新后复核版本，没生效就删掉包目录强制重装
     });
     assert.equal(result.ok, true);
     assert.equal(commands.length, 2, '应当补一次强制重装');
+    assert.deepEqual(dirGoneOnSecondAdd, [false, true], '重试前必须删掉包目录，否则 pnpm 会直接跳过');
     assert.deepEqual(commands[1], ['add', `file:${sourcesDir}`]);
     assert.equal(result.verified, true, '复核通过要如实上报');
     assert.match(result.note, /v2\.0\.0/);
