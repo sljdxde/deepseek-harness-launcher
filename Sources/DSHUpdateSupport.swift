@@ -510,6 +510,14 @@ enum DSHUpdatePlanner {
         )
     }
 
+    /// 弹窗里可选的更新目标：只列比当前版本新的候选（最新的在最前），并按 limit
+    /// 截断，免得下拉里塞进整部发布历史。
+    static func selectableUpdates(_ report: DSHUpdateReport, limit: Int = 10) -> [DSHUpdateCandidate] {
+        let newer = report.candidates.filter { compareDSHVersions($0.version, report.current) == .orderedDescending }
+        guard !newer.isEmpty else { return report.isUpdate ? [report.best] : [] }
+        return Array(newer.prefix(max(1, limit)))
+    }
+
     static func isSkipped(version: String, skipped: String?) -> Bool {
         guard let skipped, !skipped.isEmpty else { return false }
         return normalizedDSHVersion(skipped) == normalizedDSHVersion(version)

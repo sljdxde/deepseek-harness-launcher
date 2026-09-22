@@ -25,6 +25,7 @@ struct DSHVersionSupportChecks {
         checkReleaseFeed()
         checkPlanner()
         checkSkipPolicy()
+        checkSelectableUpdates()
         print("dsh version support checks passed")
     }
 
@@ -204,5 +205,42 @@ struct DSHVersionSupportChecks {
         // 无关版本不参与提示：没有更新时怎么都不弹。
         let current = DSHUpdatePlanner.report(current: "0.1.5-rc.2", npm: DSHNpmMetadata(distTags: ["latest": "0.1.5-rc.2"], versions: ["0.1.5-rc.2"]), releases: [])
         precondition(!DSHUpdatePlanner.shouldAnnounce(current, interactive: true, skipped: nil))
+    }
+
+    /// 多个新版本时弹窗要给出可选项：只列比当前新的（最新的在前），当前版本与更旧的
+    /// 版本不能出现在下拉里，并按 limit 截断。
+    static func checkSelectableUpdates() {
+        let npm = DSHNpmMetadata(
+            distTags: ["latest": "0.1.5-rc.2", "next": "0.1.5-rc.3", "alpha": "0.1.7-alpha.1"],
+            versions: ["0.1.4", "0.1.5-rc.2", "0.1.5-rc.3", "0.1.6-alpha.1", "0.1.7-alpha.1"]
+        )
+        let report = DSHUpdatePlanner.report(
+            current: "0.1.5-rc.2",
+            npm: npm,
+            releases: [
+                DSHReleaseEntry(version: "0.1.7-alpha.1", tag: "dsh-v0.1.7-alpha.1", publishedAt: nil, notes: "### 新", htmlURL: nil),
+                DSHReleaseEntry(version: "0.1.6-alpha.1", tag: "dsh-v0.1.6-alpha.1", publishedAt: nil, notes: nil, htmlURL: nil),
+                DSHReleaseEntry(version: "0.1.4", tag: "dsh-v0.1.4", publishedAt: nil, notes: nil, htmlURL: nil)
+            ]
+        )
+        let choices = DSHUpdatePlanner.selectableUpdates(report)
+        precondition(choices.map(\.version) == ["0.1.7-alpha.1", "0.1.6-alpha.1", "0.1.5-rc.3"])  // 只留比当前新的，最新在前
+        precondition(choices.first?.channel == .alpha)
+        precondition(choices.contains { $0.source == .githubRelease })
+        precondition(DSHUpdatePlanner.selectableUpdates(report, limit: 2).map(\.version) == ["0.1.7-alpha.1", "0.1.6-alpha.1"])
+
+        // 只有一个新版本时退化成单条；已是最新时为空（弹窗不该被打开）。
+        let single = DSHUpdatePlanner.report(
+            current: "0.1.5-rc.2",
+            npm: DSHNpmMetadata(distTags: ["next": "0.1.5-rc.3"], versions: ["0.1.5-rc.3"]),
+            releases: []
+        )
+        precondition(DSHUpdatePlanner.selectableUpdates(single).map(\.version) == ["0.1.5-rc.3"])
+        let upToDate = DSHUpdatePlanner.report(
+            current: "0.1.7-alpha.1",
+            npm: DSHNpmMetadata(distTags: ["latest": "0.1.7-alpha.1"], versions: ["0.1.7-alpha.1"]),
+            releases: []
+        )
+        precondition(DSHUpdatePlanner.selectableUpdates(upToDate).isEmpty)
     }
 }

@@ -322,61 +322,87 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if interactive { presentDSHUpdate(report: report) }
     }
 
-    /// 更新确认：更新 / 稍后 / 跳过此版本（跳过会被记住，菜单里仍能看到并随时取消）。
+    /// 更新确认：把所有比当前新的版本列进下拉让用户选（只有一个时退化成单版本提示），
+    /// 选项为 更新 / 稍后 / 跳过此版本（跳过会被记住，菜单里仍能看到并随时取消）。
     private func presentDSHUpdate(report: DSHUpdateReport) {
-        let best = report.best
-        let skipped = DSHUpdatePlanner.isSkipped(version: best.version, skipped: settings.skippedDSHVersion)
+        let choices = DSHUpdatePlanner.selectableUpdates(report)
+        guard let newest = choices.first ?? (report.isUpdate ? report.best : nil) else { return }
+        let multiple = choices.count > 1
+        let chosen = { multiple ? $0 : newest }
+
         let alert = NSAlert()
-        alert.messageText = "发现 Deepseek Harness 新版本 v\(best.version)（\(best.channel.label)）"
-        var lines = [
-            "当前版本：v\(report.current)",
-            "最新版本：v\(best.version) · \(best.channel.label) · 来源：\(best.source.label)"
-                + (best.publishedAt.map { " · \(Self.dayString($0))" } ?? "")
-        ]
-        if let stable = report.newestStable, stable.version != best.version,
+        alert.messageText = multiple
+            ? "Deepseek Harness 有 \(choices.count) 个可选更新版本"
+            : "发现 Deepseek Harness 新版本 v\(newest.version)（\(newest.channel.label)）"
+        var lines = ["当前版本：v\(report.current)"]
+        if multiple {
+            lines.append("下拉里是所有比当前版本新的已发布版本，默认选中最新的一版；切换后会显示该版本的来源与说明。")
+        } else {
+            lines.append("最新版本：v\(newest.version) · \(newest.channel.label) · 来源：\(newest.source.label)"
+                + (newest.publishedAt.map { " · \(dshDayString($0))" } ?? ""))
+        }
+        if let stable = report.newestStable, stable.version != newest.version,
            compareDSHVersions(stable.version, report.current) == .orderedDescending {
-            lines.append("最新正式版：v\(stable.version)（上面提示的是预发布版本）")
+            lines.append("最新正式版：v\(stable.version)（最新版是预发布版本，可在下拉里改选正式版）")
         }
         lines.append("")
         lines.append(state == .running
-            ? "更新会从 npm 下载新版本并自动重启 Deepseek Harness；会话、归档与插件数据不受影响。也可以先不更新。"
-            : "更新会从 npm 下载新版本，下次启动 Deepseek Harness 时生效。也可以先不更新。")
+            ? "更新会从 npm 下载所选版本并自动重启 Deepseek Harness；会话、归档与插件数据不受影响。也可以先不更新。"
+            : "更新会从 npm 下载所选版本，下次启动 Deepseek Harness 时生效。也可以先不更新。")
         alert.informativeText = lines.joined(separator: "\n")
-        if let notes = best.notes, !notes.isEmpty, let accessory = makeReleaseNotesView(notes) {
+
+        var picker: DSHUpdateVersionPicker?
+        if multiple {
+            let chooser = DSHUpdateVersionPicker(
+                candidates: choices,
+                selected: newest,
+                width: 430,
+                height: releaseNotesHeight(for: newest.notes)
+            )
+            picker = chooser
+            alert.accessoryView = chooser.view
+        } else if let notes = newest.notes, !notes.isEmpty, let accessory = makeReleaseNotesView(notes) {
             alert.accessoryView = accessory
         }
-        alert.addButton(withTitle: "更新到 v\(best.version)")
+
+        let selected = { picker.map { chosen($0.selection) } ?? newest }
+        let skipState = { DSHUpdatePlanner.isSkipped(version: selected().version, skipped: self.settings.skippedDSHVersion) }
+        alert.addButton(withTitle: "更新到 v\(newest.version)")
         alert.addButton(withTitle: "稍后")
-        alert.addButton(withTitle: skipped ? "取消跳过此版本" : "跳过此版本")
-        // 预发布版本不设为默认按钮：回车不该顺手把内测版装上。
-        if best.channel.isPrerelease {
-            alert.buttons.first?.keyEquivalent = ""
-            alert.buttons[1].keyEquivalent = "\r"
+        alert.addButton(withTitle: skipState() ? "取消跳过此版本" : "跳过此版本")
+
+        // 预发布版本不设为默认按钮：回车不该顺手装上内测版。
+        let applyDefaultButton = { (channel: DSHReleaseChannel) in
+            alert.buttons[0].keyEquivalent = channel.isPrerelease ? "" : "\r"
+            alert.buttons[1].keyEquivalent = channel.isPrerelease ? "\r" : ""
         }
+        applyDefaultButton(newest.channel)
+        picker?.onChange = { candidate in
+            alert.buttons[0].title = "更新到 v\(candidate.version)"
+            alert.buttons[2].title = DSHUpdatePlanner.isSkipped(version: candidate.version, skipped: self.settings.skippedDSHVersion)
+                ? "取消跳过此版本"
+                : "跳过此版本"
+            applyDefaultButton(candidate.channel)
+        }
+
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            updateDSHNow(to: best.version)
+            updateDSHNow(to: selected().version)
         case .alertThirdButtonReturn:
-            if skipped {
+            let version = selected().version
+            if DSHUpdatePlanner.isSkipped(version: version, skipped: settings.skippedDSHVersion) {
                 settings.skippedDSHVersion = nil
-                setDSHUpdateMenuTitle("Deepseek Harness 更新可用：v\(best.version)（\(best.channel.label)）")
-                appendLogString("已取消跳过 dsh v\(best.version)\n")
+                setDSHUpdateMenuTitle("Deepseek Harness 更新可用：v\(newest.version)（\(newest.channel.label)）")
+                appendLogString("已取消跳过 dsh v\(version)\n")
             } else {
-                settings.skippedDSHVersion = best.version
+                settings.skippedDSHVersion = version
                 dshUpdateReport = nil
-                setDSHUpdateMenuTitle("检查 Deepseek Harness 更新（已跳过 v\(best.version)）")
-                appendLogString("用户跳过 dsh v\(best.version) 的更新提示\n")
+                setDSHUpdateMenuTitle("检查 Deepseek Harness 更新（已跳过 v\(version)）")
+                appendLogString("用户跳过 dsh v\(version) 的更新提示\n")
             }
         default:
-            appendLogString("用户选择稍后更新 dsh v\(best.version)\n")
+            appendLogString("用户选择稍后更新 dsh（最新 v\(newest.version)，可选 \(choices.count) 个版本）\n")
         }
-    }
-
-    private static func dayString(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
     }
 
     /// 菜单「立即更新」：从 npm 安装指定版本替换 runtime。dsh 正在运行/启动中时
@@ -949,32 +975,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// GitHub Release 的正文是 Markdown；用 ReleaseNotesSupport 渲染成带标题、
     /// 列表与行内样式的只读文本，避免把 `##`、`**` 原样甩给用户。
     private func makeReleaseNotesView(_ markdown: String) -> NSView? {
-        let width: CGFloat = 430
-        let height: CGFloat = min(300, max(140, CGFloat(markdown.split(separator: "\n").count) * 18))
-        let textView = NSTextView()
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.isRichText = false
-        textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 0, height: 2)
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.textStorage?.setAttributedString(ReleaseNotesMarkdown.attributedString(from: markdown))
-        textView.frame = NSRect(x: 0, y: 0, width: width, height: height)
-        textView.minSize = NSSize(width: width, height: height)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
-
-        let scroll = NSScrollView()
-        scroll.documentView = textView
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.borderType = .lineBorder
-        scroll.backgroundColor = .textBackgroundColor
-        scroll.frame = NSRect(x: 0, y: 0, width: width, height: height)
-        return scroll
+        guard !markdown.isEmpty else { return nil }
+        let pane = makeReleaseNotesText(width: 430, height: releaseNotesHeight(for: markdown))
+        renderReleaseNotes(markdown, into: pane.textView)
+        return pane.scroll
     }
 
     private func updatePublishedText(_ raw: String?) -> String {

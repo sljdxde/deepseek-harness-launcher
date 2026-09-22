@@ -80,7 +80,7 @@ if rg -Fq 'alert.informativeText = manifest.notes' "$ROOT/Sources/main.swift"; t
   echo "update notes must be rendered as markdown, not dumped into informativeText" >&2
   exit 1
 fi
-rg -q 'ReleaseNotesMarkdown.attributedString' "$ROOT/Sources/main.swift"
+rg -q 'ReleaseNotesMarkdown.attributedString' "$ROOT/Sources/DSHUpdateVersionPicker.swift"
 rg -q 'UpdateDownloadWindowController' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateDownloadWindowController.swift"
 rg -q 'UpdateDownloadProgress' "$ROOT/Sources/UpdateSupport.swift"
 rg -q 'miniaturizable' "$ROOT/Sources/UpdateDownloadWindowController.swift"
@@ -275,6 +275,11 @@ rg -Fq 'DSHUpdatePlanner.shouldAnnounce' "$ROOT/Sources/main.swift"
 rg -Fq 'if interactive { presentDSHUpdate(report: report) }' "$ROOT/Sources/main.swift"
 rg -Fq '跳过此版本' "$ROOT/Sources/main.swift"
 rg -Fq 'skippedDSHVersion' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateSupport.swift"
+# 多个新版本时让用户挑：下拉列出全部比当前新的候选，切换时刷新说明与按钮。
+rg -Fq 'DSHUpdatePlanner.selectableUpdates' "$ROOT/Sources/main.swift" "$ROOT/Sources/DSHUpdateSupport.swift"
+rg -Fq 'NSPopUpButton' "$ROOT/Sources/DSHUpdateVersionPicker.swift"
+rg -Fq 'DSHUpdateVersionPicker(' "$ROOT/Sources/main.swift"
+rg -Fq 'selectableUpdates' "$ROOT/scripts/test-dsh-version-support.swift"
 # 自动检查只改菜单标题：不得出现「检查完直接安装」的路径。
 if rg -q 'applyDSHUpdateReport.*updateDSHNow|performDSHUpdateCheck.*updateDSHNow' "$ROOT/Sources/main.swift"; then
   echo "dsh updates must never install without the user choosing Update" >&2
