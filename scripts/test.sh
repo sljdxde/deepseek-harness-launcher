@@ -266,6 +266,25 @@ rg -Fq 'scheduleDSHUpdateCheck' "$ROOT/Sources/main.swift"
 rg -Fq 'ServiceProbe.body' "$ROOT/Sources/main.swift"
 rg -Fq 'nodeEnvironment' "$ROOT/Sources/LauncherEnvironment.swift"
 rg -Fq '检查 Deepseek Harness 更新' "$ROOT/Sources/main.swift"
+# dsh 更新检查：npm dist-tags + GitHub Release 双来源（npm 的 latest 常落后于刚发的
+# Release），是否安装由用户决定（更新/稍后/跳过此版本），跳过会被记住。
+rg -Fq '["view", "@deepseek-ai/dsh", "dist-tags", "versions", "--json"]' "$ROOT/Sources/DSHUpdateSupport.swift"
+rg -Fq 'deepseek-ai/deepseek-harness/releases.atom' "$ROOT/Sources/DSHUpdateSupport.swift"
+rg -Fq 'compareDSHVersions' "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/scripts/test-dsh-version-support.swift"
+rg -Fq 'DSHUpdatePlanner.shouldAnnounce' "$ROOT/Sources/main.swift"
+rg -Fq 'if interactive { presentDSHUpdate(report: report) }' "$ROOT/Sources/main.swift"
+rg -Fq '跳过此版本' "$ROOT/Sources/main.swift"
+rg -Fq 'skippedDSHVersion' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateSupport.swift"
+# 自动检查只改菜单标题：不得出现「检查完直接安装」的路径。
+if rg -q 'applyDSHUpdateReport.*updateDSHNow|performDSHUpdateCheck.*updateDSHNow' "$ROOT/Sources/main.swift"; then
+  echo "dsh updates must never install without the user choosing Update" >&2
+  exit 1
+fi
+rg -Fq 'npm dist-tags' "$ROOT/README.md" "$ROOT/README.en.md"
+if rg -Fq 'dsh 检查只比较 npm 最新版本' "$ROOT/README.md"; then
+  echo "README must document the dual-source dsh update check" >&2
+  exit 1
+fi
 rg -Fq 'globalHotKeyEnabled' "$ROOT/Sources/UpdateSupport.swift"
 rg -Fq '请按下快捷键' "$ROOT/Sources/SettingsWindowController.swift"
 rg -Fq 'globalHotKeyManager' "$ROOT/Sources/main.swift"

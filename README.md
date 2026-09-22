@@ -135,7 +135,10 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 - 设置项：自动检测启动器（DHL）更新、检查频率、Harness 就绪后自动打开浏览器、登录 macOS 时自动启动 Deepseek Harness Launcher、全局快捷呼出快捷键。
 - 默认值：自动检测启动器（DHL）更新开启、每 6 小时检查一次、启动后约 8 秒做首次后台检查；就绪后自动打开浏览器开启；开机启动关闭；全局快捷键启用，默认 `⌃⌥D`。检查间隔最小为 1 小时。
 - 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.4`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
-- 启动器自身更新和 `@deepseek-ai/dsh` 更新是两条独立链路；dsh 检查只比较 npm 最新版本并提示，不修改 npm 缓存。
+- 启动器自身更新和 `@deepseek-ai/dsh` 更新是两条独立链路；dsh 检查同时读 **npm 的 dist-tags**（`latest` / `next` / `beta` / `alpha`）与 **GitHub Release**（`deepseek-ai/deepseek-harness` 的 `releases.atom`；匿名 API 常被 `403` 限流，feed 更稳），取两者中最新、且确实已发布到 npm 的版本，只提示，不修改 npm 缓存。菜单标题与弹窗都会标出通道（正式版 / 候选版 / 公测版 / 内测版）——npm 的 `latest` 常常落后于刚发的 Release，只看它就会漏掉新版本。
+- dsh 是否更新完全由用户决定：弹窗提供「更新到 vX / 稍后 / 跳过此版本」，预发布版本默认按钮是「稍后」（回车不会顺手装上内测版），弹窗里显示来源（GitHub Release / npm 某标签）、发布日期与 Release 正文（Markdown 渲染）。「跳过此版本」会被记住：自动检查只把菜单写成「已跳过 vX」，手动点菜单仍会弹窗（里面可「取消跳过此版本」）。自动检查只改菜单标题，**从不静默安装**。
+- dsh 的 Release tag 形如 `dsh-v0.1.7-alpha.1`，与 npm 版本 `0.1.7-alpha.1` 视为同一版本；同版本优先采用 GitHub Release（带发布日期与更新说明）。只有出现在 npm 版本列表里的候选才会被推荐——镜像滞后时 GitHub 刚发的 tag 还没上 npm，直接安装会 `ETARGET` 失败，这类候选会被忽略并写进日志。
+- dsh 的版本比较按 npm 语义（semver）：同 base 下预发布低于正式版，`alpha.1 < alpha.2`、`rc.2 < rc.3` 都能区分（启动器自身 `x.y.z-a.b[-SNAPSHOT]` 用的 `compareVersions` 不区分后者，所以 dsh 用独立的 `compareDSHVersions`）。
 - GitHub API 返回 `403`（通常是未认证限流）时，启动器会回退读取 Releases Atom feed 来比较版本；没有已发布 Release 时，手动检查会显示「暂无可用更新」。
 - 可用更新必须携带名为 `Deepseek.Harness.Launcher.dmg` 的 Release asset（GitHub 不接受空格，会把文件名里的空格改为点）。下载期间显示可最小化/关闭的进度窗口，关闭窗口不取消下载；下载保存到 `~/Downloads/Deepseek Harness Launcher-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先终止后台、替换当前 App、再重新启动 Deepseek Harness。
 

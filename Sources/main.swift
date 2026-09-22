@@ -152,8 +152,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let updateService = UpdateService()
     private let dshUpdateService = DSHVersionService()
     private var dshUpdateCheckInFlight = false
-    // 最近一次检查发现的可用更新：菜单再次点击时直接进入更新确认，免二次联网检查。
-    private var dshAvailableUpdate: (current: String, latest: String)?
+    // 最近一次检查的完整报告：菜单再次点击时直接进入更新确认，免二次联网检查。
+    private var dshUpdateReport: DSHUpdateReport?
     private let logLock = NSLock()
     private lazy var globalHotKeyManager = GlobalHotKeyManager { [weak self] in
         self?.openDHL()
@@ -257,8 +257,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         // 已知有更新时直接进入更新确认，避免重复联网检查。
-        if let update = dshAvailableUpdate {
-            presentDSHUpdate(current: update.current, latest: update.latest)
+        if let report = dshUpdateReport, report.isUpdate {
+            presentDSHUpdate(report: report)
             return
         }
         performDSHUpdateCheck(interactive: true)
@@ -269,6 +269,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
             return
         }
+        // 安装/更新进行中不做检查：结果只会被下一次安装覆盖。
+        guard dshInstallHandle == nil else {
+            if interactive { showInfo(title: "正在安装或更新 Deepseek Harness", message: "请等待当前安装/更新完成后再试。") }
+            return
+        }
         guard !dshUpdateCheckInFlight else { return }
         dshUpdateCheckInFlight = true
         if interactive { setDSHUpdateMenuTitle("正在检查 Deepseek Harness 更新…") }
@@ -276,16 +281,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             self.dshUpdateCheckInFlight = false
             switch result {
-            case .available(let current, let latest):
-                self.dshAvailableUpdate = (current, latest)
-                self.setDSHUpdateMenuTitle("Deepseek Harness 更新可用：v\(latest)")
-                if interactive { self.presentDSHUpdate(current: current, latest: latest) }
-            case .current(let version):
-                self.dshAvailableUpdate = nil
-                self.setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
-                if interactive { self.showInfo(title: "Deepseek Harness 已是最新版本", message: "当前版本：v\(version)") }
+            case .checked(let report):
+                self.applyDSHUpdateReport(report, interactive: interactive)
             case .failed(let message):
-                self.dshAvailableUpdate = nil
+                self.dshUpdateReport = nil
                 self.setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
                 self.appendLogString("dsh 更新检查失败：\(message)\n")
                 if interactive { self.showInfo(title: "检查 Deepseek Harness 更新失败", message: message) }
@@ -293,16 +292,91 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func presentDSHUpdate(current: String, latest: String) {
+    /// 检查结果落地：日志 → 菜单标题 → 需要时弹窗。自动检查只改菜单标题（dsh 更新
+    /// 从不静默安装，是否更新由用户决定），被用户跳过的版本连标题都不再改。
+    private func applyDSHUpdateReport(_ report: DSHUpdateReport, interactive: Bool) {
+        appendLogString("dsh 更新检查：当前 v\(report.current)；" + report.messages.joined(separator: "；") + "\n")
+        for warning in report.warnings { appendLogString("dsh 更新检查提示：\(warning)\n") }
+
+        guard report.isUpdate else {
+            dshUpdateReport = nil
+            setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
+            if interactive {
+                var message = "当前版本：v\(report.current)"
+                if compareDSHVersions(report.best.version, report.current) != .orderedSame {
+                    // 当前装的是比 npm / GitHub 上更新的版本（例如提前用了内测版）。
+                    message += "\n已发布的最新版本：v\(report.best.version)（\(report.best.channel.label)）"
+                }
+                showInfo(title: "Deepseek Harness 已是最新版本", message: message)
+            }
+            return
+        }
+
+        dshUpdateReport = report
+        if DSHUpdatePlanner.shouldAnnounce(report, interactive: interactive, skipped: settings.skippedDSHVersion) {
+            setDSHUpdateMenuTitle("Deepseek Harness 更新可用：v\(report.best.version)（\(report.best.channel.label)）")
+        } else {
+            setDSHUpdateMenuTitle("检查 Deepseek Harness 更新（已跳过 v\(report.best.version)）")
+            appendLogString("dsh v\(report.best.version) 已被跳过，自动检查不再提示\n")
+        }
+        if interactive { presentDSHUpdate(report: report) }
+    }
+
+    /// 更新确认：更新 / 稍后 / 跳过此版本（跳过会被记住，菜单里仍能看到并随时取消）。
+    private func presentDSHUpdate(report: DSHUpdateReport) {
+        let best = report.best
+        let skipped = DSHUpdatePlanner.isSkipped(version: best.version, skipped: settings.skippedDSHVersion)
         let alert = NSAlert()
-        alert.messageText = "发现 Deepseek Harness 新版本 v\(latest)"
-        alert.informativeText = state == .running
-            ? "当前使用 v\(current)。立即更新会下载新版本并自动重启 Deepseek Harness，会话与归档数据不受影响。"
-            : "当前使用 v\(current)。立即更新会下载新版本，下次启动 Deepseek Harness 时生效。"
-        alert.addButton(withTitle: "立即更新")
-        alert.addButton(withTitle: "取消")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        updateDSHNow(to: latest)
+        alert.messageText = "发现 Deepseek Harness 新版本 v\(best.version)（\(best.channel.label)）"
+        var lines = [
+            "当前版本：v\(report.current)",
+            "最新版本：v\(best.version) · \(best.channel.label) · 来源：\(best.source.label)"
+                + (best.publishedAt.map { " · \(Self.dayString($0))" } ?? "")
+        ]
+        if let stable = report.newestStable, stable.version != best.version,
+           compareDSHVersions(stable.version, report.current) == .orderedDescending {
+            lines.append("最新正式版：v\(stable.version)（上面提示的是预发布版本）")
+        }
+        lines.append("")
+        lines.append(state == .running
+            ? "更新会从 npm 下载新版本并自动重启 Deepseek Harness；会话、归档与插件数据不受影响。也可以先不更新。"
+            : "更新会从 npm 下载新版本，下次启动 Deepseek Harness 时生效。也可以先不更新。")
+        alert.informativeText = lines.joined(separator: "\n")
+        if let notes = best.notes, !notes.isEmpty, let accessory = makeReleaseNotesView(notes) {
+            alert.accessoryView = accessory
+        }
+        alert.addButton(withTitle: "更新到 v\(best.version)")
+        alert.addButton(withTitle: "稍后")
+        alert.addButton(withTitle: skipped ? "取消跳过此版本" : "跳过此版本")
+        // 预发布版本不设为默认按钮：回车不该顺手把内测版装上。
+        if best.channel.isPrerelease {
+            alert.buttons.first?.keyEquivalent = ""
+            alert.buttons[1].keyEquivalent = "\r"
+        }
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            updateDSHNow(to: best.version)
+        case .alertThirdButtonReturn:
+            if skipped {
+                settings.skippedDSHVersion = nil
+                setDSHUpdateMenuTitle("Deepseek Harness 更新可用：v\(best.version)（\(best.channel.label)）")
+                appendLogString("已取消跳过 dsh v\(best.version)\n")
+            } else {
+                settings.skippedDSHVersion = best.version
+                dshUpdateReport = nil
+                setDSHUpdateMenuTitle("检查 Deepseek Harness 更新（已跳过 v\(best.version)）")
+                appendLogString("用户跳过 dsh v\(best.version) 的更新提示\n")
+            }
+        default:
+            appendLogString("用户选择稍后更新 dsh v\(best.version)\n")
+        }
+    }
+
+    private static func dayString(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 
     /// 菜单「立即更新」：从 npm 安装指定版本替换 runtime。dsh 正在运行/启动中时
@@ -812,13 +886,18 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func scheduleAutoUpdateChecks() {
         autoUpdateTimer?.invalidate(); autoUpdateTimer = nil
+        let interval = settings.updateIntervalHours * 3600
+        // 一个定时器驱动两条独立链路：启动器自身的自动检测受「自动检测更新」开关
+        // 控制；dsh 的检查只改菜单提示、从不静默安装，因此只跟随「检查频率」——
+        // 开关关闭时用户仍然能看到「有新版 dsh 可用」，是否更新由他自己决定。
+        autoUpdateTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            if self.settings.autoUpdateEnabled { self.performUpdateCheck(interactive: false) }
+            self.performDSHUpdateCheck(interactive: false)
+        }
         guard settings.autoUpdateEnabled else {
             setUpdateMenuTitle("检测启动器（DHL）更新")
             return
-        }
-        let interval = settings.updateIntervalHours * 3600
-        autoUpdateTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            self?.performUpdateCheck(interactive: false)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             self?.performUpdateCheck(interactive: false)
@@ -1193,7 +1272,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             switch result {
             case .success(let executableURL):
                 if isDSHUpdate {
-                    self.dshAvailableUpdate = nil
+                    self.dshUpdateReport = nil
+                    // 已经装上了，之前跳过的同一版本就没有意义了。
+                    if let installed = updateVersion,
+                       DSHUpdatePlanner.isSkipped(version: installed, skipped: self.settings.skippedDSHVersion) {
+                        self.settings.skippedDSHVersion = nil
+                    }
                     self.setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
                     if relaunchAfterInstall, self.state != .stopped {
                         self.appendLogString("dsh 更新完成，正在同步更新已安装插件…\n")

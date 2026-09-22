@@ -123,6 +123,19 @@ final class LauncherSettings {
         set { defaults.set(newValue, forKey: "openBrowserOnReady") }
     }
 
+    /// 用户选择「跳过此版本」的 dsh 版本：自动检查只把菜单标题写成「已跳过 vX」，
+    /// 不再当作可用更新提示；手动检查仍然弹窗，并可以在弹窗里取消跳过。
+    var skippedDSHVersion: String? {
+        get { defaults.string(forKey: "skippedDSHVersion") }
+        set {
+            if let newValue, !newValue.isEmpty {
+                defaults.set(newValue, forKey: "skippedDSHVersion")
+            } else {
+                defaults.removeObject(forKey: "skippedDSHVersion")
+            }
+        }
+    }
+
     var launchAtLogin: Bool {
         get { defaults.bool(forKey: "launchAtLogin") }
         set { defaults.set(newValue, forKey: "launchAtLogin") }
