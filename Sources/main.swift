@@ -11,6 +11,8 @@ private enum DSHInstallMode: Equatable { case firstInstall, upgrade, repair, dsh
 // title and shortcut columns stable while preserving native menu behavior.
 private final class MenuRowView: NSView {
     var title: String { didSet { needsDisplay = true } }
+    /// 未读的会话完成行用半粗体，点过之后变回常规字重（对齐 codex 的"最近任务"列表）。
+    var emphasized: Bool = false { didSet { needsDisplay = true } }
     let shortcut: String
     private let enabled: () -> Bool
     private var trackingArea: NSTrackingArea?
@@ -74,8 +76,10 @@ private final class MenuRowView: NSView {
         } else {
             foregroundColor = NSColor.tertiaryLabelColor
         }
+        let baseFont = NSFont.menuFont(ofSize: 0)
+        let font = emphasized ? NSFont.systemFont(ofSize: baseFont.pointSize, weight: .semibold) : baseFont
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.menuFont(ofSize: 0),
+            .font: font,
             .foregroundColor: foregroundColor
         ]
         let textSize = title.size(withAttributes: attributes)
@@ -231,7 +235,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return menu
     }
 
-    private func menuRowItem(title: String, action: Selector?, keyEquivalent: String = "", enabled: @escaping () -> Bool = { true }) -> NSMenuItem {
+    private func menuRowItem(title: String, action: Selector?, keyEquivalent: String = "", emphasized: Bool = false, enabled: @escaping () -> Bool = { true }) -> NSMenuItem {
         let item = NSMenuItem(title: "", action: action, keyEquivalent: keyEquivalent)
         item.target = self
         item.isEnabled = enabled()
@@ -243,7 +247,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.state = .off
         item.indentationLevel = 0
         let shortcut = keyEquivalent.isEmpty ? "" : (keyEquivalent == "," ? "⌘," : "⌘ \(keyEquivalent.uppercased())")
-        item.view = MenuRowView(title: title, shortcut: shortcut, enabled: enabled)
+        let row = MenuRowView(title: title, shortcut: shortcut, enabled: enabled)
+        row.emphasized = emphasized
+        item.view = row
         return item
     }
 
@@ -1907,16 +1913,28 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let menu = statusItem.menu else { return }
         for item in sessionNotifyMenuItems { menu.removeItem(item) }
         sessionNotifyMenuItems = []
-        let events = sessionNotifyStore.recent(limit: 6)
-        guard !events.isEmpty else {
+        let entries = sessionNotifyStore.recent(limit: 6)
+        guard !entries.isEmpty else {
             statusItem.button?.image = makeStatusImage()
             return
         }
+        // 工作区名让用户一眼分清是哪个项目完成的（会话 id/标题都太短，分不清）。
+        let workspaces = SessionNotifyWorkspaceIndex.load()
         var items: [NSMenuItem] = [NSMenuItem.separator()]
         let header = menuRowItem(title: "会话完成（\(sessionNotifyStore.unreadCount) 个未读）", action: nil, enabled: { false })
         items.append(header)
-        for event in events {
-            let row = menuRowItem(title: SessionNotifyStore.menuTitle(for: event), action: #selector(openSessionFromNotify(_:)))
+        for entry in entries {
+            let event = entry.event
+            let label = SessionNotifyStore.menuLabel(
+                workspace: workspaces.title(for: event.sessionId),
+                title: event.title,
+                sessionId: event.sessionId
+            )
+            let row = menuRowItem(
+                title: SessionNotifyStore.menuTitle(for: event, label: label),
+                action: #selector(openSessionFromNotify(_:)),
+                emphasized: entry.isUnread
+            )
             row.representedObject = event.sessionId
             items.append(row)
         }
@@ -2098,7 +2116,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openSessionFromNotify(_ sender: NSMenuItem) {
         let sessionId = sender.representedObject as? String
-        sessionNotifyStore.markAllRead()
+        // 只清掉点中的这一条：其它工作区的完成提醒还得留着，列表里的行也不会消失，
+        // 用户想再跳一次随时可以点（「清除完成提醒」才是清空）。
+        if let sessionId { sessionNotifyStore.markRead(sessionId) }
         rebuildSessionNotifyMenuSection()
         appendLogString("用户查看会话完成提醒：\(sessionId ?? "")\n")
         if state == .running, let port = selectedPort {

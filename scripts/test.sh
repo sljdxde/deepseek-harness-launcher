@@ -326,6 +326,13 @@ rg -Fq 'summarizeTurnStart' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 rg -Fq "kind: 'resumed'" "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 rg -Fq 'event.isResume' "$ROOT/Sources/SessionNotifySupport.swift"
 rg -Fq '已撤销其完成提醒' "$ROOT/Sources/main.swift"
+# 会话完成提醒：行标签用工作区名（回退标题/短 id），点一条只清那一条，列表保留。
+rg -Fq 'SessionNotifyWorkspaceIndex' "$ROOT/Sources/SessionNotifySupport.swift"
+rg -Fq 'storages/workspace.json' "$ROOT/Sources/SessionNotifySupport.swift"
+rg -Fq 'static func menuLabel' "$ROOT/Sources/SessionNotifySupport.swift"
+rg -Fq 'SessionNotifyWorkspaceIndex.load()' "$ROOT/Sources/main.swift"
+rg -Fq 'sessionNotifyStore.markRead(sessionId)' "$ROOT/Sources/main.swift"
+rg -Fq 'SessionNotifyWorkspaceIndex' "$ROOT/scripts/test-session-notify.swift"
 rg -Fq 'snapshotEvents' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 rg -Fq 'selectableUpdates' "$ROOT/scripts/test-dsh-version-support.swift"
 # 自动检查只改菜单标题：不得出现「检查完直接安装」的路径。
