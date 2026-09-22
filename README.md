@@ -34,7 +34,7 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 9 | **实时状态 + 日志** | 菜单栏实时显示当前运行端口；所有 stdout/stderr 与生命周期事件写入 `~/Library/Logs/Deepseek Harness Launcher/dhl.log`，一键「打开日志」。 |
 | 10 | **全局快捷呼出** | 任意应用中按 `⌃⌥D`（可在设置中录制更换）直接呼出 Deepseek Harness 浏览器窗口；检测到已有 Harness 页面时选中并前置原标签，不再重复新开。 |
 | 11 | **启动时检测 dsh 更新** | 应用启动后异步检查 npm 上 `@deepseek-ai/dsh` 的最新版本，不阻塞启动；有新版本时菜单栏提示并可跳转 npm 查看。 |
-| 12 | **内置插件管理（DSHPluginManager）** | 侧边栏新增「插件管理」入口，含「已安装」与「插件市场」两个页面：已安装插件可查看/卸载；市场数据来自 `awesome-dsh-plugin`（分类、搜索、按星级/下载排序、一键安装）。安装/卸载通过 `dsh plugin --profile web` 执行，缺 pnpm 时自动用 corepack 自举，安装后提示重启 dsh 生效。 |
+| 12 | **内置插件管理（DSHPluginManager）** | 侧边栏新增「插件管理」入口，含「已安装」与「插件市场」两个页面：已安装插件可查看/卸载/**更新到最新版本**；市场数据来自 `awesome-dsh-plugin`（分类、搜索、按星级/下载排序、一键安装）。安装/卸载/更新通过 `dsh plugin --profile web` 执行，缺 pnpm 时自动用 corepack 自举，变更后提示重启 dsh 生效。可更新插件在侧边栏入口与面板里都有标记。 |
 | 13 | **会话完成通知（DSHSessionNotify）** | 内置服务端插件监听主会话 `turn/end`（方案同社区 dsh-notify 插件，但不弹系统通知）。会话回合结束时，菜单栏图标显示 Foxmail 式红色未读角标（**按会话计数**：同一会话连跑多轮仍只算一个），菜单顶部列出最近的完成/出错/中止会话（时间 · 标题 · 结果），点击条目打开 Harness 页面并清除角标，也可一键「清除完成提醒」。 |
 
 **边界与取舍**：
@@ -142,6 +142,15 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 - dsh 的版本比较按 npm 语义（semver）：同 base 下预发布低于正式版，`alpha.1 < alpha.2`、`rc.2 < rc.3` 都能区分（启动器自身 `x.y.z-a.b[-SNAPSHOT]` 用的 `compareVersions` 不区分后者，所以 dsh 用独立的 `compareDSHVersions`）。
 - GitHub API 返回 `403`（通常是未认证限流）时，启动器会回退读取 Releases Atom feed 来比较版本；没有已发布 Release 时，手动检查会显示「暂无可用更新」。
 - 可用更新必须携带名为 `Deepseek.Harness.Launcher.dmg` 的 Release asset（GitHub 不接受空格，会把文件名里的空格改为点）。下载期间显示可最小化/关闭的进度窗口，关闭窗口不取消下载；下载保存到 `~/Downloads/Deepseek Harness Launcher-<version>.dmg`，随后由用户确认「安装并重启」；此操作会先终止后台、替换当前 App、再重新启动 Deepseek Harness。
+
+### 插件版本检测与更新
+
+- **检测口径（按来源分派）**：npm 包走 registry 的 `dist-tags`（只跟 `latest` 比，不把 rc/beta/alpha 推给装正式版的用户）；`github:` 依赖与 `plugin-sources` 里的克隆走 `git ls-remote` + 远端 `package.json`，**以"远端版本号变高"为判定**，只有 commit 变了而版本号没变时附注「远端有新提交」；`version` 相同时判定为已是最新。
+- **跨大版本**会照常提示，但标注为「跨大版本 vX」，更新按钮直接安装最新版（无视 profile 里记录的版本范围）。
+- **来源识别**：克隆到 `plugin-sources` 时写入 `.dsh-source.json`（作者 / 仓库 / 子目录 / commit）。此前装的旧克隆没有这个标记，检测时会按 `package.json` 的 `repository.url` + `repository.directory` → 市场索引 → 目录名候选的顺序逐个 `git ls-remote` 确认，命中后把标记写回目录（所以"大仓库子目录"型插件也能正确检测）。都确认不了（本地插件或私有仓库）才标记为「未识别到可检测的远端来源」。
+- **更新动作**：npm → `pnpm add <name>@<latest>`；`github:` → 按原 spec 重新解析；`plugin-sources` 克隆 → 先把旧目录改名成 `.bak-<时间戳>` 再重新 clone 覆盖，失败自动回滚（只保留最近一个备份）。服务端插件代码要**重启 dsh** 才生效。
+- **后台自动检测**：默认开启（设置窗口「自动检测插件更新」可关）。开启时启动器在服务就绪后约 15 秒触发一次刷新，之后跟随「检查频率」（默认每 6 小时）；结果缓存在 profile 下的 `.plugin-updates.json`，默认 6 小时内不重复联网。关闭只影响后台检测，面板里的「检查更新」仍可用。
+- **呈现**：插件管理面板「已安装」列表每行显示当前版本与「可更新到 vX」（可单条更新，也可「全部更新」），并有「上次检测」时间；侧边栏「插件管理」入口和启动器菜单行也会显示可更新数量。旧的外部 Harness 实例没有这些接口时静默降级。
 
 ### 卸载
 

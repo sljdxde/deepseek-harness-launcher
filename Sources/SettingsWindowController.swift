@@ -7,6 +7,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let settings = LauncherSettings.shared
 
     private let autoUpdateCheckbox = NSButton(checkboxWithTitle: "自动检测启动器（DHL）更新", target: nil, action: nil)
+    private let pluginUpdateCheckbox = NSButton(checkboxWithTitle: "自动检测插件更新", target: nil, action: nil)
     private let openBrowserCheckbox = NSButton(checkboxWithTitle: "就绪后自动打开浏览器", target: nil, action: nil)
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动", target: nil, action: nil)
     private let globalHotKeyCheckbox = NSButton(checkboxWithTitle: "启用全局快捷键呼出", target: nil, action: nil)
@@ -175,6 +176,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         autoUpdateCheckbox.target = self
         autoUpdateCheckbox.action = #selector(autoUpdateCheckChanged)
         updateCard.addSubview(autoUpdateCheckbox)
+        configureCheckbox(pluginUpdateCheckbox)
+        updateCard.addSubview(pluginUpdateCheckbox)
 
         let intervalDescLabel = makeLabel("检查频率", size: 13, weight: .regular, color: .labelColor)
         intervalLabel = intervalDescLabel
@@ -210,10 +213,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             autoUpdateCheckbox.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
             autoUpdateCheckbox.topAnchor.constraint(equalTo: updateTitle.bottomAnchor, constant: 8),
             autoUpdateCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: updateCard.trailingAnchor, constant: -16),
+            pluginUpdateCheckbox.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
+            pluginUpdateCheckbox.topAnchor.constraint(equalTo: autoUpdateCheckbox.bottomAnchor, constant: 4),
+            pluginUpdateCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: updateCard.trailingAnchor, constant: -16),
             intervalDescLabel.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
             intervalDescLabel.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
             intervalField.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: controlColumn),
-            intervalField.topAnchor.constraint(equalTo: autoUpdateCheckbox.bottomAnchor, constant: 7),
+            intervalField.topAnchor.constraint(equalTo: pluginUpdateCheckbox.bottomAnchor, constant: 7),
             intervalField.heightAnchor.constraint(equalToConstant: 26),
             intervalStepper.leadingAnchor.constraint(equalTo: intervalField.trailingAnchor, constant: 4),
             intervalStepper.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
@@ -224,7 +230,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             sourceValue.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: controlColumn),
             sourceValue.trailingAnchor.constraint(lessThanOrEqualTo: updateCard.trailingAnchor, constant: -16),
             sourceValue.topAnchor.constraint(equalTo: intervalField.bottomAnchor, constant: 12),
-            updateCard.heightAnchor.constraint(equalToConstant: 148)
+            updateCard.heightAnchor.constraint(equalToConstant: 170)
         ])
         root.addSubview(updateCard)
         NSLayoutConstraint.activate([
@@ -311,6 +317,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     private func loadSettings() {
         autoUpdateCheckbox.state = settings.autoUpdateEnabled ? .on : .off
+        pluginUpdateCheckbox.state = settings.autoCheckPluginUpdates ? .on : .off
         openBrowserCheckbox.state = settings.openBrowserOnReady ? .on : .off
         launchAtLoginCheckbox.state = settings.launchAtLogin ? .on : .off
         globalHotKeyCheckbox.state = settings.globalHotKeyEnabled ? .on : .off
@@ -413,6 +420,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let previousHotKeyDisplay = settings.globalHotKeyDisplay
 
         settings.autoUpdateEnabled = autoUpdateCheckbox.state == .on
+        settings.autoCheckPluginUpdates = pluginUpdateCheckbox.state == .on
         settings.openBrowserOnReady = openBrowserCheckbox.state == .on
         settings.launchAtLogin = launchAtLoginCheckbox.state == .on
         settings.updateIntervalHours = max(intervalField.doubleValue, 1)

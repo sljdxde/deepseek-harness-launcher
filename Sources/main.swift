@@ -136,6 +136,20 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var sessionNotifyUnavailableLogged = false
     // dsh 重启瞬间（stop → start）可能同端口先后起两条轮询链，代际号让旧链自灭。
     private var sessionNotifyLoopID = 0
+    // 插件更新提醒：内置 dsh-plugin-manager 提供 /dsh-plugin-manager/updates，
+    // 启动器周期性读回可更新数量写进菜单；外部/旧实例没有该接口，静默降级。
+    private var pluginUpdatesMenuItem: NSMenuItem?
+    private var pluginUpdatesMenuRow: MenuRowView?
+    private var pluginUpdatesLoopID = 0
+    private var pluginUpdatesFailureStreak = 0
+    private var pluginUpdatesUnavailableLogged = false
+    private var pluginUpdatesAvailableCount = 0
+    // 插件更新的进度窗口：与 dsh 安装共用 DSHInstallWindowController（同一套布局/
+    // 进度条/已用时长），插件侧只换文案角色，保证三种更新的进度界面一致。
+    private var pluginUpdateWindow: DSHInstallWindowController?
+    private var pluginUpdateProgressActive = false
+    private var pluginUpdateFinishedAt: String?
+    private var pluginUpdateDismissScheduled = false
     // A notification can be clicked while dsh is still starting. Keep the
     // target until the Harness page and its client are ready.
     private var pendingSessionId: String?
@@ -208,10 +222,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         update.tag = 1002; updateMenuItem = update; updateMenuRow = update.view as? MenuRowView
         let dshUpdate = menuRowItem(title: "检查 Deepseek Harness 更新", action: #selector(checkDSHForUpdates))
         dshUpdate.tag = 1003; dshUpdateMenuItem = dshUpdate; dshUpdateMenuRow = dshUpdate.view as? MenuRowView
+        let pluginUpdates = menuRowItem(title: "插件管理", action: #selector(openPluginManager))
+        pluginUpdates.tag = 1004; pluginUpdatesMenuItem = pluginUpdates; pluginUpdatesMenuRow = pluginUpdates.view as? MenuRowView
         let settingsItem = makeSettingsMenuItem()
         let logs = menuRowItem(title: "打开日志", action: #selector(openLogs), keyEquivalent: "l")
         let quit = menuRowItem(title: "退出 Deepseek Harness", action: #selector(quit), keyEquivalent: "q")
-        [open, port, restart, NSMenuItem.separator(), update, dshUpdate, settingsItem, logs, quit].forEach(menu.addItem)
+        [open, port, restart, NSMenuItem.separator(), update, dshUpdate, pluginUpdates, settingsItem, logs, quit].forEach(menu.addItem)
         return menu
     }
 
@@ -243,6 +259,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setDSHUpdateMenuTitle(_ title: String) {
         dshUpdateMenuItem?.title = title
         dshUpdateMenuRow?.title = title
+    }
+
+    /// 菜单「插件管理」行的标题：只在有可更新插件时才带数字，平时保持朴素。
+    private func setPluginUpdatesMenuTitle(_ count: Int) {
+        let title = count > 0 ? "插件管理 · \(count) 个可更新" : "插件管理"
+        pluginUpdatesMenuItem?.title = title
+        pluginUpdatesMenuRow?.title = title
     }
 
     private func scheduleDSHUpdateCheck() {
@@ -927,6 +950,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             if self.settings.autoUpdateEnabled { self.performUpdateCheck(interactive: false) }
             self.performDSHUpdateCheck(interactive: false)
+            // 插件探测要联网，按「检查频率」跟着抖动一次；是否真的发请求由
+            // 「自动检测插件更新」开关决定（关闭时该函数直接返回）。
+            self.requestPluginUpdatesRefresh()
         }
         guard settings.autoUpdateEnabled else {
             setUpdateMenuTitle("检测启动器（DHL）更新")
@@ -1122,6 +1148,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.setState(.running)
                     self.monitorArchivePlugin(port: port)
                     self.monitorSessionNotify(port: port)
+                    self.monitorPluginUpdates(port: port)
                     self.openBrowserWhenReadyIfNeeded()
                     self.schedulePluginCompatibilityCheck(port: port)
                 case .launch(let port):
@@ -1541,6 +1568,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 self.monitorArchivePlugin(port: port)
                 self.monitorSessionNotify(port: port)
+                self.monitorPluginUpdates(port: port)
                 self.openBrowserWhenReadyIfNeeded()
                 self.schedulePluginCompatibilityCheck(port: port)
             } else {
@@ -1942,6 +1970,130 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.pollSessionNotify(port: port, loopID: loopID)
             }
         }
+    }
+
+    // MARK: - 插件更新检测
+
+    /// 轮询内置 dsh-plugin-manager 的插件更新结果：仅在本启动器管理的 Harness
+    /// 上存在；复用外部/旧实例时接口 404，静默降级（与会话完成通知一致）。
+    /// 代际号随停止/重启递增，让旧轮询链自灭。
+    private func monitorPluginUpdates(port: Int) {
+        pluginUpdatesLoopID += 1
+        let loopID = pluginUpdatesLoopID
+        pluginUpdatesFailureStreak = 0
+        pluginUpdatesAvailableCount = 0
+        setPluginUpdatesMenuTitle(0)
+        pollPluginUpdates(port: port, loopID: loopID)
+        // 插件探测要联网、一次可能耗时几秒：等服务与插件加载稳定后只发一次
+        // 刷新请求，结果由插件写进自己的缓存，下一轮轮询读回。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            guard let self, loopID == self.pluginUpdatesLoopID,
+                  self.state == .running, self.selectedPort == port else { return }
+            self.requestPluginUpdatesRefresh()
+        }
+    }
+
+    private func pollPluginUpdates(port: Int, loopID: Int) {
+        guard loopID == pluginUpdatesLoopID, state == .running, selectedPort == port else { return }
+        // 开关只控制后台检测：关闭时连 GET 都不发（插件侧缓存过期时 GET 自身
+        // 也会触发联网刷新）；轮询链保留，把开关重新打开即自动恢复。
+        guard settings.autoCheckPluginUpdates,
+              let url = URL(string: "http://127.0.0.1:\(port)/dsh-plugin-manager/updates") else {
+            scheduleNextPluginUpdatesPoll(port: port, loopID: loopID)
+            return
+        }
+        ServiceProbe.body(at: url, timeout: 2) { [weak self] body in
+            guard let self, loopID == self.pluginUpdatesLoopID,
+                  self.state == .running, self.selectedPort == port else { return }
+            self.applyPluginUpdatesBody(body)
+            self.scheduleNextPluginUpdatesPoll(port: port, loopID: loopID)
+        }
+    }
+
+    private func scheduleNextPluginUpdatesPoll(port: Int, loopID: Int) {
+        guard loopID == pluginUpdatesLoopID else { return }
+        // 没有更新在跑时 10 秒够用；一旦插件在更新就快轮询，进度窗口才不会一跳一跳。
+        let delay: TimeInterval = pluginUpdateProgressActive ? 1 : 10
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, loopID == self.pluginUpdatesLoopID,
+                  self.state == .running, self.selectedPort == port else { return }
+            self.pollPluginUpdates(port: port, loopID: loopID)
+        }
+    }
+
+    private func applyPluginUpdatesBody(_ body: String?) {
+        guard let snapshot = PluginUpdatesSnapshot.parse(body) else {
+            // 404 / 格式不符都按「插件不可用」处理。插件加载要几秒，早期失败
+            // 属于正常降级，攒够约一分钟再记一次日志（最多一次）。
+            pluginUpdatesFailureStreak += 1
+            if pluginUpdatesFailureStreak == 6 && !pluginUpdatesUnavailableLogged {
+                pluginUpdatesUnavailableLogged = true
+                appendLogString("插件更新接口不可用（当前 Harness 未加载插件管理器），后台自动检测已跳过\n")
+            }
+            return
+        }
+        pluginUpdatesFailureStreak = 0
+        let count = max(snapshot.summary.updateAvailable, 0)
+        if count != pluginUpdatesAvailableCount {
+            appendLogString("插件更新检测：\(count) 个已安装插件可更新\n")
+        }
+        pluginUpdatesAvailableCount = count
+        setPluginUpdatesMenuTitle(count)
+        applyPluginUpdateProgress(snapshot.progress)
+        applyPluginUpdateBatchResult(snapshot.lastBatch)
+    }
+
+    /// 把插件侧的更新进度映射到进度窗口：文案、进度条与 dsh 安装完全同款，
+    /// 只有措辞不同（见 ProgressWindowWording.pluginUpdate）。
+    private func applyPluginUpdateProgress(_ progress: PluginUpdatesSnapshot.Progress?) {
+        let active = progress?.active == true
+        pluginUpdateProgressActive = active
+        guard active else {
+            // 更新收尾：窗口切到"已完成"再自动收起，用户可以跟着进度条看到结束。
+            guard pluginUpdateWindow != nil, !pluginUpdateDismissScheduled else { return }
+            pluginUpdateDismissScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self else { return }
+                self.pluginUpdateDismissScheduled = false
+                self.pluginUpdateWindow?.dismiss()
+                self.pluginUpdateWindow = nil
+            }
+            return
+        }
+        // dsh 正在安装/更新时不再叠一个插件窗口：两者都会重启 Harness。
+        guard dshInstallWindow == nil else { return }
+
+        guard let presentation = PluginUpdatePresentation.progress(progress) else { return }
+        if pluginUpdateWindow == nil {
+            pluginUpdateWindow = DSHInstallWindowController(wording: .pluginUpdate) { /* 隐藏窗口，不打断更新 */ }
+            pluginUpdateWindow?.present()
+        }
+        pluginUpdateWindow?.update(status: presentation.status, detail: presentation.detail, percentage: presentation.percentage)
+    }
+
+    /// 批量更新结束（面板点了「全部更新」）：日志 + 窗口上给一句收尾。
+    private func applyPluginUpdateBatchResult(_ batch: PluginUpdatesSnapshot.Batch?) {
+        guard let finishedAt = batch?.finishedAt, !finishedAt.isEmpty else { return }
+        // 同一个批次只收尾一次（轮询会反复读到同样的 finishedAt）。
+        guard finishedAt != pluginUpdateFinishedAt else { return }
+        guard let summary = PluginUpdatePresentation.batchSummary(batch) else { return }
+        pluginUpdateFinishedAt = finishedAt
+        appendLogString("\(summary)（插件批量更新）\n")
+        pluginUpdateWindow?.update(status: summary, detail: "重启 dsh 之后新版本生效。", percentage: 100)
+    }
+
+    /// 触发插件后台刷新：`?refresh=1` 只发出去、不等长结果（探测结果由插件
+    /// 写进缓存，下一轮轮询就能读到），避免阻塞主线程。
+    private func requestPluginUpdatesRefresh() {
+        guard settings.autoCheckPluginUpdates, state == .running, let port = selectedPort,
+              let url = URL(string: "http://127.0.0.1:\(port)/dsh-plugin-manager/updates?refresh=1") else { return }
+        ServiceProbe.body(at: url, timeout: 2) { _ in }
+    }
+
+    /// 菜单「插件管理」：与「打开 Deepseek Harness」一致，打开 Harness 页面
+    /// （用户在那里手动检查/更新插件），不新增弹窗。
+    @objc private func openPluginManager() {
+        openDHL()
     }
 
     @objc private func openSessionFromNotify(_ sender: NSMenuItem) {

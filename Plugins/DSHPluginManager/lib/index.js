@@ -312,6 +312,18 @@ async function cloneToSources(ref, subdir) {
     }
     await fs.rm(dest, { recursive: true, force: true });
     await fs.cp(src, dest, { recursive: true });
+    // 记下来源与 commit：更新检测靠它反推远端、判断"远端是否只是有新提交"。
+    const head = await run('git', ['-C', cloneDir, 'rev-parse', 'HEAD'], { timeout: 30000 })
+      .then(result => String(result.stdout).trim().toLowerCase())
+      .catch(() => null);
+    await fs.writeFile(join(dest, SOURCE_MARKER_NAME), JSON.stringify({
+      author: ref.author,
+      repo: ref.repo,
+      subdir: subdir ?? null,
+      url: repoUrl,
+      commit: /^[0-9a-f]{40}$/.test(head ?? '') ? head : null,
+      clonedAt: new Date().toISOString()
+    }, null, 2), 'utf8').catch(() => {});
     return { ok: true, dest, packageName: meta.name };
   } finally {
     await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
@@ -472,16 +484,135 @@ export async function uninstallPlugins(names) {
  * @param {string} name - package name as listed by listInstalledPlugins.
  * @returns {Promise<{ok:boolean,note?:string,error?:string}>}
  */
-export async function updatePlugin(name) {
+export async function updatePlugin(name, options = {}) {
   if (typeof name !== 'string' || !/^[@a-zA-Z0-9._/-]+$/.test(name) || name.includes('..')) {
     return { ok: false, error: '非法的插件名' };
   }
+  const ownsProgress = options.batch !== true;
+  if (ownsProgress) beginUpdateProgress('single', [name]);
   try {
-    const result = await pluginCommand(['update', name]);
-    return { ok: true, note: result.note };
+    const sources = await collectPluginSources();
+    const source = sources.find(item => item.name === name);
+    if (!source) {
+      const failure = { ok: false, status: 'unknown', error: '未找到可更新的已安装插件' };
+      if (ownsProgress) { recordUpdateProgress({ name, ...failure }); finishUpdateProgress(); }
+      return failure;
+    }
+    const result = await applyPluginUpdate(source, options);
+    if (ownsProgress) {
+      recordUpdateProgress({ name, ...result });
+      finishUpdateProgress();
+    }
+    return result;
   } catch (error) {
-    return { ok: false, error: String(error?.message || error) };
+    const failure = { ok: false, error: String(error?.message || error) };
+    if (ownsProgress) { recordUpdateProgress({ name, ...failure }); finishUpdateProgress(); }
+    return failure;
   }
+}
+
+/**
+ * 按来源分派更新动作：
+ * - npm：`pnpm add <name>@<latest>`（显式指定版本，插件记录里就是新版本号）；
+ * - `github:` 依赖：按原 spec 重新解析（pnpm 会拉到默认分支最新 commit）；
+ * - plugin-sources 的克隆：先备份成 `.bak-<时间戳>` 再重新 clone 覆盖，失败回滚。
+ * 服务端插件代码要重启 dsh 才生效，所以统一回 `restartRequired: true`。
+ */
+export async function applyPluginUpdate(source, options = {}) {
+  const check = options.check ?? (sources => runUpdateCheck(sources, options.probe ?? {}));
+  const command = options.command ?? pluginCommand;
+  const clone = options.clone ?? cloneToSources;
+  const [entry] = await check([source]);
+  if (!entry || entry.status !== 'update-available') {
+    return { ok: false, status: entry?.status ?? 'unknown', error: entry?.error ?? '没有检测到可更新的版本' };
+  }
+  const target = entry.latestVersion;
+  const remote = source.remote;
+  stepUpdateProgress(source.name, `正在解析最新版本 v${target}…`);
+
+  if (source.kind === 'npm') {
+    stepUpdateProgress(source.name, `正在下载并安装 v${target}…`);
+    await command(['add', `${source.name}@${target}`]);
+    stepUpdateProgress(source.name, `正在同步 profile…`);
+    return { ok: true, updatedTo: target, restartRequired: true, note: `已更新到 v${target}` };
+  }
+
+  if (source.kind === 'git' && remote) {
+    if (remote.dir) {
+      const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      const backup = `${remote.dir}.bak-${stamp}`;
+      await fs.rm(backup, { recursive: true, force: true }).catch(() => {});
+      await fs.rename(remote.dir, backup).catch(() => {});
+      try {
+        stepUpdateProgress(source.name, '正在重新克隆源码…');
+        const cloned = await clone(
+          { author: remote.author, repo: remote.repo, subdir: remote.subdir ?? null, full: `${remote.author}/${remote.repo}` },
+          remote.subdir ?? null
+        );
+        if (!cloned.ok) throw new Error(cloned.error || '重新克隆失败');
+        stepUpdateProgress(source.name, '正在同步 profile…');
+        await command(['add', `file:${cloned.dest}`]);
+      } catch (error) {
+        await fs.rm(remote.dir, { recursive: true, force: true }).catch(() => {});
+        await fs.rename(backup, remote.dir).catch(() => {});
+        throw error;
+      }
+      await pruneSourceBackups(remote.dir);
+      return { ok: true, updatedTo: target, restartRequired: true, note: `已更新到 v${target}（旧版本保留为 ${backup.split('/').pop()}）` };
+    }
+    stepUpdateProgress(source.name, `正在重新解析 ${source.spec ?? `github:${remote.author}/${remote.repo}`}…`);
+    await command(['add', source.spec ?? `github:${remote.author}/${remote.repo}`]);
+    return { ok: true, updatedTo: target, restartRequired: true, note: `已更新到 v${target}` };
+  }
+
+  return { ok: false, error: '该插件来源无法自动更新' };
+}
+
+/** 只保留最近一个 `.bak-*` 备份，避免 plugin-sources 越滚越大。 */
+export async function pruneSourceBackups(dest) {
+  const dir = dest.replace(/\/[^/]+$/, '');
+  const name = dest.split('/').filter(Boolean).pop();
+  if (!dir || !name) return [];
+  let entries = [];
+  try { entries = await fs.readdir(dir); } catch { return []; }
+  const backups = entries.filter(entry => entry.startsWith(`${name}.bak-`)).sort().reverse();
+  const removed = [];
+  for (const stale of backups.slice(1)) {
+    await fs.rm(join(dir, stale), { recursive: true, force: true }).catch(() => {});
+    removed.push(stale);
+  }
+  return removed;
+}
+
+/** 批量更新（面板的「全部更新」）：逐个来，单个失败不影响其它。 */
+let lastBatchUpdate = null;
+
+/** 最近一次批量更新的结果（客户端轮询 `/updates` 时读它来汇总提示）。 */
+export function readLastBatchUpdate() {
+  return lastBatchUpdate;
+}
+
+export async function updatePlugins(names, options = {}) {
+  const startedAt = new Date().toISOString();
+  lastBatchUpdate = { startedAt, finishedAt: null, updated: 0, failed: 0, results: [] };
+  beginUpdateProgress('batch', names);
+  const results = [];
+  for (const name of names) {
+    // eslint-disable-next-line no-await-in-loop -- 顺序更新避免 pnpm 并发写同一个 profile
+    const result = await updatePlugin(name, { ...options, batch: true });
+    recordUpdateProgress({ name, ...result });
+    results.push({ name, ...result });
+  }
+  const summary = {
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    updated: results.filter(item => item.ok).length,
+    failed: results.filter(item => !item.ok).length,
+    results
+  };
+  lastBatchUpdate = summary;
+  finishUpdateProgress();
+  return { ok: results.every(item => item.ok), ...summary };
 }
 
 /**
@@ -588,6 +719,554 @@ export async function readMarketplace() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 插件更新检测（已安装插件 → 来源 → 远端最新 → 是否需要更新）
+//
+// 与用户确认过的口径：
+//   * npm 来源：只跟 registry 的 dist-tags 比；跨大版本会提示但标注。
+//   * git 来源（`github:` 依赖、以及我们自己 clone 到 plugin-sources 的 `file:`）：
+//     以"远端 package.json 的 version 变高"为准；只有 commit 变了而版本号没变时，
+//     附注一句"远端有新提交"，不当作可更新（避免 README/CI 提交造成噪声）。
+//   * 本地来源（用户手工放进 node_modules 的目录）与 bundled 插件不检测；
+//     broken 的插件沿用现有的"清理/重装"提示。
+//   * 预发布不参与：装的是正式版就只跟 latest 比。
+// 结果缓存到 profile 下，默认 6 小时内不重复联网。
+// ---------------------------------------------------------------------------
+
+/** 克隆到 plugin-sources 时写入的来源标记（用于反推远端与已装 commit）。 */
+const SOURCE_MARKER_NAME = '.dsh-source.json';
+const UPDATES_CACHE_FILE = () => join(profilesWebDir(), '.plugin-updates.json');
+const UPDATES_TTL_MS = 6 * 60 * 60 * 1000;
+const PROBE_TIMEOUT_MS = 15000;
+const PROBE_CONCURRENCY = 4;
+
+/** 解析版本号：base 数字段 + 预发布标识（npm 语义，和启动器里的实现保持一致）。 */
+export function parsePluginVersion(raw) {
+  const value = String(raw ?? '').trim().replace(/^v(?=\d)/i, '');
+  const withoutBuild = value.split('+')[0];
+  const dash = withoutBuild.indexOf('-');
+  const basePart = dash >= 0 ? withoutBuild.slice(0, dash) : withoutBuild;
+  const prePart = dash >= 0 ? withoutBuild.slice(dash + 1) : '';
+  const base = basePart.split('.').map(part => (/^\d+$/.test(part) ? Number(part) : 0));
+  const pre = prePart ? prePart.split('.').filter(Boolean).map(part => part.toLowerCase()) : null;
+  return { base: base.length > 0 ? base : [0], pre: pre && pre.length > 0 ? pre : null };
+}
+
+/**
+ * 比较两个版本号（npm 语义：同 base 下预发布低于正式版，数字段按数值、字母段按字典序，
+ * 前缀相同则标识更多的一方更高）。返回 -1 / 0 / 1。
+ */
+export function comparePluginVersions(left, right) {
+  const a = parsePluginVersion(left);
+  const b = parsePluginVersion(right);
+  for (let i = 0; i < Math.max(a.base.length, b.base.length); i += 1) {
+    const x = a.base[i] ?? 0;
+    const y = b.base[i] ?? 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  if (!a.pre && !b.pre) return 0;
+  if (!a.pre) return 1;
+  if (!b.pre) return -1;
+  for (let i = 0; i < Math.max(a.pre.length, b.pre.length); i += 1) {
+    if (i >= a.pre.length) return -1;
+    if (i >= b.pre.length) return 1;
+    const x = a.pre[i];
+    const y = b.pre[i];
+    const xNumeric = /^\d+$/.test(x);
+    const yNumeric = /^\d+$/.test(y);
+    if (xNumeric && yNumeric) {
+      if (Number(x) !== Number(y)) return Number(x) < Number(y) ? -1 : 1;
+      continue;
+    }
+    if (xNumeric !== yNumeric) return xNumeric ? -1 : 1;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+/** 主版本号，用于标注"跨大版本"。 */
+export function pluginMajorVersion(raw) {
+  return parsePluginVersion(raw).base[0] ?? 0;
+}
+
+/** pnpm-lock.yaml 里 `github:` / git 依赖解析出的 commit（没有就返回 null）。 */
+export function parseLockCommit(lockText, spec) {
+  const text = String(lockText ?? '');
+  if (!text || !spec) return null;
+  // 只有 git 形态的 spec 才有 commit；npm spec（`^1.2.3`）在 lock 里的下一条依赖
+  // 可能正好是 git 依赖，窗口扫下去会取到别人的 sha。
+  if (!/^(?:github:|git\+|git@|https?:)/i.test(spec)) return null;
+  let index = text.indexOf(`specifier: ${spec}`);
+  while (index >= 0) {
+    const window = text.slice(index, index + 400);
+    const tarball = window.match(/tar\.gz\/([0-9a-f]{40})/i);
+    if (tarball) return tarball[1].toLowerCase();
+    const resolution = window.match(/commit:\s*([0-9a-f]{40})/i);
+    if (resolution) return resolution[1].toLowerCase();
+    index = text.indexOf(`specifier: ${spec}`, index + 1);
+  }
+  return null;
+}
+
+/**
+ * 把一个已安装插件归到某个来源。
+ * @param {{name:string,spec:string|null,installedVersion:string|null,installedCommit?:string|null,marker?:object|null,marketNames?:Set<string>}} input
+ * @returns {{name:string,spec:string|null,kind:'npm'|'git'|'local',remote:object|null,installedVersion:string|null,installedCommit:string|null}}
+ */
+export function classifyPluginSource(input) {
+  const name = String(input?.name ?? '');
+  const spec = typeof input?.spec === 'string' ? input.spec : null;
+  const installedVersion = input?.installedVersion ?? null;
+  const base = { name, spec, installedVersion, installedCommit: input?.installedCommit ?? null, remote: null };
+
+  if (!spec) return { ...base, kind: 'npm', remote: { type: 'npm', package: name } };
+
+  const fileMatch = spec.match(/^(?:file|link):(.+)$/);
+  if (fileMatch) {
+    const raw = fileMatch[1];
+    const dir = raw.startsWith('/') ? raw : join(profilesWebDir(), raw);
+    const marker = input?.marker;
+    if (marker?.author && marker?.repo) {
+      return {
+        ...base,
+        installedCommit: marker.commit ?? base.installedCommit,
+        kind: 'git',
+        remote: {
+          type: 'git',
+          url: marker.url || `https://github.com/${marker.author}/${marker.repo}.git`,
+          author: marker.author,
+          repo: marker.repo,
+          subdir: marker.subdir ?? null,
+          dir
+        }
+      };
+    }
+    // 老版本 clone 出来的目录没有标记：只有在市场索引里能确认的候选才敢认（调用方
+    // 还会先用 ls-remote 探测并写回标记）；按位置乱猜会把 `tt-a1i/xxx` 拆成
+    // `tt/a1i-xxx`，指向一个不存在的仓库。
+    const confirmed = sourceCandidates(dir, input?.marketNames)
+      .find(candidate => input?.marketNames?.has(`${candidate.author}/${candidate.repo}`.toLowerCase()));
+    if (confirmed) {
+      return { ...base, kind: 'git', remote: { type: 'git', url: `https://github.com/${confirmed.author}/${confirmed.repo}.git`, ...confirmed, subdir: null, dir } };
+    }
+    return { ...base, kind: 'local' };
+  }
+
+  if (spec.startsWith('github:')) {
+    const body = spec.slice('github:'.length);
+    const hash = body.indexOf('#');
+    const repoPart = (hash >= 0 ? body.slice(0, hash) : body).replace(/\.git$/, '');
+    const [author, repo] = repoPart.split('/');
+    if (author && repo) {
+      return {
+        ...base,
+        kind: 'git',
+        remote: {
+          type: 'git',
+          url: `https://github.com/${author}/${repo}.git`,
+          author,
+          repo,
+          subdir: hash >= 0 ? body.slice(hash + 1) : null,
+          dir: null
+        }
+      };
+    }
+  }
+
+  const gitUrl = spec.match(/^(?:git\+)?(?:https?:\/\/|git@)github\.com[:/]([^/]+)\/([^/#]+)(?:\.git)?(?:#(.+))?$/i);
+  if (gitUrl) {
+    const [, author, repoPart, subdir] = gitUrl;
+    // `…/repo.git` 的 `.git` 后缀要先剥掉，否则拼出来的 URL 会变成 `repo.git.git`。
+    const repo = repoPart.replace(/\.git$/i, '');
+    return {
+      ...base,
+      kind: 'git',
+      remote: { type: 'git', url: `https://github.com/${author}/${repo}.git`, author, repo, subdir: subdir ?? null, dir: null }
+    };
+  }
+
+  // npm 包名，可能带范围/标签（`^1.2.3`、`latest`、`1.2.3`）——都归到 registry 上的包。
+  return { ...base, kind: 'npm', remote: { type: 'npm', package: name } };
+}
+
+/**
+ * 从 plugin-sources 的 `<author>-<repo>` 目录名列出可能的远端候选，按可信度排序：
+ * 市场索引里能查到的排前面，其余按 `-` 的切分顺序（`cloneToSources` 的命名规则是
+ * `${author}-${repo}`，但 author 本身也可能含 `-`，所以只能给候选、由调用方探测确认）。
+ * @returns {Array<{author:string,repo:string}>}
+ */
+export function sourceCandidates(dir, marketNames) {
+  const base = String(dir ?? '').split('/').filter(Boolean).pop() ?? '';
+  if (!base) return [];
+  const parts = base.split('-');
+  const matches = [];
+  const rest = [];
+  for (let i = 1; i < parts.length; i += 1) {
+    const author = parts.slice(0, i).join('-');
+    const repo = parts.slice(i).join('-');
+    if (!author || !repo) continue;
+    const entry = { author, repo };
+    if (marketNames?.has(`${author}/${repo}`.toLowerCase())) matches.push(entry);
+    else rest.push(entry);
+  }
+  return [...matches, ...rest];
+}
+
+/**
+ * 从插件自己的 package.json 读真实上游：很多插件是"大仓库的子目录"（例如
+ * `@tt-a1i/archify-dsh` 来自 `tt-a1i/archify` 的 `integrations/deepseek-harness`），
+ * 靠 plugin-sources 的目录名根本推不出来，而 `repository.url` + `repository.directory`
+ * 是权威信息。
+ */
+export async function readRepositoryHint(dir) {
+  const pkg = await readJsonQuiet(join(dir, 'package.json'));
+  const repository = pkg?.repository;
+  const url = typeof repository === 'string' ? repository : repository?.url;
+  const subdir = repository && typeof repository === 'object' && typeof repository.directory === 'string'
+    ? repository.directory
+    : null;
+  const match = typeof url === 'string' ? url.match(/github\.com[:/]([^/]+)\/([^/#]+?)(?:\.git)?(?:#.*)?$/i) : null;
+  if (!match) return null;
+  return { author: match[1], repo: match[2], subdir };
+}
+
+/**
+ * 没有来源标记的目录（本次改动之前装的）：按权威度依次探测候选，命中后把标记写回
+ * 目录——之后检测就是精确的，也能拿到准确的 commit。
+ * 顺序：package.json 的 repository → 市场索引确认的目录名 → 目录名切分候选。
+ */
+export async function discoverSourceMarker(dir, marketNames, probe) {
+  const head = probe ?? (async url => {
+    try {
+      const { stdout } = await run('git', ['ls-remote', url, 'HEAD'], {
+        timeout: 8000,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '/usr/bin/true' }
+      });
+      const sha = String(stdout).trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+      return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+    } catch { return null; }
+  });
+  const candidates = [];
+  const hint = await readRepositoryHint(dir).catch(() => null);
+  if (hint) candidates.push(hint);
+  for (const candidate of sourceCandidates(dir, marketNames)) {
+    if (!candidates.some(item => item.author === candidate.author && item.repo === candidate.repo)) candidates.push(candidate);
+  }
+  for (const candidate of candidates) {
+    const url = `https://github.com/${candidate.author}/${candidate.repo}.git`;
+    // eslint-disable-next-line no-await-in-loop -- 逐个确认，命中即停
+    const commit = await head(url);
+    if (!commit) continue;
+    const marker = {
+      author: candidate.author,
+      repo: candidate.repo,
+      subdir: candidate.subdir ?? null,
+      url,
+      commit,
+      discoveredAt: new Date().toISOString()
+    };
+    await fs.writeFile(join(dir, SOURCE_MARKER_NAME), JSON.stringify(marker, null, 2), 'utf8').catch(() => {});
+    return marker;
+  }
+  return null;
+}
+
+/**
+ * 判定一个插件要不要更新。远端探测结果 `remote` 形如
+ * `{version, commit, tags?}`，探测失败时给 `{error}`。
+ * @returns {{status:'update-available'|'up-to-date'|'ahead'|'unknown'|'failed',latestVersion:string|null,channel:string|null,major:boolean,note:string|null,error:string|null}}
+ */
+export function decidePluginUpdate({ kind, installedVersion, installedCommit, remote }) {
+  const unknown = (note, status = 'unknown') => ({ status, latestVersion: null, channel: null, major: false, note, error: null });
+  // 本地来源先判定：它本来就没有远端，报"检测失败"会让用户以为出错了。
+  if (kind === 'local') return unknown('未识别到可检测的远端来源（本地插件或私有仓库）');
+  // git 远端不可达（私有仓库 / 已删除 / 改名）：判定不了，但也不该报成"检测失败"，
+  // 面板上写清楚原因即可，技术细节留在 error 里供日志排查。
+  if (remote?.unreachable) {
+    return { status: 'unknown', latestVersion: null, channel: null, major: false, note: '无法访问远端仓库（可能是私有仓库或已删除）', error: String(remote.error) };
+  }
+  if (remote?.error) return { status: 'failed', latestVersion: null, channel: null, major: false, note: null, error: String(remote.error) };
+  if (!remote?.version) return unknown('远端没有可用的版本号');
+  const latestVersion = String(remote.version);
+  const channel = typeof remote.channel === 'string' ? remote.channel : null;
+  if (!installedVersion) {
+    return { status: 'update-available', latestVersion, channel, major: false, note: '无法读取已安装版本', error: null };
+  }
+  const order = comparePluginVersions(installedVersion, latestVersion);
+  if (order > 0) return { status: 'ahead', latestVersion, channel, major: false, note: '已安装版本比远端更高', error: null };
+  // 预发布不参与：装的是正式版时，远端只有 rc/beta/alpha 就保持安静（用户确认的口径）。
+  const installedIsPrerelease = parsePluginVersion(installedVersion).pre !== null;
+  const latestIsPrerelease = parsePluginVersion(latestVersion).pre !== null;
+  if (latestIsPrerelease && !installedIsPrerelease) {
+    return { status: 'up-to-date', latestVersion, channel, major: false, note: `远端只有预发布版本 v${latestVersion}，暂不提示`, error: null };
+  }
+  const commitDiffers = Boolean(remote.commit && installedCommit && String(remote.commit).toLowerCase() !== String(installedCommit).toLowerCase());
+  if (order === 0) {
+    return { status: 'up-to-date', latestVersion, channel, major: false, note: commitDiffers ? '远端有新提交（版本号未变）' : null, error: null };
+  }
+  return {
+    status: 'update-available',
+    latestVersion,
+    channel,
+    major: pluginMajorVersion(installedVersion) !== pluginMajorVersion(latestVersion),
+    note: commitDiffers ? '远端同时有新提交' : null,
+    error: null
+  };
+}
+
+/** 汇总面板/菜单要用的计数。 */
+export function summarizeUpdateInventory(inventory) {
+  const items = Array.isArray(inventory) ? inventory : [];
+  return {
+    total: items.length,
+    updateAvailable: items.filter(item => item?.status === 'update-available').length,
+    failed: items.filter(item => item?.status === 'failed').length,
+    unknown: items.filter(item => item?.status === 'unknown').length
+  };
+}
+
+/** 并发上限内跑完一批探测，保证单个插件卡住不会拖死整轮检测。 */
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index], index).catch(error => ({ error: String(error?.message || error) }));
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+async function readJsonQuiet(path) {
+  try { return JSON.parse(await fs.readFile(path, 'utf8')); } catch { return null; }
+}
+
+export async function readUpdateCache() {
+  const cached = await readJsonQuiet(UPDATES_CACHE_FILE());
+  if (!cached || !Array.isArray(cached.inventory)) return null;
+  return cached;
+}
+
+async function writeUpdateCache(value) {
+  await fs.mkdir(profilesWebDir(), { recursive: true });
+  await fs.writeFile(UPDATES_CACHE_FILE(), JSON.stringify(value, null, 2), 'utf8');
+}
+
+/** npm 包的 dist-tags（走 pnpm shim，和安装链路同一个 registry/网络栈）。 */
+export async function probeNpmDistTags(packageName, timeoutMs = PROBE_TIMEOUT_MS) {
+  try {
+    await ensurePnpmPath();
+    const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
+    const { stdout } = await run(cli, ['view', packageName, 'dist-tags', '--json'], { timeout: timeoutMs });
+    const tags = JSON.parse(stdout);
+    const latest = typeof tags?.latest === 'string' ? tags.latest : null;
+    if (!latest) return { error: 'registry 没有 latest 标签' };
+    return { version: latest, channel: 'latest', tags };
+  } catch (error) {
+    return { error: String(error?.message || error) };
+  }
+}
+
+/** git 远端 HEAD：ls-remote 不需要 token，也不受 GitHub API 匿名限流影响。 */
+export async function probeGitHead(remote, timeoutMs = PROBE_TIMEOUT_MS) {
+  const url = remote?.url;
+  if (!url) return { error: '缺少远端地址' };
+  try {
+    // GIT_TERMINAL_PROMPT=0：私有或不存在的仓库会要求输入用户名，关掉交互让它在
+    // 超时前就失败（否则检测会卡在这里）。
+    const { stdout } = await run('git', ['ls-remote', url, 'HEAD'], {
+      timeout: timeoutMs,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '/usr/bin/true' }
+    });
+    const sha = String(stdout).trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+    if (!/^[0-9a-f]{40}$/.test(sha)) return { error: '无法解析远端 HEAD' };
+    const version = await fetchRemotePackageVersion(remote, sha, timeoutMs);
+    if (version.error) return { commit: sha, error: version.error };
+    return { version: version.version, commit: sha, channel: null };
+  } catch (error) {
+    return { error: String(error?.message || error), unreachable: true };
+  }
+}
+
+/** 远端 package.json 的 version：raw.githubusercontent 一次 GET，无需 API token。 */
+export async function fetchRemotePackageVersion(remote, commit, timeoutMs = PROBE_TIMEOUT_MS) {
+  const { author, repo, subdir } = remote ?? {};
+  if (!author || !repo) return { error: '缺少仓库信息' };
+  const path = subdir ? `${subdir.replace(/^\/+|\/+$/g, '')}/package.json` : 'package.json';
+  const url = `https://raw.githubusercontent.com/${author}/${repo}/${commit}/${path}`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch(url, { signal: controller.signal, headers: { 'cache-control': 'no-cache' } });
+    clearTimeout(timer);
+    if (!response.ok) return { error: `远端 package.json HTTP ${response.status}` };
+    const pkg = await response.json();
+    return typeof pkg?.version === 'string' && pkg.version ? { version: pkg.version } : { error: '远端 package.json 没有 version' };
+  } catch (error) {
+    return { error: String(error?.message || error) };
+  }
+}
+
+/** profile 里所有可检测插件的来源清单（bundled / broken 不参与）。 */
+export async function collectPluginSources() {
+  const installed = await listInstalledPlugins();
+  const manifest = await readProfileManifest();
+  const dependencies = manifest?.dependencies ?? {};
+  const lockText = await fs.readFile(join(profilesWebDir(), 'pnpm-lock.yaml'), 'utf8').catch(() => '');
+  const market = await readJsonQuiet(marketIndexFile());
+  const marketNames = new Set((market?.plugins ?? [])
+    .map(entry => (entry?.author && entry?.repo ? `${entry.author}/${entry.repo}` : null))
+    .filter(Boolean)
+    .map(value => value.toLowerCase()));
+
+  const sources = [];
+  for (const item of installed) {
+    if (item.broken || item.source === 'bundled') continue;
+    const spec = Object.prototype.hasOwnProperty.call(dependencies, item.name) ? dependencies[item.name] : null;
+    const markerDir = typeof spec === 'string' && /^(?:file|link):/.test(spec)
+      ? (spec.replace(/^(?:file|link):/, '').startsWith('/')
+        ? spec.replace(/^(?:file|link):/, '')
+        : join(profilesWebDir(), spec.replace(/^(?:file|link):/, '')))
+      : null;
+    let marker = markerDir ? await readJsonQuiet(join(markerDir, SOURCE_MARKER_NAME)) : null;
+    if (!marker && markerDir) {
+      // 老克隆（本次改动之前装的）：探测确认远端并写回标记，之后检测就是精确的。
+      marker = await discoverSourceMarker(markerDir, marketNames).catch(() => null);
+    }
+    const installedCommit = spec ? parseLockCommit(lockText, spec) : null;
+    sources.push(classifyPluginSource({
+      name: item.name,
+      spec,
+      installedVersion: item.version,
+      installedCommit,
+      marker,
+      marketNames
+    }));
+  }
+  return sources;
+}
+
+/** 真正跑一轮检测（联网）。 */
+export async function runUpdateCheck(sources, probe = {}) {
+  const npmProbe = probe.npm ?? probeNpmDistTags;
+  const gitProbe = probe.git ?? probeGitHead;
+  const entries = await mapWithConcurrency(sources, PROBE_CONCURRENCY, async source => {
+    let remote;
+    try {
+      remote = source.remote?.type === 'npm'
+        ? await npmProbe(source.remote.package)
+        : source.remote?.type === 'git'
+          ? await gitProbe(source.remote)
+          : { error: '没有远端来源' };
+    } catch (error) {
+      // 探测函数抛错（网络栈直接抛、注入的假 probe 抛）也要落到 decidePluginUpdate，
+      // 否则这条没有 status，汇总里既不计 failed 也不计 unknown。
+      remote = { error: String(error?.message || error) };
+    }
+    return {
+      name: source.name,
+      kind: source.kind,
+      spec: source.spec,
+      installedVersion: source.installedVersion,
+      installedCommit: source.installedCommit,
+      remote,
+      ...decidePluginUpdate({
+        kind: source.kind,
+        installedVersion: source.installedVersion,
+        installedCommit: source.installedCommit,
+        remote
+      })
+    };
+  });
+  return entries;
+}
+
+let updateCheckInFlight = null;
+
+// 更新进度：面板与启动器的进度窗口都读它（启动器轮询 /updates 时带上）。
+let updateProgress = null;
+
+function beginUpdateProgress(kind, names) {
+  updateProgress = {
+    active: true,
+    kind,
+    total: names.length,
+    done: 0,
+    current: null,
+    step: '正在准备…',
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    results: []
+  };
+  return updateProgress;
+}
+
+function stepUpdateProgress(current, step) {
+  if (!updateProgress) return;
+  updateProgress.current = current;
+  updateProgress.step = step;
+}
+
+function recordUpdateProgress(result) {
+  if (!updateProgress) return;
+  updateProgress.done += 1;
+  updateProgress.results.push(result);
+}
+
+function finishUpdateProgress() {
+  if (!updateProgress) return;
+  updateProgress.active = false;
+  updateProgress.current = null;
+  updateProgress.finishedAt = new Date().toISOString();
+  updateProgress.step = '已完成';
+}
+
+/** 当前更新进度（没有进行中的更新时是 null）。 */
+export function readUpdateProgress() {
+  return updateProgress;
+}
+
+
+/**
+ * 缓存优先的检测入口（面板与启动器都走这里）。
+ * - 缓存新鲜（< 6h）且未 force → 直接返回缓存，不联网；
+ * - 否则返回当前缓存（可能为空）并**在后台**刷新，`refreshing: true` 表示还在跑。
+ */
+export async function checkPluginUpdates({ force = false, probe = {} } = {}) {
+  const cached = await readUpdateCache();
+  const fresh = cached && Date.now() - Date.parse(cached.checkedAt ?? 0) < UPDATES_TTL_MS;
+  const needsRefresh = force || !fresh;
+
+  if (needsRefresh && !updateCheckInFlight) {
+    updateCheckInFlight = (async () => {
+      try {
+        const sources = await collectPluginSources();
+        const inventory = await runUpdateCheck(sources, probe);
+        const payload = { checkedAt: new Date().toISOString(), inventory };
+        await writeUpdateCache(payload);
+        return payload;
+      } finally {
+        updateCheckInFlight = null;
+      }
+    })().catch(() => null);
+  }
+
+  // 永不阻塞 HTTP 响应：首次检测也要几秒，而客户端（启动器只等 2 秒）会先断开，
+  // 服务端再往已关闭的 socket 写响应会抛异常。统一"立刻返回当前缓存 + refreshing"，
+  // 由调用方轮询。
+  const current = cached ?? { checkedAt: null, inventory: [] };
+  return {
+    ...current,
+    summary: summarizeUpdateInventory(current.inventory),
+    refreshing: Boolean(needsRefresh && updateCheckInFlight),
+    progress: updateProgress,
+    lastBatch: lastBatchUpdate
+  };
+}
+
 function json(response, status, value) {
   response.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(value));
@@ -639,6 +1318,27 @@ export function apply(ctx) {
                   json(res, 200, await updatePlugin(value.name));
                 } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
               }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/updates', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          res.on('error', () => {});
+          try {
+            const url = new URL(req.url || '/', 'http://127.0.0.1');
+            const payload = await checkPluginUpdates({ force: url.searchParams.get('refresh') === '1' });
+            try { json(res, 200, payload); } catch { /* 客户端可能已断开（刷新要几秒） */ }
+          } catch (error) { try { json(res, 500, { error: String(error?.message || error) }); } catch { /* 同上 */ } }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/update-many', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          res.on('error', () => {});
+          try {
+            const value = await body(req);
+            const names = Array.isArray(value?.names) ? value.names.filter(item => typeof item === 'string' && item) : [];
+            if (names.length === 0) { json(res, 400, { error: '缺少要更新的插件' }); return; }
+            // 批量更新可能跑几分钟：先回已受理，进度由客户端刷新列表/检测结果体现。
+            json(res, 202, { ok: true, accepted: names.length, names });
+            void updatePlugins(names).catch(() => {});
+          } catch (error) { try { json(res, 500, { error: String(error?.message || error) }); } catch { /* 客户端已断开 */ } }
+        }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/uninstall-many', handler: async (req, res) => {
           if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
           try {

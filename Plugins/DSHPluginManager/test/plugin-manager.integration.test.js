@@ -45,7 +45,9 @@ test('apply 注册全部插件管理路由', () => {
     '/dsh-plugin-manager/refresh',
     '/dsh-plugin-manager/uninstall',
     '/dsh-plugin-manager/uninstall-many',
-    '/dsh-plugin-manager/update'
+    '/dsh-plugin-manager/update',
+    '/dsh-plugin-manager/update-many',
+    '/dsh-plugin-manager/updates'
   ]);
   assert.ok(routes.every(route => route.kind === 'exact'));
 });

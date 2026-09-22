@@ -98,6 +98,7 @@ final class LauncherSettings {
     private init() {
         defaults.register(defaults: [
             "autoUpdateEnabled": true,
+            "autoCheckPluginUpdates": true,
             "updateIntervalHours": 6.0,
             "openBrowserOnReady": true,
             "launchAtLogin": false,
@@ -116,6 +117,13 @@ final class LauncherSettings {
     var updateIntervalHours: Double {
         get { max(defaults.double(forKey: "updateIntervalHours"), 1) }
         set { defaults.set(max(newValue, 1), forKey: "updateIntervalHours") }
+    }
+
+    /// 后台自动检测已安装插件的新版本（默认开）。关闭只影响后台检测，
+    /// 插件管理面板里的手动「检查更新」仍然可用。
+    var autoCheckPluginUpdates: Bool {
+        get { defaults.bool(forKey: "autoCheckPluginUpdates") }
+        set { defaults.set(newValue, forKey: "autoCheckPluginUpdates") }
     }
 
     var openBrowserOnReady: Bool {

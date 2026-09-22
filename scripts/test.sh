@@ -20,13 +20,37 @@ node --check "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHPluginManager/client/client.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-manager.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/client-toasts.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
+# 客户端 UI 渲染冒烟：纯函数测不到的组件接线（工具栏/行内标记/批量轮询/多选/降级）。
+node "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-manager.integration.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
 if rg -q 'npx |git clone|github.com' "$ROOT/Plugins/DSHPluginManager/lib/index.js" >/dev/null && ! rg -q 'installCandidates|git\+' "$ROOT/Plugins/DSHPluginManager/lib/index.js"; then
   echo "plugin manager must expose npm-first / git-fallback install candidates" >&2
   exit 1
 fi
 rg -q 'dsh-plugin-manager' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -q 'sidebar.footer.action' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 插件版本检测与更新：双源判定、老克隆补标记、按来源分派更新动作、后台检测开关。
+rg -q 'comparePluginVersions' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -q 'classifyPluginSource' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -q 'decidePluginUpdate' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq '.dsh-source.json' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'readRepositoryHint' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'GIT_TERMINAL_PROMPT' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/updates'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/update-many'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq '/dsh-plugin-manager/updates' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'update-many' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '/dsh-plugin-manager/updates' "$ROOT/Sources/main.swift"
+rg -Fq 'autoCheckPluginUpdates' "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/main.swift"
+rg -Fq 'decidePluginUpdate' "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
+# 客户端更新 UI 的纯函数（多选/框选/角标/进度/批量 toast）必须有单测。
+rg -Fq 'bandSelection' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
+rg -Fq 'rangeSelection' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
+rg -Fq 'updatesBadgeText' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
+rg -Fq 'batchToast' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
+rg -Fq 'progressStepText' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
 rg -q "register\([^\n]*PluginTrigger" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 侧边栏底部动作：宿主把该 slot 渲染成 Settings 旁边的一行 nowrap flex，
 # 两个占位者都声称整行宽，第二个就会被排到侧边栏右边缘之外（DOM 里存在、
@@ -84,6 +108,13 @@ rg -q 'ReleaseNotesMarkdown.attributedString' "$ROOT/Sources/DSHUpdateVersionPic
 rg -q 'UpdateDownloadWindowController' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateDownloadWindowController.swift"
 rg -q 'UpdateDownloadProgress' "$ROOT/Sources/UpdateSupport.swift"
 rg -q 'miniaturizable' "$ROOT/Sources/UpdateDownloadWindowController.swift"
+# 三种更新的进度窗口都走 DSHInstallWindowController，必须可最小化。
+rg -Fq '.titled, .closable, .miniaturizable' "$ROOT/Sources/DSHInstallWindowController.swift"
+rg -Fq 'static let pluginUpdate = ProgressWindowWording(' "$ROOT/Sources/DSHInstallWindowController.swift"
+rg -Fq 'DSHInstallWindowController(wording: .pluginUpdate)' "$ROOT/Sources/main.swift"
+rg -Fq 'PluginUpdatePresentation.progress' "$ROOT/Sources/main.swift"
+rg -Fq 'PluginUpdatesSnapshot.parse' "$ROOT/Sources/main.swift"
+rg -Fq '/dsh-plugin-manager/updates' "$ROOT/Sources/main.swift"
 rg -q 'onProgress' "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift"
 rg -Fq 'DSHPluginManager' "$ROOT/scripts/build-app.sh" "$ROOT/scripts/build-universal.sh" "$ROOT/Sources/main.swift"
 rg -q 'window.isOpaque = true' "$ROOT/Sources/SettingsWindowController.swift"
@@ -326,6 +357,8 @@ swiftc "$ROOT/scripts/test-plugin-compatibility.swift" "$ROOT/Sources/PluginComp
 swiftc "$ROOT/scripts/test-release-notes.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" -o "$ROOT/build/test-release-notes"
 "$ROOT/build/test-release-notes"
 swiftc "$ROOT/scripts/test-session-notify.swift" "$ROOT/Sources/SessionNotifySupport.swift" -o "$ROOT/build/test-session-notify"
+swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupport.swift" -o "$ROOT/build/test-plugin-updates"
+"$ROOT/build/test-plugin-updates"
 "$ROOT/build/test-session-notify"
 # 提示框外观与版本选择器：纯 AppKit 视图，直接构造/量尺寸/触发动作来断言。
 swiftc "$ROOT/scripts/test-alert-design.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/DSHUpdateVersionPicker.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" -o "$ROOT/build/test-alert-design" -framework AppKit
