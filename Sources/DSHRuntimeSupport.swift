@@ -126,7 +126,9 @@ enum DSHRuntimeSupport {
     static func needsRuntimeUpgrade(environment: [String: String] = LauncherEnvironment.nodeEnvironment()) -> Bool {
         guard isInstalled(), let bundled = bundledDSHVersion() else { return false }
         guard let installed = installedDSHVersion(environment: environment) else { return false }
-        return compareVersions(bundled, installed) == .orderedDescending
+        // npm 语义：bundled 0.1.5-rc.4 相对已装 0.1.5-rc.2 是「更新」。用启动器那套
+        // compareVersions 会把两个 rc 判成相等，于是修复版永远装不上。
+        return compareDSHVersions(bundled, installed) == .orderedDescending
     }
 
     /// npm can emit a lot of output during a first install; only the tail is
@@ -157,6 +159,11 @@ enum DSHRuntimeSupport {
 
     static var executableURL: URL {
         runtimeURL.appendingPathComponent("node_modules/.bin/dsh")
+    }
+
+    /// 用户 web profile 的依赖目录：插件的 package.json / cordis.patch.yml 从这里读。
+    static var profileModulesURL: URL {
+        dshHomeURL.appendingPathComponent("profiles/web/node_modules", isDirectory: true)
     }
 
     /// 版本定向更新（菜单触发的 dsh 更新）前保留的旧 runtime 快照。

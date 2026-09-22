@@ -21,10 +21,25 @@ struct PluginCompatibilityTests {
         check(!PluginCompatibilitySupport.satisfiesRange("0.2.0", range: ">=0.1.0-rc.6 <0.2.0"), "越过上界应不满足")
         check(!PluginCompatibilitySupport.satisfiesRange("0.0.9", range: ">=0.1.0-rc.6 <0.2.0"), "低于下界应不满足")
         check(PluginCompatibilitySupport.satisfiesRange("0.1.0", range: ">=0.1.0-rc.6 <0.2.0"), "正式版高于 rc 下界")
-        // 已知近似：compareVersions 对同为文本后缀（rc.1/rc.6）的预发布视为相等，
-        // 因此 rc.1 会被判为满足 >=rc.6。该近似只影响“同为预发布”的边界情况，
-        // 正式版与预发布之间的比较不受影响，这里显式记录该行为。
-        check(PluginCompatibilitySupport.satisfiesRange("0.1.0-rc.1", range: ">=0.1.0-rc.6 <0.2.0"), "同为 rc 后缀按近似相等处理（记录已知近似）")
+        // rc 粒度必须真的生效：0.1.0-rc.1 不满足 >=0.1.0-rc.6。
+        // （旧实现复用启动器的 compareVersions，把两个 rc 判成相等，于是不兼容的插件被报成兼容。）
+        check(!PluginCompatibilitySupport.satisfiesRange("0.1.0-rc.1", range: ">=0.1.0-rc.6 <0.2.0"), "rc.1 不应满足 >=rc.6")
+        check(PluginCompatibilitySupport.satisfiesRange("0.1.0-rc.6", range: ">=0.1.0-rc.6 <0.2.0"), "rc.6 满足 >=rc.6")
+        check(PluginCompatibilitySupport.satisfiesRange("0.1.0-rc.10", range: ">=0.1.0-rc.6 <0.2.0"), "rc.10 按数值高于 rc.6（不是字典序）")
+        // 越界的预发布：插件写 `<0.2.0` 排除的就是 0.2 这条线，0.2.0-rc.9 不能算满足。
+        check(!PluginCompatibilitySupport.satisfiesRange("0.2.0-rc.9", range: ">=0.1.0-rc.6 <0.2.0"), "上界线的预发布不应被放过")
+        // dsh 生态常态是装 rc runtime：只写正式区间的插件不能被误报成不兼容（npm 默认的
+        // 预发布门控会这么干，这里刻意不采纳）。
+        check(PluginCompatibilitySupport.satisfiesRange("0.1.5-rc.2", range: ">=0.1.0 <0.2.0"), "区间内的 rc runtime 算兼容")
+        // 空格写法与 x-range：`>= 0.1.0` 曾被拆成 `>=` + `0.1.0` 两段，退化成「必须精确等于」。
+        check(PluginCompatibilitySupport.satisfiesRange("1.5.0", range: ">= 0.1.0"), "操作符后的空格不能把比较子拆断")
+        check(PluginCompatibilitySupport.satisfiesRange("0.1.4", range: "0.1.x"), "0.1.x 接受 0.1 线内的版本")
+        check(!PluginCompatibilitySupport.satisfiesRange("0.2.0", range: "0.1.x"), "0.1.x 拒绝 0.2.0")
+        check(PluginCompatibilitySupport.satisfiesRange("1.9.9", range: "1.x"), "1.x 覆盖整条主版本线")
+        // ^0.0.3 的上界是 0.0.4（npm 只允许补丁位浮动），旧实现算成 0.1.0。
+        check(!PluginCompatibilitySupport.satisfiesRange("0.0.4", range: "^0.0.3"), "^0.0.3 不允许跨到 0.0.4")
+        check(PluginCompatibilitySupport.satisfiesRange("0.0.3", range: "^0.0.3"), "^0.0.3 满足自身")
+        check(PluginCompatibilitySupport.satisfiesRange("0.1.5-rc.2", range: ">=0.1.0-rc.6 <0.2.0 || ^0.1.5-rc.1"), "真实插件的多分支写法")
 
         check(PluginCompatibilitySupport.satisfiesRange("1.0.0", range: "*"), "星号恒真")
         check(PluginCompatibilitySupport.satisfiesRange("1.2.3", range: ""), "空区间恒真")

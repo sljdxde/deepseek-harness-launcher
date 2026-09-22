@@ -25,6 +25,10 @@ node --test "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
 node "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-manager.integration.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
+# 安装前的源码 import 校验（残缺克隆不许换掉能用版本）。
+node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-source-imports.test.js"
+# 插件写操作的安全网：装坏要撤销、回滚不许吞错、必需组件不许被拆。
+node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-mutation-safety.test.js"
 if rg -q 'npx |git clone|github.com' "$ROOT/Plugins/DSHPluginManager/lib/index.js" >/dev/null && ! rg -q 'installCandidates|git\+' "$ROOT/Plugins/DSHPluginManager/lib/index.js"; then
   echo "plugin manager must expose npm-first / git-fallback install candidates" >&2
   exit 1
@@ -301,7 +305,7 @@ rg -Fq '检查 Deepseek Harness 更新' "$ROOT/Sources/main.swift"
 # Release），是否安装由用户决定（更新/稍后/跳过此版本），跳过会被记住。
 rg -Fq '["view", "@deepseek-ai/dsh", "dist-tags", "versions", "--json"]' "$ROOT/Sources/DSHUpdateSupport.swift"
 rg -Fq 'deepseek-ai/deepseek-harness/releases.atom' "$ROOT/Sources/DSHUpdateSupport.swift"
-rg -Fq 'compareDSHVersions' "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/scripts/test-dsh-version-support.swift"
+rg -Fq 'compareDSHVersions' "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/scripts/test-dsh-version-support.swift"
 rg -Fq 'DSHUpdatePlanner.shouldAnnounce' "$ROOT/Sources/main.swift"
 rg -Fq 'if interactive { presentDSHUpdate(report: report) }' "$ROOT/Sources/main.swift"
 rg -Fq '跳过此版本' "$ROOT/Sources/main.swift"
@@ -359,26 +363,28 @@ fi
 mkdir -p "$ROOT/build"
 swiftc "$ROOT/scripts/test-update-support.swift" "$ROOT/Sources/UpdateSupport.swift" -o "$ROOT/build/test-update-support"
 "$ROOT/build/test-update-support"
-swiftc "$ROOT/scripts/test-plugin-compatibility.swift" "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/Sources/UpdateSupport.swift" -o "$ROOT/build/test-plugin-compatibility"
+swiftc "$ROOT/scripts/test-plugin-compatibility.swift" "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" -o "$ROOT/build/test-plugin-compatibility"
 "$ROOT/build/test-plugin-compatibility"
 swiftc "$ROOT/scripts/test-release-notes.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" -o "$ROOT/build/test-release-notes"
 "$ROOT/build/test-release-notes"
 swiftc "$ROOT/scripts/test-session-notify.swift" "$ROOT/Sources/SessionNotifySupport.swift" -o "$ROOT/build/test-session-notify"
+swiftc "$ROOT/scripts/test-plugin-isolation.swift" "$ROOT/Sources/PluginIsolationSupport.swift" -o "$ROOT/build/test-plugin-isolation"
+"$ROOT/build/test-plugin-isolation"
 swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupport.swift" -o "$ROOT/build/test-plugin-updates"
 "$ROOT/build/test-plugin-updates"
 "$ROOT/build/test-session-notify"
 # 提示框外观与版本选择器：纯 AppKit 视图，直接构造/量尺寸/触发动作来断言。
-swiftc "$ROOT/scripts/test-alert-design.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/DSHUpdateVersionPicker.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" -o "$ROOT/build/test-alert-design" -framework AppKit
+swiftc "$ROOT/scripts/test-alert-design.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/DSHUpdateVersionPicker.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" -o "$ROOT/build/test-alert-design" -framework AppKit
 "$ROOT/build/test-alert-design"
 swiftc "$ROOT/scripts/test-launcher-support.swift" "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/Sources/LogSupport.swift" -o "$ROOT/build/test-launcher-support"
 "$ROOT/build/test-launcher-support"
 swiftc "$ROOT/scripts/test-global-hotkey.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-global-hotkey"
 "$ROOT/build/test-global-hotkey"
-swiftc "$ROOT/scripts/test-dsh-version-support.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" -o "$ROOT/build/test-dsh-version-support"
+swiftc "$ROOT/scripts/test-dsh-version-support.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" -o "$ROOT/build/test-dsh-version-support"
 "$ROOT/build/test-dsh-version-support"
 swiftc "$ROOT/scripts/test-dsh-install-progress.swift" "$ROOT/Sources/DSHInstallProgress.swift" -o "$ROOT/build/test-dsh-install-progress"
 "$ROOT/build/test-dsh-install-progress"
-swiftc "$ROOT/scripts/test-dsh-runtime-support.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" -o "$ROOT/build/test-dsh-runtime-support"
+swiftc "$ROOT/scripts/test-dsh-runtime-support.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" -o "$ROOT/build/test-dsh-runtime-support"
 RUNTIME_TEST_HOME="$(mktemp -d /tmp/dsh-runtime-home.XXXXXX)"
 # macOS ignores the HOME env var for NSHomeDirectory(); DSHRuntimeSupport honors
 # DSH_HOME, so use it to isolate the runtime tests from the real ~/.dsh.

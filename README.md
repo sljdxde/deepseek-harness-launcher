@@ -37,6 +37,7 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 12 | **内置插件管理（DSHPluginManager）** | 侧边栏新增「插件管理」入口，含「已安装」与「插件市场」两个页面：已安装插件可查看/卸载/**更新到最新版本**；市场数据来自 `awesome-dsh-plugin`（分类、搜索、按星级/下载排序、一键安装）。安装/卸载/更新通过 `dsh plugin --profile web` 执行，缺 pnpm 时自动用 corepack 自举，变更后提示重启 dsh 生效。可更新插件在侧边栏入口与面板里都有标记。 |
 | 13 | **会话完成通知（DSHSessionNotify）** | 内置服务端插件监听主会话 `turn/end`（方案同社区 dsh-notify 插件，但不弹系统通知）。会话回合结束时，菜单栏图标显示 Foxmail 式红色未读角标（**按会话计数**：同一会话连跑多轮仍只算一个），菜单顶部列出最近的完成/出错/中止会话（时间 · 标题 · 结果），点击条目打开 Harness 页面并清除角标，也可一键「清除完成提醒」。 |
 
+| 14 | **启动失败自动恢复** | 某个插件把 dsh 弄崩时（插件 import 失败会让整个进程以退出码 1 结束），启动器从 stderr 里认出是哪个插件，用自带的 `--patch` overlay 把它的行 `disabled: true` 再自动重启；认不出或隔离到上限就转入只加载 dsh 自带插件的安全模式。全过程不改动 profile 的依赖与 bundle 列表，菜单里可一键恢复。详见「启动失败自动恢复」。 |
 **边界与取舍**：
 
 - 仅支持 macOS（无 Windows / Linux）；
@@ -152,6 +153,20 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 - **后台自动检测**：默认开启（设置窗口「自动检测插件更新」可关）。开启时启动器在服务就绪后约 15 秒触发一次刷新，之后跟随「检查频率」（默认每 6 小时）；结果缓存在 profile 下的 `.plugin-updates.json`，默认 6 小时内不重复联网。关闭只影响后台检测，面板里的「检查更新」仍可用。
 - **呈现**：插件管理面板「已安装」列表每行显示当前版本与「可更新到 vX」（可单条更新，也可「全部更新」），并有「上次检测」时间；侧边栏「插件管理」入口和启动器菜单行也会显示可更新数量。旧的外部 Harness 实例没有这些接口时静默降级。
 
+### 启动失败自动恢复（插件隔离与安全模式）
+
+设计目标：**点「重启」一定要能把 Harness 拉起来**。插件是 dsh 启动时逐个 import 的，任何一个抛错整个进程就以退出码 1 结束，而插件管理器的 HTTP 接口随 dsh 一起死——所以恢复逻辑必须放在启动器里，不依赖 dsh 活着。
+
+- **只在「启动过程中」退出才触发**：运行期崩溃的原因五花八门，那时候禁插件大概率无效，还会静默削弱用户环境。
+- **归因**：从这次启动的 stderr 里认 `failed to import loader entry <行> (<包>)`、`Cannot find package '<包>'`、`ERR_MODULE_NOT_FOUND` 的 `node_modules` 路径。**认不出就不猜**。
+- **隔离**：跑一次 `dsh web --dump-config`（只 compose、不启服务，坏 profile 上照样出结果）取该包**自己贡献**的顶层行 id，取不到再退回包内 `cordis.patch.yml` 的 `insert:` 块；然后写两个文件到 `~/Library/Application Support/Deepseek Harness Launcher/`：`plugin-isolation.json`（状态）与 `plugin-isolation.yml`（overlay）。下次启动以最高优先级的 `--patch` 传入 `- id: <行>` + `disabled: true`，并自动重新拉起。
+  - 不碰 profile 的 `dependencies` 与 `dsh.profile.bundles`（那两处 `dsh plugin` 每次都会 reconcile 回来），不删插件文件，不跑 pnpm。
+  - 内置插件（`@deepseek-ai/dsh-base`、`dsh-web-app` 与启动器自带的三个插件）永不被隔离。
+  - 一次启动会话最多连续隔离 3 个插件，避免把插件挨个禁光。
+- **安全模式**：认不出嫌疑插件、或隔离额度用尽时，改用 `dsh --profile rescue --from-default-profile web` 启动——只含 dsh 自带的 base + web-app（新建约 16K，不需要网络），第三方插件一个都不加载。此时不跑归档/通知/插件更新等探针，免得对着一堆「插件不可用」弹窗。
+- **恢复**：菜单会出现「已隔离 N 个插件…（点按恢复）」或「退出安全模式并重启」。手动复位删掉 `plugin-isolation.json` 即可。
+- **已知代价**：被隔离的插件如果给别的 bundle 注入服务，那些行会以 `pending (waiting for services: …)` 再失败一次，此时继续隔离下一个嫌疑插件或转入安全模式。
+
 ### 卸载
 
 ```sh
@@ -228,6 +243,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 - 日志文件：`~/Library/Logs/Deepseek Harness Launcher/dhl.log`。菜单栏中的「打开日志」会直接打开它。
 - 日志时间使用本机时区，格式为 `yyyy-MM-dd HH:mm:ss Z`；已有的历史 UTC 日志不会被重写。
 - 遇到启动失败，优先检查日志中的「启动命令」以及紧随其后的 npm/dsh stderr。常见原因是 Node/npm 不在可发现路径、registry 网络失败、端口已被非 Harness 程序占用，或归档插件链接指向了已删除的旧 App。
+- 因插件导致的启动失败会先自动隔离并重试（日志里搜「已隔离插件」），隔离记录在 `~/Library/Application Support/Deepseek Harness Launcher/plugin-isolation.json`；某次更新后功能消失，先看这个文件是不是把插件禁掉了。
 
 ---
 

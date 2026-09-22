@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
@@ -79,6 +79,73 @@ async function listScopedModules(modulesDir) {
 
 /** Official core profile layers that ship with dsh and are not user plugins. */
 const CORE_BUNDLES = new Set(['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-headless']);
+
+/**
+ * 启动器随包自带的内置插件。它们不是"用户插件"，但会出现在已安装列表里；
+ * 卸掉 dsh-plugin-manager 等于把插件管理界面自己拆了，之后再也无法从界面恢复。
+ * 客户端按钮只是 gating，真正的拦截必须放在服务端这一层。
+ */
+const PROTECTED_PLUGINS = new Set(['dsh-plugin-manager', 'dsh-archive-manager', 'dsh-session-notify']);
+
+async function pathExists(path) {
+  try { await fs.access(path); return true; } catch { return false; }
+}
+
+/**
+ * 临时文件 + rename 的原子写。半截 JSON（磁盘满、进程被杀）会被读回来，
+ * 让 profile 的状态比不写更糟；原子写至少保证读到的要么是旧内容要么是完整新内容。
+ */
+async function writeTextAtomic(path, text) {
+  await fs.mkdir(join(path, '..'), { recursive: true });
+  const staging = `${path}.${process.pid}.tmp`;
+  try {
+    await fs.writeFile(staging, text, 'utf8');
+    await fs.rename(staging, path);
+  } catch (error) {
+    await fs.rm(staging, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+/**
+ * 已经装进 node_modules 的那份能不能被 import。
+ *
+ * 光校验克隆源码不够：npm／`github:` 来源根本不经过 plugin-sources，pnpm 也可能在
+ * 物化时漏文件。装完立刻按包自己的 import 图查一遍，坏就当场退回，别等用户重启
+ * dsh 才发现整个 Harness 起不来。包目录不存在时返回空（外部 profile 或已被移走，
+ * 无从校验，也不该因此判定失败）。
+ */
+async function installedImportGaps(name) {
+  const resolved = await resolveModule(profilesWebModules(), String(name));
+  if (!resolved) return [];
+  return findUnresolvableLocalImports(resolved.path);
+}
+
+async function restoreSourceBackup(backup, dir) {
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rename(backup, dir);
+    return true;
+  } catch { return false; }
+}
+
+/** 装坏之后的退路：把包从 profile 里摘掉，恢复到动手之前。 */
+async function rollbackFailedInstall(name, command) {
+  try {
+    await command(['remove', name]);
+    return '已自动撤销这次安装';
+  } catch (error) {
+    return `已尝试撤销但失败（${String(error?.message || error)}），重启 dsh 前请先手动卸载 ${name}`;
+  }
+}
+
+/** 安装后验收：装进来的包 import 落不了地就当场撤销，绝不留给下一次 dsh 启动去炸。 */
+async function acceptInstalledPackage(name, note, command = pluginCommand) {
+  const gaps = await installedImportGaps(name);
+  if (!gaps.length) return { ok: true, note };
+  const rollback = await rollbackFailedInstall(name, command);
+  return { ok: false, error: `${describeUnresolvableImports(gaps)}；${rollback}` };
+}
 
 /** Resolve a package name (`name` or `@scope/name`) inside a modules dir. */
 async function resolveModule(modulesDir, packageName) {
@@ -211,10 +278,10 @@ export async function ensurePnpmWorkspace() {
   try {
     const content = await fs.readFile(workspacePath, 'utf8');
     if (content.includes('dangerouslyAllowAllBuilds') || content.includes('allowBuilds')) return;
-    await fs.writeFile(workspacePath, `${content.replace(/\n*$/, '')}\ndangerouslyAllowAllBuilds: true\n`, 'utf8');
+    await writeTextAtomic(workspacePath, `${content.replace(/\n*$/, '')}\ndangerouslyAllowAllBuilds: true\n`);
   } catch {
     await fs.mkdir(profilesWebDir(), { recursive: true });
-    await fs.writeFile(workspacePath, 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\ndangerouslyAllowAllBuilds: true\n', 'utf8');
+    await writeTextAtomic(workspacePath, 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\ndangerouslyAllowAllBuilds: true\n');
   }
 }
 
@@ -271,6 +338,95 @@ async function npmViewExists(name, timeoutMs = 8000) {
   }
 }
 
+/** 一条 import 语句里的模块说明符，覆盖静态、动态与副作用三种写法。 */
+const LOCAL_IMPORT_RES = [
+  /(?:^|[\s;(=])(?:import|export)\b[^;'"]*?from\s*["']([^"']+)["']/g,
+  /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
+  /(?:^|[\s;])import\s*["']([^"']+)["']/g
+];
+
+/** Node 允许省扩展名时补齐的后缀（含 TS：有的插件带 loader 跑 .mts）。 */
+const LOCAL_MODULE_EXTENSIONS = ['', '.mjs', '.js', '.cjs', '.mts', '.ts', '.cts'];
+
+/** 不参与 import 校验的目录：不是这个包的运行时代码。 */
+const UNSCANNED_PACKAGE_DIRS = new Set(['node_modules', '.git', 'test', 'tests', '__tests__', 'fixtures', 'coverage']);
+
+function localImportSpecifiers(source) {
+  const found = new Set();
+  for (const re of LOCAL_IMPORT_RES) {
+    for (const match of source.matchAll(re)) found.add(match[1]);
+  }
+  return [...found];
+}
+
+async function listPackageModuleFiles(dir, out = []) {
+  let entries;
+  try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return out; }
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      // node_modules 里的东西不归这个包负责；测试与覆盖率目录 dsh 启动时不加载，而插件
+      // 仓库的 test/ 引用到仓库里的 fixture 是常态，报出来全是误报。
+      if (UNSCANNED_PACKAGE_DIRS.has(entry.name)) continue;
+      await listPackageModuleFiles(path, out);
+    } else if (/\.(?:mjs|cjs|js|mts|cts)$/.test(entry.name) && !/\.(?:test|spec)\.(?:mjs|cjs|js|mts|cts)$/.test(entry.name)) {
+      out.push(path);
+    }
+  }
+  return out;
+}
+
+async function resolvesAsLocalModule(target) {
+  for (const extension of LOCAL_MODULE_EXTENSIONS) {
+    try { if ((await fs.stat(`${target}${extension}`)).isFile()) return true; } catch { /* 换下一个候选 */ }
+  }
+  for (const extension of LOCAL_MODULE_EXTENSIONS.slice(1)) {
+    try { if ((await fs.stat(join(target, `index${extension}`))).isFile()) return true; } catch { /* 换下一个候选 */ }
+  }
+  return false;
+}
+
+/**
+ * 装之前先问源码自己：你 import 的相对路径都在吗？
+ *
+ * 一些上游把公共模块移出 git、改成 pack 时生成（OpenViking 的 `shared/` 就是
+ * `prepack: node ../memory-plugin-shared/sync.mjs` 的产物），而子目录插件的安装方式是
+ * 「sparse clone 那个子目录 + `pnpm add file:`」：既不会跑 prepack，也拿不到兄弟目录，
+ * 于是装出来的源码缺一整批模块。版本复核（verifyUpdateApplied）只看 package.json 的
+ * version，对此毫无察觉——真正炸的时机是用户下次重启 dsh，而且一炸整个 Harness 起不来。
+ *
+ * 只查解析后仍落在包目录内的相对路径：`../` 出界的部分在 pnpm 的 node_modules 布局里
+ * 另有解析规则，报出来只会是误报。
+ * @param {string} dir - 待校验的包目录（克隆出来的 plugin-sources 副本）。
+ * @returns {Promise<Array<{importer:string,specifier:string}>>} 落不了地的 import，按引用方排序。
+ */
+export async function findUnresolvableLocalImports(dir) {
+  const root = resolve(dir);
+  const missing = [];
+  for (const file of await listPackageModuleFiles(root)) {
+    const source = await fs.readFile(file, 'utf8').catch(() => null);
+    if (source === null) continue;
+    for (const specifier of localImportSpecifiers(source)) {
+      if (!specifier.startsWith('.')) continue;
+      const target = resolve(dirname(file), specifier);
+      if (!target.startsWith(root + sep)) continue;
+      if (!(await resolvesAsLocalModule(target))) {
+        missing.push({ importer: relative(root, file), specifier });
+      }
+    }
+  }
+  return missing.sort((a, b) => `${a.importer}${a.specifier}`.localeCompare(`${b.importer}${b.specifier}`));
+}
+
+/** 缺失模块要说人话：点名前三个模块和它们的引用方，再说清为什么缺。 */
+function describeUnresolvableImports(missing) {
+  const shown = missing.slice(0, 3)
+    .map(item => `${item.specifier}（由 ${item.importer} 引用）`)
+    .join('、');
+  const rest = missing.length > 3 ? ` 等 ${missing.length} 处` : '';
+  return `插件源码缺少模块 ${shown}${rest}：上游大概只在 npm 打包时才生成这些文件，从 git 目录装出来就是残缺的，装上会让 dsh 起不来`;
+}
+
 /**
  * Clone `author/repo` into a persistent source folder under the profile and
  * return the resolved plugin's package.json name. When `subdir` is given, only
@@ -310,13 +466,16 @@ async function cloneToSources(ref, subdir) {
     if (!meta?.name) {
       return { ok: false, error: `仓库 ${ref.full}${subdir ? ' 的子目录 ' + subdir : ' 根目录'}没有 package.json，无法作为插件安装` };
     }
-    await fs.rm(dest, { recursive: true, force: true });
-    await fs.cp(src, dest, { recursive: true });
+    // 先落一份同目录下的暂存副本、验过再换掉旧源码。原来的「先 rm 再 cp」意味着
+    // 只要后面任何一步失败（包括校验拒绝、pnpm 失败），上一个能用的版本就已经没了。
+    const staging = `${dest}.staged-${process.pid}-${Date.now()}`;
+    await fs.mkdir(join(dest, '..'), { recursive: true });
+    await fs.cp(src, staging, { recursive: true });
     // 记下来源与 commit：更新检测靠它反推远端、判断"远端是否只是有新提交"。
     const head = await run('git', ['-C', cloneDir, 'rev-parse', 'HEAD'], { timeout: 30000 })
       .then(result => String(result.stdout).trim().toLowerCase())
       .catch(() => null);
-    await fs.writeFile(join(dest, SOURCE_MARKER_NAME), JSON.stringify({
+    await fs.writeFile(join(staging, SOURCE_MARKER_NAME), JSON.stringify({
       author: ref.author,
       repo: ref.repo,
       subdir: subdir ?? null,
@@ -324,6 +483,13 @@ async function cloneToSources(ref, subdir) {
       commit: /^[0-9a-f]{40}$/.test(head ?? '') ? head : null,
       clonedAt: new Date().toISOString()
     }, null, 2), 'utf8').catch(() => {});
+    const gaps = await findUnresolvableLocalImports(staging);
+    if (gaps.length) {
+      await fs.rm(staging, { recursive: true, force: true }).catch(() => {});
+      return { ok: false, error: `${describeUnresolvableImports(gaps)}；原有源码未改动` };
+    }
+    await fs.rm(dest, { recursive: true, force: true }).catch(() => {});
+    await fs.rename(staging, dest);
     return { ok: true, dest, packageName: meta.name };
   } finally {
     await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
@@ -336,6 +502,8 @@ async function cloneToSources(ref, subdir) {
  * We sparse-clone the repo, copy the subdirectory into a persistent source
  * folder under the profile, and add it as a `file:` dependency so pnpm records
  * it in the profile manifest and node_modules (and dsh reconciles its bundle).
+ * A clone whose own relative imports don't land is refused here rather than
+ * linked into the profile (see findUnresolvableLocalImports).
  * @param {{author:string,repo:string,subdir:string,full:string}} ref
  * @param {Set<string>} installedNames - lower-cased names already present.
  * @returns {Promise<{ok:boolean,alreadyInstalled?:boolean,installedAs?:string,packageName?:string,note?:string,error?:string}>}
@@ -343,12 +511,16 @@ async function cloneToSources(ref, subdir) {
 async function installSubdirPlugin(ref, installedNames) {
   const src = await cloneToSources(ref, ref.subdir);
   if (!src.ok) return src;
+  const missing = await findUnresolvableLocalImports(src.dest);
+  if (missing.length) return { ok: false, error: describeUnresolvableImports(missing) };
   if (installedNames.has(src.packageName.toLowerCase())) {
     return { ok: true, alreadyInstalled: true, installedAs: src.packageName, packageName: src.packageName };
   }
   try {
     const result = await pluginCommand(['add', `file:${src.dest}`]);
-    return { ok: true, installedAs: `file:${src.dest}`, packageName: src.packageName, note: result.note };
+    const accepted = await acceptInstalledPackage(src.packageName, result.note);
+    if (!accepted.ok) return accepted;
+    return { ok: true, installedAs: `file:${src.dest}`, packageName: src.packageName, note: accepted.note };
   } catch (error) {
     return { ok: false, error: String(error?.message || error) };
   }
@@ -394,7 +566,9 @@ export async function installPlugin(entry) {
     if (!probes[i]) { lastError = `npm 包 ${candidates[i]} 不存在`; continue; }
     try {
       const result = await pluginCommand(['add', candidates[i]]);
-      return { ok: true, installedAs: candidates[i], packageName: candidates[i], note: result.note };
+      const accepted = await acceptInstalledPackage(candidates[i], result.note);
+      if (!accepted.ok) return accepted;
+      return { ok: true, installedAs: candidates[i], packageName: candidates[i], note: accepted.note };
     } catch (error) {
       lastError = String(error?.message || error);
     }
@@ -407,7 +581,9 @@ export async function installPlugin(entry) {
     if (src.ok) {
       try {
         const result = await pluginCommand(['add', `file:${src.dest}`]);
-        return { ok: true, installedAs: `file:${src.dest}`, packageName: src.packageName, note: result.note };
+        const accepted = await acceptInstalledPackage(src.packageName, result.note);
+        if (!accepted.ok) return accepted;
+        return { ok: true, installedAs: `file:${src.dest}`, packageName: src.packageName, note: accepted.note };
       } catch (error) {
         lastError = String(error?.message || error);
       }
@@ -454,6 +630,9 @@ export async function cleanupPluginSources(before, names) {
 }
 
 export async function uninstallPlugin(name) {
+  if (PROTECTED_PLUGINS.has(String(name))) {
+    return { ok: false, error: `${name} 是启动器随包自带的内置插件，卸载它会连插件管理界面一起失去，启动器会在下次启动时重新链接它` };
+  }
   const before = await readProfileManifest();
   try {
     const result = await pluginCommand(['remove', name]);
@@ -537,6 +716,8 @@ async function verifyUpdateApplied(name, target) {
  * - npm：`pnpm add <name>@<latest>`（显式指定版本，插件记录里就是新版本号）；
  * - `github:` 依赖：按原 spec 重新解析（pnpm 会拉到默认分支最新 commit）；
  * - plugin-sources 的克隆：先备份成 `.bak-<时间戳>` 再重新 clone 覆盖，失败回滚。
+ *   克隆出来的源码若自己的相对 import 都落不了地，同样算失败并回滚——残缺源码装进
+ *   profile 之后版本号是对的，只有重启 dsh 才会炸。
  * 服务端插件代码要重启 dsh 才生效，所以统一回 `restartRequired: true`。
  */
 export async function applyPluginUpdate(source, options = {}) {
@@ -554,6 +735,15 @@ export async function applyPluginUpdate(source, options = {}) {
   if (source.kind === 'npm') {
     stepUpdateProgress(source.name, `正在下载并安装 v${target}…`);
     await command(['add', `${source.name}@${target}`]);
+    const gaps = await installedImportGaps(source.name);
+    if (gaps.length) {
+      return {
+        ok: false,
+        status: 'rolled-back',
+        restartRequired: true,
+        error: `${describeUnresolvableImports(gaps)}；${await restorePreviousVersion(source, command)}`
+      };
+    }
     stepUpdateProgress(source.name, `正在同步 profile…`);
     const applied = await verifyUpdateApplied(source.name, target);
     return {
@@ -569,8 +759,13 @@ export async function applyPluginUpdate(source, options = {}) {
     if (remote.dir) {
       const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
       const backup = `${remote.dir}.bak-${stamp}`;
-      await fs.rm(backup, { recursive: true, force: true }).catch(() => {});
-      await fs.rename(remote.dir, backup).catch(() => {});
+      const hadSource = await pathExists(remote.dir);
+      if (hadSource) {
+        await fs.rm(backup, { recursive: true, force: true }).catch(() => {});
+        // 备份这一步以前是 .catch(() => {})：备份没做成和"本来就没有旧目录"长得一模一样，
+        // 后面 clone 一失败就能把唯一能用的源码 rm 掉。现在让它如实抛错，此时还没动过任何东西。
+        await fs.rename(remote.dir, backup);
+      }
       let clonedDest = null;
       try {
         stepUpdateProgress(source.name, '正在重新克隆源码…');
@@ -580,11 +775,18 @@ export async function applyPluginUpdate(source, options = {}) {
         );
         if (!cloned.ok) throw new Error(cloned.error || '重新克隆失败');
         clonedDest = cloned.dest ?? null;
+        // 校验放在 pnpm add 之前：源码残缺就 throw 出去，让下面的 catch 把 .bak 换回来，
+        // profile 一行都不动。
+        stepUpdateProgress(source.name, '正在校验插件源码…');
+        const missing = await findUnresolvableLocalImports(clonedDest ?? remote.dir);
+        if (missing.length) throw new Error(describeUnresolvableImports(missing));
         stepUpdateProgress(source.name, '正在同步 profile…');
         await command(['add', `file:${cloned.dest}`]);
       } catch (error) {
-        await fs.rm(remote.dir, { recursive: true, force: true }).catch(() => {});
-        await fs.rename(backup, remote.dir).catch(() => {});
+        if (hadSource && !(await restoreSourceBackup(backup, remote.dir))) {
+          throw new Error(`${String(error?.message || error)}；旧版本没能从 ${backup.split('/').pop()} 放回原位，`
+            + `dsh 可能已经起不来，请按日志里的路径手工恢复该目录`);
+        }
         throw error;
       }
       await pruneSourceBackups(remote.dir);
@@ -597,6 +799,15 @@ export async function applyPluginUpdate(source, options = {}) {
     }
     stepUpdateProgress(source.name, `正在重新解析 ${source.spec ?? `github:${remote.author}/${remote.repo}`}…`);
     await command(['add', source.spec ?? `github:${remote.author}/${remote.repo}`]);
+    const gaps = await installedImportGaps(source.name);
+    if (gaps.length) {
+      return {
+        ok: false,
+        status: 'rolled-back',
+        restartRequired: true,
+        error: `${describeUnresolvableImports(gaps)}；${await restorePreviousVersion(source, command)}`
+      };
+    }
     const parsed = await verifyUpdateApplied(source.name, target);
     return {
       ok: true,
@@ -608,6 +819,34 @@ export async function applyPluginUpdate(source, options = {}) {
   }
 
   return { ok: false, error: '该插件来源无法自动更新' };
+}
+
+/**
+ * 升级装出来一个 import 落不了地的版本时，把 profile 退回升级**之前**的那一份。
+ * 退不回去就如实说，别把用户留在"看起来更新成功、其实起不来"的状态。
+ */
+async function restorePreviousVersion(source, command) {
+  const previous = source.installedVersion;
+  if (source.kind === 'npm') {
+    if (!previous) return `无法自动退回：不知道 v${source.name} 升级前的版本号，请在插件管理里手动重装`;
+    try {
+      await command(['add', `${source.name}@${previous}`]);
+      return `已退回原版本 v${previous}，重启 dsh 后生效`;
+    } catch (error) {
+      return `退回 v${previous} 也失败（${String(error?.message || error)}），该插件现在需要手动重装或卸载`;
+    }
+  }
+  const remote = source.remote ?? {};
+  if (source.kind === 'git' && remote.author && remote.repo && source.installedCommit) {
+    const spec = `github:${remote.author}/${remote.repo}#${source.installedCommit}`;
+    try {
+      await command(['add', spec]);
+      return `已退回原 commit ${String(source.installedCommit).slice(0, 8)}，重启 dsh 后生效`;
+    } catch (error) {
+      return `退回 ${spec} 失败（${String(error?.message || error)}），该插件现在需要手动重装或卸载`;
+    }
+  }
+  return '没有足够的版本信息自动退回，请在插件管理里手动重装或卸载该插件';
 }
 
 /**
@@ -624,8 +863,40 @@ async function finalizeFileSourceUpdate(name, target, dest, command, backup) {
   if (!(await installedVersionOf(name))) {
     return { verified: false, note: `源码已更新到 v${target}${backupNote}，node_modules 里没有该包，重启 dsh 后确认` };
   }
-  await fs.rm(join(profilesWebModules(), ...String(name).split('/')), { recursive: true, force: true }).catch(() => {});
-  await command(['add', `file:${dest}`]);
+  const packageDir = join(profilesWebModules(), ...String(name).split('/'));
+  await fs.rm(packageDir, { recursive: true, force: true }).catch(() => {});
+  try {
+    await command(['add', `file:${dest}`]);
+  } catch (error) {
+    // 包目录已经删了、重装又失败：profile 正处于"这个包不存在"的半坏状态。
+    // 更新前的源码副本此时还在 `.bak-…` 里，用它重装一次，别把坏状态留给用户。
+    let detail = `重装 v${target} 失败（${String(error?.message || error)}）`;
+    if (backup && await pathExists(backup)) {
+      try {
+        await command(['add', `file:${backup}`]);
+        detail += '；已改用更新前的源码副本重装，重启 dsh 后确认';
+      } catch (inner) {
+        detail += `；用更新前的源码副本重装也失败（${String(inner?.message || inner)}），`
+          + `请在插件管理里重装或卸载 ${name}，否则 dsh 会起不来`;
+      }
+    }
+    return { ok: false, verified: false, error: detail, note: detail };
+  }
+  // 重装成功不等于装对了：pnpm 的 file: 链接会原样反映源码目录，源码残缺时
+  // 版本复核照样通过（那次事故就是这样）。按包自己的 import 图再查一遍。
+  const gaps = await installedImportGaps(name);
+  if (gaps.length) {
+    let detail = describeUnresolvableImports(gaps);
+    if (backup && await pathExists(backup)) {
+      try {
+        await command(['add', `file:${backup}`]);
+        detail += `；已改回更新前的源码副本（${backup.split('/').pop()}），重启 dsh 后确认`;
+      } catch (inner) {
+        detail += `；改回更新前的源码副本也失败（${String(inner?.message || inner)}），请重装或卸载 ${name}`;
+      }
+    }
+    return { ok: false, verified: false, error: detail, note: detail };
+  }
   if (await verifyUpdateApplied(name, target)) {
     return { verified: true, note: `已更新到 v${target}${backupNote}（重装了一次让 node_modules 跟上）` };
   }
@@ -641,6 +912,11 @@ export async function pruneSourceBackups(dest) {
   try { entries = await fs.readdir(dir); } catch { return []; }
   const backups = entries.filter(entry => entry.startsWith(`${name}.bak-`)).sort().reverse();
   const removed = [];
+  // 被 Ctrl+C 或崩溃打断的克隆会把 `.staged-*` 留在原地，下次更新用不到它。
+  for (const stale of entries.filter(entry => entry.startsWith(`${name}.staged-`))) {
+    await fs.rm(join(dir, stale), { recursive: true, force: true }).catch(() => {});
+    removed.push(stale);
+  }
   for (const stale of backups.slice(1)) {
     await fs.rm(join(dir, stale), { recursive: true, force: true }).catch(() => {});
     removed.push(stale);
@@ -695,6 +971,11 @@ export async function cleanupBrokenPlugin(name) {
   if (typeof name !== 'string' || !/^[@a-zA-Z0-9._/-]+$/.test(name) || name.includes('..')) {
     throw new Error('非法的插件名');
   }
+  // 清理坏安装的手段本身不能用来拆掉必需组件：内置插件与 core bundle 一旦被删，
+  // dsh 会直接缺服务，而 UI 的 gating 挡不住直接打接口的调用。
+  if (PROTECTED_PLUGINS.has(name) || CORE_BUNDLES.has(name)) {
+    throw new Error(`${name} 是启动器/dsh 的必需组件，不能清理`);
+  }
   const target = join(profilesWebModules(), name);
   await fs.rm(target, { recursive: true, force: true });
   // Also drop any stale dependency / bundle record from the profile manifest
@@ -712,7 +993,7 @@ export async function cleanupBrokenPlugin(name) {
       changed = true;
     }
     if (changed) {
-      await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+      await writeTextAtomic(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
     }
   } catch { /* no manifest to clean */ }
   return { ok: true };
@@ -1130,8 +1411,7 @@ export async function writeUpdateCache(value, cacheFile) {
   const inventory = (Array.isArray(value?.inventory) ? value.inventory : [])
     .filter(item => item && typeof item.name === 'string' && item.name && typeof item.status === 'string' && item.status);
   const target = cacheFile ?? UPDATES_CACHE_FILE();
-  await fs.mkdir(join(target, '..'), { recursive: true });
-  await fs.writeFile(target, JSON.stringify({ ...value, inventory }, null, 2), 'utf8');
+  await writeTextAtomic(target, JSON.stringify({ ...value, inventory }, null, 2));
 }
 
 /** npm 包的 dist-tags（走 pnpm shim，和安装链路同一个 registry/网络栈）。 */
