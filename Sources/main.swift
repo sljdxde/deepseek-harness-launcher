@@ -11,8 +11,6 @@ private enum DSHInstallMode: Equatable { case firstInstall, upgrade, repair, dsh
 // title and shortcut columns stable while preserving native menu behavior.
 private final class MenuRowView: NSView {
     var title: String { didSet { needsDisplay = true } }
-    /// 未读的会话完成行用半粗体，点过之后变回常规字重（对齐 codex 的"最近任务"列表）。
-    var emphasized: Bool = false { didSet { needsDisplay = true } }
     let shortcut: String
     private let enabled: () -> Bool
     private var trackingArea: NSTrackingArea?
@@ -76,10 +74,8 @@ private final class MenuRowView: NSView {
         } else {
             foregroundColor = NSColor.tertiaryLabelColor
         }
-        let baseFont = NSFont.menuFont(ofSize: 0)
-        let font = emphasized ? NSFont.systemFont(ofSize: baseFont.pointSize, weight: .semibold) : baseFont
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
+            .font: NSFont.menuFont(ofSize: 0),
             .foregroundColor: foregroundColor
         ]
         let textSize = title.size(withAttributes: attributes)
@@ -142,8 +138,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var sessionNotifyLoopID = 0
     // 插件更新提醒：内置 dsh-plugin-manager 提供 /dsh-plugin-manager/updates，
     // 启动器周期性读回可更新数量写进菜单；外部/旧实例没有该接口，静默降级。
-    private var pluginUpdatesMenuItem: NSMenuItem?
-    private var pluginUpdatesMenuRow: MenuRowView?
     private var pluginUpdatesLoopID = 0
     private var pluginUpdatesFailureStreak = 0
     private var pluginUpdatesUnavailableLogged = false
@@ -226,16 +220,14 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         update.tag = 1002; updateMenuItem = update; updateMenuRow = update.view as? MenuRowView
         let dshUpdate = menuRowItem(title: "检查 Deepseek Harness 更新", action: #selector(checkDSHForUpdates))
         dshUpdate.tag = 1003; dshUpdateMenuItem = dshUpdate; dshUpdateMenuRow = dshUpdate.view as? MenuRowView
-        let pluginUpdates = menuRowItem(title: "插件管理", action: #selector(openPluginManager))
-        pluginUpdates.tag = 1004; pluginUpdatesMenuItem = pluginUpdates; pluginUpdatesMenuRow = pluginUpdates.view as? MenuRowView
         let settingsItem = makeSettingsMenuItem()
         let logs = menuRowItem(title: "打开日志", action: #selector(openLogs), keyEquivalent: "l")
         let quit = menuRowItem(title: "退出 Deepseek Harness", action: #selector(quit), keyEquivalent: "q")
-        [open, port, restart, NSMenuItem.separator(), update, dshUpdate, pluginUpdates, settingsItem, logs, quit].forEach(menu.addItem)
+        [open, port, restart, NSMenuItem.separator(), update, dshUpdate, settingsItem, logs, quit].forEach(menu.addItem)
         return menu
     }
 
-    private func menuRowItem(title: String, action: Selector?, keyEquivalent: String = "", emphasized: Bool = false, enabled: @escaping () -> Bool = { true }) -> NSMenuItem {
+    private func menuRowItem(title: String, action: Selector?, keyEquivalent: String = "", enabled: @escaping () -> Bool = { true }) -> NSMenuItem {
         let item = NSMenuItem(title: "", action: action, keyEquivalent: keyEquivalent)
         item.target = self
         item.isEnabled = enabled()
@@ -247,9 +239,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.state = .off
         item.indentationLevel = 0
         let shortcut = keyEquivalent.isEmpty ? "" : (keyEquivalent == "," ? "⌘," : "⌘ \(keyEquivalent.uppercased())")
-        let row = MenuRowView(title: title, shortcut: shortcut, enabled: enabled)
-        row.emphasized = emphasized
-        item.view = row
+        item.view = MenuRowView(title: title, shortcut: shortcut, enabled: enabled)
         return item
     }
 
@@ -265,13 +255,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setDSHUpdateMenuTitle(_ title: String) {
         dshUpdateMenuItem?.title = title
         dshUpdateMenuRow?.title = title
-    }
-
-    /// 菜单「插件管理」行的标题：只在有可更新插件时才带数字，平时保持朴素。
-    private func setPluginUpdatesMenuTitle(_ count: Int) {
-        let title = count > 0 ? "插件管理 · \(count) 个可更新" : "插件管理"
-        pluginUpdatesMenuItem?.title = title
-        pluginUpdatesMenuRow?.title = title
     }
 
     private func scheduleDSHUpdateCheck() {
@@ -1923,8 +1906,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var items: [NSMenuItem] = [NSMenuItem.separator()]
         let header = menuRowItem(title: "会话完成（\(sessionNotifyStore.unreadCount) 个未读）", action: nil, enabled: { false })
         items.append(header)
-        for entry in entries {
-            let event = entry.event
+        for event in entries {
             let label = SessionNotifyStore.menuLabel(
                 workspace: workspaces.title(for: event.sessionId),
                 title: event.title,
@@ -1932,8 +1914,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
             let row = menuRowItem(
                 title: SessionNotifyStore.menuTitle(for: event, label: label),
-                action: #selector(openSessionFromNotify(_:)),
-                emphasized: entry.isUnread
+                action: #selector(openSessionFromNotify(_:))
             )
             row.representedObject = event.sessionId
             items.append(row)
@@ -2000,7 +1981,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let loopID = pluginUpdatesLoopID
         pluginUpdatesFailureStreak = 0
         pluginUpdatesAvailableCount = 0
-        setPluginUpdatesMenuTitle(0)
         pollPluginUpdates(port: port, loopID: loopID)
         // 插件探测要联网、一次可能耗时几秒：等服务与插件加载稳定后只发一次
         // 刷新请求，结果由插件写进自己的缓存，下一轮轮询读回。
@@ -2055,8 +2035,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if count != pluginUpdatesAvailableCount {
             appendLogString("插件更新检测：\(count) 个已安装插件可更新\n")
         }
+        // 可更新数量只进日志：插件入口在 Harness 侧边栏，启动器菜单里不再放它
+        // （用户明确要求），进度窗口仍由这里的轮询驱动。
         pluginUpdatesAvailableCount = count
-        setPluginUpdatesMenuTitle(count)
         applyPluginUpdateProgress(snapshot.progress)
         applyPluginUpdateBatchResult(snapshot.lastBatch)
     }
@@ -2106,12 +2087,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard settings.autoCheckPluginUpdates, state == .running, let port = selectedPort,
               let url = URL(string: "http://127.0.0.1:\(port)/dsh-plugin-manager/updates?refresh=1") else { return }
         ServiceProbe.body(at: url, timeout: 2) { _ in }
-    }
-
-    /// 菜单「插件管理」：与「打开 Deepseek Harness」一致，打开 Harness 页面
-    /// （用户在那里手动检查/更新插件），不新增弹窗。
-    @objc private func openPluginManager() {
-        openDHL()
     }
 
     @objc private func openSessionFromNotify(_ sender: NSMenuItem) {

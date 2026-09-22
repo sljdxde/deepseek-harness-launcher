@@ -18,7 +18,7 @@ struct SessionNotifyChecks {
         let second = store.ingest(SessionNotifyFeed(bootId: "b1", seq: 3, items: [event(2, session: "b", reason: "error"), event(3, session: "a")]))
         precondition(second.completions.map(\.seq) == [3])
         precondition(store.unreadCount == 2)
-        precondition(store.recent(limit: 1).first?.event.reason == "completed")
+        precondition(store.recent(limit: 1).first?.reason == "completed")
 
         // 一个会话连跑 5 轮也只是一个未读会话（这正是角标曾经虚高的原因）。
         let chatty = SessionNotifyStore()
@@ -26,10 +26,10 @@ struct SessionNotifyChecks {
         precondition(chatty.unreadCount == 1)
         _ = chatty.ingest(SessionNotifyFeed(bootId: "b1", seq: 9, items: (6...9).map { event($0, session: "same") }))
         precondition(chatty.unreadCount == 1)
-        precondition(chatty.recent(limit: 5).map(\.event.seq) == [9])
+        precondition(chatty.recent(limit: 5).map(\.seq) == [9])
 
         // recent 最新在前。
-        precondition(store.recent(limit: 2).map(\.event.sessionId) == ["a", "b"])
+        precondition(store.recent(limit: 2).map(\.sessionId) == ["a", "b"])
 
         // 2. Harness 重启（bootId 变化）：游标归零，不把旧事件重复计数。
         let restarted = store.ingest(SessionNotifyFeed(bootId: "b2", seq: 0, items: []))
@@ -45,7 +45,7 @@ struct SessionNotifyChecks {
         let capped = SessionNotifyStore(capacity: 3)
         _ = capped.ingest(SessionNotifyFeed(bootId: "b1", seq: 5, items: (1...5).map { event($0, session: "s\($0)") }))
         precondition(capped.unreadCount == 3)
-        precondition(capped.recent(limit: 10).map(\.event.seq) == [5, 4, 3])
+        precondition(capped.recent(limit: 10).map(\.seq) == [5, 4, 3])
 
         // 3.5 排队消息：用户在我干活时又发了一条 —— 回合可能先 completed 再被打断，
         // 但会话马上开跑新一轮，角标不能还亮着「已完成」。
@@ -79,13 +79,12 @@ struct SessionNotifyChecks {
         precondition(clicks.unreadCount == 2)
         precondition(clicks.recent(limit: 6).count == 2)
         clicks.markRead("chat-a")
-        precondition(clicks.unreadCount == 1)                                  // 只清掉点过的那条
-        precondition(clicks.recent(limit: 6).map(\.event.sessionId) == ["chat-b", "chat-a"])  // 两条都还在，新的在前
-        precondition(clicks.recent(limit: 6).map(\.isUnread) == [true, false])
-        precondition(clicks.recent(limit: 6).last?.event.sessionId == "chat-a")  // 已读的仍可再次点击
+        precondition(clicks.unreadCount == 1)
+        // 点过的那条从菜单消失，没点的那条还在（还能点它跳到那个工作区）。
+        precondition(clicks.recent(limit: 6).map(\.sessionId) == ["chat-b"])
         clicks.markRead("chat-b")
         precondition(clicks.unreadCount == 0)
-        precondition(clicks.recent(limit: 6).count == 2)                        // 清空未读 ≠ 清空列表
+        precondition(clicks.recent(limit: 6).isEmpty)                           // 都看过了，段落整体消失
 
         // 3.8 工作区名称解析：会话归属优先，文件缺失/未收录都要安全回退。
         let workspaceState: [String: Any] = [

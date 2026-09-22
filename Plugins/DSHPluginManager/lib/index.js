@@ -502,6 +502,7 @@ export async function updatePlugin(name, options = {}) {
     if (ownsProgress) {
       recordUpdateProgress({ name, ...result });
       finishUpdateProgress();
+      if (result.ok) await invalidateUpdateCache(options.cacheFile);
     }
     return result;
   } catch (error) {
@@ -509,6 +510,26 @@ export async function updatePlugin(name, options = {}) {
     if (ownsProgress) { recordUpdateProgress({ name, ...failure }); finishUpdateProgress(); }
     return failure;
   }
+}
+
+/**
+ * 已安装包在 node_modules 里的实际版本（复核用）。
+ * @returns {Promise<string|null>}
+ */
+export async function installedVersionOf(name) {
+  const meta = await readPackageMeta(join(profilesWebModules(), ...String(name).split('/')));
+  return meta?.version ?? null;
+}
+
+/**
+ * 复核更新是否真的落到 node_modules：`file:` 依赖换了源码之后，pnpm 有时不会重新
+ * 物化（版本停在旧值），界面就会一直显示"可更新"。没生效就删掉包目录重装一次。
+ * @returns {Promise<boolean>} 版本已达到目标
+ */
+async function verifyUpdateApplied(name, target) {
+  const installed = await installedVersionOf(name);
+  if (!installed || !target) return false;
+  return comparePluginVersions(installed, target) >= 0;
 }
 
 /**
@@ -534,7 +555,14 @@ export async function applyPluginUpdate(source, options = {}) {
     stepUpdateProgress(source.name, `正在下载并安装 v${target}…`);
     await command(['add', `${source.name}@${target}`]);
     stepUpdateProgress(source.name, `正在同步 profile…`);
-    return { ok: true, updatedTo: target, restartRequired: true, note: `已更新到 v${target}` };
+    const applied = await verifyUpdateApplied(source.name, target);
+    return {
+      ok: true,
+      updatedTo: target,
+      restartRequired: true,
+      verified: applied,
+      note: applied ? `已更新到 v${target}` : `已安装 v${target}，但 node_modules 版本未变，重启 dsh 后确认`
+    };
   }
 
   if (source.kind === 'git' && remote) {
@@ -543,6 +571,7 @@ export async function applyPluginUpdate(source, options = {}) {
       const backup = `${remote.dir}.bak-${stamp}`;
       await fs.rm(backup, { recursive: true, force: true }).catch(() => {});
       await fs.rename(remote.dir, backup).catch(() => {});
+      let clonedDest = null;
       try {
         stepUpdateProgress(source.name, '正在重新克隆源码…');
         const cloned = await clone(
@@ -550,6 +579,7 @@ export async function applyPluginUpdate(source, options = {}) {
           remote.subdir ?? null
         );
         if (!cloned.ok) throw new Error(cloned.error || '重新克隆失败');
+        clonedDest = cloned.dest ?? null;
         stepUpdateProgress(source.name, '正在同步 profile…');
         await command(['add', `file:${cloned.dest}`]);
       } catch (error) {
@@ -558,14 +588,48 @@ export async function applyPluginUpdate(source, options = {}) {
         throw error;
       }
       await pruneSourceBackups(remote.dir);
-      return { ok: true, updatedTo: target, restartRequired: true, note: `已更新到 v${target}（旧版本保留为 ${backup.split('/').pop()}）` };
+      return {
+        ok: true,
+        updatedTo: target,
+        restartRequired: true,
+        ...(await finalizeFileSourceUpdate(source.name, target, clonedDest ?? remote.dir, command, backup))
+      };
     }
     stepUpdateProgress(source.name, `正在重新解析 ${source.spec ?? `github:${remote.author}/${remote.repo}`}…`);
     await command(['add', source.spec ?? `github:${remote.author}/${remote.repo}`]);
-    return { ok: true, updatedTo: target, restartRequired: true, note: `已更新到 v${target}` };
+    const parsed = await verifyUpdateApplied(source.name, target);
+    return {
+      ok: true,
+      updatedTo: target,
+      restartRequired: true,
+      verified: parsed,
+      note: parsed ? `已更新到 v${target}` : `已重新解析依赖，但 node_modules 版本未变，重启 dsh 后确认`
+    };
   }
 
   return { ok: false, error: '该插件来源无法自动更新' };
+}
+
+/**
+ * `file:` 来源更新后的收尾：复核 node_modules 里的版本，没跟上就删掉包目录重装一次
+ * 再复核。pnpm 对未变化的 `file:` 依赖有时不会重新物化，这一步能把它掰回来；
+ * 仍然不生效就如实上报 verified=false，让界面提示用户重启 dsh。
+ */
+async function finalizeFileSourceUpdate(name, target, dest, command, backup) {
+  const backupNote = `（旧版本保留为 ${backup.split('/').pop()}）`;
+  if (await verifyUpdateApplied(name, target)) {
+    return { verified: true, note: `已更新到 v${target}${backupNote}` };
+  }
+  // node_modules 里压根没有这个包（例如手工删过）：重装也复核不出结果，如实上报。
+  if (!(await installedVersionOf(name))) {
+    return { verified: false, note: `源码已更新到 v${target}${backupNote}，node_modules 里没有该包，重启 dsh 后确认` };
+  }
+  await fs.rm(join(profilesWebModules(), ...String(name).split('/')), { recursive: true, force: true }).catch(() => {});
+  await command(['add', `file:${dest}`]);
+  if (await verifyUpdateApplied(name, target)) {
+    return { verified: true, note: `已更新到 v${target}${backupNote}（重装了一次让 node_modules 跟上）` };
+  }
+  return { verified: false, note: `源码已更新到 v${target}${backupNote}，但 node_modules 未生效，重启 dsh 后确认` };
 }
 
 /** 只保留最近一个 `.bak-*` 备份，避免 plugin-sources 越滚越大。 */
@@ -612,6 +676,8 @@ export async function updatePlugins(names, options = {}) {
   };
   lastBatchUpdate = summary;
   finishUpdateProgress();
+  // 有一个成功就失效，让面板/启动器马上看到真实状态。
+  if (results.some(item => item.ok)) await invalidateUpdateCache(options.cacheFile);
   return { ok: results.every(item => item.ok), ...summary };
 }
 
@@ -1235,6 +1301,16 @@ function finishUpdateProgress() {
   updateProgress.current = null;
   updateProgress.finishedAt = new Date().toISOString();
   updateProgress.step = '已完成';
+}
+
+/**
+ * 更新成功后让检测结果缓存失效：否则面板与启动器最多 6 小时都会继续显示"有 N 个可更新"
+ * （用户实测：插件更新完了，菜单还写着"2 个可更新"）。删掉缓存后，下一次 GET /updates
+ * 会立刻触发一轮后台重检。
+ */
+async function invalidateUpdateCache(cacheFile) {
+  const target = cacheFile ?? UPDATES_CACHE_FILE();
+  await fs.rm(target, { force: true }).catch(() => {});
 }
 
 /** 当前更新进度（没有进行中的更新时是 null）。 */

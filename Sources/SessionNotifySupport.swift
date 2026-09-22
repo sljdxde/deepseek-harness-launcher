@@ -89,9 +89,10 @@ final class SessionNotifyStore {
     /// Sequence cursor for the next poll (`?after=`).
     var pollAfterSeq: Int { lastSeq }
 
-    /// 菜单列表用的最近事件（新的在前），并标注每条是否还未读，便于加粗显示。
-    func recent(limit: Int) -> [(event: SessionNotifyEvent, isUnread: Bool)] {
-        Array(events.suffix(max(0, limit)).reversed()).map { ($0, unread.contains($0.sessionId)) }
+    /// 菜单列表用的未读事件（新的在前）。点开某一条后它就从列表消失，其它条目仍在，
+    /// 可以继续点它跳到对应的工作区；都点过之后整段消失（= 都看过了）。
+    func recent(limit: Int) -> [SessionNotifyEvent] {
+        Array(events.filter { unread.contains($0.sessionId) }.suffix(max(0, limit)).reversed())
     }
 
     /// 菜单行标签：工作区名 → 会话标题 → 短 id。插件在拿不到标题时会给出

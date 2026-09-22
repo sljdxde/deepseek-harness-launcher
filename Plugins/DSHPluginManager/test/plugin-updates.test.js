@@ -942,3 +942,131 @@ test('回归 6：缓存文件里的畸形 JSON 不能让调用方崩', async () 
     assert.equal(await readUpdateCache({ cacheFile }), null);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 回归：更新成功后必须让「检测结果缓存」失效，否则面板与启动器会长时间显示旧计数
+// （用户实测：更新完插件，菜单还显示"2 个可更新"）。
+// ---------------------------------------------------------------------------
+
+test('回归 7：更新成功后缓存失效，下一次 /updates 会重新检测', async () => {
+  await withTempDshHome('dsh-pm-invalidate-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    await mkdir(join(profile, 'node_modules', 'demo'), { recursive: true });
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: 'github:o/demo' },
+      dsh: { profile: { bundles: ['demo'] } }
+    }));
+    await writeFile(join(profile, 'node_modules', 'demo', 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }));
+    const cacheFile = join(home, 'cache.json');
+
+    // 先造一份"有可用更新"的缓存
+    await writeUpdateCache({
+      checkedAt: new Date().toISOString(),
+      inventory: [{ name: 'demo', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' }]
+    }, cacheFile);
+    assert.equal((await readUpdateCache({ cacheFile })).inventory[0].status, 'update-available');
+
+    // 更新这个插件（注入假命令，不碰 pnpm）
+    const result = await updatePlugin('demo', {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      command: async () => {},
+      cacheFile
+    });
+    assert.equal(result.ok, true);
+    assert.equal(await readUpdateCache({ cacheFile }), null, '更新成功后缓存必须失效');
+
+    // 下一次检测会真的重新跑（probe 被调用）
+    let probes = 0;
+    const refreshed = await checkPluginUpdates({
+      cacheFile,
+      probe: { git: async () => { probes += 1; return { version: '2.0.0', commit: 'c'.repeat(40) }; } }
+    });
+    assert.ok(refreshed.refreshing, '缓存失效后 GET 会触发后台重检');
+    for (let i = 0; i < 100 && probes === 0; i += 1) await sleep(30);
+    assert.ok(probes > 0, '应当真的重新探测了');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 回归 8：更新后要复核已安装版本——file: 依赖换源后 pnpm 有时不会重新物化
+// node_modules，于是界面会一直显示"可更新"（用户实测）。
+// ---------------------------------------------------------------------------
+
+test('回归 8：更新后复核版本，没生效就删掉包目录强制重装并二次复核', async () => {
+  await withTempDshHome('dsh-pm-verify-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    const sourcesDir = join(profile, 'plugin-sources', 'o-demo');
+    const installedDir = join(profile, 'node_modules', 'demo');
+    await mkdir(installedDir, { recursive: true });
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: `file:${sourcesDir}` },
+      dsh: { profile: { bundles: ['demo'] } }
+    }));
+    await writeFile(join(installedDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }));
+    await mkdir(sourcesDir, { recursive: true });
+    await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }));
+    // 真实克隆会在目录里写来源标记；有它才会被识别成 git 来源（否则算本地插件、不更新）。
+    await writeFile(join(sourcesDir, '.dsh-source.json'), JSON.stringify({
+      author: 'o', repo: 'demo', subdir: null, url: 'https://github.com/o/demo.git', commit: 'a'.repeat(40)
+    }));
+
+    const commands = [];
+    const command = async (args) => {
+      commands.push(args);
+      // 第一次 pnpm add 不换版本（模拟 pnpm 没重新物化），删目录后（第二次）才生效
+      if (commands.length >= 2) {
+        // 强制重装会先删掉包目录，这里重建（真实场景是 pnpm 重新物化）
+        await mkdir(installedDir, { recursive: true });
+        await writeFile(join(installedDir, 'package.json'), JSON.stringify({ name: 'demo', version: '2.0.0' }));
+      }
+    };
+    const clone = async (_ref, _subdir) => {
+      await mkdir(sourcesDir, { recursive: true });
+      await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '2.0.0' }));
+      return { ok: true, dest: sourcesDir, packageName: 'demo' };
+    };
+
+    const result = await updatePlugin('demo', {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      command,
+      clone
+    });
+    assert.equal(result.ok, true);
+    assert.equal(commands.length, 2, '应当补一次强制重装');
+    assert.deepEqual(commands[1], ['add', `file:${sourcesDir}`]);
+    assert.equal(result.verified, true, '复核通过要如实上报');
+    assert.match(result.note, /v2\.0\.0/);
+  });
+});
+
+test('回归 8b：强制重装后仍未生效则如实标记 verified=false（界面可提示）', async () => {
+  await withTempDshHome('dsh-pm-verify-bad-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    const sourcesDir = join(profile, 'plugin-sources', 'o-demo');
+    const installedDir = join(profile, 'node_modules', 'demo');
+    await mkdir(installedDir, { recursive: true });
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: `file:${sourcesDir}` },
+      dsh: { profile: { bundles: ['demo'] } }
+    }));
+    await writeFile(join(installedDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }));
+    await mkdir(sourcesDir, { recursive: true });
+    await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }));
+    // 真实克隆会在目录里写来源标记；有它才会被识别成 git 来源（否则算本地插件、不更新）。
+    await writeFile(join(sourcesDir, '.dsh-source.json'), JSON.stringify({
+      author: 'o', repo: 'demo', subdir: null, url: 'https://github.com/o/demo.git', commit: 'a'.repeat(40)
+    }));
+
+    const result = await updatePlugin('demo', {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      command: async () => {},          // pnpm 假装置之不理
+      clone: async () => ({ ok: true, dest: sourcesDir, packageName: 'demo' })
+    });
+    assert.equal(result.ok, true, '源码已更新，仍算成功');
+    assert.equal(result.verified, false);
+    assert.match(result.note, /重启 dsh|未生效/);
+  });
+});
