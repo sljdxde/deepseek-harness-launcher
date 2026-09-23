@@ -7,7 +7,7 @@ import Foundation
 // 这里的用例锁住三件事：能从那种 stderr 里认出是谁干的、认不出时绝不瞎隔离、
 // 以及隔离后的启动命令在没有隔离项时与历史命令逐字节一致。
 //
-// 编译：swiftc scripts/test-plugin-isolation.swift Sources/PluginIsolationSupport.swift
+// 编译：swiftc scripts/test-plugin-isolation.swift Sources/PluginIsolationSupport.swift Sources/PluginSourceCheck.swift
 
 @main
 struct PluginIsolationTests {
@@ -223,27 +223,132 @@ struct PluginIsolationTests {
             "写不进去时返回 nil（宁可回到没有隔离的原始行为，也不递半截文件给 dsh）"
         )
 
+        // MARK: - 行归属映射与逐个排除阶梯
+
+        let rowsMap = support.bundleRowIds(fromDumpConfig: realDumpConfig)
+        checkEqual(rowsMap["@openviking/dsh-memory-plugin"]?.joined(separator: ",") ?? "nil", "openviking-memory", "dump 一次解析出全部 bundle 的行")
+        checkEqual(rowsMap["@tt-a1i/archify-dsh"]?.joined(separator: ",") ?? "nil", "archify-skill-filesystem", "别的 bundle 的行也要收进来")
+        check((rowsMap["@deepseek-ai/dsh-base"] ?? []).isEmpty, "`patched by` 段不该被算成谁的新行")
+        checkEqual(support.bundleOwning(rowId: "openviking-memory-runtime", in: rowsMap) ?? "nil", "nil", "别人的子行不认，避免误禁")
+        checkEqual(support.bundleOwning(rowId: "archify-skill-filesystem", in: rowsMap) ?? "nil", "@tt-a1i/archify-dsh", "行 id 反查归属")
+
+        checkEqual(
+            support.attributedRowIds(stderr: "failed to import loader entry openviking-memory-runtime (@openviking/dsh-memory-plugin)\nfailed to apply loader entry archify-row (x)").joined(separator: ","),
+            "archify-row,openviking-memory-runtime",
+            "行 id 按最后出现优先（后面的才是真正没起来的行）"
+        )
+        check(
+            support.attributedRowIds(stderr: "failed to import loader entry bad\nid:\n  disabled: true (x)").isEmpty,
+            "不安全字符的行 id 直接丢弃（会被写进 YAML）"
+        )
+        checkEqual(
+            support.isolatableBundles(fromProfileManifest: """
+            { "dsh": { "profile": { "bundles": [
+              "@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "@openviking/dsh-memory-plugin", "dsh-notify"
+            ] } } }
+            """).joined(separator: ","),
+            "@openviking/dsh-memory-plugin,dsh-notify",
+            "core 层不可隔离，第三方按 manifest 顺序排队"
+        )
+        check(support.isolatableBundles(fromProfileManifest: "not json").isEmpty, "manifest 读不懂就当没有候选，交给安全模式")
+
+        // MARK: - 隔离记录
+
+        checkEqual(
+            support.isolationEntry(bundle: "@openviking/dsh-memory-plugin", rowIds: ["openviking-memory"], reason: "r", isolatedAt: "t")?.rowIds.joined(separator: ",") ?? "nil",
+            "openviking-memory", "有可禁的行才生成记录"
+        )
+        check(support.isolationEntry(bundle: "@a/b", rowIds: [], reason: "r", isolatedAt: "t") == nil, "没有可禁的行就不隔离（写了等于没写）")
+        check(support.isolationEntry(bundle: "dsh-plugin-manager", rowIds: ["x"], reason: "r", isolatedAt: "t") == nil, "内置插件不给生成隔离记录")
+        checkEqual(
+            support.isolationEntry(bundle: "@a/b", rowIds: ["ok-row", "bad\ninjected"], reason: "r", isolatedAt: "t")?.rowIds.joined(separator: ",") ?? "nil",
+            "ok-row", "不安全行 id 被过滤掉"
+        )
+
         // MARK: - 恢复决策
 
-        checkEqual(
-            support.isolationEntry(bundle: "@openviking/dsh-memory-plugin", dumpConfig: realDumpConfig, ownPatchYAML: nil, reason: "r", isolatedAt: "t")?.rowIds.joined(separator: ",") ?? "nil",
-            "openviking-memory",
-            "dump-config 能给出可禁的行"
+        let emptyInput = support.RecoveryInput(attributedBundle: nil, attributedRowIds: [], rowIdOwners: [], candidateBundles: [], isolatedBundles: [], isolationsThisBoot: 0)
+        check(support.decideRecovery(emptyInput) == .safeMode(reason: "没有可隔离的第三方插件，dsh 本体或内置插件出了问题"), "什么都没点名且没有候选 → 安全模式")
+        check(
+            support.decideRecovery(support.RecoveryInput(attributedBundle: "@a/b", attributedRowIds: [], rowIdOwners: [], candidateBundles: ["@a/b", "@c/d"], isolatedBundles: [], isolationsThisBoot: 0))
+                == .isolate(bundle: "@a/b", source: .stderrBundle),
+            "日志点名了包 → 只禁它"
         )
-        checkEqual(
-            support.isolationEntry(bundle: "@a/b", dumpConfig: "", ownPatchYAML: "- insert:\n    - id: only-local\n      name: x\n", reason: "r", isolatedAt: "t")?.rowIds.joined(separator: ",") ?? "nil",
-            "only-local",
-            "dump-config 拿不到时退回包内 patch 的 insert 块"
+        check(
+            support.decideRecovery(support.RecoveryInput(attributedBundle: nil, attributedRowIds: ["row-x"], rowIdOwners: ["@c/d"], candidateBundles: ["@a/b", "@c/d"], isolatedBundles: [], isolationsThisBoot: 0))
+                == .isolate(bundle: "@c/d", source: .stderrRow),
+            "只点名了行 → 按行反查 bundle，优先于瞎猜"
         )
-        check(support.isolationEntry(bundle: "@a/b", dumpConfig: "", ownPatchYAML: "", reason: "r", isolatedAt: "t") == nil, "找不到任何可禁的行就不隔离（写了等于没写，下次照样起不来）")
-        check(support.isolationEntry(bundle: "dsh-plugin-manager", dumpConfig: realDumpConfig, ownPatchYAML: "- id: x\n", reason: "r", isolatedAt: "t") == nil, "内置插件不给生成隔离记录")
-        checkEqual(support.isolationEntry(bundle: "@a/b", dumpConfig: realDumpConfig, ownPatchYAML: nil, reason: "r", isolatedAt: "t")?.bundle ?? "nil", "nil", "dump-config 里没有这个 bundle 时不隔离")
+        check(
+            support.decideRecovery(support.RecoveryInput(attributedBundle: nil, attributedRowIds: [], rowIdOwners: [], candidateBundles: ["@a/b", "@c/d"], isolatedBundles: [], isolationsThisBoot: 1))
+                == .isolate(bundle: "@a/b", source: .bisect),
+            "什么都认不出 → 从候选列表逐个排除，而不是一把全砍"
+        )
+        check(
+            support.decideRecovery(support.RecoveryInput(attributedBundle: "@a/b", attributedRowIds: [], rowIdOwners: [], candidateBundles: ["@a/b", "@c/d"], isolatedBundles: ["@a/b"], isolationsThisBoot: 1))
+                == .isolate(bundle: "@c/d", source: .bisect),
+            "点名的已经禁过了 → 继续排除下一个"
+        )
+        check(
+            support.decideRecovery(support.RecoveryInput(attributedBundle: nil, attributedRowIds: [], rowIdOwners: [], candidateBundles: ["@a/b"], isolatedBundles: ["@a/b"], isolationsThisBoot: 1))
+                == .safeMode(reason: "已隔离 1 个插件仍起不来：@a/b"),
+            "第三方全禁完仍失败 → 安全模式"
+        )
+        check(support.decideRecovery(emptyInput) != .isolate(bundle: "@a/b", source: .bisect), "决策不会凭空发明插件名")
 
-        checkEqual(support.decideRecovery(attributed: nil, alreadyIsolated: [], isolationsThisBoot: 0), .safeMode(reason: "无法从启动日志里确定是哪个插件导致失败"), "认不出嫌疑对象就转安全模式")
-        checkEqual(support.decideRecovery(attributed: "@a/b", alreadyIsolated: ["@a/b"], isolationsThisBoot: 1), .safeMode(reason: "@a/b 已被隔离过，仍然起不来"), "同一个插件隔离过一次还失败，不再重复隔离")
-        checkEqual(support.decideRecovery(attributed: "@a/b", alreadyIsolated: [], isolationsThisBoot: 0), .isolate(bundle: "@a/b"), "首次识别到坏插件应隔离后重试")
-        checkEqual(support.decideRecovery(attributed: "@a/b", alreadyIsolated: [], isolationsThisBoot: support.maxIsolationsPerBoot), .safeMode(reason: "本次启动已连续隔离 \(support.maxIsolationsPerBoot) 个插件"), "隔离额度用尽转安全模式，避免把插件挨个禁光")
-        check(support.maxIsolationsPerBoot > 0, "隔离额度必须为正")
+        // MARK: - 启动前静态预检
+
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("dhl-preflight-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        func write(_ relative: String, _ body: String) {
+            let url = root.appendingPathComponent(relative)
+            try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? body.write(to: url, atomically: true, encoding: .utf8)
+        }
+        func gaps(in sub: String) -> [String] {
+            PluginSourceCheck.unresolvableLocalImports(in: sub.isEmpty ? root : root.appendingPathComponent(sub))
+                .map { "\($0.importer) -> \($0.specifier)" }
+        }
+
+        write("index.mjs", "import { a } from './lib/a.mjs';\nexport const all = a;\n")
+        write("lib/a.mjs", "export const a = 1\n")
+        write("servers/mcp.mjs", "import '../lib/a.mjs';\nexport const s = 1;\n")
+        check(gaps(in: "").isEmpty, "完整源码不报")
+
+        write("client.mjs", "import { http } from './shared/ov-http.mjs';\nexport const c = http;\n")
+        checkEqual(gaps(in: "").joined(separator: ","), "client.mjs -> ./shared/ov-http.mjs", "缺整个 shared/ 要报（真实事故形状）")
+
+        write("shared/ov-http.mjs", "export const http = 1\n")
+        check(gaps(in: "").isEmpty, "补上 shared/ 之后不报")
+
+        write("dynamic.mjs", "const load = () => import('./maybe-later.mjs');\nexport const d = load;\n")
+        checkEqual(gaps(in: "").joined(separator: ","), "dynamic.mjs -> ./maybe-later.mjs", "动态 import 也查")
+
+        write("reexport.mjs", "export { x } from './gone.mjs';\n")
+        check(gaps(in: "").contains("reexport.mjs -> ./gone.mjs"), "re-export 也查")
+
+        // 换下一组用例前把上面那些"故意缺文件"的样本清干净，否则会串味。
+        for stale in ["index.mjs", "client.mjs", "dynamic.mjs", "reexport.mjs", "servers", "shared"] {
+            try? fm.removeItem(at: root.appendingPathComponent(stale))
+        }
+        write("plain.mjs", "import { x } from './plain';\nexport const p = x;\n")
+        write("plain.js", "export const x = 1\n")
+        write("dirimport.mjs", "import { y } from './dir/';\nexport const q = y;\n")
+        write("dir/index.mjs", "export const y = 1\n")
+        write("bare.mjs", "import { llm } from '@deepseek-ai/dsh-llm';\nexport const b = llm;\n")
+        check(gaps(in: "").isEmpty, "省扩展名、目录 index、裸包名都不误报")
+
+        write("outside.mjs", "import { z } from '../../other-pkg/z.mjs';\nexport const o = z;\n")
+        check(gaps(in: "").isEmpty, "指向包外的相对路径不报（pnpm 布局另有解析）")
+
+        write("index.test.mjs", "import { fix } from './fixture.mjs';\nexport const t = fix;\n")
+        write("test/only-tests.mjs", "import { g } from './gone-in-tests.mjs';\nexport const u = g;\n")
+        write("node_modules/dep/x.mjs", "import { n } from './missing-in-deps.mjs';\nexport const v = n;\n")
+        check(gaps(in: "").isEmpty, "测试文件、test/ 目录、node_modules 里的缺失都不拦启动")
+
+        check(PluginSourceCheck.unresolvableLocalImports(in: root.appendingPathComponent("no-such-dir")).isEmpty,
+              "目录不存在时返回空（预检自己不能变成故障源）")
 
         if !failures.isEmpty {
             for failure in failures { print("FAIL: \(failure)") }

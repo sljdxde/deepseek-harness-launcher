@@ -677,7 +677,9 @@ export async function updatePlugin(name, options = {}) {
       if (ownsProgress) { recordUpdateProgress({ name, ...failure }); finishUpdateProgress(); }
       return failure;
     }
-    const result = await applyPluginUpdate(source, options);
+    // 门禁探测只在真实入口（菜单/面板/批量）里跑；单测直接调 applyPluginUpdate 时默认不做，
+    // 免得离线测试去连 registry。
+    const result = await applyPluginUpdate(source, { peerProbe: fetchTargetPeerDependencies, ...options });
     if (ownsProgress) {
       recordUpdateProgress({ name, ...result });
       finishUpdateProgress();
@@ -712,6 +714,151 @@ async function verifyUpdateApplied(name, target) {
 }
 
 /**
+ * 区间求值：与 `Sources/PluginCompatibilitySupport.swift` 共用同一套规则，两边各自解释。
+ *
+ * 支持 `*`/`x`-range、`^`、`~`、`>= 0.1.0`（操作符后有空格）、`||` 分支，比较用
+ * `comparePluginVersions`（npm 语义，`rc.1 < rc.6`）。刻意**不**照搬 npm 默认的预发布
+ * 门控：dsh 生态常态就是装 rc runtime，套上去会把所有只写正式区间的插件一律报成不兼容。
+ * 保留的只有一条安全边界：越过排他上界的预发布不算满足（`<0.2.0` 不接受 `0.2.0-rc.9`）。
+ */
+export function satisfiesPluginRange(version, range) {
+  return String(range ?? '').split('||').some(branch => {
+    const comparators = joinSplitComparators(branch);
+    if (!comparators.length) return true;
+    return comparators.every(comparator => satisfiesPluginComparator(version, comparator));
+  });
+}
+
+const RANGE_OPERATORS = new Set(['>=', '<=', '>', '<', '=', '^', '~']);
+
+/** `>= 0.1.0` 这种写法不能被拆成两段：拆断后 `>=` 会退化成「必须精确等于」。 */
+function joinSplitComparators(branch) {
+  const tokens = String(branch ?? '').split(/\s+/).filter(Boolean);
+  const out = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (RANGE_OPERATORS.has(tokens[i]) && i + 1 < tokens.length) {
+      out.push(tokens[i] + tokens[i + 1]);
+      i += 1;
+    } else {
+      out.push(tokens[i]);
+    }
+  }
+  return out;
+}
+
+function versionBase(value) {
+  return String(value).replace(/^v(?=\d)/i, '').split('-')[0];
+}
+
+function hasPrerelease(value) {
+  return String(value).replace(/^v(?=\d)/i, '').split('+')[0].includes('-');
+}
+
+/** `^`/`~`/x-range 展开成 `>=` + `<` 上下界；空串与 `*` 是不约束。 */
+function expandPluginComparator(comparator) {
+  const trimmed = String(comparator).trim();
+  if (!trimmed || trimmed === '*' || trimmed === 'x' || trimmed === 'X') return [];
+  if (trimmed[0] === '^' || trimmed[0] === '~') return caretOrTildeAtoms(trimmed.slice(1), trimmed[0] === '^');
+  const match = /^(>=|<=|>|<|=)?\s*(.*)$/.exec(trimmed);
+  const op = match[1] ?? '=';
+  const value = match[2];
+  if (!value || value === 'x' || value === 'X') return [];
+  if (/[xX]/.test(value)) return xRangeAtoms(value);
+  return [{ op, value }];
+}
+
+function caretOrTildeAtoms(base, caret) {
+  const parts = base.split('.').map(part => (/^\d+$/.test(part) ? Number(part) : 0));
+  const major = parts[0] ?? 0;
+  const minor = parts[1] ?? 0;
+  const patch = parts[2] ?? 0;
+  let upper;
+  if (!caret) upper = `${major}.${minor + 1}.0`;
+  else if (major > 0) upper = `${major + 1}.0.0`;
+  else if (minor > 0) upper = `0.${minor + 1}.0`;
+  else upper = `0.0.${patch + 1}`;
+  return [{ op: '>=', value: base }, { op: '<', value: upper }];
+}
+
+function xRangeAtoms(value) {
+  const tokens = value.split('.');
+  const wildcard = tokens.findIndex(token => token === 'x' || token === 'X' || token === '');
+  const numbers = tokens.slice(0, wildcard < 0 ? tokens.length : wildcard).map(Number);
+  if (!numbers.length) return [];
+  if (numbers.length === 1) return [{ op: '>=', value: `${numbers[0]}.0.0` }, { op: '<', value: `${numbers[0] + 1}.0.0` }];
+  return [{ op: '>=', value: `${numbers[0]}.${numbers[1]}.0` }, { op: '<', value: `${numbers[0]}.${numbers[1] + 1}.0` }];
+}
+
+function satisfiesPluginComparator(version, comparator) {
+  return expandPluginComparator(comparator).every(atom => {
+    // 越界的预发布：插件写 `<0.2.0` 排除的就是 0.2 这条线，rc 只是它的更早快照。
+    if ((atom.op === '<' || atom.op === '<=') && hasPrerelease(version)
+      && !hasPrerelease(atom.value) && versionBase(version) === versionBase(atom.value)) return false;
+    const order = comparePluginVersions(version, atom.value);
+    if (atom.op === '>=') return order >= 0;
+    if (atom.op === '<=') return order <= 0;
+    if (atom.op === '>') return order > 0;
+    if (atom.op === '<') return order < 0;
+    return order === 0;
+  });
+}
+
+/** peer 声明 vs 已装的 dsh 组件版本：返回不满足的条目。读不到版本的 peer 跳过（宁可不判，不误伤）。 */
+export function findPeerIncompatibilities(peers, installedVersions) {
+  const problems = [];
+  for (const [peer, range] of Object.entries(peers ?? {})) {
+    const installed = installedVersions?.[peer];
+    if (!installed || !range) continue;
+    if (!satisfiesPluginRange(installed, range)) problems.push({ peer, range, installed });
+  }
+  return problems;
+}
+
+/** 目标版本声明的 peerDependencies：npm 走 registry，git 走远端 package.json。失败返回空（不阻断）。 */
+export async function fetchTargetPeerDependencies(source, version) {
+  const remote = source?.remote ?? {};
+  try {
+    if (remote.type === 'npm') {
+      await ensurePnpmPath();
+      const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
+      const { stdout } = await run(cli, ['view', `${remote.package ?? source.name}@${version}`, 'peerDependencies', '--json'], { timeout: PROBE_TIMEOUT_MS });
+      const parsed = JSON.parse(stdout);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    }
+    if (remote.type === 'git' && remote.author && remote.repo) {
+      const commit = source.installedCommit && version === source.installedVersion ? source.installedCommit : 'HEAD';
+      const path = remote.subdir ? `${String(remote.subdir).replace(/^\/+|\/+$/g, '')}/package.json` : 'package.json';
+      const url = `https://raw.githubusercontent.com/${remote.author}/${remote.repo}/${commit}/${path}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+      const response = await fetch(url, { signal: controller.signal, headers: { 'cache-control': 'no-cache' } });
+      clearTimeout(timer);
+      if (!response.ok) return {};
+      const pkg = await response.json();
+      return pkg?.peerDependencies && typeof pkg.peerDependencies === 'object' ? pkg.peerDependencies : {};
+    }
+  } catch { /* 问不到就不阻断更新：预检是加分项，不是新故障源 */ }
+  return {};
+}
+
+/** 已装 dsh 各组件的版本（peer 都指向它们）。读不到的键直接缺席，交由上层跳过判定。 */
+export async function readRuntimePeerVersions(peers) {
+  const base = join(dshHome(), 'runtime', 'node_modules');
+  const out = {};
+  for (const peer of peers) {
+    const meta = await readPackageMeta(join(base, peer));
+    if (meta?.version) out[peer] = meta.version;
+  }
+  return out;
+}
+
+/** 升级前的兼容门禁说明（写进界面错误里，用户要能看懂该干什么）。 */
+function describePeerProblems(problems, target) {
+  const detail = problems.map(item => `${item.peer} ${item.range}（当前 ${item.installed}）`).join('；');
+  return `目标版本 v${target} 要求 ${detail}，与当前 dsh 运行时不兼容，已阻止升级：先更新 dsh 本体（菜单栏「检查 Deepseek Harness 更新」）再升这个插件`;
+}
+
+/**
  * 按来源分派更新动作：
  * - npm：`pnpm add <name>@<latest>`（显式指定版本，插件记录里就是新版本号）；
  * - `github:` 依赖：按原 spec 重新解析（pnpm 会拉到默认分支最新 commit）；
@@ -732,6 +879,25 @@ export async function applyPluginUpdate(source, options = {}) {
   const remote = source.remote;
   stepUpdateProgress(source.name, `正在解析最新版本 v${target}…`);
 
+  // 升级前的兼容门禁：目标版本声明的 peer 与当前 dsh 运行时不满足就当场挡住。
+  // 插件升级失败最多是插件不生效，但装上不兼容的版本会让 dsh 起不来。
+  // 探测本身失败（registry 不通、仓库改名）时放行：判不了不等于不兼容，而装坏还有
+  // 装后验收 + 自动退回 + 启动隔离三层兜着。门禁只负责"知道不兼容时别装"。
+  let declaredPeers = {};
+  let peerProbeWarning = null;
+  try {
+    declaredPeers = await (options.peerProbe ?? (async () => ({})))(source, target) ?? {};
+  } catch (error) {
+    peerProbeWarning = `没能确认 v${target} 的 dsh 版本要求（${String(error?.message || error)}）`;
+  }
+  const peerProblems = findPeerIncompatibilities(
+    declaredPeers,
+    await readRuntimePeerVersions(Object.keys(declaredPeers))
+  );
+  if (peerProblems.length) {
+    return { ok: false, status: 'peer-incompatible', error: describePeerProblems(peerProblems, target) };
+  }
+
   if (source.kind === 'npm') {
     stepUpdateProgress(source.name, `正在下载并安装 v${target}…`);
     await command(['add', `${source.name}@${target}`]);
@@ -751,7 +917,8 @@ export async function applyPluginUpdate(source, options = {}) {
       updatedTo: target,
       restartRequired: true,
       verified: applied,
-      note: applied ? `已更新到 v${target}` : `已安装 v${target}，但 node_modules 版本未变，重启 dsh 后确认`
+      note: [applied ? `已更新到 v${target}` : `已安装 v${target}，但 node_modules 版本未变，重启 dsh 后确认`, peerProbeWarning]
+        .filter(Boolean).join('；')
     };
   }
 

@@ -135,7 +135,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 
 - 设置项：自动检测启动器（DHL）更新、检查频率、Harness 就绪后自动打开浏览器、登录 macOS 时自动启动 Deepseek Harness Launcher、全局快捷呼出快捷键。
 - 默认值：自动检测启动器（DHL）更新开启、每 6 小时检查一次、启动后约 8 秒做首次后台检查；就绪后自动打开浏览器开启；开机启动关闭；全局快捷键启用，默认 `⌃⌥D`。检查间隔最小为 1 小时。
-- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.4`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
+- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.5`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
 - 启动器自身更新和 `@deepseek-ai/dsh` 更新是两条独立链路；dsh 检查同时读 **npm 的 dist-tags**（`latest` / `next` / `beta` / `alpha`）与 **GitHub Release**（`deepseek-ai/deepseek-harness` 的 `releases.atom`；匿名 API 常被 `403` 限流，feed 更稳），取两者中最新、且确实已发布到 npm 的版本，只提示，不修改 npm 缓存。菜单标题与弹窗都会标出通道（正式版 / 候选版 / 公测版 / 内测版）——npm 的 `latest` 常常落后于刚发的 Release，只看它就会漏掉新版本。
 - dsh 是否更新完全由用户决定：弹窗提供「更新到 vX / 稍后 / 跳过此版本」，预发布版本默认按钮是「稍后」（回车不会顺手装上内测版），弹窗里显示来源（GitHub Release / npm 某标签）、发布日期与 Release 正文（Markdown 渲染）。**找到多个比当前新的版本时，弹窗给出「更新到：[版本下拉]」**：一次列全（最新的在最上、最多 10 条、默认选最新一版），切换版本会同步刷新该版本的来源、日期与说明，按钮也跟着变成「更新到 vX」；只有一个候选时退化为原先的单版本提示。「跳过此版本」跳过的是当前下拉里选中的那一版，并会被记住：自动检查只把菜单写成「已跳过 vX」，手动点菜单仍会弹窗（里面可「取消跳过此版本」）。自动检查只改菜单标题，**从不静默安装**。
 - dsh 的 Release tag 形如 `dsh-v0.1.7-alpha.1`，与 npm 版本 `0.1.7-alpha.1` 视为同一版本；同版本优先采用 GitHub Release（带发布日期与更新说明）。只有出现在 npm 版本列表里的候选才会被推荐——镜像滞后时 GitHub 刚发的 tag 还没上 npm，直接安装会 `ETARGET` 失败，这类候选会被忽略并写进日志。
@@ -148,6 +148,8 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 
 - **检测口径（按来源分派）**：npm 包走 registry 的 `dist-tags`（只跟 `latest` 比，不把 rc/beta/alpha 推给装正式版的用户）；`github:` 依赖与 `plugin-sources` 里的克隆走 `git ls-remote` + 远端 `package.json`，**以"远端版本号变高"为判定**，只有 commit 变了而版本号没变时附注「远端有新提交」；`version` 相同时判定为已是最新。
 - **跨大版本**会照常提示，但标注为「跨大版本 vX」，更新按钮直接安装最新版（无视 profile 里记录的版本范围）。
+- **升级前的 dsh 版本门禁**：执行更新前先取目标版本声明的 `peerDependencies`（npm 走 registry、git 来源走远端 `package.json`），与本机 `~/.dsh/runtime` 里各 `@deepseek-ai/*` 组件的实际版本比对；不满足就**直接阻止这次升级**并说明「目标版本要求 X，当前 dsh 是 Y，请先更新 dsh 本体」。探测本身失败（registry 不通、仓库改名）时放行——判不了不等于不兼容，后面还有装后验收与启动隔离两层兜底。
+- **区间语义与启动器自身的版本比较是两套**：插件与 dsh 的兼容性按 npm 语义判（`rc.1 < rc.6`、`^0.0.3` 上界是 `0.0.4`、支持 `0.1.x`/`>= 0.1.0`/`||`）；但**不**采纳 npm 默认的预发布门控——dsh 生态常态就是装 rc runtime，套上去会把所有只写正式区间的插件一律报成不兼容，警告变成噪音。同一套规则在 Swift（`Sources/PluginCompatibilitySupport.swift`）与 JS（`satisfiesPluginRange`）各实现一份，两边用同一批表驱动用例锁住。
 - **来源识别**：克隆到 `plugin-sources` 时写入 `.dsh-source.json`（作者 / 仓库 / 子目录 / commit）。此前装的旧克隆没有这个标记，检测时会按 `package.json` 的 `repository.url` + `repository.directory` → 市场索引 → 目录名候选的顺序逐个 `git ls-remote` 确认，命中后把标记写回目录（所以"大仓库子目录"型插件也能正确检测）。都确认不了（本地插件或私有仓库）才标记为「未识别到可检测的远端来源」。
 - **更新动作**：npm → `pnpm add <name>@<latest>`；`github:` → 按原 spec 重新解析；`plugin-sources` 克隆 → 先把旧目录改名成 `.bak-<时间戳>` 再重新 clone 覆盖，失败自动回滚（只保留最近一个备份）。服务端插件代码要**重启 dsh** 才生效。
 - **后台自动检测**：默认开启（设置窗口「自动检测插件更新」可关）。开启时启动器在服务就绪后约 15 秒触发一次刷新，之后跟随「检查频率」（默认每 6 小时）；结果缓存在 profile 下的 `.plugin-updates.json`，默认 6 小时内不重复联网。关闭只影响后台检测，面板里的「检查更新」仍可用。
@@ -158,14 +160,18 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 设计目标：**点「重启」一定要能把 Harness 拉起来**。插件是 dsh 启动时逐个 import 的，任何一个抛错整个进程就以退出码 1 结束，而插件管理器的 HTTP 接口随 dsh 一起死——所以恢复逻辑必须放在启动器里，不依赖 dsh 活着。
 
 - **只在「启动过程中」退出才触发**：运行期崩溃的原因五花八门，那时候禁插件大概率无效，还会静默削弱用户环境。
-- **归因**：从这次启动的 stderr 里认 `failed to import loader entry <行> (<包>)`、`Cannot find package '<包>'`、`ERR_MODULE_NOT_FOUND` 的 `node_modules` 路径。**认不出就不猜**。
+- **归因**：从这次启动的 stderr 里认 `failed to import loader entry <行> (<包>)`、`Cannot find package '<包>'`、`ERR_MODULE_NOT_FOUND` 的 `node_modules` 路径。括号里是 `@deepseek-ai/*` 这类公共层时改用**行 id 反查**（`--dump-config` 的 `# == <包名>` 段能查出那一行属于哪个 bundle）——dsh 升级后最常见的破坏是「模块 import 得动、插件 init 才炸」，那种报错里既没有包名也没有路径。
+- **拉起前的静态预检**：第一次启动 dsh 之前先把 profile 里的第三方 bundle 扫一遍相对 import，缺文件的**预隔离**掉（原因记「启动前预检」），让「上游只在打包时生成公共模块」这类问题不需要先失败一次才自愈。只在真查出问题时才付一次 `--dump-config` 的开销。
+- **逐个排除（bisect）**：什么都没点名时，按 `dsh.profile.bundles` 的第三方列表一个一个禁、一个一个试。失败退出只要几秒，代价是几次快速重试，换来的是**只禁掉真正坏的那一个**，而不是一把全砍。第三方全禁完仍起不来才转安全模式（此时先提出 dsh 版本一键回退，回退不成才进安全模式）。
 - **隔离**：跑一次 `dsh web --dump-config`（只 compose、不启服务，坏 profile 上照样出结果）取该包**自己贡献**的顶层行 id，取不到再退回包内 `cordis.patch.yml` 的 `insert:` 块；然后写两个文件到 `~/Library/Application Support/Deepseek Harness Launcher/`：`plugin-isolation.json`（状态）与 `plugin-isolation.yml`（overlay）。下次启动以最高优先级的 `--patch` 传入 `- id: <行>` + `disabled: true`，并自动重新拉起。
   - 不碰 profile 的 `dependencies` 与 `dsh.profile.bundles`（那两处 `dsh plugin` 每次都会 reconcile 回来），不删插件文件，不跑 pnpm。
   - 内置插件（`@deepseek-ai/dsh-base`、`dsh-web-app` 与启动器自带的三个插件）永不被隔离。
   - 一次启动会话最多连续隔离 3 个插件，避免把插件挨个禁光。
 - **安全模式**：认不出嫌疑插件、或隔离额度用尽时，改用 `dsh --profile rescue --from-default-profile web` 启动——只含 dsh 自带的 base + web-app（新建约 16K，不需要网络），第三方插件一个都不加载。此时不跑归档/通知/插件更新等探针，免得对着一堆「插件不可用」弹窗。
 - **恢复**：菜单会出现「已隔离 N 个插件…（点按恢复）」或「退出安全模式并重启」。手动复位删掉 `plugin-isolation.json` 即可。
-- **已知代价**：被隔离的插件如果给别的 bundle 注入服务，那些行会以 `pending (waiting for services: …)` 再失败一次，此时继续隔离下一个嫌疑插件或转入安全模式。
+- **已知代价**：被隔离的插件如果给别的 bundle 注入服务，那些行会以 `pending (waiting for services: …)` 再失败一次，此时阶梯会继续隔离下一个嫌疑插件或转入安全模式。
+- **dsh 版本回退快照的释放时机**：不是「首页有响应」就算成功——那会出现「dsh 升到 X 之后所有插件加载失败、但界面显示成功、也已经一键回不去」。快照要等内置插件探测成功（插件树真的加载完）才清理。
+- **还在观察的缺口**：dsh 本体升级后启动器会跑一次 `dsh plugin update --latest` 同步插件，那条路走的是 dsh 自带 CLI，**没有**上面这套 peer 门禁与装后验收；它的兜底是启动预检 + 逐个排除 + 兼容性扫描提示。
 
 ### 卸载
 

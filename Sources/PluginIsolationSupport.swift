@@ -75,6 +75,50 @@ enum PluginIsolationSupport {
         firstMatch(in: path, packageFromPathRe, group: 1)
     }
 
+    /// stderr 里出现过的 loader entry 行 id，最后出现的排最前。
+    /// 括号里是 `@deepseek-ai/cordis-plugin-group` 这类公共 group 时，包名给不出凶手，
+    /// 但行 id 能——调用方拿 dump-config 的「bundle → 自己的行」映射反查即可。
+    static func attributedRowIds(stderr: String) -> [String] {
+        var seen = Set<String>()
+        var ids: [String] = []
+        for raw in allMatches(in: stderr, loaderEntryRe, group: 1).reversed() where isSafeRowId(raw) {
+            if seen.insert(raw).inserted { ids.append(raw) }
+        }
+        return ids
+    }
+
+    /// 整份 dump-config → 每个 bundle 自己贡献的顶层行 id。一次解析，供整个恢复流程用。
+    static func bundleRowIds(fromDumpConfig dump: String) -> [String: [String]] {
+        var map: [String: [String]] = [:]
+        var bundle: String?
+        for line in dump.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("# == ") {
+                let owners = line.dropFirst(5).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                bundle = (!line.contains("patched by") && !(owners.first ?? "").isEmpty) ? owners.first : nil
+                continue
+            }
+            guard let owner = bundle, line.hasPrefix("- id: ") else { continue }
+            let id = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
+            if isSafeRowId(id) { map[owner, default: []].append(id) }
+        }
+        return map
+    }
+
+    /// 用行 id 反查它属于哪个 bundle（多个命中时取第一个）。
+    static func bundleOwning(rowId: String, in rowsByBundle: [String: [String]]) -> String? {
+        rowsByBundle.keys.sorted().first { rowsByBundle[$0]?.contains(rowId) == true }
+    }
+
+    /// profile 里用户可以被隔离的 bundle：排掉 dsh 自身的 core 层与启动器内置插件。
+    /// 这些是「坏一个就整体起不来」的候选集，也是隔离预算的上限。
+    static func isolatableBundles(fromProfileManifest json: String, protected: Set<String> = protectedBundles) -> [String] {
+        guard let data = json.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let profile = (object["dsh"] as? [String: Any])?["profile"] as? [String: Any],
+              let bundles = profile["bundles"] as? [Any] else { return [] }
+        return bundles.compactMap { $0 as? String }.filter { !protected.contains($0) }
+    }
+
     /// dsh 启动失败的 stderr 里能不能认出是哪个包坏了。认不出就返回 nil（上层转安全模式，
     /// 绝不瞎猜——隔离错插件会让用户以为数据丢了）。
     /// 取最后一次出现：一个坏 bundle 会连带触发多条错误，最后一条才指向真正的导入方。
@@ -84,7 +128,10 @@ enum PluginIsolationSupport {
             // 括号里可能是包名，也可能是 file:// 路径，两种都要能认。
             guard let name = raw.hasPrefix("file://") || raw.contains("node_modules/")
                 ? packageName(fromPath: raw) : (raw.isEmpty ? nil : raw) else { continue }
-            if !protected.contains(name) { return name }
+            // `@deepseek-ai/*` 与内置插件都是公共层：报错指到它们，真正的凶手是那一行
+            // （由 attributedRowIds + dump-config 反查），不能把它们自己当嫌疑对象。
+            if protected.contains(name) || name.hasPrefix("@deepseek-ai/") { continue }
+            return name
         }
         if let pkg = firstMatch(in: stderr, missingPackageRe, group: 1), !protected.contains(pkg) { return pkg }
         // 兜底：ERR_MODULE_NOT_FOUND 的 url 字段指向谁，就是谁的锅。
@@ -228,16 +275,11 @@ enum PluginIsolationSupport {
     /// 写一条禁不掉任何东西的 overlay 只会让下次启动以同样的方式失败。
     static func isolationEntry(
         bundle: String,
-        dumpConfig: String?,
-        ownPatchYAML: String?,
+        rowIds: [String],
         reason: String,
         isolatedAt: String
     ) -> IsolatedPlugin? {
         guard !protectedBundles.contains(bundle) else { return nil }
-        var rowIds = dumpConfig.map { ownRowIds(fromDumpConfig: $0, bundle: bundle) } ?? []
-        if rowIds.isEmpty {
-            rowIds = ownPatchYAML.map { insertedRowIds(fromPatchYAML: $0) } ?? []
-        }
         let safe = rowIds.filter(isSafeRowId)
         guard !safe.isEmpty else { return nil }
         return IsolatedPlugin(bundle: bundle, rowIds: safe, reason: reason, isolatedAt: isolatedAt)
@@ -246,31 +288,69 @@ enum PluginIsolationSupport {
     // MARK: - 恢复决策
 
     enum RecoveryDecision: Equatable {
-        /// 隔离这个 bundle 后重试；rowIds 由调用方去 dump-config／包内 patch 解析。
-        case isolate(bundle: String)
-        /// 认不出嫌疑对象，或隔离额度用尽 → 安全模式。
+        /// 隔离这个 bundle 后重试（行 id 由调用方从 dump 映射或包内 patch 取得）。
+        case isolate(bundle: String, source: IsolationSource)
+        /// 候选集已经全部隔离过还是起不来 → 安全模式。
         case safeMode(reason: String)
         /// 连安全模式都不该再自动尝试（比如刚因安全模式失败过）。
         case giveUp(reason: String)
     }
 
-    /// 纯决策：给定这次失败的归因结果与本次会话已经隔离过什么，下一步做什么。
-    static func decideRecovery(
-        attributed: String?,
-        alreadyIsolated: Set<String>,
-        isolationsThisBoot: Int,
-        maxIsolations: Int = maxIsolationsPerBoot
-    ) -> RecoveryDecision {
-        guard let attributed, !attributed.isEmpty else {
-            return .safeMode(reason: "无法从启动日志里确定是哪个插件导致失败")
+    /// 这次隔离是谁提出来的，写进状态文件供用户看明白。
+    enum IsolationSource: String, Equatable {
+        case stderrBundle = "启动日志点名的插件"
+        case stderrRow = "启动日志点名的插件行"
+        case bisect = "逐个排除"
+        case preflight = "启动前预检"
+    }
+
+    struct RecoveryInput: Equatable {
+        /// stderr 直接认出来的包名。
+        var attributedBundle: String?
+        /// stderr 里的 loader 行 id（包名认不出时的线索，已按"最后出现优先"排序）。
+        var attributedRowIds: [String]
+        /// 行 id → bundle 的映射结果（调用方用 bundleRowIds(fromDumpConfig:) 预先算好）。
+        var rowIdOwners: [String]
+        /// profile 里可隔离的第三方 bundle，按 manifest 顺序。
+        var candidateBundles: [String]
+        var isolatedBundles: Set<String>
+        var isolationsThisBoot: Int
+
+        var isEmpty: Bool { attributedBundle == nil && rowIdOwners.isEmpty && candidateBundles.isEmpty }
+    }
+
+    /// 恢复阶梯：DSH 必须起来，插件能留多少留多少。
+    ///
+    /// 1. 日志点名了哪个包 → 只禁它；
+    /// 2. 只点名了行（括号里是 `@deepseek-ai/cordis-plugin-group` 这类公共 group）→ 用
+    ///    dump-config 的行归属反查到 bundle；
+    /// 3. 什么都认不出（dsh 升级后最常见的插件 init 报错，stderr 里没有包名也没有行 id）→
+    ///    **按候选列表逐个排除**：每次只多禁一个，失败退出只要几秒，代价是几次快速重试，
+    ///    换来的是"只禁掉真正坏的那一个"，而不是一把全砍；
+    /// 4. 第三方全禁完还不行 → 安全模式（连内置插件与 --patch 都不带）。
+    static func decideRecovery(_ input: RecoveryInput) -> RecoveryDecision {
+        if let bundle = input.attributedBundle, !input.isolatedBundles.contains(bundle) {
+            return .isolate(bundle: bundle, source: .stderrBundle)
         }
-        if alreadyIsolated.contains(attributed) {
-            return .safeMode(reason: "\(attributed) 已被隔离过，仍然起不来")
+        for owner in input.rowIdOwners where !input.isolatedBundles.contains(owner) {
+            return .isolate(bundle: owner, source: .stderrRow)
         }
-        guard isolationsThisBoot < maxIsolations else {
-            return .safeMode(reason: "本次启动已连续隔离 \(isolationsThisBoot) 个插件")
+        for bundle in input.candidateBundles where !input.isolatedBundles.contains(bundle) {
+            return .isolate(bundle: bundle, source: .bisect)
         }
-        return .isolate(bundle: attributed)
+        if input.isEmpty {
+            return .safeMode(reason: "没有可隔离的第三方插件，dsh 本体或内置插件出了问题")
+        }
+        return .safeMode(
+            reason: "已隔离 \(input.isolatedBundles.count) 个插件仍起不来：\(input.isolatedBundles.sorted().joined(separator: ", "))"
+        )
+    }
+
+    // MARK: - 启动前预检
+
+    /// 预检要扫的 bundle 目录（profile 的 node_modules 下）。
+    static func bundleDirectory(for bundle: String, profileModules: String) -> String {
+        "\(profileModules)/\(bundle)"
     }
 }
 

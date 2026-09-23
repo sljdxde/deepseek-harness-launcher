@@ -29,6 +29,8 @@ node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-source-imports.test.js"
 # 插件写操作的安全网：装坏要撤销、回滚不许吞错、必需组件不许被拆。
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-mutation-safety.test.js"
+# 升级前的 dsh 版本兼容门禁（区间语义与 Sources/PluginCompatibilitySupport.swift 同口径）。
+node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-peer-compat.test.js"
 if rg -q 'npx |git clone|github.com' "$ROOT/Plugins/DSHPluginManager/lib/index.js" >/dev/null && ! rg -q 'installCandidates|git\+' "$ROOT/Plugins/DSHPluginManager/lib/index.js"; then
   echo "plugin manager must expose npm-first / git-fallback install candidates" >&2
   exit 1
@@ -368,7 +370,7 @@ swiftc "$ROOT/scripts/test-plugin-compatibility.swift" "$ROOT/Sources/PluginComp
 swiftc "$ROOT/scripts/test-release-notes.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" -o "$ROOT/build/test-release-notes"
 "$ROOT/build/test-release-notes"
 swiftc "$ROOT/scripts/test-session-notify.swift" "$ROOT/Sources/SessionNotifySupport.swift" -o "$ROOT/build/test-session-notify"
-swiftc "$ROOT/scripts/test-plugin-isolation.swift" "$ROOT/Sources/PluginIsolationSupport.swift" -o "$ROOT/build/test-plugin-isolation"
+swiftc "$ROOT/scripts/test-plugin-isolation.swift" "$ROOT/Sources/PluginIsolationSupport.swift" "$ROOT/Sources/PluginSourceCheck.swift" -o "$ROOT/build/test-plugin-isolation"
 "$ROOT/build/test-plugin-isolation"
 swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupport.swift" -o "$ROOT/build/test-plugin-updates"
 "$ROOT/build/test-plugin-updates"
