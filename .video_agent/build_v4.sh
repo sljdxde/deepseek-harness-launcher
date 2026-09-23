@@ -17,8 +17,31 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 FONT="/System/Library/Fonts/Hiragino Sans GB.ttc"
 W=1280; H=720; FPS=30; XFD=0.3
 
-# crop: 顶部避豆包横幅(170px)，底部避 Dock(留 160px)。4K=3840x2160 → crop=3555:1830:142:170
-CROP="crop=3555:1830:142:170"
+# crop: 4K=3840x2160 逐镜定制——默认裁顶部豆包横幅(170px)+底部 Dock；菜单栏镜头保留完整菜单；
+# Finder 镜头切到窗口区域（x≈1152-3014）；日志镜头切日志窗口；S13/S15 菜单特写。
+declare -a CROPEXPR=(
+  ""                            # 0  S01 c卡
+  "crop=3555:1830:142:170"      # 1  S02 github（Chrome 全宽）
+  "crop=3555:1830:142:170"      # 2  S03 releases
+  "crop=1862:1047:1152:450"     # 3  S04 Finder/DMG 窗口
+  "crop=2528:1422:880:40"       # 4  S05 菜单栏+菜单+Finder
+  "crop=2528:1422:880:40"       # 5  S06 同 S05
+  "crop=3555:1830:142:170"      # 6  S07 Harness 全宽
+  "crop=3555:1830:142:170"      # 7  S08 Harness 全宽
+  "crop=3555:1830:142:40"       # 8  S09 角标+菜单完整
+  "crop=3555:1830:142:170"      # 9  S10 Harness 全宽
+  "crop=3555:1830:142:170"      # 10 S11 Harness 全宽
+  "crop=3555:1830:142:170"      # 11 S12a Harness 全宽
+  "crop=3555:1830:142:170"      # 12 S12b Harness 全宽
+  "crop=3555:1830:142:170"      # 13 S12c Harness 全宽
+  "crop=3555:1830:142:170"      # 14 S12d Harness 全宽
+  "crop=960:540:2480:56"       # 15 S13 菜单特写（DHL 菜单 x 2480-3171）
+  "crop=1312:738:432:132"      # 16 S14 日志窗口
+  "crop=960:540:2480:56"       # 17 S15 菜单特写
+  "crop=3555:1830:142:170"      # 18 S16a Harness 全宽
+  ""                            # 19 S17 c卡
+  ""                            # 20 S18 c卡
+)
 
 # ---------- 镜头清单（分镜稿v4；S12 拆 4 段：检测→市场安装→卸载→确认） ----------
 # 格式: 类型:路径，类型 c=静态卡 v=录屏
@@ -94,7 +117,8 @@ for i in "${!SRC[@]}"; do
   else
     sd=$($FP -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$path")
     sc=$(echo "$sd / $t" | bc -l)
-    $FF -y -v error -i "$path" -vf "$CROP,scale=$W:$H:force_original_aspect_ratio=decrease,pad=$W:$H:(ow-iw)/2:(oh-ih)/2,setpts=PTS/$sc,fps=$FPS,format=yuv420p" -an -c:v libx264 -preset fast -crf 18 "$out"
+    cr=${CROPEXPR[$i]}
+    $FF -y -v error -i "$path" -vf "$cr,scale=$W:$H:force_original_aspect_ratio=decrease,pad=$W:$H:(ow-iw)/2:(oh-ih)/2,setpts=PTS/$sc,fps=$FPS,format=yuv420p" -an -c:v libx264 -preset fast -crf 18 "$out"
   fi
   SEG+=("$out")
 done
