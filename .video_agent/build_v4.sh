@@ -15,38 +15,44 @@ VDIR="${1:-/Users/yuzhou/004个人代码仓库/dsh-launcher/.video_agent}"
 SHOTS="$VDIR/shots"; GFX="$VDIR/gfx"; AUD="$VDIR/audio"; OUT="$VDIR"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 FONT="/System/Library/Fonts/Hiragino Sans GB.ttc"
-W=1280; H=720; FPS=30; XFD=0.3
+W=1280; H=720; FPS=30; XFD=0.5
+# AI 片头（Seedance 2.5 生成，温暖亲切风格，10s 16:9 已成品）
+OPEN="$VDIR/opening_ai.mp4"
+# 动态转场序列（22 段之间 21 个转场）
+declare -a XT=("fade" "smoothleft" "circleopen" "zoomin" "smoothright" "radial" "dissolve" "smoothup" "circleclose" "pixelize" "smoothdown" "wipeleft" "zoomin" "smoothleft" "circleopen" "radial" "dissolve" "smoothright" "smoothup" "circleclose" "fade")
 
 # crop: 4K=3840x2160 逐镜定制。Chrome/Harness 镜头：裁顶部菜单栏(130px)+底部Dock(2160-1950=210)，
 # 左侧保留（x=0），右侧裁次要面板/留白 → crop=3254:1820:0:130（16:9）。
 # Finder/日志/菜单镜头按窗口区域特写；S13/S15 菜单特写（DHL 菜单 x 2480-3171）。
 declare -a CROPEXPR=(
-  ""                            # 0  S01 c卡
-  "crop=3254:1820:0:130"        # 1  S02 github（保留标签栏+左侧）
-  "crop=3254:1820:0:130"        # 2  S03 releases
-  "crop=1862:1047:1152:450"     # 3  S04 Finder/DMG 窗口
-  "crop=2528:1422:880:40"       # 4  S05 菜单栏+菜单+Finder
-  "crop=2528:1422:880:40"       # 5  S06 同 S05
-  "crop=3254:1820:0:130"        # 6  S07 Harness（页面完整）
-  "crop=3254:1820:0:130"        # 7  S08 Harness（页面完整）
-  "crop=3254:1820:0:40"         # 8  S09 Harness+菜单（菜单完整+页面完整）
-  "crop=3254:1820:0:130"        # 9  S10 Harness（页面完整）
-  "crop=3254:1820:0:130"        # 10 S11 Harness（页面完整）
-  "crop=3254:1820:0:130"        # 11 S12a Harness（页面完整）
-  "crop=3254:1820:0:130"        # 12 S12b Harness（页面完整）
-  "crop=3254:1820:0:130"        # 13 S12c Harness（页面完整）
-  "crop=3254:1820:0:130"        # 14 S12d Harness（页面完整）
-  "crop=960:540:2480:56"        # 15 S13 菜单特写（DHL 菜单 x 2480-3171）
-  "crop=1312:738:432:132"       # 16 S14 日志窗口
-  "crop=960:540:2480:56"        # 17 S15 菜单特写
-  "crop=3254:1820:0:130"        # 18 S16a Harness 设置（页面完整）
-  ""                            # 19 S17 c卡
-  ""                            # 20 S18 c卡
+  ""                            # 0  AI 片头（成品）
+  ""                            # 1  S01 c卡
+  "crop=3254:1820:0:130"        # 2  S02 github（保留标签栏+左侧）
+  "crop=3254:1820:0:130"        # 3  S03 releases
+  "crop=1862:1047:1152:450"     # 4  S04 Finder/DMG 窗口
+  "crop=2528:1422:880:40"       # 5  S05 菜单栏+菜单+Finder
+  "crop=2528:1422:880:40"       # 6  S06 同 S05
+  "crop=3254:1820:0:130"        # 7  S07 Harness（页面完整）
+  "crop=3254:1820:0:130"        # 8  S08 Harness（页面完整）
+  "crop=3254:1820:0:40"         # 9  S09 Harness+菜单（菜单完整+页面完整）
+  "crop=3254:1820:0:130"        # 10 S10 Harness（页面完整）
+  "crop=3254:1820:0:130"        # 11 S11 Harness（页面完整）
+  "crop=3254:1820:0:130"        # 12 S12a Harness（页面完整）
+  "crop=3254:1820:0:130"        # 13 S12b Harness（页面完整）
+  "crop=3254:1820:0:130"        # 14 S12c Harness（页面完整）
+  "crop=3254:1820:0:130"        # 15 S12d Harness（页面完整）
+  "crop=960:540:2480:56"        # 16 S13 菜单特写（DHL 菜单 x 2480-3171）
+  "crop=1312:738:432:132"       # 17 S14 日志窗口
+  "crop=960:540:2480:56"        # 18 S15 菜单特写
+  "crop=3254:1820:0:130"        # 19 S16a Harness 设置（页面完整）
+  ""                            # 20 S17 c卡
+  ""                            # 21 S18 c卡
 )
 
-# ---------- 镜头清单（分镜稿v4；S12 拆 4 段：检测→市场安装→卸载→确认） ----------
-# 格式: 类型:路径，类型 c=静态卡 v=录屏
+# ---------- 镜头清单（AI 片头 + 分镜稿v4；S12 拆 4 段：检测→市场安装→卸载→确认） ----------
+# 格式: 类型:路径，类型 o=AI片头成品 c=静态卡 v=录屏
 declare -a SRC=(
+  "o:$OPEN"                         # AI 片头 10.0
   "c:$GFX/gfx_08_teaser.png"        # S01 开场 Teaser 3.5
   "v:$SHOTS/v4_s02_github.mp4"      # S02 GitHub 仓库页 4.0
   "v:$SHOTS/v4_s03_releases.mp4"    # S03 Releases 页 4.0
@@ -69,11 +75,12 @@ declare -a SRC=(
   "c:$GFX/gfx_05_infocard.png"      # S17 总结卡 4.0
   "c:$GFX/gfx_15_outro.png"         # S18 Outro 4.0
 )
-declare -a DUR=(3.5 4.0 4.0 4.0 3.0 3.5 4.0 6.0 3.5 8.0 4.0 5.0 7.0 5.0 4.0 5.0 5.0 5.0 4.0 4.0 4.0)
+declare -a DUR=(10.0 3.5 4.0 4.0 4.0 3.0 3.5 4.0 6.0 3.5 8.0 4.0 5.0 7.0 5.0 4.0 5.0 5.0 5.0 4.0 4.0 4.0)
 N=${#SRC[@]}
 
-# ---------- 字幕文案（每镜一句） ----------
+# ---------- 字幕文案（每镜一句；片头无字幕） ----------
 declare -a SUB=(
+  ""
   "在 Mac 上跑 DeepSeek Harness，还停在命令行？"
   "开源项目 Deepseek Harness Launcher，原生菜单栏启动器"
   "下载 DMG，一步装好"
@@ -113,7 +120,9 @@ SEG=()
 for i in "${!SRC[@]}"; do
   typ=${SRC[$i]%%:*}; path=${SRC[$i]#*:}; t=${DUR[$i]}
   out="$WORK/seg$(printf '%02d' $i).mp4"
-  if [ "$typ" = "c" ]; then
+  if [ "$typ" = "o" ]; then
+    $FF -y -v error -i "$path" -t "$t" -vf "scale=$W:$H:force_original_aspect_ratio=decrease,pad=$W:$H:(ow-iw)/2:(oh-ih)/2,fps=$FPS,format=yuv420p" -an -c:v libx264 -preset fast -crf 18 "$out"
+  elif [ "$typ" = "c" ]; then
     $FF -y -v error -loop 1 -i "$path" -t "$t" -vf "scale=$W:$H:force_original_aspect_ratio=decrease,pad=$W:$H:(ow-iw)/2:(oh-ih)/2,fps=$FPS,format=yuv420p" -an -c:v libx264 -preset fast -crf 18 "$out"
   else
     sd=$($FP -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$path")
@@ -137,7 +146,8 @@ for i in "${!SEG[@]}"; do
   else
     dur=${DURS[$((i-1))]}
     OFF=$(echo "$OFF + $dur - $XFD" | bc -l)
-    FILTER="$FILTER ${PREV}${INP[$i]}xfade=transition=fade:duration=$XFD:offset=$OFF[v$i];"
+    tr=${XT[$((i-1))]}
+    FILTER="$FILTER ${PREV}${INP[$i]}xfade=transition=$tr:duration=$XFD:offset=$OFF[v$i];"
     PREV="[v$i]"
   fi
 done
@@ -151,6 +161,7 @@ python3 - "$WORK/sub.ass" "${DUR[@]}" <<'PYEOF'
 import sys
 out, durs = sys.argv[1], [float(x) for x in sys.argv[2:]]
 subs = [
+"",
 "在 Mac 上跑 DeepSeek Harness，还停在命令行？",
 "开源项目 Deepseek Harness Launcher，原生菜单栏启动器",
 "下载 DMG，一步装好",
@@ -173,7 +184,7 @@ subs = [
 "原生 · 轻量 · 开源，让 Harness 在 Mac 上更好用",
 "开源地址见简介，Star 支持一下",
 ]
-XFD = 0.3
+XFD = 0.5
 def ts(t):
     h=int(t//3600); m=int(t%3600//60); s=t%60
     return f"{h}:{m:02d}:{s:05.2f}"
@@ -181,6 +192,8 @@ lines = []
 off = 0.0
 for i, d in enumerate(durs):
     if i > 0: off += durs[i-1] - XFD
+    if not subs[i]:
+        continue
     start = max(0.0, off + 0.25)
     end = off + d - 0.25
     lines.append(f"Dialogue: 0,{ts(start)},{ts(end)},Sub,,0,0,0,,{subs[i]}")
