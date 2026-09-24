@@ -117,18 +117,26 @@ enum DSHRuntimeSupport {
         return DSHVersionParser.version(from: output)
     }
 
-    /// True when the bundled lockfile pins a NEWER dsh version than the one
-    /// installed: an app update shipped a newer runtime spec, so a low-memory
-    /// lockfile reinstall (`npm ci`) should refresh the runtime. A bundled
-    /// version older than the installed one (e.g. the user updated dsh from the
-    /// menu) must NOT trigger a reinstall — that would silently downgrade the
-    /// manual update back to the bundled pin on the next launch.
-    static func needsRuntimeUpgrade(environment: [String: String] = LauncherEnvironment.nodeEnvironment()) -> Bool {
-        guard isInstalled(), let bundled = bundledDSHVersion() else { return false }
-        guard let installed = installedDSHVersion(environment: environment) else { return false }
+    /// App 自带锁文件要求的目标版本：bundled 比已装的新时的 (bundled, installed)，
+    /// 否则 nil（含已装比 bundled 新的情况——那通常是用户从菜单手动更新过 dsh，
+    /// 静默「更新」回去等于把用户的版本降级）。两个版本号一并返回，是因为调用方
+    /// 要拿它写确认弹窗（「v当前 → v目标」），不想为此再跑一次 `dsh --version`。
+    static func bundledUpgradeTarget(environment: [String: String] = LauncherEnvironment.nodeEnvironment()) -> BundledRuntimeUpgrade? {
+        guard isInstalled(), let bundled = bundledDSHVersion() else { return nil }
+        guard let installed = installedDSHVersion(environment: environment) else { return nil }
         // npm 语义：bundled 0.1.5-rc.4 相对已装 0.1.5-rc.2 是「更新」。用启动器那套
         // compareVersions 会把两个 rc 判成相等，于是修复版永远装不上。
-        return compareDSHVersions(bundled, installed) == .orderedDescending
+        guard compareDSHVersions(bundled, installed) == .orderedDescending else { return nil }
+        return BundledRuntimeUpgrade(bundled: bundled, installed: installed)
+    }
+
+    /// True when the bundled lockfile pins a NEWER dsh version than the one
+    /// installed: an app update shipped a newer runtime spec, so a low-memory
+    /// lockfile reinstall (`npm ci`) refreshes the runtime. Whether that refresh
+    /// happens is the user's call (see RuntimeLaunchPlanner); this only reports
+    /// that it is available.
+    static func needsRuntimeUpgrade(environment: [String: String] = LauncherEnvironment.nodeEnvironment()) -> Bool {
+        bundledUpgradeTarget(environment: environment) != nil
     }
 
     /// npm can emit a lot of output during a first install; only the tail is
@@ -214,6 +222,63 @@ enum DSHRuntimeSupport {
 
     static func isInstalled() -> Bool {
         runtimeIsHealthy(runtimeURL)
+    }
+
+    /// 能试着启动的最小判据：固定 runtime 里的 dsh 本体还在、还可执行。
+    /// 与 `isInstalled()`（整棵依赖树齐全）刻意分开：后者是「要不要装」的边界，
+    /// 用它来决定「能不能用」会把一份还能跑的环境判死，逼出一次没必要的重装。
+    static func canAttemptLaunch() -> Bool {
+        fileManager.isExecutableFile(atPath: executableURL.path)
+    }
+
+    /// 完整运行环境的快照：版本定向更新留下的 `runtime.rollback`，或替换 runtime
+    /// 的中途被中断留下的 `runtime.previous-*`。这两处都是**一整个可用的运行环境**，
+    /// 不是垃圾——正式 runtime 缺失时它就是用户手上唯一一份，只能用来恢复。
+    static func runtimeSnapshotURL() -> URL? {
+        var candidates: [URL] = []
+        if fileManager.fileExists(atPath: rollbackURL.path) { candidates.append(rollbackURL) }
+        let root = runtimeURL.deletingLastPathComponent()
+        let entries = (try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        candidates += entries.filter { $0.lastPathComponent.hasPrefix("runtime.previous-") }
+        // 多个残留只认最新的一份（其余由 cleanupInterruptedInstalls 收掉）。
+        func modified(_ url: URL) -> Date {
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        }
+        return candidates.max { modified($0) < modified($1) }
+    }
+
+    static func hasRuntimeSnapshot() -> Bool {
+        runtimeSnapshotURL() != nil
+    }
+
+    /// 把快照换回成正式 runtime。正式 runtime 已经完整时什么都不做（返回 true）。
+    /// 换入失败会把原来的现场放回去，调用方按「没有快照」继续处理。
+    static func restoreRuntimeSnapshot() -> Bool {
+        if isInstalled() { return true }
+        guard let snapshot = runtimeSnapshotURL() else { return false }
+        let root = runtimeURL.deletingLastPathComponent()
+        guard fileManager.fileExists(atPath: runtimeURL.path) else {
+            return (try? fileManager.moveItem(at: snapshot, to: runtimeURL)) != nil
+        }
+        // 半份 runtime 挡在路上：先挪开，快照换入成功再删；失败则原样放回。
+        let broken = root.appendingPathComponent("runtime.broken-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try fileManager.moveItem(at: runtimeURL, to: broken)
+        } catch {
+            return false
+        }
+        do {
+            try fileManager.moveItem(at: snapshot, to: runtimeURL)
+        } catch {
+            try? fileManager.moveItem(at: broken, to: runtimeURL)
+            return false
+        }
+        try? fileManager.removeItem(at: broken)
+        return true
     }
 
     /// Whether DeepSeek Harness has been installed/used before on this machine.
@@ -305,10 +370,17 @@ enum DSHRuntimeSupport {
         completion: @escaping (Result<URL, Error>) -> Void
     ) -> DSHRuntimeInstallHandle {
         let handle = DSHRuntimeInstallHandle()
+        // 上次安装/更新在替换 runtime 的中途被打断时，正式 runtime 只剩快照
+        // （runtime.previous-* / runtime.rollback）。先把它换回来再判断要不要装：
+        // 那是用户手上唯一一份能跑的环境，重装既慢、又会在网络失败时把他从
+        // 「旧环境还能跑」直接推到「什么都没有」。
+        if !isInstalled(), hasRuntimeSnapshot(), restoreRuntimeSnapshot() {
+            onOutput("检测到上次运行环境更新未完成，已从快照恢复现有运行环境\n")
+        }
         // A healthy fixed runtime is the installation boundary. Never replace it
         // merely because a caller requests installation again, unless the caller
         // explicitly forces a reinstall (e.g. an app update shipped a newer
-        // bundled lockfile and the runtime version must catch up).
+        // bundled lockfile and the user agreed to refresh the runtime).
         if isInstalled(), !force {
             onOutput("已检测到完整 dsh runtime，跳过 npm 下载\n")
             DispatchQueue.main.async { completion(.success(executableURL)) }
@@ -353,8 +425,14 @@ enum DSHRuntimeSupport {
         ) else { return }
         for entry in entries {
             let name = entry.lastPathComponent
-            // runtime.rollback 是版本更新的回退快照，刻意保留，不在清理之列
-            guard name.hasPrefix("runtime.installing-") || name.hasPrefix("runtime.previous-") || name.hasPrefix("runtime.retired-") else { continue }
+            // 正式 runtime 已完整时，此前留下的 runtime.previous-* 只是旧快照，可以
+            // 收掉；不完整时留着——它可能是用户手上唯一一份能跑的环境（见
+            // runtimeSnapshotURL）。runtime.rollback 永远保留，回退靠它。
+            let isStale = name.hasPrefix("runtime.installing-")
+                || name.hasPrefix("runtime.broken-")
+                || name.hasPrefix("runtime.retired-")
+                || (name.hasPrefix("runtime.previous-") && isInstalled())
+            guard isStale else { continue }
             try? fileManager.removeItem(at: entry)
         }
     }
@@ -442,6 +520,10 @@ enum DSHRuntimeSupport {
         attemptEnvironment["npm_config_prefer_offline"] = preferOffline ? "true" : "false"
         attemptEnvironment["npm_config_progress"] = "true"
         attemptEnvironment["npm_config_color"] = "false"
+        // 进度窗口需要解析 npm 的依赖解析/下载/安装事件（placeDep、ADD、
+        // http fetch、reify）才能算出真实百分比。这些行只在 silly 级别输出；
+        // 完整日志保留在日志面板中便于安装失败时排查。
+        attemptEnvironment["npm_config_loglevel"] = "silly"
         // Resolving the 100+ package dsh tree needs more than Node's default
         // heap; the app caps V8 old space at a tuned ceiling (see
         // npmMaxOldSpaceSizeMB). This is a ceiling, not a preallocation, and

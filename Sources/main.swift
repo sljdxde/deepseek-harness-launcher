@@ -165,6 +165,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var dshInstallHandle: DSHRuntimeInstallHandle?
     private var dshInstallProgressTracker: DSHInstallProgressTracker?
     private var terminateAfterDSHInstall = false
+    /// App 自带锁文件要求的运行环境版本（比已装的新时才非 nil）。只作为「可更新
+    /// 的目标」缓存：启动流程不会自己开始装，装与不装由用户在弹窗/菜单里决定。
+    private var pendingBundledUpgrade: BundledRuntimeUpgrade?
+    /// 本次启动器运行里用户拒绝过重建运行环境：拒绝之后不再反复弹窗，只留菜单入口。
+    private var rebuildDeclinedThisRun = false
+    private var runtimeMenuItem: NSMenuItem?
+    private var runtimeMenuRow: MenuRowView?
     // 会话完成提醒：内置 dsh-session-notify 插件把主会话 turn/end 记录在
     // Harness 侧，启动器轮询后以菜单栏角标（Foxmail 风格）+ 菜单区块呈现。
     private let sessionNotifyStore = SessionNotifyStore()
@@ -263,7 +270,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 恢复入口平时不显示：只有隔离过插件或处在安全模式里才需要它。
         let recovery = menuRowItem(title: "插件恢复", action: #selector(togglePluginRecoveryMode))
         recovery.tag = 1004; recovery.isHidden = true
-        [open, port, recovery, restart, NSMenuItem.separator(), update, dshUpdate, settingsItem, logs, quit].forEach(menu.addItem)
+        // 运行环境入口同样按需出现：只有在「App 自带版本更新（用户暂不更新）」或
+        // 「运行环境缺失/半份（用户暂不重建）」时才有内容，平时不占菜单空间。
+        let runtime = menuRowItem(title: "运行环境", action: #selector(fixRuntimeFromMenu))
+        runtime.tag = 1005; runtime.isHidden = true
+        runtimeMenuItem = runtime; runtimeMenuRow = runtime.view as? MenuRowView
+        [open, port, recovery, runtime, restart, NSMenuItem.separator(), update, dshUpdate, settingsItem, logs, quit].forEach(menu.addItem)
         return menu
     }
 
@@ -467,13 +479,20 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 菜单「立即更新」：从 npm 安装指定版本替换 runtime。dsh 正在运行/启动中时
     /// 先停止再更新，完成后自动重启回到运行状态；未运行则只更新，下次启动生效。
     private func updateDSHNow(to version: String) {
+        runRuntimeInstall(mode: .dshUpdate(version: version))
+    }
+
+    /// 「安装/更新/重建运行环境」的统一入口：必要时先停掉正在跑的 Harness，装完
+    /// 回到启动流程。调用方负责先拿到用户同意（启动流程见 launch / 菜单见
+    /// fixRuntimeFromMenu），这里不再自作主张。
+    private func runRuntimeInstall(mode: DSHInstallMode) {
         guard dshInstallHandle == nil else {
             showInfo(title: "正在安装或更新 Deepseek Harness", message: "请等待当前安装/更新完成后再试。")
             return
         }
         let wasActive = state == .running || state == .checking
         let port = selectedPort ?? basePort
-        let beginInstall: () -> Void = { [weak self] in
+        let begin: () -> Void = { [weak self] in
             guard let self else { return }
             self.setState(.checking)
             let environment = LauncherEnvironment.nodeEnvironment(preferOffline: false)
@@ -481,12 +500,20 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.fail("未找到 npm。请先安装 Node.js（包含 npm），或把 Node 加入标准安装路径后重试")
                 return
             }
-            self.beginDSHInstall(port: port, npmPath: npmPath, environment: environment, mode: .dshUpdate(version: version), relaunchAfterInstall: wasActive)
+            // 用户此刻明确要求装/修，之前「别再问」的拒绝不再适用。
+            self.rebuildDeclinedThisRun = false
+            self.beginDSHInstall(
+                port: port,
+                npmPath: npmPath,
+                environment: environment,
+                mode: mode,
+                relaunchAfterInstall: wasActive
+            )
         }
         if wasActive {
-            stopDHL(completion: beginInstall)
+            stopDHL(completion: begin)
         } else {
-            beginInstall()
+            begin()
         }
     }
 
@@ -1222,51 +1249,134 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func launch(port: Int) {
         ensurePluginLink()
+        // 上次安装/更新在替换 runtime 的中途被打断时，正式 runtime 可能只以快照
+        // 形式躺着。先换回来再决策：用户手里那份环境是能跑的，不该被一次「重新
+        // 安装」顶掉——重装要联网，装失败就从「还能跑」掉到「什么都没有」。
+        if !DSHRuntimeSupport.isInstalled(), DSHRuntimeSupport.hasRuntimeSnapshot(),
+           DSHRuntimeSupport.restoreRuntimeSnapshot() {
+            appendLogString("上次运行环境更新未完成，已从快照恢复现有运行环境\n")
+        }
         let environment = LauncherEnvironment.nodeEnvironment(preferOffline: false)
         guard let npmPath = LauncherEnvironment.executablePath(named: "npm", environment: environment) else {
             fail("未找到 npm。请先安装 Node.js（包含 npm），或把 Node 加入标准安装路径后重试")
             return
         }
-        if DSHRuntimeSupport.isInstalled() {
-            // 新版本 App 自带更新的 dsh 锁定文件时，用 npm ci 做一次低内存更新
-            if DSHRuntimeSupport.needsRuntimeUpgrade(environment: environment) {
-                beginDSHInstall(port: port, npmPath: npmPath, environment: environment, mode: .upgrade)
+        // App 自带锁文件比已装的新时，只把它记成「可更新的目标」：菜单里给入口，
+        // 是否更新由用户点头。启动流程绝不因为「有更新」就自己开始装。
+        pendingBundledUpgrade = DSHRuntimeSupport.bundledUpgradeTarget(environment: environment)
+        let action = RuntimeLaunchPlanner.plan(RuntimeLaunchInput(
+            runtimeInstalled: DSHRuntimeSupport.isInstalled(),
+            runtimeRunnable: DSHRuntimeSupport.canAttemptLaunch(),
+            recoverySnapshotAvailable: DSHRuntimeSupport.hasRuntimeSnapshot(),
+            bundledUpgradeTarget: pendingBundledUpgrade,
+            harnessInstallPresent: DSHRuntimeSupport.hasHarnessInstall(),
+            rebuildDeclinedThisRun: rebuildDeclinedThisRun
+        ))
+        refreshRuntimeMenuRow()
+        switch action {
+        case .launchInstalled:
+            launchInstalledDSH(port: port, executableURL: DSHRuntimeSupport.executableURL, environment: environment)
+
+        case .recoverSnapshot:
+            // 计划里排出这一步时快照刚被换走却仍然不完整（例如快照本身也是半份），
+            // 按「需要重建」处理，不让启动卡在半路。
+            if DSHRuntimeSupport.hasRuntimeSnapshot(), DSHRuntimeSupport.restoreRuntimeSnapshot() {
+                appendLogString("上次运行环境更新未完成，已从快照恢复现有运行环境\n")
+                launch(port: port)
                 return
             }
-            launchInstalledDSH(port: port, executableURL: DSHRuntimeSupport.executableURL, environment: environment)
-            return
-        }
-        // runtime 缺失但本机已安装/使用过 DeepSeek Harness（profile 或依赖树存在）：
-        // 这不是首次安装，而是运行环境被清理或损坏，应在保留会话/归档/插件数据
-        // 的前提下重建 runtime，避免误导性的「首次安装」引导。
-        if DSHRuntimeSupport.hasHarnessInstall() {
+            guard confirmRuntimeRebuild() else {
+                declineRuntimeRebuild()
+                return
+            }
+            beginDSHInstall(port: port, npmPath: npmPath, environment: environment, mode: .repair)
+
+        case .offerBundledUpgrade(let upgrade):
+            // 用户此前已经说过「稍后」：同一版本不再打扰，直接按现有环境启动。
+            guard settings.deferredBundledRuntimeVersion != upgrade.bundled else {
+                appendLogString("运行环境 v\(upgrade.bundled) 已暂缓更新，本次按 v\(upgrade.installed) 启动\n")
+                launchInstalledDSH(port: port, executableURL: DSHRuntimeSupport.executableURL, environment: environment)
+                return
+            }
+            guard confirmBundledRuntimeUpgrade(upgrade) else {
+                // 「稍后」= 继续用现在这版启动，并把这次选择记住，别每次打开都问。
+                settings.deferredBundledRuntimeVersion = upgrade.bundled
+                appendLogString("用户暂不更新运行环境（v\(upgrade.installed) → v\(upgrade.bundled)），按现有版本启动\n")
+                refreshRuntimeMenuRow()
+                launchInstalledDSH(port: port, executableURL: DSHRuntimeSupport.executableURL, environment: environment)
+                return
+            }
+            beginDSHInstall(port: port, npmPath: npmPath, environment: environment, mode: .upgrade)
+
+        case .offerRepair:
+            guard confirmRuntimeRebuild() else {
+                declineRuntimeRebuild()
+                return
+            }
+            beginDSHInstall(port: port, npmPath: npmPath, environment: environment, mode: .repair)
+
+        case .rebuildDeclined:
+            appendLogString("运行环境缺失且用户已拒绝重建，本次不再提示（菜单里可随时重建）\n")
+            showStatusTitle("已跳过重建运行环境", autoDismissAfter: 6)
+            setState(.stopped)
+            setPortMenuTitle("运行环境缺失：菜单可重建")
+
+        case .firstInstall:
             let alert = NSAlert()
             AlertDesign.style(alert, tone: .question)
-            alert.messageText = "检测到已有 DeepSeek Harness 安装"
-            alert.informativeText = "本机已检测到 DeepSeek Harness 数据，但运行环境缺失，将重新安装运行环境（不影响你的会话、归档与插件数据）。启动器会优先尝试更快的镜像，失败后自动回退到官方源。"
+            alert.messageText = "首次安装 Deepseek Harness"
+            alert.informativeText = "首次安装会下载较多 npm 依赖，可能需要几分钟。启动器会优先尝试更快的镜像，失败后自动回退到官方源。"
             alert.alertStyle = .informational
-            alert.addButton(withTitle: "重新安装")
+            alert.addButton(withTitle: "开始安装")
             alert.addButton(withTitle: "取消")
             guard alert.runModal() == .alertFirstButtonReturn else {
                 setState(.stopped)
                 return
             }
-            beginDSHInstall(port: port, npmPath: npmPath, environment: environment, mode: .repair)
-            return
+            beginDSHInstall(port: port, npmPath: npmPath, environment: environment, mode: .firstInstall)
         }
+    }
+
+    /// App 自带锁文件要求更新运行环境时的确认弹窗。返回 true 表示现在更新；
+    /// false（「稍后」）表示照常启动现有环境。
+    private func confirmBundledRuntimeUpgrade(_ upgrade: BundledRuntimeUpgrade) -> Bool {
+        let alert = NSAlert()
+        AlertDesign.style(alert, tone: .update)
+        alert.messageText = "运行环境有新版本 v\(upgrade.bundled)"
+        alert.informativeText = "启动器自带 v\(upgrade.bundled)，当前运行的是 v\(upgrade.installed)。更新会用 npm ci 重新安装运行环境（不影响你的会话、归档与插件数据），约需一到几分钟。"
+        alert.addButton(withTitle: "更新运行环境")
+        alert.addButton(withTitle: "稍后")
+        alert.accessoryView = AlertDesign.accessory(
+            card: AlertDesign.card(rows: [
+                AlertDesign.versionRow(from: upgrade.installed, to: upgrade.bundled, channel: nil)
+            ]),
+            footnote: "选择「稍后」不会打断启动：继续用 v\(upgrade.installed) 跑，菜单里可以随时更新。"
+        )
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// 运行环境缺失（或只剩半份）时的重建确认。返回 true 表示现在重建。
+    private func confirmRuntimeRebuild() -> Bool {
         let alert = NSAlert()
         AlertDesign.style(alert, tone: .question)
-        alert.messageText = "首次安装 Deepseek Harness"
-        alert.informativeText = "首次安装会下载较多 npm 依赖，可能需要几分钟。启动器会优先尝试更快的镜像，失败后自动回退到官方源。"
+        alert.messageText = "检测到已有 DeepSeek Harness 安装"
+        alert.informativeText = "本机已检测到 DeepSeek Harness 数据，但运行环境缺失，需要重新安装运行环境（不影响你的会话、归档与插件数据）。启动器会优先尝试更快的镜像，失败后自动回退到官方源。选择「稍后」则本次不再提示，菜单里可随时重建。"
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "开始安装")
-        alert.addButton(withTitle: "取消")
-        guard alert.runModal() == .alertFirstButtonReturn else {
-            setState(.stopped)
-            return
-        }
-        beginDSHInstall(port: port, npmPath: npmPath, environment: environment, mode: .firstInstall)
+        alert.addButton(withTitle: "重新安装")
+        alert.addButton(withTitle: "稍后")
+        return alert.runModal() == .alertFirstButtonReturn
     }
+
+    /// 用户拒绝重建：把「别再问」记到本次运行结束，并给出菜单入口与状态提示。
+    private func declineRuntimeRebuild() {
+        rebuildDeclinedThisRun = true
+        appendLogString("用户暂不重建 dsh 运行环境，菜单里可随时重建\n")
+        setState(.stopped)
+        setPortMenuTitle("运行环境缺失：菜单可重建")
+        showStatusTitle("已跳过重建运行环境", autoDismissAfter: 6)
+        refreshRuntimeMenuRow()
+    }
+
 
     private func beginDSHInstall(
         port: Int,
@@ -1349,6 +1459,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.dshInstallWindow = nil
             switch result {
             case .success(let executableURL):
+                // 装完了：升级目标与「暂缓/拒绝」记忆一起作废，菜单入口跟着收起。
+                self.pendingBundledUpgrade = nil
+                self.rebuildDeclinedThisRun = false
+                if isUpgrade || isRepair { self.settings.deferredBundledRuntimeVersion = nil }
+                self.refreshRuntimeMenuRow()
                 if isDSHUpdate {
                     self.dshUpdateReport = nil
                     // 已经装上了，之前跳过的同一版本就没有意义了。
@@ -1560,6 +1675,17 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 self.process = nil
                 self.selectedPort = nil
+                // 前端（插件管理）在卸载插件后会调 /dsh-plugin-manager/restart 让 dsh
+                // 以 exit 0 优雅退出。此时 dsh 处于 running 状态、退出码为 0，不是崩溃，
+                // 启动器应自动拉起新进程，让侧边栏 slot 刷新——而不是弹「进程已退出」。
+                if self.state == .running, terminatedProcess.terminationStatus == 0 {
+                    self.appendLogString("dsh 收到重启请求（exit 0），正在自动重新启动…\n")
+                    self.relaunchingAfterRestart = true
+                    self.openWhenReady = true
+                    self.setState(.stopped)
+                    self.start()
+                    return
+                }
                 // 版本更新后的首次启动失败优先提供回退，而非直接报错
                 let exitReason = "\(LauncherBrand.fullName) 进程已退出（code=\(terminatedProcess.terminationStatus)）"
                 // 只在「启动过程中」退出才做插件隔离：运行期崩溃的原因五花八门，
@@ -1846,6 +1972,61 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item?.isHidden = false
             item?.title = "已隔离 \(isolated.count) 个插件：\(isolated.map { $0.bundle }.prefix(2).joined(separator: "、"))（点按恢复）"
         }
+    }
+
+    // MARK: - 运行环境入口（按需出现的菜单项）
+
+    /// 运行环境那条菜单入口：只有「需要用户点头」时才有内容——运行环境缺失/半份
+    /// （重建/修复），或 App 自带版本更新而用户暂未更新。平时整条隐藏，不占菜单。
+    /// 判据都是廉价的文件检查 + 缓存的升级目标：菜单每次打开都会刷新这条，不能在这里
+    /// 跑 `dsh --version`。
+    private func refreshRuntimeMenuRow() {
+        guard let item = runtimeMenuItem else { return }
+        guard let title = runtimeMenuTitle() else {
+            item.isHidden = true
+            return
+        }
+        item.isHidden = false
+        runtimeMenuRow?.title = title
+    }
+
+    private func runtimeMenuTitle() -> String? {
+        if !DSHRuntimeSupport.isInstalled() {
+            return DSHRuntimeSupport.canAttemptLaunch()
+                ? "修复 Deepseek Harness 运行环境"
+                : "重建 Deepseek Harness 运行环境"
+        }
+        if let upgrade = pendingBundledUpgrade {
+            return "更新运行环境到 v\(upgrade.bundled)（App 自带）"
+        }
+        return nil
+    }
+
+    /// 菜单入口：用户主动要处理运行环境——这时才弹确认并真的开始装。
+    @objc private func fixRuntimeFromMenu() {
+        guard dshInstallHandle == nil else {
+            showInfo(title: "正在安装或更新 Deepseek Harness", message: "请等待当前安装/更新完成后再试。")
+            return
+        }
+        if let upgrade = pendingBundledUpgrade, DSHRuntimeSupport.isInstalled() {
+            guard confirmBundledRuntimeUpgrade(upgrade) else {
+                settings.deferredBundledRuntimeVersion = upgrade.bundled
+                appendLogString("用户暂不更新运行环境（v\(upgrade.installed) → v\(upgrade.bundled)）\n")
+                refreshRuntimeMenuRow()
+                return
+            }
+            runRuntimeInstall(mode: .upgrade)
+            return
+        }
+        let runnable = DSHRuntimeSupport.canAttemptLaunch()
+        let alert = NSAlert()
+        AlertDesign.style(alert, tone: .question)
+        alert.messageText = runnable ? "修复 Deepseek Harness 运行环境" : "重建 Deepseek Harness 运行环境"
+        alert.informativeText = "会按 App 自带的锁文件重新安装运行环境（npm ci，锁定版本），你的会话、归档与插件数据不受影响。"
+        alert.addButton(withTitle: "开始重建")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        runRuntimeInstall(mode: .repair)
     }
 
     private func ensurePluginLink() {
@@ -2458,6 +2639,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         rebuildSessionNotifyMenuSection()
         refreshRecoveryMenuItem()
+        refreshRuntimeMenuRow()
     }
 }
 

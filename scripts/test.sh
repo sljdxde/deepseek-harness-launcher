@@ -191,6 +191,32 @@ rg -q 'cleanupInterruptedInstalls' "$ROOT/Sources/DSHRuntimeSupport.swift"
 rg -Fq '已检测到完整 dsh runtime，跳过 npm 下载' "$ROOT/Sources/DSHRuntimeSupport.swift"
 rg -q 'SIGKILL' "$ROOT/Sources/DSHRuntimeSupport.swift"
 rg -q 'cordis-plugin-group/package.json' "$ROOT/Sources/DSHRuntimeSupport.swift"
+# 启动期不得强制装/更新运行环境：有更新只代表「可以更新」，是否更新由用户决定，
+# 拒绝后必须仍能用现有环境启动（「装不装」的判据 isInstalled 与「能不能用」的
+# canAttemptLaunch 必须分开，别把还能跑的环境判死）。被中断的替换要把快照换回来，
+# 而不是逼用户重装一次。
+rg -Fq 'RuntimeLaunchPlanner.plan' "$ROOT/Sources/main.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift"
+rg -Fq 'RuntimeLaunchInput(' "$ROOT/Sources/main.swift"
+rg -Fq 'canAttemptLaunch' "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/main.swift"
+rg -Fq 'guard confirmBundledRuntimeUpgrade(upgrade) else' "$ROOT/Sources/main.swift"
+rg -Fq 'guard confirmRuntimeRebuild() else' "$ROOT/Sources/main.swift"
+rg -Fq 'declineRuntimeRebuild' "$ROOT/Sources/main.swift"
+rg -Fq 'deferredBundledRuntimeVersion' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateSupport.swift"
+rg -Fq 'fixRuntimeFromMenu' "$ROOT/Sources/main.swift"
+# 反例守卫：启动流程里不许再出现「检测到需要升级就直接开装」的老路径。
+if rg -Fq 'needsRuntimeUpgrade(environment: environment) {' "$ROOT/Sources/main.swift"; then
+  echo "startup must not begin a runtime upgrade without user confirmation" >&2
+  exit 1
+fi
+rg -Fq 'restoreRuntimeSnapshot' "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/main.swift"
+rg -Fq 'runtimeSnapshotURL' "$ROOT/Sources/DSHRuntimeSupport.swift"
+rg -Fq '已从快照恢复现有运行环境' "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/scripts/test-dsh-runtime-support.swift"
+rg -Fq 'restore_interrupted_runtime' "$ROOT/scripts/uninstall.sh"
+# 卸载不得删掉用户唯一一份运行环境：runtime.previous-* 是「替换 runtime 中途被打断」
+# 时的完整快照，正式 runtime 缺失时要先换回去（zsh 里 local path 会让 PATH 变空，
+# 所以必须用绝对路径调用 mv）。
+rg -Fq '/bin/mv "$snapshot"' "$ROOT/scripts/uninstall.sh"
+rg -Fq 'runtime.broken-' "$ROOT/scripts/uninstall.sh"
 rg -q 'DSHInstallWindowController' "$ROOT/Sources/main.swift"
 rg -q 'DSHInstallProgressTracker' "$ROOT/Sources/main.swift"
 rg -Fq '本地未检测到 DeepSeek Harness' "$ROOT/Sources/DSHInstallWindowController.swift" "$ROOT/Sources/main.swift"
@@ -376,17 +402,20 @@ swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupp
 "$ROOT/build/test-plugin-updates"
 "$ROOT/build/test-session-notify"
 # 提示框外观与版本选择器：纯 AppKit 视图，直接构造/量尺寸/触发动作来断言。
-swiftc "$ROOT/scripts/test-alert-design.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/DSHUpdateVersionPicker.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" -o "$ROOT/build/test-alert-design" -framework AppKit
+swiftc "$ROOT/scripts/test-alert-design.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/DSHUpdateVersionPicker.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-alert-design" -framework AppKit
 "$ROOT/build/test-alert-design"
 swiftc "$ROOT/scripts/test-launcher-support.swift" "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/Sources/LogSupport.swift" -o "$ROOT/build/test-launcher-support"
 "$ROOT/build/test-launcher-support"
 swiftc "$ROOT/scripts/test-global-hotkey.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-global-hotkey"
 "$ROOT/build/test-global-hotkey"
-swiftc "$ROOT/scripts/test-dsh-version-support.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" -o "$ROOT/build/test-dsh-version-support"
+swiftc "$ROOT/scripts/test-dsh-version-support.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" -o "$ROOT/build/test-dsh-version-support"
 "$ROOT/build/test-dsh-version-support"
 swiftc "$ROOT/scripts/test-dsh-install-progress.swift" "$ROOT/Sources/DSHInstallProgress.swift" -o "$ROOT/build/test-dsh-install-progress"
 "$ROOT/build/test-dsh-install-progress"
-swiftc "$ROOT/scripts/test-dsh-runtime-support.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" -o "$ROOT/build/test-dsh-runtime-support"
+# 启动期运行环境决策：每个分支都必须是「直接启动」或「先问用户」，不允许自己开装。
+swiftc "$ROOT/scripts/test-runtime-launch-plan.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-runtime-launch-plan"
+"$ROOT/build/test-runtime-launch-plan"
+swiftc "$ROOT/scripts/test-dsh-runtime-support.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-dsh-runtime-support"
 RUNTIME_TEST_HOME="$(mktemp -d /tmp/dsh-runtime-home.XXXXXX)"
 # macOS ignores the HOME env var for NSHomeDirectory(); DSHRuntimeSupport honors
 # DSH_HOME, so use it to isolate the runtime tests from the real ~/.dsh.

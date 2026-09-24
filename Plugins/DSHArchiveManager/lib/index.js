@@ -244,6 +244,81 @@ export async function deleteTrees(services, rootIds) {
 }
 
 /**
+ * Whether session `id` is currently accounted by any workspace row.
+ */
+function sessionHasWorkspace(state, id) {
+  return Object.values(state.tables?.workspaces || {}).some(row => (row.sessionIds || []).includes(id));
+}
+
+/**
+ * Restore archived sessions back to the normal session list. Two steps:
+ *   1. Drop each id from the global archive set — dsh core's archive keeps
+ *      the workspace `sessionIds` slot, so sessions that still belong to a
+ *      workspace reappear in place. Prefer the registry's own
+ *      `unarchiveSession` (it serializes through the workspace write chain);
+ *      fall back to editing workspace.json directly.
+ *   2. Sessions that belong to NO workspace (orphans, e.g. sessions created
+ *      before their workspace accounted them) would stay invisible after
+ *      step 1. Re-attach each one to the workspace whose path matches the
+ *      session header's `cwd`; sessions with no matching workspace are left
+ *      alone (they show up nowhere by design).
+ * Descendants of an archived root are restored together with the root.
+ */
+export async function restoreArchives(services, rootIds) {
+  const headers = await listHeaders(services.sessionPersistence, rootIds);
+  const requested = [...new Set(rootIds.map(String).filter(Boolean))];
+  const selected = new Set(requested);
+  const roots = requested.filter(root => !hasSelectedAncestor(headers, root, selected));
+  const ids = [...new Set(roots.flatMap(root => descendants(headers, root)))];
+  const byId = new Map(headers.map(header => [String(header.id), header]));
+  const registry = services.workspaceRegistry;
+
+  // Step 1: remove from the archive set through the registry when available.
+  if (registry && typeof registry.unarchiveSession === 'function') {
+    for (const id of ids) { try { await registry.unarchiveSession(id); } catch { /* fall through to file edit */ } }
+  }
+
+  let state = await readWorkspace();
+  const archivedBefore = new Set((state.global?.archivedSessionIds || []).map(String));
+  const stillArchived = ids.filter(id => archivedBefore.has(id));
+  if (stillArchived.length) {
+    state.global = state.global || {};
+    state.global.archivedSessionIds = (state.global.archivedSessionIds || []).filter(id => !ids.includes(id));
+    await writeWorkspace(state);
+    state = await readWorkspace();
+  }
+  const restored = archivedBefore.size - new Set((state.global?.archivedSessionIds || []).map(String)).size;
+
+  // Step 2: re-attach orphan sessions to the workspace matching their cwd.
+  const attached = [];
+  for (const id of ids) {
+    if (sessionHasWorkspace(state, id)) continue;
+    const cwd = byId.get(id)?.cwd;
+    if (!cwd) continue;
+    try {
+      if (registry && typeof registry.resolveByPath === 'function') {
+        const workspace = await registry.resolveByPath(cwd);
+        if (workspace && typeof workspace.attachSession === 'function') {
+          await workspace.attachSession(id);
+          attached.push(id);
+          continue;
+        }
+      }
+      // File-level fallback: find the workspace row by (normalized) path.
+      const row = Object.entries(state.tables?.workspaces || {}).find(([, value]) => value.path === cwd);
+      if (row) {
+        row[1].sessionIds = [id, ...(row[1].sessionIds || [])];
+        await writeWorkspace(state);
+        state = await readWorkspace();
+        attached.push(id);
+      }
+    } catch { /* an un-attachable orphan stays ungrouped rather than failing the whole restore */ }
+  }
+
+  return { roots, restored, attached };
+}
+
+/**
  * Sessions that should be auto-archived when the workspace `workspaceId` is
  * deleted: everything still listed in that workspace row and not yet in the
  * global archive set. Pure so it can be unit-tested without a registry.
@@ -315,6 +390,15 @@ export function apply(ctx) {
             const value = await body(req);
             const sessionIds = Array.isArray(value.sessionIds) ? value.sessionIds : [value.sessionId];
             json(res, 200, await deleteTrees(host, sessionIds));
+          }
+          catch (error) { json(res, 409, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-archive-manager/restore', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            const sessionIds = Array.isArray(value.sessionIds) ? value.sessionIds : [value.sessionId];
+            json(res, 200, await restoreArchives(host, sessionIds));
           }
           catch (error) { json(res, 409, { error: String(error?.message || error) }); }
         }})

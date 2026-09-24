@@ -103,6 +103,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-confirm-actions button{border:0;border-radius:6px;cursor:pointer;font:inherit;font-size:13px;line-height:20px;padding:4px 12px}
 .dsh-pm-confirm-cancel{background:var(--dsw-alias-button-ghost-fill);color:inherit}
 .dsh-pm-confirm-danger{background:var(--dsw-alias-state-error-primary);color:#fff}
+.dsh-pm-confirm-primary{background:var(--dsw-alias-color-accent-primary,#0a84ff);color:#fff}
 .dsh-pm-confirm-actions button:disabled{cursor:not-allowed;opacity:.5}
 /* 更新检测：侧边栏角标、已安装页工具栏、行内版本号/胶囊/更新按钮。
    橙色用宿主的 warn 语义色（浅色 amber-100 底 + amber-600 字，深色 amber-900 底），
@@ -470,6 +471,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const [confirmUninstall, setConfirmUninstall] = React.useState(null)
     const [selected, setSelected] = React.useState(new Set())
     const [confirmBatch, setConfirmBatch] = React.useState(false)
+    // 卸载成功后暂存插件名，非 null 时弹「是否立即重启 dsh」确认框。
+    const [restartPrompt, setRestartPrompt] = React.useState(null)
     const [error, setError] = React.useState('')
     // 更新检测：从 PluginTrigger 注入的 store 读取（角标与面板同源）；单独渲染时自建一个。
     const updatesStore = React.useMemo(() => store || createUpdatesStore(), [store])
@@ -620,15 +623,27 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const requestUninstall = (item) => { setError(''); setConfirmUninstall(item) }
     const confirmUninstallGo = () => {
       if (!confirmUninstall) return
+      const name = confirmUninstall.name
       setBusy('uninstall'); setConfirmUninstall(null)
-      fetch('/dsh-plugin-manager/uninstall', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: confirmUninstall.name }) })
+      fetch('/dsh-plugin-manager/uninstall', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) })
         .then(r => r.json()).then(v => {
           if (v.error) throw Error(v.error)
           if (!v.ok) throw Error(v.error || '卸载失败')
-          toast('success', `已卸载 ${confirmUninstall.name}，重启 dsh 后生效`)
+          if (v.needsRestart) setRestartPrompt(name)
+          else toast('success', `已卸载 ${name}`)
           return loadInstalled()
         })
         .catch(e => toast('error', `卸载失败：${String(e.message || e)}`)).finally(() => setBusy(''))
+    }
+    const restartNow = () => {
+      setRestartPrompt(null)
+      setBusy('restart')
+      // dsh 退出后启动器会自动拉起新进程，页面随后重连。
+      fetch('/dsh-plugin-manager/restart', { method: 'POST' }).catch(() => {})
+      setTimeout(() => {
+        toast('info', '正在重启 Deepseek Harness，页面即将自动刷新…')
+        setBusy('')
+      }, 400)
     }
 
     const manageable = installed.filter(item => !item.broken && item.source !== 'bundled')
@@ -726,11 +741,16 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         .then(r => r.json()).then(v => {
           if (v.error) throw Error(v.error)
           const failed = (v.results || []).filter(r => !r.ok)
-          if (failed.length === 0) toast('success', `已卸载 ${selectedNames.length} 个插件，重启 dsh 后生效`)
-          else {
+          if (failed.length === 0) {
+            toast('success', `已卸载 ${selectedNames.length} 个插件`)
+            setRestartPrompt(`${selectedNames.length} 个插件`)
+          } else {
             toast('error', `卸载失败：${failed.map(f => f.name).join('、')}`)
             const done = selectedNames.filter(name => !failed.some(f => f.name === name))
-            if (done.length > 0) toast('success', `已卸载 ${done.length} 个插件，重启 dsh 后生效`)
+            if (done.length > 0) {
+              toast('success', `已卸载 ${done.length} 个插件`)
+              setRestartPrompt(`${done.length} 个插件`)
+            }
           }
           setSelected(new Set())
           return loadInstalled()
@@ -880,6 +900,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             h('div', { className: 'dsh-pm-confirm-actions' },
               h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setConfirmBatch(false), disabled: busy === 'uninstall-many' }, '取消'),
               h('button', { className: 'dsh-pm-confirm-danger', onClick: uninstallManyGo, disabled: busy === 'uninstall-many' }, busy === 'uninstall-many' ? '卸载中…' : '确认卸载'))),
+          restartPrompt && h('div', { className: 'dsh-pm-confirm' },
+            h('div', { className: 'dsh-pm-confirm-title' }, `已卸载 ${restartPrompt}`),
+            h('div', { className: 'dsh-pm-confirm-copy' }, '侧边栏入口会在重启 dsh 后消失。是否立即重启？'),
+            h('div', { className: 'dsh-pm-confirm-actions' },
+              h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setRestartPrompt(null) }, '稍后'),
+              h('button', { className: 'dsh-pm-confirm-primary', onClick: restartNow, disabled: busy === 'restart' }, busy === 'restart' ? '重启中…' : '立即重启'))),
           tab === 'installed'
             ? h('div', null,
                 updatesBar,

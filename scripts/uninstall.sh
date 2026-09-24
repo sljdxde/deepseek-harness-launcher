@@ -86,13 +86,46 @@ remove_backups() {
   done
 }
 
+latest_runtime_snapshot() {
+  # 最新的在前：zsh 的时间排序限定符里 om 是新→旧（实测 Om 反而old→new），
+  # 取第一个就是最新那份快照。
+  local -a snapshots
+  snapshots=("$HOME/.dsh"/runtime.previous-*(N-/om))
+  [[ ${#snapshots[@]} -gt 0 ]] || return 1
+  printf '%s\n' "${snapshots[1]}"
+}
+
+restore_interrupted_runtime() {
+  # 上次更新在替换 runtime 的中途被打断时，正式 runtime 会只剩一份快照
+  # （runtime.previous-*）。那是用户手上唯一一份能跑的环境：先换回正式位置，
+  # 绝不能当残留删掉——删了下次打开启动器只能联网重装一份。
+  # 用绝对路径调用 mv：本文件里的 `local path` 会把 zsh 里与 PATH 绑定的
+  # path 数组局部化，作用域内的 PATH 因此是空的，裸命令一律找不到。
+  [[ -e "$HOME/.dsh/runtime" ]] && return 0
+  local snapshot
+  snapshot="$(latest_runtime_snapshot)" || return 0
+  if /bin/mv "$snapshot" "$HOME/.dsh/runtime" 2>/dev/null; then
+    echo "Restored dsh runtime from interrupted-update snapshot: $snapshot"
+  fi
+}
+
 remove_dsh_runtime() {
-  local path
+  local path runtime_present=0
+  restore_interrupted_runtime
+  [[ -e "$HOME/.dsh/runtime" ]] && runtime_present=1
   # 保留正式 runtime：~/.dsh/runtime/node_modules 里是 DeepSeek Harness 的完整
   # npm 依赖树，删除后下次启动会重新下载并可能被误判为「首次安装」。只有更新
   # dsh（launcher 检测到版本差异时）才重建 runtime。这里只清理中断/残留的
   # 临时安装目录。
-  for path in "$HOME/.dsh"/runtime.installing-*(N) "$HOME/.dsh"/runtime.previous-*(N); do
+  for path in "$HOME/.dsh"/runtime.installing-*(N) "$HOME/.dsh"/runtime.broken-*(N); do
+    [[ -e "$path" ]] || continue
+    /bin/rm -rf "$path"
+    echo "Removed dsh runtime residue $path"
+  done
+  # 只有正式 runtime 已经在位，剩下的 previous-* 才是旧快照；否则它是用户
+  # 唯一一份运行环境（上面的恢复没成功），必须留着。
+  [[ "$runtime_present" == 1 ]] || return 0
+  for path in "$HOME/.dsh"/runtime.previous-*(N); do
     [[ -e "$path" ]] || continue
     /bin/rm -rf "$path"
     echo "Removed dsh runtime residue $path"

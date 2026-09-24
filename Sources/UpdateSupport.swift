@@ -144,6 +144,20 @@ final class LauncherSettings {
         }
     }
 
+    /// 用户选择「稍后」的 App 自带运行环境版本（bundled dsh）。启动器只在「App
+    /// 自带锁文件比已装的新」时问一次；用户说过稍后就不再每次打开都问，菜单里那条
+    /// 「更新运行环境到 vX（App 自带）」仍随时可用。装成后自动清空。
+    var deferredBundledRuntimeVersion: String? {
+        get { defaults.string(forKey: "deferredBundledRuntimeVersion") }
+        set {
+            if let newValue, !newValue.isEmpty {
+                defaults.set(newValue, forKey: "deferredBundledRuntimeVersion")
+            } else {
+                defaults.removeObject(forKey: "deferredBundledRuntimeVersion")
+            }
+        }
+    }
+
     var launchAtLogin: Bool {
         get { defaults.bool(forKey: "launchAtLogin") }
         set { defaults.set(newValue, forKey: "launchAtLogin") }

@@ -60,7 +60,7 @@ npm ci --prefix ~/.dsh/runtime --no-audit --no-fund --prefer-offline \
   --registry <registry>
 ```
 
-更新 dsh 不需要重新全量解析：新版本 App 自带更新的锁定文件，启动时检测到已装版本不一致，会自动用同样的 `npm ci` 做低内存原子升级。
+更新 dsh 不需要重新全量解析：新版本 App 自带更新的锁定文件，启动时若发现已装版本比锁定版本旧，会**先问一次**（「更新运行环境」/「稍后」）。选「稍后」不打断使用：继续用当前版本启动，菜单里常驻一条「更新运行环境到 vX（App 自带）」，随时可点。启动器不会因为「有更新」就自己开始装。
 
 安装完成后实际执行：
 
@@ -89,6 +89,15 @@ npx @deepseek-ai/dsh web
 4. 「退出 Deepseek Harness」会退出菜单栏 UI，并终止 Deepseek Harness Launcher 管理的 Harness 后台进程。
 
 若所有端口均无法复用或绑定，或 npm/dsh/插件启动失败，Deepseek Harness Launcher 会显示失败提示；首次安装期间可取消，临时目录会自动清理。详细 stdout、stderr 与命令行记录可从「打开日志」查看。
+
+### 启动期不强制装/更新运行环境
+
+启动器把「运行环境能不能用」和「依赖树是否齐全」分开判：`.bin/dsh` 还在就先启动，不把一份还能跑的环境判死、更不会因为它「看起来不完整」就要求重装。启动期的每个安装动作都必须由用户点头：
+
+- **App 自带锁文件更新**：问一次「更新运行环境 / 稍后」。选「稍后」照常启动，并把选择记住，之后不再反复问；菜单里那条「更新运行环境到 vX（App 自带）」仍随时可用。
+- **运行环境缺失**（本机用过 dsh，但 `~/.dsh/runtime` 没了）：问一次「重新安装 / 稍后」。选「稍后」不会在每次打开时再弹，菜单里出现「重建 Deepseek Harness 运行环境」可随时重建。
+- **替换 runtime 的中途被打断**（旧环境只以 `runtime.previous-*` 快照形式存在）：直接自动换回来再启动，不弹重装框、不联网重装。卸载脚本同样只在正式 runtime 已在位时才清理这类快照，绝不会删掉用户唯一一份运行环境。
+
 
 ## 安装与构建
 
@@ -135,7 +144,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 
 - 设置项：自动检测启动器（DHL）更新、检查频率、Harness 就绪后自动打开浏览器、登录 macOS 时自动启动 Deepseek Harness Launcher、全局快捷呼出快捷键。
 - 默认值：自动检测启动器（DHL）更新开启、每 6 小时检查一次、启动后约 8 秒做首次后台检查；就绪后自动打开浏览器开启；开机启动关闭；全局快捷键启用，默认 `⌃⌥D`。检查间隔最小为 1 小时。
-- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.5`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
+- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.6`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
 - 启动器自身更新和 `@deepseek-ai/dsh` 更新是两条独立链路；dsh 检查同时读 **npm 的 dist-tags**（`latest` / `next` / `beta` / `alpha`）与 **GitHub Release**（`deepseek-ai/deepseek-harness` 的 `releases.atom`；匿名 API 常被 `403` 限流，feed 更稳），取两者中最新、且确实已发布到 npm 的版本，只提示，不修改 npm 缓存。菜单标题与弹窗都会标出通道（正式版 / 候选版 / 公测版 / 内测版）——npm 的 `latest` 常常落后于刚发的 Release，只看它就会漏掉新版本。
 - dsh 是否更新完全由用户决定：弹窗提供「更新到 vX / 稍后 / 跳过此版本」，预发布版本默认按钮是「稍后」（回车不会顺手装上内测版），弹窗里显示来源（GitHub Release / npm 某标签）、发布日期与 Release 正文（Markdown 渲染）。**找到多个比当前新的版本时，弹窗给出「更新到：[版本下拉]」**：一次列全（最新的在最上、最多 10 条、默认选最新一版），切换版本会同步刷新该版本的来源、日期与说明，按钮也跟着变成「更新到 vX」；只有一个候选时退化为原先的单版本提示。「跳过此版本」跳过的是当前下拉里选中的那一版，并会被记住：自动检查只把菜单写成「已跳过 vX」，手动点菜单仍会弹窗（里面可「取消跳过此版本」）。自动检查只改菜单标题，**从不静默安装**。
 - dsh 的 Release tag 形如 `dsh-v0.1.7-alpha.1`，与 npm 版本 `0.1.7-alpha.1` 视为同一版本；同版本优先采用 GitHub Release（带发布日期与更新说明）。只有出现在 npm 版本列表里的候选才会被推荐——镜像滞后时 GitHub 刚发的 tag 还没上 npm，直接安装会 `ETARGET` 失败，这类候选会被忽略并写进日志。
@@ -179,7 +188,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 ./scripts/uninstall.sh
 ```
 
-卸载脚本会移除当前/旧版 `Deepseek Harness Launcher.app`、`DHL.app` 与 `DSH.app`，停止并删除 DHL 管理的 `~/.dsh/runtime` 及临时安装目录，清理历史 App 备份，卸载并注销旧 DMG 卷与 payload 注册，并删除指向 Deepseek Harness Launcher 自有资源的归档插件链接；**保留其他 `~/.dsh` 数据**（会话、归档、profile 与其他插件数据）。
+卸载脚本会移除当前/旧版 `Deepseek Harness Launcher.app`、`DHL.app` 与 `DSH.app`，停止 DHL 管理的 Harness，清理历史 App 备份与 `~/.dsh/runtime.installing-*`／`runtime.broken-*` 之类的中断残留，卸载并注销旧 DMG 卷与 payload 注册，并删除指向 Deepseek Harness Launcher 自有资源的归档插件链接；**保留其他 `~/.dsh` 数据**（会话、归档、profile 与其他插件数据）。`~/.dsh/runtime.previous-*` 是「替换 runtime 中途被打断」留下的完整环境快照：正式 runtime 缺失时会先把它换回 `~/.dsh/runtime`，只有在正式 runtime 已在位时才当残留清理——绝不会删掉用户唯一一份运行环境。
 
 ---
 

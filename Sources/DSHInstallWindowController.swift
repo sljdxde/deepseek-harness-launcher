@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import QuartzCore
 
 /// 进度窗口的文案角色：dsh 安装、插件更新共用同一套窗口布局、进度条与"已用时长"，
 /// 让三种更新（启动器自身 / dsh / 插件）的进度界面观感一致。
@@ -24,7 +25,7 @@ struct ProgressWindowWording {
         command: "安装命令：npx @deepseek-ai/dsh web",
         detail: "正在执行下载安装，请保持网络连接。",
         progressIdle: "安装进度：正在下载 npm 依赖",
-        progressFormat: "安装进度：%.2f%%",
+        progressFormat: "安装进度：%.1f%%",
         actionTitle: "取消安装",
         note: "安装完成后会自动打开 DeepSeek Harness Web 页面。",
         cancellingStatus: "正在取消安装…",
@@ -38,7 +39,7 @@ struct ProgressWindowWording {
         command: "更新方式：dsh plugin update（pnpm）",
         detail: "正在下载并安装新版本，请保持网络连接。",
         progressIdle: "更新进度：正在准备…",
-        progressFormat: "更新进度：%.2f%%",
+        progressFormat: "更新进度：%.1f%%",
         actionTitle: "隐藏窗口",
         note: "服务端插件代码在重启 dsh 之后生效。",
         cancellingStatus: "正在隐藏窗口…",
@@ -115,12 +116,20 @@ final class DSHInstallWindowController: NSWindowController {
         if let detail, !detail.isEmpty {
             baseDetail = detail
         }
+        // 现在 tracker 始终返回百分比，进度条几乎总是确定模式；保留 nil 分支
+        // 给插件更新等还没接 stage-weighted tracker 的调用方兜底。
         progress.isIndeterminate = percentage == nil
         if progress.isIndeterminate {
             progress.startAnimation(nil)
         } else {
             progress.stopAnimation(nil)
-            progress.doubleValue = max(0, min(100, percentage ?? 0))
+            let target = max(0, min(100, percentage ?? 0))
+            // 百分比变化时用 0.2s 动画平滑过渡，避免 npm 每来一行日志进度条就跳一格。
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.25
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                progress.animator().doubleValue = target
+            }
         }
         if let percentage {
             progressLabel.stringValue = String(format: wording.progressFormat, locale: Locale(identifier: "en_US_POSIX"), percentage)
@@ -184,7 +193,7 @@ final class DSHInstallWindowController: NSWindowController {
         detailLabel.maximumNumberOfLines = 3
         effect.addSubview(detailLabel)
 
-        progress.frame = NSRect(x: 108, y: 88, width: 210, height: 18)
+        progress.frame = NSRect(x: 108, y: 90, width: 230, height: 20)
         progress.style = .bar
         progress.controlSize = .regular
         progress.minValue = 0
@@ -199,7 +208,7 @@ final class DSHInstallWindowController: NSWindowController {
         progressLabel.textColor = .secondaryLabelColor
         effect.addSubview(progressLabel)
 
-        cancelButton.frame = NSRect(x: 335, y: 82, width: 120, height: 30)
+        cancelButton.frame = NSRect(x: 350, y: 83, width: 110, height: 28)
         cancelButton.bezelStyle = .rounded
         cancelButton.target = self
         cancelButton.action = #selector(cancelPressed)

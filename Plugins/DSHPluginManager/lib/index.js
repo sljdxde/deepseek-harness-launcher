@@ -638,7 +638,9 @@ export async function uninstallPlugin(name) {
     const result = await pluginCommand(['remove', name]);
     const removedSources = await cleanupPluginSources(before, [name]);
     const note = removedSources.length > 0 ? `${result.note}；已清理插件源码目录` : result.note;
-    return { ok: true, note, removedSources };
+    // 插件已从 node_modules 移除，但当前 dsh 进程仍在内存里加载着它（侧边栏
+    // slot、事件监听都还在）。返回 needsRestart 让前端引导用户重启 dsh。
+    return { ok: true, note, removedSources, needsRestart: true };
   } catch (error) {
     return { ok: false, error: String(error?.message || error) };
   }
@@ -1891,6 +1893,13 @@ export function apply(ctx) {
             if (!value?.name) { json(res, 400, { error: '缺少插件名' }); return; }
             json(res, 200, await cleanupBrokenPlugin(value.name));
           } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 前端在卸载插件后调用：先回 200，再优雅退出 dsh 进程。启动器（DHL）
+        // 监听到 dsh 以 exit 0 退出时会自动拉起新进程，侧边栏 slot 随之刷新。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/restart', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          json(res, 200, { ok: true, restarting: true });
+          setTimeout(() => { process.exit(0); }, 150);
         }})
       ];
       return () => disposers.forEach(dispose => dispose());

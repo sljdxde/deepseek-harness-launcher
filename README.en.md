@@ -52,9 +52,13 @@ Deepseek Harness Launcher is a third, macOS-only option: a Swift/AppKit menu-bar
 On first start the launcher performs a complete install:
 
 ```sh
-npm install --prefix ~/.dsh/runtime --no-package-lock --no-audit --no-fund \
-  --progress --prefer-offline --registry <registry> @deepseek-ai/dsh
+npm ci --prefix ~/.dsh/runtime --no-audit --no-fund --prefer-offline \
+  --registry <registry>
 ```
+
+The app ships a pinned `dsh-runtime/package-lock.json`, so the install replays an already-resolved dependency set through `npm ci` (peak RSS around 0.3–0.6 GB instead of the ~3 GB a bare `npm install` can need while re-resolving the whole graph).
+
+Updating dsh never re-resolves the graph either: when a new app version ships a newer lockfile, the launcher **asks once** on start (**Update runtime** / **Later**). Choosing **Later** does not block anything — the current runtime starts as usual and the menu keeps an **Update runtime to vX (bundled)** entry you can use at any time. The launcher never starts an install just because an update exists.
 
 After installation it executes:
 
@@ -83,6 +87,14 @@ Leave the terminal process running, then reopen Deepseek Harness Launcher; it wi
 4. **Quit Deepseek Harness** exits the menu-bar UI and terminates the Harness backend managed by Deepseek Harness Launcher.
 
 If no port can be reused or bound, or if npm, dsh, or the plugin fails to start, Deepseek Harness Launcher shows a failure alert. The first install can be cancelled and its temporary directory is cleaned automatically. Use **Open Log** for the command and its stdout/stderr.
+
+### Startup never forces an install or runtime update
+
+The launcher separates "is this runtime usable" from "is the dependency tree complete": if `.bin/dsh` is still there, the environment gets a chance to start instead of being declared dead and replaced. Every install action during startup needs the user's consent first:
+
+- **Bundled lockfile is newer**: one prompt (**Update runtime** / **Later**). **Later** starts the current runtime and is remembered, so it is not asked again; the **Update runtime to vX (bundled)** menu entry stays available.
+- **Runtime missing** (dsh was used on this machine but `~/.dsh/runtime` is gone): one prompt (**Reinstall** / **Later**). **Later** is not repeated on every open, and a **Rebuild Deepseek Harness runtime** menu entry appears.
+- **Replacement interrupted midway** (the previous environment only exists as a `runtime.previous-*` snapshot): it is swapped back automatically and started — no reinstall dialog, no network install. The uninstall script likewise only prunes such snapshots once the real runtime is in place, so it never deletes the user's only working environment.
 
 ---
 
@@ -130,7 +142,7 @@ Default builds are ad-hoc signed for local use. A directly downloaded copy can s
 
 - Settings include automatic update checks, update interval, opening the browser when Harness is ready, launching Deepseek Harness Launcher at macOS login, and the global quick-summon shortcut.
 - Defaults: automatic checks are enabled every 6 hours; the first background check is about 8 seconds after launch; opening the browser is enabled; launch at login is disabled; the global shortcut is enabled as Control-Option-D. The minimum interval is one hour.
-- The update source is fixed to GitHub Releases for `sljdxde/deepseek-harness-launcher`; users never need to enter a URL. The current App version is `0.3.4`, and only a higher Release version is offered.
+- The update source is fixed to GitHub Releases for `sljdxde/deepseek-harness-launcher`; users never need to enter a URL. The current App version is `0.3.6`, and only a higher Release version is offered.
 - Launcher updates and `@deepseek-ai/dsh` updates are separate paths. The dsh check reads both the **npm dist-tags** (`latest` / `next` / `beta` / `alpha`) and the **GitHub Releases feed** for `deepseek-ai/deepseek-harness` (the anonymous API is rate-limited with `403` often enough that the Atom feed is the reliable source), then takes the newest version that is actually published to npm. It only reports; it never modifies the npm cache. Menu and dialog both label the channel (stable / release candidate / beta / alpha), because npm's `latest` regularly lags behind a freshly published Release.
 - Whether dsh is updated is entirely the user's call: the dialog offers **Update to vX / Later / Skip this version**, a pre-release makes *Later* the default button (pressing Return never installs an alpha by accident), and the dialog shows the source (GitHub Release or an npm tag), the publish date, and the Markdown release notes. **When more than one version is newer than the installed one, the dialog adds an "Update to: [version ▾]" picker** listing them all (newest first, at most 10, newest preselected); switching refreshes that version's source, date and notes, and retitles the button to *Update to vX*. With a single candidate the dialog stays the plain one-version prompt. *Skip this version* skips the selected entry and is remembered: automatic checks then only title the menu "skipped vX", while a manual menu click still opens the dialog, where the skip can be undone. Automatic checks only update the menu title — they **never install silently**.
 - A dsh Release tag looks like `dsh-v0.1.7-alpha.1` and is treated as the same version as the npm version `0.1.7-alpha.1`; GitHub Releases are preferred when both name a version (they carry the date and notes). Only candidates present in npm's version list are offered: when a mirror lags, a Release tag that npm does not serve yet would fail with `ETARGET`, so it is dropped and explained in the log.
@@ -152,7 +164,7 @@ Default builds are ad-hoc signed for local use. A directly downloaded copy can s
 ./scripts/uninstall.sh
 ```
 
-The script removes current and legacy `Deepseek Harness Launcher.app`, `DHL.app`, and `DSH.app` installations, stops and removes the DHL-managed `~/.dsh/runtime` and temporary install directories, prunes historical App backups, detaches and unregisters old DMG volumes/payloads, and removes the archive-plugin link when it points to Deepseek Harness Launcher's resources. It preserves the other `~/.dsh` data, including sessions, archives, profiles, and other plugin data.
+The script removes current and legacy `Deepseek Harness Launcher.app`, `DHL.app`, and `DSH.app` installations, stops the DHL-managed Harness, prunes historical App backups and interrupted-install leftovers (`~/.dsh/runtime.installing-*`, `runtime.broken-*`), detaches and unregisters old DMG volumes/payloads, and removes the archive-plugin link when it points to Deepseek Harness Launcher's resources. It preserves the other `~/.dsh` data, including sessions, archives, profiles, and other plugin data. A `~/.dsh/runtime.previous-*` snapshot is a complete environment left behind by an interrupted runtime replacement: when the real runtime is missing it is restored first, and it is only pruned once the real runtime is in place — the user's only working environment is never deleted.
 
 ---
 

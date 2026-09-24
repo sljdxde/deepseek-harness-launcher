@@ -19,6 +19,9 @@ struct DSHRuntimeSupportChecks {
             try testBundledOlderDoesNotDowngrade(fakeNPM: fakeNPM)
             try testExplicitVersionInstall(fakeNPM: fakeNPM)
             try testUpdateKeepsRollbackSnapshot(fakeNPM: fakeNPM)
+            try testInterruptedUpdateRecoversSnapshot(fakeNPM: fakeNPM)
+            try testSnapshotReplacesHalfRuntime(fakeNPM: fakeNPM)
+            try testHalfRuntimeIsStillLaunchable()
             try testCapturedOutputIsBounded()
             try testHasHarnessInstall()
             try fileManager.removeItem(at: temp)
@@ -210,6 +213,12 @@ struct DSHRuntimeSupportChecks {
         guard DSHRuntimeSupport.needsRuntimeUpgrade(environment: [:]) else {
             throw TestError("版本不一致未判定为需要升级")
         }
+        // 弹窗文案需要「当前 → 目标」两个版本号：判定结果一并带上，别让调用方
+        // 为此再跑一次 `dsh --version`。
+        guard let target = DSHRuntimeSupport.bundledUpgradeTarget(environment: [:]),
+              target.bundled == "0.2.0", target.installed == "0.1.1-rc.2" else {
+            throw TestError("升级目标未携带 bundled / installed 版本号")
+        }
 
         // 3) force 重装必须走 npm ci 且提示升级，而不是跳过
         let box = ResultBox()
@@ -379,6 +388,119 @@ struct DSHRuntimeSupportChecks {
         }
         DSHRuntimeSupport.discardRollback()
         try FileManager.default.removeItem(at: DSHRuntimeSupport.runtimeURL)
+    }
+
+    // Interrupted-update recovery: replacing the runtime is a two-step rename
+    // (old aside, new in). If the app dies in between, the only copy of a working
+    // environment sits in `runtime.previous-*`. That snapshot must be recognised
+    // and swapped back — a missing runtime must not turn into a forced reinstall
+    // (the user cannot decline that without losing a working environment).
+    private static func testInterruptedUpdateRecoversSnapshot(fakeNPM: URL) throws {
+        let fileManager = FileManager.default
+        try? fileManager.removeItem(at: DSHRuntimeSupport.runtimeURL)
+        DSHRuntimeSupport.discardRollback()
+        let snapshot = DSHRuntimeSupport.runtimeURL.deletingLastPathComponent()
+            .appendingPathComponent("runtime.previous-\(UUID().uuidString)", isDirectory: true)
+        try writeHealthyRuntime(at: snapshot)
+        defer { try? fileManager.removeItem(at: snapshot) }
+
+        guard !DSHRuntimeSupport.isInstalled() else { throw TestError("快照恢复测试前置：正式 runtime 应缺失") }
+        // 比路径要先把符号链接解开：temporaryDirectory 走的是 /var/...，而
+        // contentsOfDirectory 回的是解析后的 /private/var/...。
+        let expected = snapshot.resolvingSymlinksInPath().path
+        guard DSHRuntimeSupport.hasRuntimeSnapshot(),
+              DSHRuntimeSupport.runtimeSnapshotURL()?.resolvingSymlinksInPath().path == expected else {
+            throw TestError("runtime.previous-* 未被认成可恢复的运行环境快照")
+        }
+
+        var output = ""
+        let result = runInstall(fakeNPM: fakeNPM, environment: [:]) { output += $0 }
+        guard case .success = result else { throw TestError("快照恢复后的安装流程未成功") }
+        guard output.contains("已从快照恢复现有运行环境") else {
+            throw TestError("未走快照恢复路径，实际输出：\(output)")
+        }
+        guard !output.contains("尝试 npm registry") else {
+            throw TestError("快照可恢复时仍然联网重装了运行环境")
+        }
+        guard DSHRuntimeSupport.isInstalled(), DSHRuntimeSupport.canAttemptLaunch() else {
+            throw TestError("恢复后的运行环境不可用")
+        }
+        guard !fileManager.fileExists(atPath: snapshot.path) else {
+            throw TestError("快照未被换入正式位置")
+        }
+        guard DSHRuntimeSupport.runtimeSnapshotURL() == nil else {
+            throw TestError("恢复后仍残留快照（下次会被当成垃圾）")
+        }
+        try? fileManager.removeItem(at: DSHRuntimeSupport.runtimeURL)
+    }
+
+    // A runtime that was left half-installed must not block the snapshot: the
+    // snapshot is a complete environment, the leftover is not. The replaced
+    // half-runtime is parked as runtime.broken-* and removed, so no residue is
+    // left to confuse the next launch.
+    private static func testSnapshotReplacesHalfRuntime(fakeNPM: URL) throws {
+        let fileManager = FileManager.default
+        try? fileManager.removeItem(at: DSHRuntimeSupport.runtimeURL)
+        DSHRuntimeSupport.discardRollback()
+        // 半份 runtime：只剩可执行文件，依赖树是空的（isInstalled() 为假）
+        try fileManager.createDirectory(
+            at: DSHRuntimeSupport.runtimeURL.appendingPathComponent("node_modules/.bin", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let halfExecutable = DSHRuntimeSupport.executableURL
+        try Data("#!/bin/sh\nexit 1\n".utf8).write(to: halfExecutable)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: halfExecutable.path)
+        let snapshot = DSHRuntimeSupport.runtimeURL.deletingLastPathComponent()
+            .appendingPathComponent("runtime.previous-\(UUID().uuidString)", isDirectory: true)
+        try writeHealthyRuntime(at: snapshot)
+        defer { try? fileManager.removeItem(at: snapshot) }
+
+        guard DSHRuntimeSupport.restoreRuntimeSnapshot() else {
+            throw TestError("半份 runtime 挡路时快照未换入")
+        }
+        guard DSHRuntimeSupport.isInstalled() else { throw TestError("换入后的运行环境不完整") }
+        let residue = (try? fileManager.contentsOfDirectory(
+            atPath: DSHRuntimeSupport.runtimeURL.deletingLastPathComponent().path
+        )) ?? []
+        guard !residue.contains(where: { $0.hasPrefix("runtime.broken-") }) else {
+            throw TestError("换入后仍留下 runtime.broken-* 垃圾")
+        }
+        guard !fileManager.fileExists(atPath: snapshot.path) else { throw TestError("快照未消费") }
+        try? fileManager.removeItem(at: DSHRuntimeSupport.runtimeURL)
+    }
+
+    // Judging "can we try to launch" by the full dependency tree would declare a
+    // runnable environment dead and force a reinstall. The launcher's boundary
+    // check (isInstalled) and its launch check (canAttemptLaunch) must stay
+    // separate: dsh itself is the authority on whether its install works.
+    private static func testHalfRuntimeIsStillLaunchable() throws {
+        let fileManager = FileManager.default
+        try? fileManager.removeItem(at: DSHRuntimeSupport.runtimeURL)
+        try fileManager.createDirectory(
+            at: DSHRuntimeSupport.runtimeURL.appendingPathComponent("node_modules/.bin", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let executable = DSHRuntimeSupport.executableURL
+        try Data("#!/bin/sh\nprintf \"0.1.1-rc.2\\n\"\n".utf8).write(to: executable)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+
+        guard !DSHRuntimeSupport.isInstalled() else { throw TestError("半份 runtime 不应被判成完整安装") }
+        guard DSHRuntimeSupport.canAttemptLaunch() else { throw TestError("dsh 本体还在时却判定为不可启动") }
+        try? fileManager.removeItem(at: DSHRuntimeSupport.runtimeURL)
+    }
+
+    private static func writeHealthyRuntime(at root: URL) throws {
+        let fileManager = FileManager.default
+        for package in ["cordis-plugin-group", "dsh-app-boot"] {
+            let directory = root.appendingPathComponent("node_modules/@deepseek-ai/\(package)", isDirectory: true)
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data(#"{"name":"@deepseek-ai/\#(package)"}"#.utf8).write(to: directory.appendingPathComponent("package.json"))
+        }
+        let bin = root.appendingPathComponent("node_modules/.bin", isDirectory: true)
+        try fileManager.createDirectory(at: bin, withIntermediateDirectories: true)
+        let executable = bin.appendingPathComponent("dsh")
+        try Data("#!/bin/sh\nprintf \"0.1.1-rc.2\\n\"\n".utf8).write(to: executable)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
     }
 
     private static func testCapturedOutputIsBounded() throws {
