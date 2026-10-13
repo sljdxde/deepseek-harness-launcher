@@ -42,6 +42,33 @@ window.__ModuleLoader__.load({ id: "dsh-session-notify", factory: () => {
     return typeof document === 'undefined' || document.visibilityState !== 'hidden'
   }
 
+  /** Diagnostics only: a failed jump must leave a trace instead of vanishing. */
+  function warn(...args) {
+    try {
+      globalThis.console?.warn?.(...args)
+    } catch {
+      // Logging must never break polling.
+    }
+  }
+
+  /**
+   * Select a Session in the Harness UI — the same action as clicking that
+   * session's sidebar row, which brings its Conversation (and Workspace) to the
+   * main view. The Session controller (`ctx.sessions`) has no navigation entry
+   * point at all: the Workspace controller service `uiWorkspace` owns the
+   * action (`openSession(target)`). It is looked up through `ctx.get` because a
+   * dynamic client package may reach a service it did not declare in `inject`.
+   * @param ctx - client plugin context.
+   * @param sessionId - target Session identity.
+   * @returns whether a navigation was requested.
+   */
+  function openSession(ctx, sessionId) {
+    const workspace = typeof ctx.get === 'function' ? ctx.get('uiWorkspace') : undefined
+    if (!workspace || typeof workspace.openSession !== 'function') return false
+    workspace.openSession(sessionId)
+    return true
+  }
+
   function apply(ctx) {
     const id = clientId()
     ctx.effect(() => {
@@ -68,13 +95,19 @@ window.__ModuleLoader__.load({ id: "dsh-session-notify", factory: () => {
             })
             const command = claimed?.command
             if (!command || disposed) continue
+            let navigated = false
             try {
               focusPage()
-              ctx.sessions.open(command.sessionId)
+              navigated = openSession(ctx, command.sessionId)
               focusPage()
-            } catch {
-              // An old or external Harness can lack the session runtime. The
-              // launcher has already opened the page, so silently finish here.
+            } catch (error) {
+              // Swallowing this is what made a broken jump look exactly like a
+              // successful one: the command was acknowledged and the page
+              // stayed on its old session, with nothing written anywhere.
+              warn('[dsh-session-notify] 打开会话失败', command.sessionId, error)
+            }
+            if (!navigated) {
+              warn('[dsh-session-notify] 当前 Harness 客户端没有会话跳转入口，未能定位', command.sessionId)
             }
             await readJSON(ACK_URL, {
               method: 'POST',
