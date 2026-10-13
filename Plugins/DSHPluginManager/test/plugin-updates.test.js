@@ -1199,3 +1199,30 @@ test('忽略：checkPluginUpdates 读时打标（角标归零），取消忽略�
     assert.deepEqual(restored.summary, { total: 2, updateAvailable: 2, ignored: 0, failed: 0, unknown: 0 });
   });
 });
+
+test('原子写顺手收掉上次被杀留下的临时文件；活进程的 staging 不动', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-pm-staging-'));
+  const file = join(home, 'ignored.json');
+  try {
+    // 实测形态：~/.dsh/profiles/web/.plugin-updates.json.11800.tmp —— 原子写写一半被
+    // dsh 重启截断，之后没人清理。999999 在本机不可能是活进程（macOS PID 上限远低于它）。
+    const dead = join(home, 'ignored.json.999999.tmp');
+    // PID 1 永远在（对本进程是 EPERM）→ 必须保留，宁可留一个别人的 staging 也不能删活进程的文件。
+    const live = join(home, 'ignored.json.1.tmp');
+    // 别的文件的同后缀临时文件不该被顺手删掉。
+    const unrelated = join(home, 'other.json.999998.tmp');
+    await writeFile(dead, '{"half":', 'utf8');
+    await writeFile(live, '{"half":', 'utf8');
+    await writeFile(unrelated, '{"half":', 'utf8');
+
+    assert.deepEqual(await ignorePluginUpdates([{ name: 'dsh-a', version: '1.0.0' }], { file }), { ok: true, ignored: ['dsh-a'], failed: [] });
+
+    const names = await readdir(home);
+    assert.equal(names.includes('ignored.json.999999.tmp'), false, '上次被杀留下的临时文件应被收掉');
+    assert.equal(names.includes('ignored.json.1.tmp'), true, '活进程的 staging 必须保留');
+    assert.equal(names.includes('other.json.999998.tmp'), true, '别的文件的临时文件不归它管');
+    assert.equal(JSON.parse(await readFile(file, 'utf8'))['dsh-a'].version, '1.0.0', '写入本身照常生效');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});

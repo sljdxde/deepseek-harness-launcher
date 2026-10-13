@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { createReadStream } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { createZstdDecompress } from 'node:zlib';
 
 const home = () => process.env.DSH_HOME || join(homedir(), '.dsh');
@@ -167,12 +167,40 @@ async function findSessionDirectories(ids) {
   return found;
 }
 
+/**
+ * 收掉同一份 workspace.json 上次留下的临时文件：写一半被 kill（dsh 重启、升级、断电）
+ * 就会留下 `<file>.dsh-archive-tmp-<pid>`，没人清理。写之前顺手收掉**进程已不在**的
+ * 那些；`kill(pid, 0)` 报 EPERM 说明进程还在（只是没权限），照样保留。
+ */
+async function reapStaleStaging(file) {
+  const dir = dirname(file);
+  const escaped = basename(file).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^${escaped}\\.dsh-archive-tmp-(\\d+)$`);
+  const names = await fs.readdir(dir).catch(() => []);
+  for (const name of names) {
+    const match = pattern.exec(name);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    if (pid === process.pid) continue;
+    let alive = false;
+    try { process.kill(pid, 0); alive = true; } catch (error) { alive = error?.code === 'EPERM'; }
+    if (alive) continue;
+    await fs.rm(join(dir, name), { force: true }).catch(() => {});
+  }
+}
+
 async function writeWorkspace(state) {
   const file = workspaceFile();
   await fs.mkdir(join(home(), 'storages'), { recursive: true });
   const tmp = `${file}.dsh-archive-tmp-${process.pid}`;
-  await fs.writeFile(tmp, JSON.stringify(state, null, 2) + '\n', 'utf8');
-  await fs.rename(tmp, file);
+  await reapStaleStaging(file);
+  try {
+    await fs.writeFile(tmp, JSON.stringify(state, null, 2) + '\n', 'utf8');
+    await fs.rename(tmp, file);
+  } catch (error) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 async function updateWorkspace(ids) {

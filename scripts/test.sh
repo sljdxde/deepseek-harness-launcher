@@ -152,6 +152,12 @@ rg -Fq 'func menuDidClose' "$ROOT/Sources/main.swift"
 rg -Fq 'mergeByPlugin' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
 rg -Fq 'resolvePeerVersion' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
 rg -Fq 'shellProvidedClientPeers' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
+# 原子写要自己收干净临时文件：进程被杀留下的 <file>.<pid>.tmp 会一直躺在 profile 里
+# （实测 ~/.dsh/profiles/web/.plugin-updates.json.11800.tmp），写同一个文件前收掉
+# 「进程已不在」的那些；活进程（EPERM）的一律保留。
+rg -Fq 'reapStaleStaging' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHArchiveManager/lib/index.js"
+rg -Fq 'EPERM' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'ignored.json.999999.tmp' "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
 rg -q '"\./client": "\./client/client.js"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q '"client"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q 'monitorSessionNotify' "$ROOT/Sources/main.swift"

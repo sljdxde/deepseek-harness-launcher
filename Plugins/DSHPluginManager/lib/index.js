@@ -92,12 +92,39 @@ async function pathExists(path) {
 }
 
 /**
+ * 收掉同一个文件上次留下的临时文件：原子写只在**本次调用**出错时删自己的 staging，
+ * 进程被 kill（dsh 重启、插件升级、断电）留下的 `<file>.<pid>.tmp` 会一直躺在目录里
+ * （实测 `~/.dsh/profiles/web/.plugin-updates.json.11800.tmp` 就是 13:39 那次 dsh
+ * 重启截断写入留下的）。写同一个文件前顺手清理同前缀、**进程已不在**的那些。
+ *
+ * 判活用 `kill(pid, 0)`：EPERM 说明进程还在、只是没权限，照样保留——宁可与一个
+ * 活进程的 staging 并存，也不能删掉别人正在写的文件。
+ */
+async function reapStaleStaging(path) {
+  const dir = dirname(path);
+  const escaped = path.slice(dir.length + 1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^${escaped}\\.(\\d+)\\.tmp$`);
+  const names = await fs.readdir(dir).catch(() => []);
+  for (const name of names) {
+    const match = pattern.exec(name);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    if (pid === process.pid) continue;
+    let alive = false;
+    try { process.kill(pid, 0); alive = true; } catch (error) { alive = error?.code === 'EPERM'; }
+    if (alive) continue;
+    await fs.rm(join(dir, name), { force: true }).catch(() => {});
+  }
+}
+
+/**
  * 临时文件 + rename 的原子写。半截 JSON（磁盘满、进程被杀）会被读回来，
  * 让 profile 的状态比不写更糟；原子写至少保证读到的要么是旧内容要么是完整新内容。
  */
 async function writeTextAtomic(path, text) {
   await fs.mkdir(join(path, '..'), { recursive: true });
   const staging = `${path}.${process.pid}.tmp`;
+  await reapStaleStaging(path);
   try {
     await fs.writeFile(staging, text, 'utf8');
     await fs.rename(staging, path);
@@ -1257,8 +1284,15 @@ export async function refreshMarketplace() {
   await fs.mkdir(marketRoot(), { recursive: true });
   const index = { version: 1, indexedAt: new Date().toISOString(), categories, plugins };
   const tmp = `${marketIndexFile()}.tmp-${process.pid}`;
-  await fs.writeFile(tmp, JSON.stringify(index), 'utf8');
-  await fs.rename(tmp, marketIndexFile());
+  // 写失败/被杀同样会留下半截 market/index.json.tmp-<pid>，所以出错要自己收干净
+  // （其它 tmp 命名走 writeTextAtomic 那一套的清理）。
+  try {
+    await fs.writeFile(tmp, JSON.stringify(index), 'utf8');
+    await fs.rename(tmp, marketIndexFile());
+  } catch (error) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw error;
+  }
   return { count: plugins.length, categories, indexedAt: index.indexedAt };
 }
 
