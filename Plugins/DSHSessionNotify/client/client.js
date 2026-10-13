@@ -42,6 +42,28 @@ window.__ModuleLoader__.load({ id: "dsh-session-notify", factory: () => {
     return typeof document === 'undefined' || document.visibilityState !== 'hidden'
   }
 
+  /** 页面是否真的在用户眼前（可见且拿到焦点）。 */
+  function pageHasFocus() {
+    if (typeof document === 'undefined') return true
+    if (typeof document.hasFocus === 'function') return document.hasFocus()
+    return pageIsVisible()
+  }
+
+  /**
+   * 用户此刻正在看的会话：主视图里 `retainedBy.mainView > 0` 的那一个（宿主 UI
+   * 判断「当前会话」用的也是这个字段），并且只在本页面可见且有焦点时才算数——
+   * 甩到后台的标签页不该把它当年看过的会话钉成已读。
+   * @param snapshot - `ctx.sessions.list` 的快照。
+   * @returns 会话 id；没有在看任何会话时返回空串。
+   */
+  function viewingSession(snapshot) {
+    if (!pageIsVisible() || !pageHasFocus()) return ''
+    for (const row of Object.values(snapshot?.byId ?? {})) {
+      if (row && typeof row.id === 'string' && (row.retainedBy?.mainView ?? 0) > 0) return row.id
+    }
+    return ''
+  }
+
   /** Diagnostics only: a failed jump must leave a trace instead of vanishing. */
   function warn(...args) {
     try {
@@ -84,7 +106,10 @@ window.__ModuleLoader__.load({ id: "dsh-session-notify", factory: () => {
           // The clientId doubles as a presence heartbeat: the server marks
           // this page alive on every poll so the launcher can tell "browser
           // has a keep-alive socket" apart from "a Harness page is open".
-          const feed = await readJSON(`${COMMANDS_URL}?clientId=${encodeURIComponent(id)}`)
+          // `viewing` piggybacks on the same poll: the launcher retracts the
+          // completion reminder of whatever session the user is looking at
+          // ("看过即已读"), without a second request per 750ms.
+          const feed = await readJSON(`${COMMANDS_URL}?clientId=${encodeURIComponent(id)}&viewing=${encodeURIComponent(viewingSession(snapshot))}`)
           if (disposed || !Array.isArray(feed?.items)) return
           for (const item of feed.items) {
             if (!item?.commandId || !item.sessionId || !hasSession(ctx.sessions.list.getSnapshot(), item.sessionId)) continue

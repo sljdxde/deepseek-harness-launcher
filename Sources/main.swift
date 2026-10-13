@@ -2472,12 +2472,16 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if !ingested.isEmpty {
                     // completions 是这一轮新增的 turn/end 数；角标按会话去重，所以同一
                     // 会话连跑多轮时数字不会跟着涨。resumed 是「用户又在该会话里发消息」，
-                    // 对应的未读提醒已被撤销——会话在跑，角标就不该亮。
+                    // viewed 是「用户正在 Harness 里看这个会话」——两者都是撤销信号：
+                    // 会话在跑、或者他正看着结果，角标都不该亮。
                     if !ingested.completions.isEmpty {
                         self.appendLogString("收到 \(ingested.completions.count) 条会话完成提醒，\(self.sessionNotifyStore.unreadCount) 个会话未读（\(SessionNotifyStore.reasonLabel(ingested.completions.last?.reason ?? ""))）\n")
                     }
                     if !ingested.resumed.isEmpty {
                         self.appendLogString("会话收到新消息，已撤销其完成提醒（\(ingested.resumed.count) 个会话）\n")
+                    }
+                    if !ingested.viewed.isEmpty {
+                        self.appendLogString("会话已在 Harness 中查看，已撤销其完成提醒（\(ingested.viewed.count) 个会话）\n")
                     }
                     self.rebuildSessionNotifyMenuSection()
                 }

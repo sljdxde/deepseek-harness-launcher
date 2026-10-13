@@ -86,6 +86,60 @@ struct SessionNotifyChecks {
         precondition(clicks.unreadCount == 0)
         precondition(clicks.recent(limit: 6).isEmpty)                           // 都看过了，段落整体消失
 
+        // 3.7b 看过即已读：用户在 Harness 里点开那个会话（插件记一条 viewed），
+        // 未读就被撤销——提醒是给「没看到结果」的人亮的。
+        let viewed = SessionNotifyStore()
+        let watched = viewed.ingest(SessionNotifyFeed(bootId: "v", seq: 2, items: [
+            event(1, session: "chat", reason: "completed"),
+            event(2, session: "chat", reason: "", kind: "viewed")            // 看着它收尾（同批）
+        ]))
+        precondition(watched.completions.count == 1)
+        precondition(watched.viewed == ["chat"])
+        precondition(watched.isEmpty == false)
+        precondition(viewed.unreadCount == 0)                                // 就在眼前收尾 → 不亮角标
+        precondition(viewed.recent(limit: 6).isEmpty)
+
+        // 本来就已读的会话再收到 viewed：幂等，不报告、不刷日志。
+        let repeatView = viewed.ingest(SessionNotifyFeed(bootId: "v", seq: 3, items: [
+            event(3, session: "chat", reason: "", kind: "viewed")
+        ]))
+        precondition(repeatView.viewed.isEmpty)
+        precondition(repeatView.isEmpty)                                     // 整批无事发生 → 不重建菜单
+
+        // 后台会话收尾（角标该亮）→ 用户把它点开 → viewed 撤销并如实报告。
+        _ = viewed.ingest(SessionNotifyFeed(bootId: "v", seq: 4, items: [event(4, session: "other", reason: "completed")]))
+        precondition(viewed.unreadCount == 1)
+        let retracted = viewed.ingest(SessionNotifyFeed(bootId: "v", seq: 5, items: [
+            event(5, session: "other", reason: "", kind: "viewed")
+        ]))
+        precondition(retracted.viewed == ["other"])
+        precondition(retracted.completions.isEmpty)
+        precondition(retracted.resumed.isEmpty)
+        precondition(viewed.unreadCount == 0)
+        // viewed 不能被当成「完成」进度条式地记进列表。
+        precondition(viewed.recent(limit: 6).isEmpty)
+
+        // 3.7c 跨语言契约：插件真实回报的 JSON（三种 kind 混在一批里，viewed 的
+        // reason 是空串、title 可能为空）必须解析成对应语义——这里正是当初
+        // 「接口对不上却静默失败」的高发地带。
+        let pluginFeed = """
+        {"bootId":"b1","seq":3,"items":[
+          {"seq":1,"sessionId":"s1","title":"看着它收尾","reason":"completed","at":10,"kind":"completion"},
+          {"seq":2,"sessionId":"s1","title":"看着它收尾","reason":"","at":11,"kind":"viewed"},
+          {"seq":3,"sessionId":"s2","title":"","reason":"","at":12,"kind":"viewed"}]}
+        """
+        guard let contractFeed = SessionNotifyFeed.parse(pluginFeed) else {
+            fatalError("插件回报的 JSON 必须能解析")
+        }
+        let contract = SessionNotifyStore()
+        let contractIngest = contract.ingest(contractFeed)
+        precondition(contractIngest.completions.map(\.sessionId) == ["s1"])
+        precondition(contractIngest.viewed == ["s1"])               // 只报告真的撤掉了的（s2 本来就没未读 → 幂等不报）
+        precondition(contractIngest.resumed.isEmpty)
+        precondition(contract.unreadCount == 0)                     // 看完的、从没记过的，都不该亮角标
+        precondition(contractFeed.items.map(\.isView) == [false, true, true])
+        precondition(contractFeed.items[2].title == "")             // 空标题不能当解析失败
+
         // 3.8 工作区名称解析：会话归属优先，文件缺失/未收录都要安全回退。
         let workspaceState: [String: Any] = [
             "tables": ["workspaces": [

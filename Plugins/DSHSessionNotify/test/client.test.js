@@ -12,10 +12,12 @@ const SOURCE_URL = new URL('../client/client.js', import.meta.url);
  * 只会抛 TypeError 并被空 catch 吞掉，命令被 ack 而页面停在原会话（就是
  * 「点完成提醒不跳转」那个 bug）。所以这里的替身必须与真实客户端同形：
  * `sessions` 只给 `list`，跳转能力只挂在 `uiWorkspace` 上。
+ * @param ids - 目录里可见的会话 id。
+ * @param byId - 目录行（`retainedBy.mainView` 决定用户正在看哪一个会话）。
  */
-function sessionList(ids) {
+function sessionList(ids, byId = {}) {
   return {
-    getSnapshot: () => ({ phase: 'ready', ids }),
+    getSnapshot: () => ({ phase: 'ready', ids, byId }),
     subscribe: () => () => {},
   };
 }
@@ -25,7 +27,7 @@ function sessionList(ids) {
  * 服务，未声明的服务只能通过 `ctx.get(name)` 取。
  * @returns 装载结果（插件、ctx、沙箱窗口与请求记录）。
  */
-async function loadClient({ sessions, services = {}, consoleSeat, visibility = 'visible' } = {}) {
+async function loadClient({ sessions, services = {}, consoleSeat, visibility = 'visible', focus = true } = {}) {
   const source = await readFile(SOURCE_URL, 'utf8');
   let plugin;
   const timers = [];
@@ -38,7 +40,7 @@ async function loadClient({ sessions, services = {}, consoleSeat, visibility = '
   };
   const context = {
     window,
-    document: { visibilityState: visibility },
+    document: { visibilityState: visibility, hasFocus: () => focus },
     setInterval(callback) { timers.push(callback); return timers.length; },
     clearInterval() {},
   };
@@ -168,4 +170,52 @@ test('沙箱没有 console 时告警不得炸掉轮询', async () => {
 
   assert.equal(requests.filter(([url]) => url.endsWith('/commands/ack')).length, 1);
   ctx.cleanup?.();
+});
+
+test('页面把「用户正在看的会话」随轮询上报（看过即已读的数据源）', async () => {
+  const requests = [];
+  const { plugin, ctx, context } = await loadClient({
+    sessions: {
+      list: sessionList(['view-session'], {
+        'view-session': { id: 'view-session', retainedBy: { mainView: 1 } },
+        'other-session': { id: 'other-session', retainedBy: {} },
+      }),
+    },
+    services: { uiWorkspace: { openSession: () => {} } },
+  });
+  context.fetch = feedFetch({ commandId: 'c7', sessionId: 'view-session', requests });
+
+  plugin.apply(ctx);
+  await settle();
+  await settle();
+
+  // 主视图里 retainedBy.mainView > 0 的那一个就是用户正在看的会话。
+  const polls = requests.map(([url]) => String(url)).filter(url => url.includes('/commands?'));
+  assert.equal(polls.length >= 1, true);
+  assert.match(polls[0], /clientId=[^&]+&viewing=view-session/);
+  ctx.cleanup?.();
+});
+
+test('页面在后台或没焦点时不上报观看目标（后台标签页不该把会话钉成已读）', async () => {
+  const scenarios = [
+    { label: '不可见', options: { visibility: 'hidden', focus: true } },
+    { label: '没焦点', options: { visibility: 'visible', focus: false } },
+  ];
+  for (const { label, options } of scenarios) {
+    const requests = [];
+    const { plugin, ctx, context } = await loadClient({
+      sessions: { list: sessionList(['view-session'], { 'view-session': { id: 'view-session', retainedBy: { mainView: 1 } } }) },
+      services: { uiWorkspace: { openSession: () => {} } },
+      ...options,
+    });
+    context.fetch = feedFetch({ commandId: 'c8', sessionId: 'view-session', requests });
+
+    plugin.apply(ctx);
+    await settle();
+    await settle();
+
+    const poll = requests.map(([url]) => String(url)).find(url => url.includes('/commands?')) ?? '';
+    assert.match(poll, /viewing=($|&)/, `${label} 时不该上报观看目标`);
+    ctx.cleanup?.();
+  }
 });

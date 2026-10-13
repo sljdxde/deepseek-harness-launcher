@@ -327,3 +327,82 @@ test('presence 路由拒绝非 GET、bye 拒绝非 POST', async () => {
   assert.equal((await call('/dsh-session-notify/presence', { method: 'POST' })).status, 405);
   assert.equal((await call('/dsh-session-notify/presence/bye', { method: 'GET' })).status, 405);
 });
+
+test('presence 追踪器记录「正在看的会话」：切走/离场/超时都清掉', () => {
+  const tracker = createPresenceTracker(90_000);
+  assert.equal(tracker.watches('page-a'), '');
+  tracker.touch('page-a', 0);
+  tracker.watch('page-a', 'session-a');
+  assert.equal(tracker.watches('page-a'), 'session-a');
+  assert.deepEqual([...tracker.viewingNow(0)], ['session-a']);
+
+  // 转到别的会话 / 离开页面（空值）都不再算「在看」。
+  tracker.watch('page-a', 'session-b');
+  assert.deepEqual([...tracker.viewingNow(0)], ['session-b']);
+  tracker.watch('page-a', '');
+  assert.equal(tracker.watches('page-a'), '');
+  assert.deepEqual([...tracker.viewingNow(0)], []);
+
+  // pagehide（bye）立刻清掉；心跳超时的页面同样不再算「在看」。
+  tracker.watch('page-a', 'session-a');
+  tracker.bye('page-a');
+  assert.deepEqual([...tracker.viewingNow(0)], []);
+  tracker.touch('page-b', 0);
+  tracker.watch('page-b', 'session-b');
+  assert.deepEqual([...tracker.viewingNow(89_999)], ['session-b']);
+  assert.deepEqual([...tracker.viewingNow(90_001)], []);
+
+  // 空 clientId 不产生观看记录。
+  tracker.watch('', 'session-c');
+  tracker.watch(undefined, 'session-c');
+  assert.deepEqual([...tracker.viewingNow(0)], []);
+});
+
+test('用户正在看的会话：轮询上报 viewing 即记一条 viewed（只在观看目标变化时记）', async () => {
+  const harness = makeHarness();
+  const { call } = harness;
+  apply(harness.ctx);
+
+  harness.emit('session/event', makeSession({ id: 'session-aaaa', title: '长任务' }), turnEnd('completed'));
+  // 页面第一次上报「正在看 session-aaaa」→ 紧跟一条 viewed（带上可读标题便于排查）。
+  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=session-aaaa' });
+  // 同一个目标反复上报（轮询 750ms 一次）不得重复记，否则缓冲区会被冲爆、真正的完成提醒被挤掉。
+  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=session-aaaa' });
+  let items = (await call('/dsh-session-notify/events')).json().items;
+  assert.deepEqual(items.map(item => [item.seq, item.kind, item.sessionId]), [
+    [1, 'completion', 'session-aaaa'],
+    [2, 'viewed', 'session-aaaa'],
+  ]);
+  assert.equal(items[1].title, '长任务');
+
+  // 转去看别的会话、再回来：观看目标变化，各记一条。
+  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=session-bbbb' });
+  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=session-aaaa' });
+  items = (await call('/dsh-session-notify/events')).json().items;
+  assert.deepEqual(items.map(item => item.kind), ['completion', 'viewed', 'viewed', 'viewed']);
+
+  // 离开页面（viewing 缺失/为空＝没在看任何会话）不记事件。
+  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=' });
+  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1' });
+  assert.equal((await call('/dsh-session-notify/events')).json().items.length, 4);
+});
+
+test('会话正在用户眼前收尾：completion 后紧跟一条 viewed，角标不该亮', async () => {
+  const harness = makeHarness();
+  const { call } = harness;
+  apply(harness.ctx);
+
+  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=session-live' });
+  harness.emit('session/event', makeSession({ id: 'session-live', title: '看着的长任务' }), turnEnd('completed'));
+  const items = (await call('/dsh-session-notify/events')).json().items;
+  assert.deepEqual(items.map(item => [item.kind, item.sessionId]), [
+    ['viewed', 'session-live'],
+    ['completion', 'session-live'],
+    ['viewed', 'session-live'],
+  ]);
+
+  // 没在看的会话收尾 → 只有 completion（角标该亮）。
+  harness.emit('session/event', makeSession({ id: 'session-away', title: '后台任务' }), turnEnd('completed'));
+  const after = (await call('/dsh-session-notify/events')).json().items;
+  assert.deepEqual(after.slice(-1).map(item => [item.kind, item.sessionId]), [['completion', 'session-away']]);
+});

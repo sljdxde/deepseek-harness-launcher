@@ -5,7 +5,12 @@
  * exposes it to the launcher menu bar app:
  *
  *   GET /dsh-session-notify/events?after=<seq>
- *     → { bootId, seq, items: [{ seq, sessionId, title, reason, at }] }
+ *     → { bootId, seq, items: [{ seq, sessionId, title, reason, at, kind }] }
+ *       kind: completion（回合收尾）| resumed（用户又发了消息）| viewed（用户正在看）
+ *   GET /dsh-session-notify/commands?clientId=<id>&viewing=<sessionId>
+ *     → the queued open-session commands; the page also reports which session the
+ *       user is looking at, which retracts that session's completion reminder
+ *       (`viewed`) the moment the view changes
  *   POST /dsh-session-notify/open { sessionId }
  *     → queues a short-lived browser navigation command
  *   GET /dsh-session-notify/presence
@@ -58,17 +63,47 @@ export const PRESENCE_TTL_MS = 90 * 1000;
 
 export function createPresenceTracker(ttlMs = PRESENCE_TTL_MS) {
   const lastSeen = new Map();
+  /** clientId → 用户此刻正在看的会话（没有则不存在这条记录）。 */
+  const viewing = new Map();
+  function prune(now) {
+    for (const [clientId, seen] of [...lastSeen]) {
+      if (now - seen > ttlMs) {
+        lastSeen.delete(clientId);
+        // 页面没了就不再算「正在看」：不然一个关掉/超时的标签页会把它当年看过的
+        // 会话永久钉成已读。
+        viewing.delete(clientId);
+      }
+    }
+  }
   return {
     touch(clientId, now = Date.now()) {
       if (clientId) lastSeen.set(clientId, now);
     },
     bye(clientId) {
-      if (clientId) lastSeen.delete(clientId);
+      if (!clientId) return;
+      lastSeen.delete(clientId);
+      viewing.delete(clientId);
+    },
+    /**
+     * 记录这个页面当前正在看的会话；空值表示「没有在看任何会话」（页面转后台、
+     * 或主视图为空）。
+     */
+    watch(clientId, sessionId) {
+      if (!clientId) return;
+      if (sessionId) viewing.set(clientId, sessionId);
+      else viewing.delete(clientId);
+    },
+    /** 某页面最后上报的观看目标，'' 表示没在看。 */
+    watches(clientId) {
+      return viewing.get(clientId) ?? '';
+    },
+    /** 用户此刻正在看的会话集合（只算还活着的页面）。 */
+    viewingNow(now = Date.now()) {
+      prune(now);
+      return new Set(viewing.values());
     },
     active(now = Date.now()) {
-      for (const [clientId, seen] of lastSeen) {
-        if (now - seen > ttlMs) lastSeen.delete(clientId);
-      }
+      prune(now);
       return lastSeen.size > 0;
     },
     clients(now = Date.now()) {
@@ -247,13 +282,38 @@ export function apply(ctx) {
   const commands = createCommandQueue();
   const presence = createPresenceTracker();
 
+  function push(record) {
+    seq += 1;
+    items.push({ seq, ...record });
+    if (items.length > BUFFER_LIMIT) items.splice(0, items.length - BUFFER_LIMIT);
+  }
+
+  /** 缓冲区里这个会话最近一条带标题的记录：viewed 记录因此也能带上可读的名字。 */
+  function titleFor(sessionId) {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      if (items[index].sessionId === sessionId && items[index].title) return items[index].title;
+    }
+    return '';
+  }
+
+  /**
+   * 「用户正在看这个会话」：与 `resumed`（他又发了消息）同为**撤销**信号——
+   * 提醒是给「没看到结果」的人亮的，人已经在会话里看着结果了就不该再亮角标。
+   */
+  function pushViewed(sessionId, title, now = Date.now()) {
+    push({ sessionId, title, reason: '', at: now, kind: 'viewed' });
+  }
+
   ctx.on('session/event', (session, event) => {
     try {
       const record = summarizeTurnStart(session, event) ?? summarizeTurnEnd(session, event);
       if (!record) return;
-      seq += 1;
-      items.push({ seq, ...record });
-      if (items.length > BUFFER_LIMIT) items.splice(0, items.length - BUFFER_LIMIT);
+      push(record);
+      // 这个会话正开在用户眼前（页面可见且有焦点）：刚记下的完成提醒立刻撤销，
+      // 免得他盯着结果看的时候角标还亮着。
+      if (record.kind === 'completion' && presence.viewingNow().has(record.sessionId)) {
+        pushViewed(record.sessionId, record.title);
+      }
     } catch (error) {
       ctx.logger?.warn?.(`[dsh-session-notify] buffer error: ${String(error)}`);
     }
@@ -295,8 +355,17 @@ export function apply(ctx) {
         handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
           try {
-            const clientId = new URL(req.url, 'http://127.0.0.1').searchParams.get('clientId');
+            const params = new URL(req.url, 'http://127.0.0.1').searchParams;
+            const clientId = params.get('clientId');
             if (clientId) presence.touch(clientId);
+            // 顺手回报「用户正在看哪个会话」（页面可见且有焦点时才报，空值＝没在看）。
+            // 只在**观看目标变化**时记一条 viewed：轮询是 750ms 一次，每次都记会把
+            // 缓冲区冲爆，真正完成提醒就被挤出去了。
+            const viewing = (params.get('viewing') ?? '').trim();
+            if (clientId && viewing !== presence.watches(clientId)) {
+              presence.watch(clientId, viewing);
+              if (viewing) pushViewed(viewing, titleFor(viewing));
+            }
           } catch { /* a poll without clientId still gets the queue */ }
           json(res, { items: commands.list() });
         },

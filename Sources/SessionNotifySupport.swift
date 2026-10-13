@@ -1,8 +1,12 @@
 import Foundation
 
-/// One record produced by the bundled dsh-session-notify plugin: either a root
-/// session's `turn/end` (`kind == "completion"`) or a `user/message` telling the
-/// launcher that the session is being worked on again (`kind == "resumed"`).
+/// One record produced by the bundled dsh-session-notify plugin:
+/// - `kind == "completion"`: a root session's `turn/end`;
+/// - `kind == "resumed"`: a `user/message`/`turn/start` telling the launcher the
+///   session is being worked on again;
+/// - `kind == "viewed"`: the user is looking at that session in the Harness UI
+///   right now (including a turn that ends while they watch it), so its
+///   completion reminder is stale.
 struct SessionNotifyEvent: Codable, Equatable {
     let seq: Int
     let sessionId: String
@@ -34,6 +38,9 @@ struct SessionNotifyEvent: Codable, Equatable {
     }
 
     var isResume: Bool { kind == "resumed" }
+
+    /// 用户正在 Harness 里看这个会话（含「看着它收尾」）：与 resumed 一样是撤销信号。
+    var isView: Bool { kind == "viewed" }
 }
 
 /// Snapshot returned by `GET /dsh-session-notify/events?after=<seq>`.
@@ -48,14 +55,16 @@ struct SessionNotifyFeed: Codable {
 }
 
 /// 一次轮询的结果：`completions` 是新的完成事件；`resumed` 是「用户又在这些会话里
-/// 发了消息」，它们已经把对应的未读提醒撤销掉（角标不该在会话重新开跑后还亮着）。
+/// 发了消息」，它们已经把对应的未读提醒撤销掉（角标不该在会话重新开跑后还亮着）；
+/// `viewed` 是「用户此刻正在 Harness 里看这些会话」，同样撤销未读（看过即已读）。
 struct SessionNotifyIngest {
     let completions: [SessionNotifyEvent]
     let resumed: [SessionNotifyEvent]
+    let viewed: [String]
 
-    var isEmpty: Bool { completions.isEmpty && resumed.isEmpty }
+    var isEmpty: Bool { completions.isEmpty && resumed.isEmpty && viewed.isEmpty }
 
-    static let none = SessionNotifyIngest(completions: [], resumed: [])
+    static let none = SessionNotifyIngest(completions: [], resumed: [], viewed: [])
 }
 
 /// Tracks completion events polled from the harness and the unread badge
@@ -144,12 +153,18 @@ final class SessionNotifyStore {
 
         var completions: [SessionNotifyEvent] = []
         var resumed: [SessionNotifyEvent] = []
+        var viewed: [String] = []
         for event in fresh {
             // 同一会话只保留最近一条；随后按事件先后决定「记一条未读」还是「撤掉」。
             events.removeAll { $0.sessionId == event.sessionId }
             if event.isResume {
                 unread.remove(event.sessionId)
                 resumed.append(event)
+            } else if event.isView {
+                // 用户正在会话里看结果（或它就在他眼前收尾）：撤销未读而不是记一条
+                // 新提醒。轮询每 3.5 秒都会带一次观看状态，所以只报告真的撤掉了的
+                // 会话，别把日志刷满。
+                if unread.remove(event.sessionId) != nil { viewed.append(event.sessionId) }
             } else if event.reason == "aborted" {
                 unread.remove(event.sessionId)
                 // 防御旧插件/旧缓冲：被打断的回合不是完成（用户插话、排队消息、
@@ -164,7 +179,7 @@ final class SessionNotifyStore {
         if events.count > capacity { events.removeFirst(events.count - capacity) }
         // 未读只统计"列表里还看得见"的会话：列表被容量挤掉的行不该继续挂在角标上。
         unread.formIntersection(events.map(\.sessionId))
-        return SessionNotifyIngest(completions: completions, resumed: resumed)
+        return SessionNotifyIngest(completions: completions, resumed: resumed, viewed: viewed)
     }
 
     func markAllRead() {

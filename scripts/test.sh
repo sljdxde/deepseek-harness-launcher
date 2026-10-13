@@ -119,6 +119,17 @@ if rg -q 'ctx\.sessions\.open\(' "$ROOT/Plugins/DSHSessionNotify/client/client.j
   echo "session jump must go through uiWorkspace.openSession: ctx.sessions has no open()" >&2
   exit 1
 fi
+# 看过即已读：注入客户端把「用户正在看的会话」随 750ms 轮询上报（可见且有焦点
+# 才算），插件只在观看目标变化时记一条 viewed，启动器把那份未读撤掉。少了任何
+# 一环，人盯着结果看的时候角标还亮着。
+rg -Fq 'viewing=' "$ROOT/Plugins/DSHSessionNotify/client/client.js"
+rg -Fq 'viewingSession' "$ROOT/Plugins/DSHSessionNotify/client/client.js"
+rg -Fq "kind: 'viewed'" "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+rg -Fq 'viewingNow' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+rg -Fq 'event.isView' "$ROOT/Sources/SessionNotifySupport.swift"
+rg -Fq 'ingested.viewed' "$ROOT/Sources/main.swift"
+rg -Fq 'viewingNow' "$ROOT/Plugins/DSHSessionNotify/test/session-notify.test.js"
+rg -Fq 'retracted.viewed' "$ROOT/scripts/test-session-notify.swift"
 rg -q '"\./client": "\./client/client.js"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q '"client"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q 'monitorSessionNotify' "$ROOT/Sources/main.swift"
