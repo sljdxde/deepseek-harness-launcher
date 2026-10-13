@@ -281,11 +281,19 @@ export function apply(ctx) {
   const items = [];
   const commands = createCommandQueue();
   const presence = createPresenceTracker();
+  /** sessionId → 这个会话最后一条记录的种类（启动器据此判断「有没有未读」）。 */
+  const lastKindBySession = new Map();
 
   function push(record) {
     seq += 1;
     items.push({ seq, ...record });
+    lastKindBySession.set(record.sessionId, record.kind);
     if (items.length > BUFFER_LIMIT) items.splice(0, items.length - BUFFER_LIMIT);
+  }
+
+  /** 这个会话当前是否挂着一条未读完成提醒（＝最后一条记录是 completion）。 */
+  function pendingCompletion(sessionId) {
+    return lastKindBySession.get(sessionId) === 'completion';
   }
 
   /** 缓冲区里这个会话最近一条带标题的记录：viewed 记录因此也能带上可读的名字。 */
@@ -364,7 +372,10 @@ export function apply(ctx) {
             const viewing = (params.get('viewing') ?? '').trim();
             if (clientId && viewing !== presence.watches(clientId)) {
               presence.watch(clientId, viewing);
-              if (viewing) pushViewed(viewing, titleFor(viewing));
+              // 只在**这个会话确实挂着未读完成**时才记一条 viewed：轮询 750ms 一次，
+              // 用户来回切会话时每次都记会把 50 条缓冲区占满（实测 2.5 分钟 26 条），
+              // 真正的完成提醒反而被挤出去。已经读过的会话再看不产生新信息。
+              if (viewing && pendingCompletion(viewing)) pushViewed(viewing, titleFor(viewing));
             }
           } catch { /* a poll without clientId still gets the queue */ }
           json(res, { items: commands.list() });

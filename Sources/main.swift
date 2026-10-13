@@ -176,6 +176,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Harness 侧，启动器轮询后以菜单栏角标（Foxmail 风格）+ 菜单区块呈现。
     private let sessionNotifyStore = SessionNotifyStore()
     private var sessionNotifyMenuItems: [NSMenuItem] = []
+    /// 菜单是否正在屏幕上（追踪中）；追踪期间不增删条目，只记下待重建。
+    private var sessionNotifyMenuOpen = false
+    private var sessionNotifyMenuRebuildPending = false
     private var sessionNotifyFailureStreak = 0
     private var sessionNotifyUnavailableLogged = false
     // dsh 重启瞬间（stop → start）可能同端口先后起两条轮询链，代际号让旧链自灭。
@@ -2417,7 +2420,20 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// 每次轮询有新完成事件时重建菜单顶部的「会话完成」区块；打开菜单
     /// (menuNeedsUpdate) 时也刷新一次，保证区块与角标和当前外观一致。
-    private func rebuildSessionNotifyMenuSection() {
+    ///
+    /// `deferWhileMenuOpen`：菜单正在屏幕上（追踪中）时**不许**增删它的条目。
+    /// 轮询每 3.5 秒就可能带来一条新完成提醒，而用户点开菜单后会盯着看几秒——
+    /// 期间把鼠标下那一行摘掉换成新对象，点击就可能落到已摘除的条目上（表现成
+    /// 「点了没反应」）或误触刚好挪到光标下的另一行。这时只记下待重建（角标照旧
+    /// 即时更新），等菜单关闭再补一次；`menuNeedsUpdate` 那条路永远立刻重建，
+    /// 所以菜单被打开时内容一定是最新的。
+    private func rebuildSessionNotifyMenuSection(deferWhileMenuOpen: Bool = true) {
+        if deferWhileMenuOpen, sessionNotifyMenuOpen {
+            sessionNotifyMenuRebuildPending = true
+            statusItem.button?.image = makeStatusImage()
+            return
+        }
+        sessionNotifyMenuRebuildPending = false
         guard let menu = statusItem.menu else { return }
         for item in sessionNotifyMenuItems { menu.removeItem(item) }
         sessionNotifyMenuItems = []
@@ -2641,9 +2657,22 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        rebuildSessionNotifyMenuSection()
+        // 菜单即将显示：内容必须是最新的，所以这一路不受「追踪中」限制。
+        rebuildSessionNotifyMenuSection(deferWhileMenuOpen: false)
         refreshRecoveryMenuItem()
         refreshRuntimeMenuRow()
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        sessionNotifyMenuOpen = true
+    }
+
+    /// 菜单关闭（含 tracking 被 cancelTracking 取消）：把追踪期间压下来的重建补上，
+    /// 保证下次打开前菜单区块与角标、未读集合一致。
+    func menuDidClose(_ menu: NSMenu) {
+        sessionNotifyMenuOpen = false
+        guard sessionNotifyMenuRebuildPending else { return }
+        rebuildSessionNotifyMenuSection(deferWhileMenuOpen: false)
     }
 }
 

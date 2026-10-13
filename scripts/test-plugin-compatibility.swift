@@ -107,6 +107,71 @@ struct PluginCompatibilityTests {
         check(!issues.contains { $0.pluginName == "fine-plugin" }, "区间满足的插件不应报问题")
         check(!issues.contains { !$0.userPlugin }, "bundled 插件不做 peer 扫描（其检测走接口探针）")
 
+        // 一个插件同时踩两个 peer（实测 dsh-connect-workbuddy：pi-ai 超界 + react 缺失）
+        // 只能报**一条**：日志行按插件计数、弹窗按插件逐个呈现，一条一条报会让同一插件
+        // 在日志里出现两遍，用户处理完第一条还会再弹一次。
+        writeManifest(profileModules.appendingPathComponent("double-trouble"), [
+            "name": "double-trouble", "version": "1.2.3",
+            "peerDependencies": [
+                "@deepseek-ai/dsh-llm": ">=0.2.0",
+                "@deepseek-ai/dsh-removed-api": "^0.1.0"
+            ]
+        ] as [String: Any])
+        let merged = PluginCompatibilitySupport.scan(
+            plugins: [.init(name: "double-trouble", version: "1.2.3", source: "user", broken: nil)],
+            profileModules: profileModules, runtimeModules: runtimeModules
+        )
+        check(merged.count == 1, "同一插件的多个 peer 问题应合并成一条，实际 \(merged.count) 条：\(merged.map(\.reason))")
+        check(merged.first?.reason.contains("@deepseek-ai/dsh-llm") == true
+              && merged.first?.reason.contains("dsh-removed-api") == true
+              && merged.first?.reason.contains("；") == true,
+              "合并后的一条要同时说清两个原因：\(merged.first?.reason ?? "")")
+        check(PluginCompatibilitySupport.mergeByPlugin(merged).count == 1, "合并是幂等的")
+
+        // peer 的实际解析位置：只看 runtime 一个目录会把提升到 profile 根的 peer 误报成
+        // 「不存在」（用户机器上 react 就在 ~/.dsh/profiles/node_modules 下，只是软链）。
+        writeManifest(tmp.appendingPathComponent("profile/node_modules/hoisted-dep"), ["name": "hoisted-dep", "version": "2.5.0"])
+        writeManifest(profileModules.appendingPathComponent("hoisted-user"), [
+            "name": "hoisted-user", "version": "0.1.0",
+            "peerDependencies": ["hoisted-dep": "^2.0.0"]
+        ] as [String: Any])
+        // 插件自己带的嵌套依赖也算数（Node 会先看 <pkg>/node_modules）。
+        writeManifest(profileModules.appendingPathComponent("nested-user/node_modules/nested-dep"), ["name": "nested-dep", "version": "1.0.0"])
+        writeManifest(profileModules.appendingPathComponent("nested-user"), [
+            "name": "nested-user", "version": "0.1.0",
+            "peerDependencies": ["nested-dep": "^1.0.0"]
+        ] as [String: Any])
+        let resolved = PluginCompatibilitySupport.scan(
+            plugins: [
+                .init(name: "hoisted-user", version: "0.1.0", source: "user", broken: nil),
+                .init(name: "nested-user", version: "0.1.0", source: "user", broken: nil),
+            ],
+            profileModules: profileModules, runtimeModules: runtimeModules
+        )
+        check(resolved.isEmpty, "提升到 profile 根 / 插件自带的 peer 不该被报成不存在：\(resolved.map { "\($0.pluginName): \($0.reason)" })")
+
+        // 浏览器侧 react/react-dom 由外壳提供：有客户端半的插件不该因「runtime 里没有
+        // react」被报警（实测 dsh-connect-workbuddy 能用却被劝退卸载）。
+        writeManifest(profileModules.appendingPathComponent("client-plugin"), [
+            "name": "client-plugin", "version": "1.0.0",
+            "peerDependencies": ["react": "^18.2.0", "react-dom": "^18.2.0"],
+            "dsh": ["client": ["platform": "web"]]
+        ] as [String: Any])
+        // 没有客户端半的插件声明 react → 仍然按真实缺失报（主机半不可能从外壳拿 react）。
+        writeManifest(profileModules.appendingPathComponent("host-plugin"), [
+            "name": "host-plugin", "version": "1.0.0",
+            "peerDependencies": ["react": "^18.2.0"]
+        ] as [String: Any])
+        let shellPeers = PluginCompatibilitySupport.scan(
+            plugins: [
+                .init(name: "client-plugin", version: "1.0.0", source: "user", broken: nil),
+                .init(name: "host-plugin", version: "1.0.0", source: "user", broken: nil),
+            ],
+            profileModules: profileModules, runtimeModules: runtimeModules
+        )
+        check(!shellPeers.contains { $0.pluginName == "client-plugin" }, "客户端半的 react peer 不该报警：\(shellPeers.map(\.reason))")
+        check(shellPeers.contains { $0.pluginName == "host-plugin" && $0.reason.contains("react") }, "没有客户端半时仍要如实报告 react 缺失")
+
         try? fm.removeItem(at: tmp)
 
         if !failures.isEmpty {

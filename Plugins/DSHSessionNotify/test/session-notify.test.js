@@ -358,16 +358,19 @@ test('presence 追踪器记录「正在看的会话」：切走/离场/超时都
   assert.deepEqual([...tracker.viewingNow(0)], []);
 });
 
-test('用户正在看的会话：轮询上报 viewing 即记一条 viewed（只在观看目标变化时记）', async () => {
+test('用户正在看的会话：只有它挂着未读完成时才记一条 viewed', async () => {
   const harness = makeHarness();
   const { call } = harness;
+  const view = target => call('/dsh-session-notify/commands', {
+    url: `/dsh-session-notify/commands?clientId=page-1&viewing=${target}`
+  });
   apply(harness.ctx);
 
   harness.emit('session/event', makeSession({ id: 'session-aaaa', title: '长任务' }), turnEnd('completed'));
-  // 页面第一次上报「正在看 session-aaaa」→ 紧跟一条 viewed（带上可读标题便于排查）。
-  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=session-aaaa' });
-  // 同一个目标反复上报（轮询 750ms 一次）不得重复记，否则缓冲区会被冲爆、真正的完成提醒被挤掉。
-  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=session-aaaa' });
+  // 第一次看：跟着记一条 viewed（带上可读标题便于排查）。
+  await view('session-aaaa');
+  // 同一个目标反复上报（轮询 750ms 一次）不得重复记。
+  await view('session-aaaa');
   let items = (await call('/dsh-session-notify/events')).json().items;
   assert.deepEqual(items.map(item => [item.seq, item.kind, item.sessionId]), [
     [1, 'completion', 'session-aaaa'],
@@ -375,14 +378,27 @@ test('用户正在看的会话：轮询上报 viewing 即记一条 viewed（只�
   ]);
   assert.equal(items[1].title, '长任务');
 
-  // 转去看别的会话、再回来：观看目标变化，各记一条。
-  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=session-bbbb' });
-  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=session-aaaa' });
+  // 切到没有未读完成的会话、再回到已经读过的会话：都不记——否则用户来回切会话会把
+  // 50 条缓冲区占满，真正的完成提醒反而被挤出去。
+  await view('session-bbbb');
+  await view('session-aaaa');
   items = (await call('/dsh-session-notify/events')).json().items;
-  assert.deepEqual(items.map(item => item.kind), ['completion', 'viewed', 'viewed', 'viewed']);
+  assert.deepEqual(items.map(item => item.kind), ['completion', 'viewed']);
+
+  // 另一个会话完成一轮 → 它重新挂上未读 → 此时看它才需要再记一条。
+  harness.emit('session/event', makeSession({ id: 'session-bbbb', title: '后台任务' }), turnEnd('completed'));
+  await view('session-aaaa');
+  await view('session-bbbb');
+  items = (await call('/dsh-session-notify/events')).json().items;
+  assert.deepEqual(items.map(item => [item.kind, item.sessionId]), [
+    ['completion', 'session-aaaa'],
+    ['viewed', 'session-aaaa'],
+    ['completion', 'session-bbbb'],
+    ['viewed', 'session-bbbb'],
+  ]);
 
   // 离开页面（viewing 缺失/为空＝没在看任何会话）不记事件。
-  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=' });
+  await view('');
   await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1' });
   assert.equal((await call('/dsh-session-notify/events')).json().items.length, 4);
 });
@@ -392,11 +408,11 @@ test('会话正在用户眼前收尾：completion 后紧跟一条 viewed，角�
   const { call } = harness;
   apply(harness.ctx);
 
+  // 先建立「正在看 session-live」；它还没有完成，所以这一步不记任何事件。
   await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&viewing=session-live' });
   harness.emit('session/event', makeSession({ id: 'session-live', title: '看着的长任务' }), turnEnd('completed'));
   const items = (await call('/dsh-session-notify/events')).json().items;
   assert.deepEqual(items.map(item => [item.kind, item.sessionId]), [
-    ['viewed', 'session-live'],
     ['completion', 'session-live'],
     ['viewed', 'session-live'],
   ]);

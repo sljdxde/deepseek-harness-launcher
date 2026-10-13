@@ -1,6 +1,13 @@
 #!/bin/zsh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# 前置自检：本脚本的源码不变量检查全部走 ripgrep。缺它时 zsh 只报
+# 「command not found: rg」然后立刻退出（实测：rg 被卸载后回归几秒内失败，
+# 看起来像测试挂了，实际是工具链缺件）。这里提前给一句能照做的提示。
+if ! command -v rg >/dev/null 2>&1; then
+  print -u2 "缺少 ripgrep：回归里的源码不变量检查依赖它（macOS: brew install ripgrep）"
+  exit 127
+fi
 node --check "$ROOT/Plugins/DSHArchiveManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/running-session-ids.test.js"
@@ -130,6 +137,21 @@ rg -Fq 'event.isView' "$ROOT/Sources/SessionNotifySupport.swift"
 rg -Fq 'ingested.viewed' "$ROOT/Sources/main.swift"
 rg -Fq 'viewingNow' "$ROOT/Plugins/DSHSessionNotify/test/session-notify.test.js"
 rg -Fq 'retracted.viewed' "$ROOT/scripts/test-session-notify.swift"
+# viewed 只在**该会话确实挂着未读完成**时才记：750ms 一次轮询、用户来回切会话时每次
+# 都记会把 50 条缓冲区占满，真正的完成提醒被挤出去。
+rg -Fq 'lastKindBySession' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+rg -Fq 'pendingCompletion' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+# 菜单正在屏幕上（追踪中）时不许增删条目：轮询每 3.5 秒就可能带来新提醒，摘掉鼠标下
+# 那一行会让点击落到已摘除的条目上（「点了没反应」）。延后到菜单关闭再补重建。
+rg -Fq 'deferWhileMenuOpen' "$ROOT/Sources/main.swift"
+rg -Fq 'sessionNotifyMenuRebuildPending' "$ROOT/Sources/main.swift"
+rg -Fq 'func menuDidClose' "$ROOT/Sources/main.swift"
+# 插件兼容性告警按插件计数：一个插件踩多个 peer 只报一条（日志行/弹窗都按插件走）；
+# peer 按 Node 顺序解析（插件自带、profile 提升的都要算）；浏览器侧的 react/react-dom
+# 由外壳注入，不能当成「运行时里不存在」劝用户卸载。
+rg -Fq 'mergeByPlugin' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
+rg -Fq 'resolvePeerVersion' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
+rg -Fq 'shellProvidedClientPeers' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
 rg -q '"\./client": "\./client/client.js"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q '"client"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q 'monitorSessionNotify' "$ROOT/Sources/main.swift"

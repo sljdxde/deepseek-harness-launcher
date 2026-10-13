@@ -180,16 +180,54 @@ enum PluginCompatibilitySupport {
         return versionBase(version) == versionBase(atom.value)
     }
 
-    /// 读取一个 package.json 的 name/version/peerDependencies（缺失返回 nil）。
-    static func packageManifest(at url: URL) -> (name: String?, version: String?, peers: [String: String])? {
+    /// 读取一个 package.json 的 name/version/peerDependencies 与「有没有客户端半」
+    /// （`dsh.client` 声明，缺失返回 nil）。
+    static func packageManifest(at url: URL) -> (name: String?, version: String?, peers: [String: String], clientHalf: Bool)? {
         guard let data = try? Data(contentsOf: url),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         let peers = (object["peerDependencies"] as? [String: String]) ?? [:]
-        return (object["name"] as? String, object["version"] as? String, peers)
+        let dsh = object["dsh"] as? [String: Any]
+        let clientHalf = (dsh?["client"] as? [String: Any]) != nil
+        return (object["name"] as? String, object["version"] as? String, peers, clientHalf)
+    }
+
+    /// 浏览器侧由 Harness 外壳提供的模块：客户端模块系统把插件的 `require('react')`
+    /// 解析到外壳自己的实例（内置插件就是 `const React = require('react')`），跟
+    /// node_modules 里有没有这个包无关。runtime 里查不到它们一点都不代表插件坏了。
+    static let shellProvidedClientPeers: Set<String> = ["react", "react-dom"]
+
+    /// peer 包的**实际解析位置**，按 Node 的顺序找：插件自己的 node_modules →
+    /// profile 的 node_modules（`~/.dsh/profiles/web/node_modules`）→ profile 根的
+    /// node_modules（pnpm 把公共依赖提升到这里）→ dsh runtime 的 node_modules。
+    /// 只看 runtime 一个位置会把提升到 profile 的 peer 误报成「不存在」。
+    /// - Returns: 找到的版本号；四处都没有返回 nil。
+    static func resolvePeerVersion(_ peer: String, pluginURL: URL, profileModules: URL, runtimeModules: URL) -> String? {
+        let profileRootModules = profileModules
+            .deletingLastPathComponent()        // ~/.dsh/profiles/web
+            .deletingLastPathComponent()        // ~/.dsh/profiles
+            .appendingPathComponent("node_modules")
+        let candidates = [
+            pluginURL.appendingPathComponent("node_modules").appendingPathComponent(peer),
+            profileModules.appendingPathComponent(peer),
+            profileRootModules.appendingPathComponent(peer),
+            runtimeModules.appendingPathComponent(peer),
+        ]
+        for candidate in candidates {
+            if let version = packageManifest(at: candidate.appendingPathComponent("package.json"))?.version {
+                return version
+            }
+        }
+        return nil
     }
 
     /// 对已安装插件做静态兼容性扫描。broken 残留与 peer 区间不满足都算问题；
     /// peer 在 runtime 中不存在（API 被移除）也算问题。
+    ///
+    /// **每个插件最多返回一条** Issue：一个插件常同时踩到两个 peer（实测
+    /// `dsh-connect-workbuddy`：`@earendil-works/pi-ai` 版本超界 + `react` 在运行时里
+    /// 不存在），一条问题一条 Issue 的写法会把同一插件在日志里列两遍、把「5 个插件
+    /// 兼容性问题」这种本该报插件数的数字报大，用户在第一条弹窗里升级完还会为同一个
+    /// 插件再弹一次。多条原因合并进 reason（`；` 分隔），一次说清。
     /// - Parameters:
     ///   - plugins: 插件管理器 /installed 接口的清单。
     ///   - profileModules: ~/.dsh/profiles/web/node_modules。
@@ -199,10 +237,10 @@ enum PluginCompatibilitySupport {
         profileModules: URL,
         runtimeModules: URL
     ) -> [Issue] {
-        var issues: [Issue] = []
+        var collected: [Issue] = []
         for plugin in plugins {
             if plugin.broken == true {
-                issues.append(Issue(
+                collected.append(Issue(
                     pluginName: plugin.name, version: plugin.version,
                     reason: "安装不完整或已损坏", userPlugin: true
                 ))
@@ -213,23 +251,51 @@ enum PluginCompatibilitySupport {
             guard let manifest = packageManifest(at: packageURL.appendingPathComponent("package.json")),
                   !manifest.peers.isEmpty else { continue }
             for (peer, range) in manifest.peers.sorted(by: { $0.key < $1.key }) {
-                let peerURL = runtimeModules.appendingPathComponent(peer).appendingPathComponent("package.json")
-                guard let installed = packageManifest(at: peerURL)?.version else {
-                    issues.append(Issue(
+                // 浏览器侧的 react/react-dom 来自外壳，不是 node_modules（见
+                // shellProvidedClientPeers）。实测 dsh-connect-workbuddy 工作正常，却因为
+                // 「依赖的 react 在运行时中不存在」被报警、还提供「卸载插件」按钮——
+                // 把能用的插件劝退，比漏报更糟。
+                if manifest.clientHalf, shellProvidedClientPeers.contains(peer) { continue }
+                guard let installed = resolvePeerVersion(
+                    peer, pluginURL: packageURL, profileModules: profileModules, runtimeModules: runtimeModules
+                ) else {
+                    collected.append(Issue(
                         pluginName: plugin.name, version: plugin.version,
                         reason: "依赖的 \(peer)（\(range)）在当前 dsh 运行时中不存在", userPlugin: true
                     ))
                     continue
                 }
                 if !satisfiesRange(installed, range: range) {
-                    issues.append(Issue(
+                    collected.append(Issue(
                         pluginName: plugin.name, version: plugin.version,
                         reason: "需要 \(peer) \(range)，当前为 \(installed)", userPlugin: true
                     ))
                 }
             }
         }
-        return issues
+        return mergeByPlugin(collected)
+    }
+
+    /// 同一插件的多条问题合成一条：原因用 `；` 串起来，插件名只出现一次
+    /// （日志行与弹窗都按插件计数）。顺序沿用首个问题的出现顺序，提示稳定。
+    static func mergeByPlugin(_ issues: [Issue]) -> [Issue] {
+        var merged: [Issue] = []
+        var indexByName: [String: Int] = [:]
+        for issue in issues {
+            guard let index = indexByName[issue.pluginName] else {
+                indexByName[issue.pluginName] = merged.count
+                merged.append(issue)
+                continue
+            }
+            let previous = merged[index]
+            merged[index] = Issue(
+                pluginName: previous.pluginName,
+                version: previous.version ?? issue.version,
+                reason: "\(previous.reason)；\(issue.reason)",
+                userPlugin: previous.userPlugin || issue.userPlugin
+            )
+        }
+        return merged
     }
 
     /// 向插件管理器发一条同步 POST 命令（升级/卸载）。dsh plugin 走 pnpm，
