@@ -158,6 +158,11 @@ rg -Fq 'shellProvidedClientPeers' "$ROOT/Sources/PluginCompatibilitySupport.swif
 rg -Fq 'reapStaleStaging' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHArchiveManager/lib/index.js"
 rg -Fq 'EPERM' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -Fq 'ignored.json.999999.tmp' "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
+# git 来源的更新检测要能穿过 raw.githubusercontent 被限速/断流的网络（实测 14～60 秒
+# 且中途断流）：raw 失败时用 api.github.com 兜一次，否则这类插件永远显示「失败」。
+rg -Fq 'api.github.com/repos/' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'readRemoteJSON' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'raw 卡住/超时时用 api.github.com 兜底' "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
 rg -q '"\./client": "\./client/client.js"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q '"client"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q 'monitorSessionNotify' "$ROOT/Sources/main.swift"

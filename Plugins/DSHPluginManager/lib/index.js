@@ -846,7 +846,7 @@ export function findPeerIncompatibilities(peers, installedVersions) {
 }
 
 /** 目标版本声明的 peerDependencies：npm 走 registry，git 走远端 package.json。失败返回空（不阻断）。 */
-export async function fetchTargetPeerDependencies(source, version) {
+export async function fetchTargetPeerDependencies(source, version, deps = {}) {
   const remote = source?.remote ?? {};
   try {
     if (remote.type === 'npm') {
@@ -858,15 +858,14 @@ export async function fetchTargetPeerDependencies(source, version) {
     }
     if (remote.type === 'git' && remote.author && remote.repo) {
       const commit = source.installedCommit && version === source.installedVersion ? source.installedCommit : 'HEAD';
-      const path = remote.subdir ? `${String(remote.subdir).replace(/^\/+|\/+$/g, '')}/package.json` : 'package.json';
-      const url = `https://raw.githubusercontent.com/${remote.author}/${remote.repo}/${commit}/${path}`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-      const response = await fetch(url, { signal: controller.signal, headers: { 'cache-control': 'no-cache' } });
-      clearTimeout(timer);
-      if (!response.ok) return {};
-      const pkg = await response.json();
-      return pkg?.peerDependencies && typeof pkg.peerDependencies === 'object' ? pkg.peerDependencies : {};
+      // 与更新检测共用同一条 raw → api.github.com 兜底：raw 在国内网络常被限速/断流，
+      // 以前这里静默返回 {}，等于门禁在那种网络下根本不生效。
+      const result = await fetchRepoJSON(
+        { author: remote.author, repo: remote.repo, subdir: remote.subdir, commit }, PROBE_TIMEOUT_MS, deps
+      );
+      if (result.error) return {};
+      const peers = result.value?.peerDependencies;
+      return peers && typeof peers === 'object' ? peers : {};
     }
   } catch { /* 问不到就不阻断更新：预检是加分项，不是新故障源 */ }
   return {};
@@ -1781,23 +1780,67 @@ export async function probeGitHead(remote, timeoutMs = PROBE_TIMEOUT_MS) {
   }
 }
 
-/** 远端 package.json 的 version：raw.githubusercontent 一次 GET，无需 API token。 */
-export async function fetchRemotePackageVersion(remote, commit, timeoutMs = PROBE_TIMEOUT_MS) {
-  const { author, repo, subdir } = remote ?? {};
-  if (!author || !repo) return { error: '缺少仓库信息' };
-  const path = subdir ? `${subdir.replace(/^\/+|\/+$/g, '')}/package.json` : 'package.json';
-  const url = `https://raw.githubusercontent.com/${author}/${repo}/${commit}/${path}`;
+/**
+ * 一次 GET + JSON 解析，带超时。`decode` 用于把 API 的包装响应还原成实际文档。
+ * 超时/网络错误一律转成 error 字段（调用方据此决定要不要走兜底）。
+ */
+async function readRemoteJSON(url, timeoutMs, doFetch, decode = payload => payload) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const response = await fetch(url, { signal: controller.signal, headers: { 'cache-control': 'no-cache' } });
-    clearTimeout(timer);
+    const response = await doFetch(url, { signal: controller.signal, headers: { 'cache-control': 'no-cache' } });
     if (!response.ok) return { error: `远端 package.json HTTP ${response.status}` };
-    const pkg = await response.json();
-    return typeof pkg?.version === 'string' && pkg.version ? { version: pkg.version } : { error: '远端 package.json 没有 version' };
+    const value = decode(await response.json());
+    if (!value) return { error: '远端 package.json 无法解析' };
+    return { value };
   } catch (error) {
-    return { error: String(error?.message || error) };
+    const message = error?.name === 'AbortError' || /aborted/i.test(String(error?.message ?? ''))
+      ? `拉取远端 package.json 超时（${Math.round(timeoutMs / 1000)} 秒）`
+      : String(error?.message || error);
+    return { error: message };
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+/** api.github.com 的 contents 响应（base64）还原成文档。 */
+function decodeAPIContent(payload) {
+  if (!payload || payload.encoding !== 'base64' || typeof payload.content !== 'string') return null;
+  try { return JSON.parse(Buffer.from(payload.content, 'base64').toString('utf8')); } catch { return null; }
+}
+
+/**
+ * 读 GitHub 仓库某次提交里的一个 JSON 文件（默认 package.json）。
+ *
+ * 先走 raw.githubusercontent（不需要 token）；**实测国内网络对 raw 限速严重：
+ * 14～60 秒且会中途断流**，15 秒超时正好卡在边缘——于是 git 来源的插件检测永远显示
+ * 「失败」（点更新还会被回一句「没有检测到可更新的版本」），更新前的 peer 门禁也静默
+ * 拿不到目标版本的声明。这一步失败时改用 api.github.com 兜一次：同一台机器上它
+ * 0.75 秒就回。只在 raw 失败时才走 API——检测最多 6 小时一轮、git 插件数量有限，
+ * 匿名限流（60/小时）够用，常规路径仍然不碰 API。
+ * @param spec - `{ author, repo, subdir, commit, file }`。
+ * @param deps - 测试注入：`{ fetch }` 替换网络调用。
+ * @returns `{ value }`（解析后的文档）或 `{ error }`（raw 那一步的原因更好对号）。
+ */
+async function fetchRepoJSON(spec, timeoutMs = PROBE_TIMEOUT_MS, deps = {}) {
+  const { author, repo, subdir, commit, file = 'package.json' } = spec ?? {};
+  if (!author || !repo) return { error: '缺少仓库信息' };
+  const path = subdir ? `${String(subdir).replace(/^\/+|\/+$/g, '')}/${file}` : file;
+  const doFetch = deps.fetch ?? fetch;
+  const raw = await readRemoteJSON(`https://raw.githubusercontent.com/${author}/${repo}/${commit}/${path}`, timeoutMs, doFetch);
+  if (!raw.error) return raw;
+  const viaAPI = await readRemoteJSON(
+    `https://api.github.com/repos/${author}/${repo}/contents/${path}?ref=${commit}`, timeoutMs, doFetch, decodeAPIContent
+  );
+  return viaAPI.error ? raw : viaAPI;
+}
+
+/** 远端 package.json 的 version（git 来源的更新检测用）。 */
+export async function fetchRemotePackageVersion(remote, commit, timeoutMs = PROBE_TIMEOUT_MS, deps = {}) {
+  const result = await fetchRepoJSON({ ...(remote ?? {}), commit }, timeoutMs, deps);
+  if (result.error) return { error: result.error };
+  const version = result.value?.version;
+  return typeof version === 'string' && version ? { version } : { error: '远端 package.json 没有 version' };
 }
 
 /** profile 里所有可检测插件的来源清单（bundled / broken 不参与）。 */

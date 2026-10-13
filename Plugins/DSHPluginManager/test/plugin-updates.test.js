@@ -12,6 +12,7 @@ import {
   comparePluginVersions,
   decidePluginUpdate,
   fetchRemotePackageVersion,
+  fetchTargetPeerDependencies,
   ignorePluginUpdates,
   isUpdateIgnored,
   parseLockCommit,
@@ -457,6 +458,100 @@ test('用例6 探测函数缺少远端信息时直接返回 error（不联网）
   assert.match((await probeGitHead({})).error, /缺少远端地址/);
   assert.match((await fetchRemotePackageVersion({})).error, /缺少仓库信息/);
   assert.match((await fetchRemotePackageVersion({ author: 'owner' })).error, /缺少仓库信息/);
+});
+
+test('远端 package.json：raw 卡住/超时时用 api.github.com 兜底（实测国内网络 raw 14～60 秒且断流）', async () => {
+  const remote = { author: 'owner', repo: 'plugin', subdir: null };
+  const commit = 'a'.repeat(40);
+  const rawURL = `https://raw.githubusercontent.com/owner/plugin/${commit}/package.json`;
+  const apiURL = `https://api.github.com/repos/owner/plugin/contents/package.json?ref=${commit}`;
+
+  // 1) raw 正常：只打 raw，不进 API
+  const happy = [];
+  const happyResult = await fetchRemotePackageVersion(remote, commit, 1000, {
+    fetch: async url => {
+      happy.push(url);
+      return { ok: true, json: async () => ({ version: '2.1.0' }) };
+    }
+  });
+  assert.deepEqual(happyResult, { version: '2.1.0' });
+  assert.deepEqual(happy, [rawURL], 'raw 成功时不该多打一次 API');
+
+  // 2) raw 超时（AbortError）→ API 兜底：base64 解出来仍是 package.json
+  const urls = [];
+  const fallback = await fetchRemotePackageVersion(remote, commit, 1000, {
+    fetch: async url => {
+      urls.push(url);
+      if (url === rawURL) {
+        const error = new Error('This operation was aborted');
+        error.name = 'AbortError';
+        throw error;
+      }
+      return { ok: true, json: async () => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ version: '3.4.5' })).toString('base64') }) };
+    }
+  });
+  assert.deepEqual(fallback, { version: '3.4.5' });
+  assert.deepEqual(urls, [rawURL, apiURL]);
+
+  // 3) 两条路都失败：如实报 raw 那一步的原因，并把 undici 的内部措辞换成人能看懂的超时说明
+  const bothFailed = await fetchRemotePackageVersion(remote, commit, 1000, {
+    fetch: async url => {
+      if (url === rawURL) {
+        const error = new Error('This operation was aborted');
+        error.name = 'AbortError';
+        throw error;
+      }
+      return { ok: false, status: 403, json: async () => ({}) };
+    }
+  });
+  assert.match(bothFailed.error, /超时（1 秒）/);
+  assert.doesNotMatch(bothFailed.error, /aborted/);
+
+  // 4) raw 404 且 API 也不可用：报 raw 的 HTTP 状态（主路径更好对号）
+  const missing = await fetchRemotePackageVersion(remote, commit, 1000, {
+    fetch: async url => ({ ok: false, status: url === rawURL ? 404 : 500, json: async () => ({}) })
+  });
+  assert.match(missing.error, /HTTP 404/);
+
+  // 5) API 返回畸形载荷：不能当成成功
+  const malformed = await fetchRemotePackageVersion(remote, commit, 1000, {
+    fetch: async url => (url === rawURL
+      ? { ok: true, json: async () => ({}) }
+      : { ok: true, json: async () => ({ encoding: 'base64', content: Buffer.from('not json').toString('base64') }) })
+  });
+  assert.match(malformed.error, /没有 version/);
+});
+
+test('git 来源更新前的 peer 门禁同样吃 raw→API 兜底（以前静默拿到空 peer，门禁形同不存在）', async () => {
+  const source = {
+    name: 'qoder-plugin',
+    installedVersion: '0.5.0',
+    installedCommit: 'b'.repeat(40),
+    remote: { type: 'git', author: 'owner', repo: 'plugin', subdir: null }
+  };
+  const urls = [];
+  const peers = await fetchTargetPeerDependencies(source, '0.5.0', {
+    fetch: async url => {
+      urls.push(url);
+      if (String(url).startsWith('https://raw.githubusercontent.com/')) {
+        const error = new Error('This operation was aborted');
+        error.name = 'AbortError';
+        throw error;
+      }
+      return {
+        ok: true,
+        json: async () => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ version: '0.5.0', peerDependencies: { '@earendil-works/pi-ai': '>=0.85.0 <0.88.0' } })).toString('base64') })
+      };
+    }
+  });
+  assert.deepEqual(peers, { '@earendil-works/pi-ai': '>=0.85.0 <0.88.0' });
+  assert.equal(urls.length, 2, 'raw 失败后必须再问一次 API');
+
+  // 两条路都不通：仍然静默返回空（更新不被阻断），只是门禁这次确实拿不到依据
+  const unavailable = await fetchTargetPeerDependencies(source, '0.5.0', {
+    fetch: async () => ({ ok: false, status: 500, json: async () => ({}) })
+  });
+  assert.deepEqual(unavailable, {});
 });
 
 // ---------------------------------------------------------------------------
