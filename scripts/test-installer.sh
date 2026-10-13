@@ -40,7 +40,7 @@ print -r -- '#!/bin/zsh' > "$TARGET/Contents/MacOS/DHL"
 print -r -- 'exec -a "$0" /usr/bin/tail -f /dev/null' >> "$TARGET/Contents/MacOS/DHL"
 chmod +x "$TARGET/Contents/MacOS/DHL"
 
-"$TARGET/Contents/MacOS/DHL" 30 &
+"$TARGET/Contents/MacOS/DHL" -f /dev/null &
 PID="$!"
 for _ in {1..20}; do
   kill -0 "$PID" 2>/dev/null && break
@@ -50,6 +50,29 @@ kill -0 "$PID" 2>/dev/null || {
   print -u2 'installer fixture failed to start its managed process'
   exit 1
 }
+
+# 替身脚本会 `exec -a "$0"` 成 argv[0] = <path>/DHL 的 tail。安装器（在
+# DHL_STOP_SCOPE=target 下）只按「argv 就是 launcher 路径」这一类匹配它，跳过
+# 「shell + 首参是 launcher」那一类（那是为了不误杀真实安装的启动器）。所以必须
+# **等它真的 exec 完再跑安装器**：否则安装器扫描时看到的是 `/bin/zsh <path>/DHL`，
+# 认不出托管进程 → 不会停它 → 测试的等待就成了空等（实测挂死 20 分钟）。
+# 注意别用 `cp /usr/bin/tail` 当替身：系统二进制换目录运行会被内核 Killed: 9，
+# 那样测试会「假绿」（进程根本没起来，安装器当然也就没什么可停）。
+launcher_argv="$TARGET/Contents/MacOS/DHL"
+exec_ready=0
+for _ in {1..80}; do
+  current="$(ps -o command= -p "$PID" 2>/dev/null)"
+  if [[ "$current" == "$launcher_argv"* ]]; then
+    exec_ready=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$exec_ready" != 1 ]]; then
+  print -u2 'installer fixture never reached its launcher argv (exec phase)'
+  kill -KILL "$PID" 2>/dev/null || true
+  exit 1
+fi
 
 # Simulate the legacy npx-based backend used by older DHL builds. The command
 # includes the managed patch path, but its executable is npx rather than node.
@@ -73,7 +96,17 @@ kill -0 "$NPX_PID" 2>/dev/null || {
 # run must never SIGTERM the really installed launcher/backend (that is what
 # used to make the menu-bar app "auto quit" during regression runs).
 DHL_STOP_SCOPE=target DHL_SKIP_GLOBAL_CLEANUP=1 "$INSTALLER" "$SOURCE" "$DEST" --no-open
-wait "$PID" 2>/dev/null || true
+# 等安装器把替身停掉：**必须有超时**——裸 wait 一旦等不到就永远挂着，
+# 让人以为「回归卡了」而不是「安装器没停掉旧启动器」（这个坑踩过一次）。
+for _ in {1..50}; do
+  kill -0 "$PID" 2>/dev/null || break
+  sleep 0.1
+done
+if kill -0 "$PID" 2>/dev/null; then
+  print -u2 'installer failed to stop the managed launcher fixture'
+  kill -KILL "$PID" 2>/dev/null || true
+  exit 1
+fi
 PID=""
 for _ in {1..20}; do
   if ! kill -0 "$NPX_PID" 2>/dev/null; then break; fi

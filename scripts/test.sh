@@ -235,6 +235,14 @@ zsh -n "$ROOT/scripts/build-dmg.sh"
 "$ROOT/scripts/test-installer.sh"
 # 安装器测试必须限定进程停止作用域：禁止回归运行杀掉真实安装的 launcher/dsh。
 rg -q 'DHL_STOP_SCOPE' "$ROOT/scripts/install-from-app.sh" "$ROOT/scripts/test-installer.sh"
+# 夹具必须先 exec 成 launcher argv 再跑安装器（否则 DHL_STOP_SCOPE=target 下安装器
+# 认不出它），而且等它退出的代码必须有上限：裸 wait 在竞态下会把整个回归挂死
+# （实测卡死 20 分钟，看起来像「测试跑不完」）。
+rg -Fq 'exec_ready' "$ROOT/scripts/test-installer.sh"
+if rg -q '^[[:space:]]*wait "\$PID"' "$ROOT/scripts/test-installer.sh"; then
+  echo "installer test must not wait for the fixture without a timeout" >&2
+  exit 1
+fi
 rg -q 'signal_processes launcher_pids KILL' "$ROOT/scripts/install-from-app.sh"
 rg -q 'signal_processes dsh_pids KILL' "$ROOT/scripts/install-from-app.sh"
 rg -q 'wait_for_processes launcher_pids' "$ROOT/scripts/install-from-app.sh"
