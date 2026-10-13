@@ -442,6 +442,9 @@ if rg -Fq 'dsh 检查只比较 npm 最新版本' "$ROOT/README.md"; then
 fi
 rg -Fq 'globalHotKeyEnabled' "$ROOT/Sources/UpdateSupport.swift"
 rg -Fq '请按下快捷键' "$ROOT/Sources/SettingsWindowController.swift"
+# 复用的设置窗口：窗口不可见时 present() 必须重新按已保存设置填一遍控件。
+rg -Fq 'loadSettings()' "$ROOT/Sources/SettingsWindowController.swift"
+rg -Fq '取消后再打开设置，勾选状态必须回到已保存的设置' "$ROOT/scripts/test-settings-window.swift"
 rg -Fq 'globalHotKeyManager' "$ROOT/Sources/main.swift"
 if rg -q 'SettingsMenuItemView' "$ROOT/Sources/main.swift"; then
   echo "legacy settings-only menu view must be removed" >&2
@@ -469,6 +472,10 @@ swiftc "$ROOT/scripts/test-alert-design.swift" "$ROOT/Sources/AlertDesign.swift"
 "$ROOT/build/test-alert-design"
 swiftc "$ROOT/scripts/test-launcher-support.swift" "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/Sources/LogSupport.swift" -o "$ROOT/build/test-launcher-support"
 "$ROOT/build/test-launcher-support"
+# 设置窗口是复用的：取消后再打开必须回到已保存的设置（否则界面显示的是被取消掉的
+# 勾选与间隔，用户以为生效了）。
+swiftc "$ROOT/scripts/test-settings-window.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-settings-window" -framework AppKit
+"$ROOT/build/test-settings-window"
 swiftc "$ROOT/scripts/test-global-hotkey.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-global-hotkey"
 "$ROOT/build/test-global-hotkey"
 swiftc "$ROOT/scripts/test-dsh-version-support.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" -o "$ROOT/build/test-dsh-version-support"

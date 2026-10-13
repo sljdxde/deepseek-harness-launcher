@@ -58,7 +58,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     func present() {
         guard let window else { return }
-        if !window.isVisible { window.center() }
+        if !window.isVisible {
+            // 窗口是复用的（isReleasedWhenClosed = false）：上次点「取消」时界面上那些
+            // 未保存的编辑（勾选状态、检查间隔、刚录但没保存的快捷键）不能留到下次打开
+            // ——照已保存的设置重新填一遍。窗口已经可见时不重填，否则会把正在改的内容冲掉。
+            loadSettings()
+            window.center()
+        }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
