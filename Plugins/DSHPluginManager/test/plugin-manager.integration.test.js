@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -22,6 +22,18 @@ function makeReq(method) {
   };
 }
 
+/** Same, but with a JSON body the route's `body()` helper can read. */
+function makeReqWithBody(method, value) {
+  const chunks = [Buffer.from(JSON.stringify(value), 'utf8')];
+  return {
+    method,
+    [Symbol.asyncIterator]() {
+      let index = 0;
+      return { next: async () => (index < chunks.length ? { done: false, value: chunks[index++] } : { done: true, value: undefined }) };
+    }
+  };
+}
+
 function boot() {
   const routes = [];
   const webServer = { register(route) { routes.push(route); } };
@@ -39,11 +51,13 @@ test('apply 注册全部插件管理路由', () => {
   const paths = routes.map(route => route.path).sort();
   assert.deepEqual(paths, [
     '/dsh-plugin-manager/cleanup',
+    '/dsh-plugin-manager/ignore',
     '/dsh-plugin-manager/install',
     '/dsh-plugin-manager/installed',
     '/dsh-plugin-manager/marketplace',
     '/dsh-plugin-manager/refresh',
     '/dsh-plugin-manager/restart',
+    '/dsh-plugin-manager/unignore',
     '/dsh-plugin-manager/uninstall',
     '/dsh-plugin-manager/uninstall-many',
     '/dsh-plugin-manager/update',
@@ -147,6 +161,44 @@ test('uninstall-many 路由拒绝空插件列表', async () => {
     await route.handler(makeReq('POST', { names: [] }), res2);
     const payload2 = JSON.parse(res2.calls.find(call => call[0] === 'end')[1]);
     assert.equal(payload2.error.includes('缺少'), true);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('ignore / unignore 路由：写记录、拒绝空请求、取消后记录消失', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-route6-'));
+  process.env.DSH_HOME = dshHome;
+  try {
+    const { routes } = boot();
+    const ignore = routes.find(route => route.path === '/dsh-plugin-manager/ignore');
+    const unignore = routes.find(route => route.path === '/dsh-plugin-manager/unignore');
+    const jsonBody = res => JSON.parse(res.calls.find(call => call[0] === 'end')[1]);
+    const status = res => res.calls.find(call => call[0] === 'writeHead')[1];
+
+    const empty = makeRes();
+    await ignore.handler(makeReq('POST'), empty);
+    assert.equal(status(empty), 400);
+    assert.match(jsonBody(empty).error, /缺少/);
+
+    const ok = makeRes();
+    await ignore.handler(makeReqWithBody('POST', { items: [{ name: 'dsh-notify', version: '2.0.0' }] }), ok);
+    assert.equal(status(ok), 200);
+    assert.deepEqual(jsonBody(ok), { ok: true, ignored: ['dsh-notify'], failed: [] });
+    const recordFile = join(dshHome, 'profiles', 'web', '.plugin-updates-ignored.json');
+    assert.equal(JSON.parse(await readFile(recordFile, 'utf8'))['dsh-notify'].version, '2.0.0');
+
+    const bad = makeRes();
+    await unignore.handler(makeReq('POST'), bad);
+    assert.equal(status(bad), 400);
+
+    const removed = makeRes();
+    await unignore.handler(makeReqWithBody('POST', { names: ['dsh-notify'] }), removed);
+    assert.deepEqual(jsonBody(removed), { ok: true, unignored: ['dsh-notify'] });
+    assert.deepEqual(JSON.parse(await readFile(recordFile, 'utf8')), {});
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previousHome;

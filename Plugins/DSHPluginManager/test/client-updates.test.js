@@ -40,7 +40,7 @@ const sorted = value => Array.from(value).sort();
 
 // ---------- 1. 计数 ----------
 
-test('summarizeUpdates：混合状态只统计 total/update-available/failed/unknown', async () => {
+test('summarizeUpdates：混合状态只统计 total/update-available/ignored/failed/unknown', async () => {
   const plugin = await loadPlugin();
   const summary = plain(plugin.summarizeUpdates([
     { name: 'a', status: 'update-available' },
@@ -49,16 +49,17 @@ test('summarizeUpdates：混合状态只统计 total/update-available/failed/unk
     { name: 'd', status: 'failed' },
     { name: 'e', status: 'ahead' },
     { name: 'f', status: 'update-available' },
+    { name: 'g', status: 'update-available', ignored: true },
   ]));
-  assert.deepEqual(summary, { total: 6, updateAvailable: 2, failed: 1, unknown: 1 });
+  assert.deepEqual(summary, { total: 7, updateAvailable: 2, ignored: 1, failed: 1, unknown: 1 });
 });
 
 test('summarizeUpdates：空清单与 null 入参都不抛错', async () => {
   const plugin = await loadPlugin();
-  assert.deepEqual(plain(plugin.summarizeUpdates([])), { total: 0, updateAvailable: 0, failed: 0, unknown: 0 });
-  assert.deepEqual(plain(plugin.summarizeUpdates(null)), { total: 0, updateAvailable: 0, failed: 0, unknown: 0 });
-  assert.deepEqual(plain(plugin.summarizeUpdates(undefined)), { total: 0, updateAvailable: 0, failed: 0, unknown: 0 });
-  assert.deepEqual(plain(plugin.summarizeUpdates([null, { name: 'x' }])), { total: 2, updateAvailable: 0, failed: 0, unknown: 0 }, '坏条目不算进任何状态');
+  assert.deepEqual(plain(plugin.summarizeUpdates([])), { total: 0, updateAvailable: 0, ignored: 0, failed: 0, unknown: 0 });
+  assert.deepEqual(plain(plugin.summarizeUpdates(null)), { total: 0, updateAvailable: 0, ignored: 0, failed: 0, unknown: 0 });
+  assert.deepEqual(plain(plugin.summarizeUpdates(undefined)), { total: 0, updateAvailable: 0, ignored: 0, failed: 0, unknown: 0 });
+  assert.deepEqual(plain(plugin.summarizeUpdates([null, { name: 'x' }])), { total: 2, updateAvailable: 0, ignored: 0, failed: 0, unknown: 0 }, '坏条目不算进任何状态');
 });
 
 test('updatesAvailableCount：优先信 summary，缺字段时数 inventory，降级算 0', async () => {
@@ -69,6 +70,9 @@ test('updatesAvailableCount：优先信 summary，缺字段时数 inventory，�
   assert.equal(plugin.updatesAvailableCount(null), 0);
   assert.equal(plugin.updatesAvailableCount(undefined), 0);
   assert.equal(plugin.updatesAvailableCount(false), 0, '接口不可用（降级）');
+  // 服务端把「已忽略」排除在 summary 之外：角标据此归零；只有 inventory 时也跳过 ignored
+  assert.equal(plugin.updatesAvailableCount({ summary: { updateAvailable: 0 }, inventory: [{ name: 'a', status: 'update-available', ignored: true }] }), 0);
+  assert.equal(plugin.updatesAvailableCount({ inventory: [{ name: 'a', status: 'update-available', ignored: true }, { name: 'b', status: 'update-available' }] }), 1);
 });
 
 // ---------- 2. 侧边栏角标 ----------
@@ -93,6 +97,8 @@ test('updatePillText：普通可更新与跨大版本两种措辞', async () => 
   assert.equal(plugin.updatePillText({ status: 'update-available', latestVersion: '0.6.0', major: false }), '可更新到 v0.6.0');
   assert.equal(plugin.updatePillText({ status: 'update-available', latestVersion: '1.0.0', major: true }), '跨大版本 v1.0.0');
   assert.equal(plugin.updatePillText({ status: 'update-available', major: true }), '跨大版本 新版本', '远端缺版本号时的兜底');
+  assert.equal(plugin.updatePillText({ status: 'update-available', latestVersion: '1.0.0', major: true, ignored: true }), '已忽略 v1.0.0', '已忽略时中性措辞盖过跨大版本');
+  assert.equal(plugin.updatePillText({ status: 'update-available', ignored: true }), '已忽略 新版本');
 });
 
 test('updateStatusNote：每种 status 的中文小字文案', async () => {
@@ -107,6 +113,7 @@ test('updateStatusNote：每种 status 的中文小字文案', async () => {
   assert.equal(plugin.updateStatusNote({ status: 'failed', error: null }), '检测失败：未知原因');
   assert.equal(plugin.updateStatusNote({ status: 'failed', error: 'x'.repeat(200) }), `检测失败：${'x'.repeat(80)}…`, '错误摘要截断到 80 字');
   assert.equal(plugin.updateStatusNote({ status: 'update-available', installedVersion: '0.5.1', note: null }), null, '有胶囊时不再重复提示');
+  assert.equal(plugin.updateStatusNote({ status: 'update-available', installedVersion: '0.5.1', ignored: true }), '已忽略这个版本：远端出了更高的版本会再提醒');
   assert.equal(plugin.updateStatusNote(null), null, '接口不可用时没有任何标记');
   assert.equal(plugin.updateStatusNote(undefined), null);
 });
@@ -132,6 +139,33 @@ test('updateEntryFor / updatableNames：按名字对齐 inventory', async () => 
   assert.deepEqual(Array.from(plugin.updatableNames(updates)), ['dsh-notify']);
   assert.deepEqual(Array.from(plugin.updatableNames(false)), []);
   assert.deepEqual(Array.from(plugin.updatableNames(null)), []);
+  // 「全部更新」跳过已忽略的条目：忽略的意思就是"这个版本别再问我了"
+  assert.deepEqual(
+    Array.from(plugin.updatableNames({ inventory: [
+      { name: 'a', status: 'update-available' },
+      { name: 'b', status: 'update-available', ignored: true },
+    ] })),
+    ['a']
+  );
+});
+
+// ---------- 3b. 忽略：提交的条目 ----------
+
+test('ignorableEntries：只收选中、可更新且尚未忽略的插件（带目标版本）', async () => {
+  const plugin = await loadPlugin();
+  const updates = { inventory: [
+    { name: 'a', status: 'update-available', latestVersion: '2.0.0' },
+    { name: 'b', status: 'update-available', latestVersion: '3.0.0', ignored: true },
+    { name: 'c', status: 'up-to-date', latestVersion: '1.0.0' },
+    { name: 'd', status: 'update-available' },
+  ] };
+  assert.deepEqual(plain(plugin.ignorableEntries(updates, new Set(['a', 'b', 'c', 'd', 'zzz']))), [
+    { name: 'a', version: '2.0.0' },
+    { name: 'd', version: null },
+  ], '已忽略的 b 与不可更新的 c 不进列表；缺版本号时交给服务端从缓存补');
+  assert.deepEqual(plain(plugin.ignorableEntries(updates, new Set())), []);
+  assert.deepEqual(plain(plugin.ignorableEntries(updates, null)), []);
+  assert.deepEqual(plain(plugin.ignorableEntries(false, new Set(['a']))), []);
 });
 
 // ---------- 4. 多选：Shift 区间选择 ----------

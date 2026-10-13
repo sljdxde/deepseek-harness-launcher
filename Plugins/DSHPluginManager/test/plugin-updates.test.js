@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  applyIgnoredUpdates,
   applyPluginUpdate,
   checkPluginUpdates,
   classifyPluginSource,
@@ -11,13 +12,17 @@ import {
   comparePluginVersions,
   decidePluginUpdate,
   fetchRemotePackageVersion,
+  ignorePluginUpdates,
+  isUpdateIgnored,
   parseLockCommit,
   parsePluginVersion,
   pluginMajorVersion,
   probeGitHead,
   pruneSourceBackups,
+  readIgnoredUpdates,
   readUpdateCache,
   readUpdateProgress,
+  unignorePluginUpdates,
   writeUpdateCache,
   runUpdateCheck,
   summarizeUpdateInventory,
@@ -360,11 +365,20 @@ test('用例5 summarizeUpdateInventory 统计各状态条数', () => {
     { status: 'failed' },
     { status: 'unknown' }
   ]);
-  assert.deepEqual(summary, { total: 6, updateAvailable: 2, failed: 1, unknown: 1 });
+  assert.deepEqual(summary, { total: 6, updateAvailable: 2, ignored: 0, failed: 1, unknown: 1 });
 
   // 空清单 / 非数组入参都不抛错
-  assert.deepEqual(summarizeUpdateInventory([]), { total: 0, updateAvailable: 0, failed: 0, unknown: 0 });
-  assert.deepEqual(summarizeUpdateInventory(null), { total: 0, updateAvailable: 0, failed: 0, unknown: 0 });
+  assert.deepEqual(summarizeUpdateInventory([]), { total: 0, updateAvailable: 0, ignored: 0, failed: 0, unknown: 0 });
+  assert.deepEqual(summarizeUpdateInventory(null), { total: 0, updateAvailable: 0, ignored: 0, failed: 0, unknown: 0 });
+
+  // 已忽略的更新不算「可更新」：侧边栏角标与启动器菜单行都读这个数
+  assert.deepEqual(
+    summarizeUpdateInventory([
+      { status: 'update-available' },
+      { status: 'update-available', ignored: true }
+    ]),
+    { total: 2, updateAvailable: 1, ignored: 1, failed: 0, unknown: 0 }
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -756,7 +770,7 @@ test('用例9 checkPluginUpdates：缓存新鲜不联网、force 才重新探测
     assert.equal(probeCalls, 1);
     assert.equal(second.refreshing, false);
     assert.equal(second.checkedAt, firstCache.checkedAt);
-    assert.deepEqual(second.summary, { total: 1, updateAvailable: 1, failed: 0, unknown: 0 });
+    assert.deepEqual(second.summary, { total: 1, updateAvailable: 1, ignored: 0, failed: 0, unknown: 0 });
     assert.equal(second.inventory[0].latestVersion, '2.0.0');
 
     // 等后台那轮彻底收尾（inFlight 清空），再验证 force
@@ -782,7 +796,7 @@ test('回归 1：探测函数抛错也要计入 failed（不能只留一个没�
   ], { npm: async () => { throw new Error('registry 不可用'); } });
   assert.equal(entries[0].status, 'failed');
   assert.match(entries[0].error, /registry 不可用/);
-  assert.deepEqual(summarizeUpdateInventory(entries), { total: 1, updateAvailable: 0, failed: 1, unknown: 0 });
+  assert.deepEqual(summarizeUpdateInventory(entries), { total: 1, updateAvailable: 0, ignored: 0, failed: 1, unknown: 0 });
 });
 
 test('回归 2：`git+https://…/repo.git` 的仓库名不重复 .git 后缀', () => {
@@ -1071,5 +1085,117 @@ test('回归 8b：强制重装后仍未生效则如实标记 verified=false（�
     assert.equal(result.ok, true, '源码已更新，仍算成功');
     assert.equal(result.verified, false);
     assert.match(result.note, /重启 dsh|未生效/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 「忽略这个版本」：记录读写、命中判定、缓存装饰与两个接口的归一化
+// ---------------------------------------------------------------------------
+
+test('忽略：isUpdateIgnored 只认同名同版本的 update-available', () => {
+  const ignored = { 'dsh-a': { version: '2.0.0', at: null } };
+  const available = { name: 'dsh-a', status: 'update-available', latestVersion: '2.0.0' };
+  assert.equal(isUpdateIgnored(available, ignored), true);
+  // 远端出了更高的版本 → 重新提醒（忽略只针对一个版本）
+  assert.equal(isUpdateIgnored({ ...available, latestVersion: '2.1.0' }, ignored), false);
+  // 别的插件 / 已是最新 / 没有目的版本 / 记录里没有版本号，都不算忽略
+  assert.equal(isUpdateIgnored({ ...available, name: 'dsh-b' }, ignored), false);
+  assert.equal(isUpdateIgnored({ ...available, status: 'up-to-date' }, ignored), false);
+  assert.equal(isUpdateIgnored({ ...available, latestVersion: null }, ignored), false);
+  assert.equal(isUpdateIgnored(available, { 'dsh-a': { version: '', at: null } }), false);
+  assert.equal(isUpdateIgnored(null, ignored), false);
+  assert.equal(isUpdateIgnored(available, null), false);
+
+  // 只给命中的那一条打标，其余条目原样返回
+  const decorated = applyIgnoredUpdates([available, { name: 'dsh-b', status: 'update-available', latestVersion: '9.9.9' }], ignored);
+  assert.equal(decorated[0].ignored, true);
+  assert.equal(decorated[1].ignored, undefined);
+  assert.deepEqual(applyIgnoredUpdates(null, ignored), []);
+});
+
+test('忽略：记录文件读写、坏条目过滤、取消忽略', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-pm-ignore-'));
+  const file = join(home, 'ignored.json');
+  try {
+    assert.deepEqual(await readIgnoredUpdates({ file }), {}, '文件不存在时是空记录，不抛错');
+
+    assert.deepEqual(await ignorePluginUpdates([{ name: 'dsh-a', version: '2.0.0' }], { file }), { ok: true, ignored: ['dsh-a'], failed: [] });
+    const stored = await readIgnoredUpdates({ file });
+    assert.equal(stored['dsh-a'].version, '2.0.0');
+    assert.ok(stored['dsh-a'].at, '记录时间便于排查');
+
+    // 手工改坏 / 半截写入：读不出 version 的记录直接丢掉，不能变成新的故障源
+    await writeFile(file, JSON.stringify({ 'dsh-a': '1.0.0', 'dsh-b': { version: '' }, 'dsh-c': { version: '3.0.0', at: 5 }, '': { version: '9.9.9' } }), 'utf8');
+    assert.deepEqual(await readIgnoredUpdates({ file }), {
+      'dsh-a': { version: '1.0.0', at: null },
+      'dsh-c': { version: '3.0.0', at: null }
+    });
+    await writeFile(file, 'not json at all', 'utf8');
+    assert.deepEqual(await readIgnoredUpdates({ file }), {});
+
+    // 取消忽略：记录消失，重复取消也算成功
+    await ignorePluginUpdates([{ name: 'dsh-a', version: '1.0.0' }, { name: 'dsh-b', version: '2.0.0' }], { file });
+    assert.deepEqual(await unignorePluginUpdates(['dsh-a'], { file }), { ok: true, unignored: ['dsh-a'] });
+    assert.deepEqual(Object.keys(await readIgnoredUpdates({ file })), ['dsh-b']);
+    assert.equal((await unignorePluginUpdates(['dsh-a'], { file })).ok, true);
+
+    // 非法入参
+    assert.equal((await ignorePluginUpdates([], { file })).ok, false);
+    assert.equal((await ignorePluginUpdates([{}], { file })).ok, false);
+    assert.equal((await unignorePluginUpdates([], { file })).ok, false);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('忽略：没带版本号时从检测缓存补，缓存里也查不到就如实报出来（不许静默空操作）', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-pm-ignore-cache-'));
+  const file = join(home, 'ignored.json');
+  const cacheFile = join(home, '.plugin-updates.json');
+  try {
+    await writeUpdateCache({
+      checkedAt: new Date().toISOString(),
+      inventory: [{ name: 'dsh-a', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' }]
+    }, cacheFile);
+
+    const result = await ignorePluginUpdates([{ name: 'dsh-a' }, { name: 'dsh-unknown' }], { file, cacheFile });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.ignored, ['dsh-a']);
+    assert.deepEqual(result.failed, ['dsh-unknown']);
+    assert.equal((await readIgnoredUpdates({ file }))['dsh-a'].version, '2.0.0');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('忽略：checkPluginUpdates 读时打标（角标归零），取消忽略立刻恢复且不重新联网', async () => {
+  await withTempDshHome('dsh-pm-ignore-check-', async home => {
+    const profileDir = join(home, 'profiles', 'web');
+    await mkdir(profileDir, { recursive: true });
+    await writeUpdateCache({
+      checkedAt: new Date().toISOString(),
+      inventory: [
+        { name: 'dsh-notify', kind: 'npm', status: 'update-available', installedVersion: '1.2.0', latestVersion: '2.0.0' },
+        { name: 'dsh-other', kind: 'npm', status: 'update-available', installedVersion: '1.0.0', latestVersion: '3.0.0' }
+      ]
+    });
+    // 缓存是新鲜的（checkedAt 刚刚），所以整轮都不会联网——用抛错的 probe 兜住这点。
+    const probe = { npm: async () => { throw new Error('不该联网'); }, git: async () => { throw new Error('不该联网'); } };
+
+    const before = await checkPluginUpdates({ probe });
+    assert.deepEqual(before.summary, { total: 2, updateAvailable: 2, ignored: 0, failed: 0, unknown: 0 });
+
+    await ignorePluginUpdates([{ name: 'dsh-notify', version: '2.0.0' }]);
+    const after = await checkPluginUpdates({ probe });
+    assert.deepEqual(after.summary, { total: 2, updateAvailable: 1, ignored: 1, failed: 0, unknown: 0 }, '被忽略的那条不再计入可更新');
+    assert.equal(after.inventory.find(item => item.name === 'dsh-notify').ignored, true);
+    assert.equal(after.inventory.find(item => item.name === 'dsh-other').ignored, undefined);
+    // 缓存文件里存的仍是原始检测结论：忽略只是读时叠加
+    const onDisk = JSON.parse(await readFile(join(profileDir, '.plugin-updates.json'), 'utf8'));
+    assert.equal(onDisk.inventory.find(item => item.name === 'dsh-notify').ignored, undefined);
+
+    await unignorePluginUpdates(['dsh-notify']);
+    const restored = await checkPluginUpdates({ probe });
+    assert.deepEqual(restored.summary, { total: 2, updateAvailable: 2, ignored: 0, failed: 0, unknown: 0 });
   });
 });

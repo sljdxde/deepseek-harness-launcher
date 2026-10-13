@@ -556,4 +556,102 @@ const entry = (name, over) => ({
   console.log('场景6（progress 行内步骤 + 退出恢复）通过，跟随轮询 ' + progressPolls + ' 次');
 }
 
+/** 场景 7：忽略 / 取消忽略（行内按钮、工具栏「忽略选中」、角标随之归零） */
+{
+  const calls = [];
+  const ignoredNames = new Set();
+  let batchStarted = false;
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    const body = () => JSON.parse(options.body || '{}');
+    const inventory = ['dsh-a', 'dsh-b'].map(name => {
+      // 批次跑完后 dsh-b 变成已是最新，用来验证「全部更新」的名单排除逻辑
+      if (batchStarted && name === 'dsh-b') return entry(name, { installedVersion: '2.0.0', latestVersion: '2.0.0' });
+      return entry(name, {
+        installedVersion: '1.0.0', latestVersion: '2.0.0', status: 'update-available',
+        ...(ignoredNames.has(name) ? { ignored: true } : {}),
+      });
+    });
+    if (url.startsWith('/dsh-plugin-manager/installed')) {
+      return respond({ items: ['dsh-a', 'dsh-b'].map(name => ({ name, version: '1.0.0', description: name })) });
+    }
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      const available = inventory.filter(item => item.status === 'update-available' && !item.ignored).length;
+      return respond({
+        checkedAt: '2026-09-22T11:00:00.000Z', refreshing: false, progress: null,
+        lastBatch: batchStarted ? { startedAt: 't1', finishedAt: 't2', updated: 1, failed: 0, results: [{ name: 'dsh-b', ok: true, updatedTo: '2.0.0', note: '已更新到 v2.0.0' }] } : null,
+        summary: { total: 2, updateAvailable: available, ignored: ignoredNames.size, failed: 0, unknown: 0 },
+        inventory,
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/ignore')) {
+      for (const item of body().items || []) ignoredNames.add(item.name);
+      return respond({ ok: true, ignored: [...ignoredNames], failed: [] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/unignore')) {
+      for (const name of body().names || []) ignoredNames.delete(name);
+      return respond({ ok: true, unignored: [...ignoredNames] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/update-many')) {
+      batchStarted = true;
+      return Promise.resolve({ ok: true, status: 202, json: () => Promise.resolve({ ok: true, accepted: body().names.length, names: body().names }) });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
+  const badgeText = () => {
+    const badge = byClass(runtime.tree, 'dsh-pm-trigger-badge')[0];
+    return badge ? textOf(badge) : '';
+  };
+  const openPanel = () => findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  assert.equal(badgeText(), '2', '两条可更新 → 角标 2');
+  openPanel();
+  await settle(runtime);
+  assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill').length, 2, '两条都是可更新胶囊');
+  assert.equal(findByText(runtime.tree, 'button', '忽略选中').props.disabled, true, '没选中时「忽略选中」禁用');
+
+  // 「忽略选中」：勾选两条 → 提交 items（含各自目标版本）→ 角标归零
+  const checkboxes = () => findAll(runtime.tree, node => node.type === 'input' && String(node.props.className).includes('dsh-pm-check'));
+  checkboxes()[0].props.onChange({ shiftKey: false });
+  await settle(runtime);
+  checkboxes()[1].props.onChange({ shiftKey: false });
+  await settle(runtime);
+  assert.equal(findByText(runtime.tree, 'button', '忽略选中').props.disabled, false, '选中可更新项后「忽略选中」可用');
+  findByText(runtime.tree, 'button', '忽略选中').props.onClick();
+  await settle(runtime);
+  const firstIgnore = calls.find(call => call.url === '/dsh-plugin-manager/ignore');
+  assert.deepEqual(JSON.parse(firstIgnore.options.body), {
+    items: [{ name: 'dsh-a', version: '2.0.0' }, { name: 'dsh-b', version: '2.0.0' }],
+  }, '「忽略选中」提交选中插件与各自目标版本');
+  assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill-ignored').length, 2, '两行都变成中性「已忽略」胶囊');
+  assert.equal(textOf(byClass(runtime.tree, 'dsh-pm-update-pill-ignored')[0]), '已忽略 v2.0.0');
+  assert.ok(textOf(runtime.tree).includes('已忽略这个版本：远端出了更高的版本会再提醒'));
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  assert.equal(badgeText(), '', '两条都忽略后角标消失（这正是用户要的效果）');
+  assert.equal(findByText(runtime.tree, 'button', '全部更新').props.disabled, true, '没有「可更新」项时「全部更新」禁用');
+
+  // 「取消忽略」：只恢复 dsh-a，角标回到 1；「全部更新」的名单里也就只剩 dsh-a
+  openPanel();
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '取消忽略')[0].props.onClick();
+  await settle(runtime);
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/unignore'), '取消忽略要打接口');
+  assert.deepEqual(JSON.parse(calls.find(call => call.url === '/dsh-plugin-manager/unignore').options.body), { names: ['dsh-a'] });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  assert.equal(badgeText(), '1', '取消忽略一条后角标回到 1');
+  openPanel();
+  await settle(runtime);
+  assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill-ignored').length, 1, '只剩 dsh-b 还是已忽略');
+  findByText(runtime.tree, 'button', '全部更新').props.onClick();
+  const manyCall = calls.find(call => call.url === '/dsh-plugin-manager/update-many');
+  assert.deepEqual(JSON.parse(manyCall.options.body), { names: ['dsh-a'] }, '「全部更新」跳过已忽略的 dsh-b');
+  await settle(runtime, 20);
+  console.log('场景7（忽略 / 取消忽略 / 忽略选中 / 角标归零）通过');
+}
+
 console.log('== 冒烟全部通过 ==');

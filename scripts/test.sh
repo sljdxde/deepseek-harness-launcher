@@ -51,6 +51,15 @@ rg -Fq 'update-many' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq '/dsh-plugin-manager/updates' "$ROOT/Sources/main.swift"
 rg -Fq 'autoCheckPluginUpdates' "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/main.swift"
 rg -Fq 'decidePluginUpdate' "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
+# 「忽略这个版本」：服务端记录 + 两个接口，客户端行内/批量入口，且不把忽略写进检测缓存。
+rg -Fq "'/dsh-plugin-manager/ignore'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/unignore'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'isUpdateIgnored' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
+rg -Fq '/dsh-plugin-manager/ignore' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '/dsh-plugin-manager/unignore' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'ignorableEntries' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
+# 门禁判「这次升级有没有让环境更差」：已装版本同样不满足的 peer 只提示、不阻止。
+rg -Fq 'readInstalledPeerDependencies' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-peer-compat.test.js"
 # 客户端更新 UI 的纯函数（多选/框选/角标/进度/批量 toast）必须有单测。
 rg -Fq 'bandSelection' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
 rg -Fq 'rangeSelection' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
@@ -99,7 +108,17 @@ rg -q '/dsh-session-notify/presence' "$ROOT/Plugins/DSHSessionNotify/lib/index.j
 rg -q 'presenceActive' "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/main.swift"
 rg -q '/dsh-session-notify/open' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Sources/main.swift"
 rg -q '/dsh-session-notify/commands/claim' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
-rg -q 'ctx\.sessions\.open' "$ROOT/Plugins/DSHSessionNotify/client/client.js"
+# 会话跳转入口：dsh 客户端的 Session controller（ctx.sessions）没有 open，
+# 跳转动作在 Workspace controller 服务 uiWorkspace.openSession 上（未声明的
+# 服务只能经 ctx.get 取）。曾经这里锁的是 `ctx.sessions.open`——那个调用从来
+# 不存在，TypeError 被空 catch 吞掉，于是「点完成提醒只前置浏览器、不切会话」
+# 一直无人发现。正向断言新入口，反向断言旧写法不许回来。
+rg -Fq "ctx.get('uiWorkspace')" "$ROOT/Plugins/DSHSessionNotify/client/client.js"
+rg -Fq 'workspace.openSession(sessionId)' "$ROOT/Plugins/DSHSessionNotify/client/client.js"
+if rg -q 'ctx\.sessions\.open\(' "$ROOT/Plugins/DSHSessionNotify/client/client.js"; then
+  echo "session jump must go through uiWorkspace.openSession: ctx.sessions has no open()" >&2
+  exit 1
+fi
 rg -q '"\./client": "\./client/client.js"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q '"client"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q 'monitorSessionNotify' "$ROOT/Sources/main.swift"

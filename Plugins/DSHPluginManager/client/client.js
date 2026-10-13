@@ -117,9 +117,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-row-note{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-pm-update-pill{background:var(--dsw-alias-state-warn-tertiary);border:1px solid transparent;border-radius:999px;color:var(--dsw-alias-state-warn-label);flex:none;font-size:11px;line-height:16px;padding:2px 8px;white-space:nowrap}
 .dsh-pm-update-pill-major{border-color:var(--dsw-alias-state-warn-primary)}
+/* 已忽略：同样的位置、灰掉的观感——提醒已经处理过了，但版本信息还看得到。 */
+.dsh-pm-update-pill-ignored{background:transparent;border-color:var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary)}
 .dsh-pm-update{box-sizing:border-box;background:var(--dsw-alias-button-primary-fill);border:0;border-radius:8px;color:var(--dsw-alias-label-primary-foreground);cursor:pointer;font:inherit;font-size:12px;line-height:18px;padding:5px 12px}
 .dsh-pm-update:hover{background:var(--dsw-alias-button-primary-hover)}
 .dsh-pm-update:disabled{cursor:not-allowed;opacity:.6}
+/* 「忽略/取消忽略」不是破坏性动作，用中性色（.dsh-pm-row-action 的红色留给卸载）。 */
+.dsh-pm-ignore{color:var(--dsw-alias-label-secondary)}
+.dsh-pm-ignore:hover{background:var(--dsw-alias-button-ghost-active-fill);color:inherit}
 /* 多选：工具栏计数、行内进度、橡皮筋框选覆盖层。 */
 .dsh-pm-selected-count{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;white-space:nowrap}
 .dsh-pm-selectarea{min-height:52px;position:relative}
@@ -241,21 +246,25 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     }
   }
 
-  /// 待更新数量：优先信服务端 summary，缺字段时退化成数 inventory。
+  /// 待更新数量：优先信服务端 summary（服务端已把「已忽略」排除在外），没有这个字段时
+  /// 退化成数 inventory（同样跳过 ignored，所以本地打了标也立刻归零）。
   function updatesAvailableCount(updates) {
     if (!updates || typeof updates !== 'object') return 0
-    const reported = Number(updates.summary && updates.summary.updateAvailable)
-    if (reported > 0) return reported
-    if (Array.isArray(updates.inventory)) return updates.inventory.filter(entry => entry && entry.status === 'update-available').length
+    const reported = updates.summary && typeof updates.summary.updateAvailable === 'number' ? updates.summary.updateAvailable : null
+    if (reported !== null) return Math.max(reported, 0)
+    if (Array.isArray(updates.inventory)) return updates.inventory.filter(entry => entry && entry.status === 'update-available' && !entry.ignored).length
     return 0
   }
 
   /// 与服务端同口径的计数（本地把条目改成「已是最新」后要重算角标）。
+  /// 已忽略的条目不算「可更新」——这正是点「忽略」之后角标要消失的原因。
   function summarizeUpdates(inventory) {
     const items = Array.isArray(inventory) ? inventory : []
+    const available = items.filter(item => item && item.status === 'update-available')
     return {
       total: items.length,
-      updateAvailable: items.filter(item => item && item.status === 'update-available').length,
+      updateAvailable: available.filter(item => !item.ignored).length,
+      ignored: available.filter(item => item.ignored).length,
       failed: items.filter(item => item && item.status === 'failed').length,
       unknown: items.filter(item => item && item.status === 'unknown').length,
     }
@@ -292,13 +301,17 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     if (entry.status === 'unknown') return String(entry.note || '本地来源，无法检测')
     if (entry.status === 'failed') return `检测失败：${truncateNote(entry.error || '未知原因')}`
     if (entry.status === 'ahead') return String(entry.note || '已安装版本比远端更高')
-    if (entry.status === 'update-available') return entry.installedVersion ? null : String(entry.note || '无法读取已安装版本')
+    if (entry.status === 'update-available') {
+      if (entry.ignored) return '已忽略这个版本：远端出了更高的版本会再提醒'
+      return entry.installedVersion ? null : String(entry.note || '无法读取已安装版本')
+    }
     return null
   }
 
-  /// 橙色胶囊文案：跨大版本时换成更重的措辞。
+  /// 橙色胶囊文案：跨大版本时换成更重的措辞；已忽略时改成中性的「已忽略 vX」。
   function updatePillText(entry) {
     const latest = entry && entry.latestVersion ? `v${entry.latestVersion}` : '新版本'
+    if (entry && entry.ignored) return `已忽略 ${latest}`
     return `${entry && entry.major ? '跨大版本' : '可更新到'} ${latest}`
   }
 
@@ -307,12 +320,21 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     return `${name} ${detail}${value && value.restartRequired ? '，重启 dsh 后生效' : ''}`
   }
 
-  /// 「全部更新」要提交的名字：只取 status === 'update-available' 的条目。
+  /// 「全部更新」要提交的名字：只取 status === 'update-available' 且**没被忽略**的条目
+  /// （忽略就是"这个版本别再问我要不要更新了"）。
   function updatableNames(updates) {
     if (!updates || !Array.isArray(updates.inventory)) return []
     return updates.inventory
-      .filter(entry => entry && entry.status === 'update-available' && entry.name)
+      .filter(entry => entry && entry.status === 'update-available' && !entry.ignored && entry.name)
       .map(entry => entry.name)
+  }
+
+  /// 「忽略选中」要提交的条目：选中、可更新、且还没被忽略的插件 + 它们的目标版本。
+  function ignorableEntries(updates, selected) {
+    if (!updates || !Array.isArray(updates.inventory) || !selected) return []
+    return updates.inventory
+      .filter(entry => entry && entry.status === 'update-available' && !entry.ignored && entry.name && selected.has(entry.name))
+      .map(entry => ({ name: entry.name, version: entry.latestVersion || null }))
   }
 
   /// 批量更新批次（lastBatch）结束后的汇总 toast：finishedAt 为空表示后台还在跑，不提示。
@@ -646,6 +668,35 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       }, 400)
     }
 
+    /// 忽略一批更新：只忽略传进去的版本，远端出了更高的版本会重新提醒。服务端的忽略
+    /// 记录发生在"读检测结果"的时候，所以这里重新读一次 /updates 就能看到效果，不必重测。
+    const ignoreEntries = (entries) => {
+      if (!entries || entries.length === 0) return
+      setBusy('ignore')
+      fetch('/dsh-plugin-manager/ignore', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items: entries }) })
+        .then(r => r.json()).then(v => {
+          if (v.error) throw Error(v.error)
+          if (!v.ok) throw Error(v.error || '忽略失败')
+          const names = Array.isArray(v.ignored) ? v.ignored : []
+          toast('success', names.length > 1 ? `已忽略 ${names.length} 个更新` : `已忽略 ${names[0] || entries[0].name} 的更新提示`)
+          return loadUpdates().then(applyUpdates)
+        })
+        .catch(e => toast('error', `忽略失败：${String(e.message || e)}`)).finally(() => setBusy(''))
+    }
+    const ignoreOne = (item, entry) => ignoreEntries([{ name: item.name, version: (entry && entry.latestVersion) || null }])
+    /// 取消忽略：恢复这个插件的更新提醒（本地重新读一次检测结果即可，无需联网）。
+    const unignoreOne = (item) => {
+      setBusy('ignore')
+      fetch('/dsh-plugin-manager/unignore', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ names: [item.name] }) })
+        .then(r => r.json()).then(v => {
+          if (v.error) throw Error(v.error)
+          if (!v.ok) throw Error(v.error || '取消忽略失败')
+          toast('info', `已恢复 ${item.name} 的更新提醒`)
+          return loadUpdates().then(applyUpdates)
+        })
+        .catch(e => toast('error', `取消忽略失败：${String(e.message || e)}`)).finally(() => setBusy(''))
+    }
+
     const manageable = installed.filter(item => !item.broken && item.source !== 'bundled')
     const selectedNames = manageable.filter(item => selected.has(item.name)).map(item => item.name)
     // 服务端进程进度（启动器的进度窗口读同一个字段）：当前处理的行显示步骤，其余待更新行「等待中」。
@@ -773,7 +824,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       // 更新检测结果按插件名对齐已安装列表；接口不可用时 entry 恒为 null，整行退回原样。
       const entry = updateEntryFor(updates, item.name)
       const updatable = Boolean(entry && entry.status === 'update-available')
-      const progressNote = progressNoteFor(entry, progress, updatable)
+      // 「已忽略」只是不再计入角标与「全部更新」，行内仍留着更新入口（用户随时可以反悔）。
+      const ignored = Boolean(updatable && entry.ignored)
+      // 已忽略的条目不在这一批里，别跟着显示「等待中」。
+      const progressNote = progressNoteFor(entry, progress, updatable && !ignored)
       const note = progressNote || updateStatusNote(entry)
       const updating = busy === 'update-' + item.name || (progressActive && progressCurrent === item.name)
       return h('div', {
@@ -791,9 +845,17 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           note ? h('div', { className: progressNote ? 'dsh-pm-row-progress' : 'dsh-pm-row-note' }, note) : null),
         h('div', { className: 'dsh-pm-row-side' },
           h('span', { className: 'dsh-pm-row-version' }, updateVersionLabel(installedVersionOf(entry, item))),
-          updatable ? h('span', { className: `dsh-pm-update-pill${entry.major ? ' dsh-pm-update-pill-major' : ''}` }, updatePillText(entry)) : null,
+          updatable ? h('span', { className: `dsh-pm-update-pill${entry.major && !ignored ? ' dsh-pm-update-pill-major' : ''}${ignored ? ' dsh-pm-update-pill-ignored' : ''}` }, updatePillText(entry)) : null,
           updatable
             ? h('button', { className: 'dsh-pm-update', disabled: updating || busyAny, onClick: () => updateOne(item), title: `更新 ${item.name} 到 v${entry.latestVersion}` }, updating ? '更新中…' : '更新')
+            : null,
+          updatable
+            ? h('button', {
+                className: 'dsh-pm-row-action dsh-pm-ignore',
+                disabled: busyAny,
+                onClick: () => (ignored ? unignoreOne(item) : ignoreOne(item, entry)),
+                title: ignored ? '恢复这个版本的更新提醒' : `不再提醒 ${item.name} 的 v${entry.latestVersion}（远端出更高版本时会再提醒）`,
+              }, ignored ? '取消忽略' : '忽略')
             : null),
         item.source === 'bundled' ? h('span', { className: 'dsh-pm-badge' }, '内置') : null,
         item.broken ? h('span', { className: 'dsh-pm-badge', style: { borderColor: 'var(--dsw-alias-state-error-primary)', color: 'var(--dsw-alias-state-error-primary)' } }, '损坏') : null,
@@ -863,12 +925,15 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     // 服务端进程也在跑批次（别人的批量更新）时，按钮同样进入「更新中…」并禁用。
     const batchRunning = updatingAll || progressActive
     const selectedUpdatable = selectedUpdatableNames(updates, selected)
+    const selectedIgnorable = ignorableEntries(updates, selected)
     // 检测/批量更新都在后台跑，面板要能关掉（批量更新可能几分钟）；安装/卸载仍锁住。
-    const closable = !busy || checking || updatingAll
+    // 忽略只是写一次本地记录，不该把「关闭」也锁上。
+    const closable = !busy || checking || updatingAll || busy === 'ignore'
     const updatesBar = updates === false ? null : h('div', { className: 'dsh-pm-toolbar' },
       h('button', { className: 'dsh-pm-tool', disabled: checking || batchRunning || busyAny && !checking, onClick: checkUpdates, title: '联网检测每个已安装插件的远端版本' }, checking ? '检测中…' : '检查更新'),
       h('button', { className: 'dsh-pm-tool', disabled: updatesAvailableCount(updates) === 0 || batchRunning || checking || busyAny, onClick: updateAll, title: '更新所有可更新的插件' }, batchRunning ? '更新中…' : '全部更新'),
       h('button', { className: 'dsh-pm-tool', disabled: selectedUpdatable.length === 0 || batchRunning || checking || busyAny, onClick: updateSelected, title: '只更新选中且可更新的插件' }, '更新选中'),
+      h('button', { className: 'dsh-pm-tool', disabled: selectedIgnorable.length === 0 || batchRunning || checking || busyAny, onClick: () => ignoreEntries(selectedIgnorable), title: '不再提醒选中插件的当前版本（远端出更高版本时会再提醒）' }, '忽略选中'),
       h('span', { className: 'dsh-pm-selected-count' }, `已选 ${selectedNames.length} 个`),
       h('button', { className: 'dsh-pm-tool', disabled: selectedNames.length === 0, onClick: () => { setSelected(new Set()); lastIndexRef.current = null }, title: '清空选择' }, '取消选择'),
       h('span', { className: 'dsh-pm-updates-time' }, clock ? `上次检测：${clock}` : '尚未检测'))
@@ -943,6 +1008,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     updatePillText,
     updateSuccessText,
     updatableNames,
+    ignorableEntries,
     batchToast,
     batchSettled,
     selectedUpdatableNames,

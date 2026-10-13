@@ -637,6 +637,8 @@ export async function uninstallPlugin(name) {
   try {
     const result = await pluginCommand(['remove', name]);
     const removedSources = await cleanupPluginSources(before, [name]);
+    // 卸载后「忽略记录」没有意义了：留着只会让用户重新装上时对不上号。
+    await unignorePluginUpdates([name]).catch(() => {});
     const note = removedSources.length > 0 ? `${result.note}；已清理插件源码目录` : result.note;
     // 插件已从 node_modules 移除，但当前 dsh 进程仍在内存里加载着它（侧边栏
     // slot、事件监听都还在）。返回 needsRestart 让前端引导用户重启 dsh。
@@ -854,10 +856,32 @@ export async function readRuntimePeerVersions(peers) {
   return out;
 }
 
+/**
+ * **升级前**装着的那份插件声明的 peer（本地读 package.json，不联网）。
+ *
+ * 门禁要靠它回答"这次升级有没有让兼容性变差"：目标版本与已装版本都不满足同一个
+ * peer 时，挡住升级并不能让环境更兼容（那个版本本来就跑着），只会把用户永远卡在
+ * 一个升不动的版本上。读不到就是空表，门禁退回"只看目标版本"的老口径。
+ */
+export async function readInstalledPeerDependencies(name) {
+  const safe = String(name ?? '');
+  if (!safe || safe.includes('..')) return {};
+  const meta = await readJsonQuiet(join(profilesWebModules(), ...safe.split('/'), 'package.json'));
+  const peers = meta?.peerDependencies;
+  return peers && typeof peers === 'object' ? peers : {};
+}
+
 /** 升级前的兼容门禁说明（写进界面错误里，用户要能看懂该干什么）。 */
 function describePeerProblems(problems, target) {
   const detail = problems.map(item => `${item.peer} ${item.range}（当前 ${item.installed}）`).join('；');
   return `目标版本 v${target} 要求 ${detail}，与当前 dsh 运行时不兼容，已阻止升级：先更新 dsh 本体（菜单栏「检查 Deepseek Harness 更新」）再升这个插件`;
+}
+
+/** 「这次升级新引入的 peer 问题」之外的既有问题：如实写进成功提示，不静默吞掉。 */
+function describePeerCarryOver(problems) {
+  if (!problems.length) return null;
+  const detail = problems.map(item => `${item.peer} ${item.range}（当前 ${item.installed}）`).join('；');
+  return `注意：${detail} 与当前运行时不符，但升级前的版本也是这么声明的，本次升级没有让兼容性变差`;
 }
 
 /**
@@ -892,13 +916,26 @@ export async function applyPluginUpdate(source, options = {}) {
   } catch (error) {
     peerProbeWarning = `没能确认 v${target} 的 dsh 版本要求（${String(error?.message || error)}）`;
   }
-  const peerProblems = findPeerIncompatibilities(
-    declaredPeers,
-    await readRuntimePeerVersions(Object.keys(declaredPeers))
+  // 门禁判的是"这次升级会不会让环境更糟"，所以要把**已装版本**的 peer 声明一起摆上桌。
+  // 实测的卡死案例：运行时 @earendil-works/pi-ai 已经是 1.1.0，而插件从 4.3.1 到 4.4.2
+  // 都声明 `>=0.85.0 <0.88.0`——目标版本"不满足"的正是**装着的那个版本**也一直不满足的
+  // 同一个 peer，挡住它只会让用户卡在一个再也升不动的版本上（插件自己还专门写了 1.x 的
+  // 适配分支）。这类"继承而来的"问题因此只提示、不阻止；只有目标版本**新引入**的不兼容
+  // （已装版本满足、目标版本不满足）才继续挡。
+  const installedPeers = await (options.installedPeers ?? readInstalledPeerDependencies)(source.name);
+  const runtimeVersions = await readRuntimePeerVersions(
+    [...new Set([...Object.keys(declaredPeers), ...Object.keys(installedPeers)])]
   );
-  if (peerProblems.length) {
-    return { ok: false, status: 'peer-incompatible', error: describePeerProblems(peerProblems, target) };
+  const peerProblems = findPeerIncompatibilities(declaredPeers, runtimeVersions);
+  const inheritedPeers = new Set(findPeerIncompatibilities(installedPeers, runtimeVersions).map(item => item.peer));
+  const blockingProblems = peerProblems.filter(item => !inheritedPeers.has(item.peer));
+  if (blockingProblems.length) {
+    return { ok: false, status: 'peer-incompatible', error: describePeerProblems(blockingProblems, target) };
   }
+  const peerCarryOver = describePeerCarryOver(peerProblems);
+  const withCarryOver = result => peerCarryOver
+    ? { ...result, note: [result.note, peerCarryOver].filter(Boolean).join('；') }
+    : result;
 
   if (source.kind === 'npm') {
     stepUpdateProgress(source.name, `正在下载并安装 v${target}…`);
@@ -914,14 +951,14 @@ export async function applyPluginUpdate(source, options = {}) {
     }
     stepUpdateProgress(source.name, `正在同步 profile…`);
     const applied = await verifyUpdateApplied(source.name, target);
-    return {
+    return withCarryOver({
       ok: true,
       updatedTo: target,
       restartRequired: true,
       verified: applied,
       note: [applied ? `已更新到 v${target}` : `已安装 v${target}，但 node_modules 版本未变，重启 dsh 后确认`, peerProbeWarning]
         .filter(Boolean).join('；')
-    };
+    });
   }
 
   if (source.kind === 'git' && remote) {
@@ -963,7 +1000,7 @@ export async function applyPluginUpdate(source, options = {}) {
         ok: true,
         updatedTo: target,
         restartRequired: true,
-        ...(await finalizeFileSourceUpdate(source.name, target, clonedDest ?? remote.dir, command, backup))
+        ...(withCarryOver(await finalizeFileSourceUpdate(source.name, target, clonedDest ?? remote.dir, command, backup)))
       };
     }
     stepUpdateProgress(source.name, `正在重新解析 ${source.spec ?? `github:${remote.author}/${remote.repo}`}…`);
@@ -978,13 +1015,13 @@ export async function applyPluginUpdate(source, options = {}) {
       };
     }
     const parsed = await verifyUpdateApplied(source.name, target);
-    return {
+    return withCarryOver({
       ok: true,
       updatedTo: target,
       restartRequired: true,
       verified: parsed,
       note: parsed ? `已更新到 v${target}` : `已重新解析依赖，但 node_modules 版本未变，重启 dsh 后确认`
-    };
+    });
   }
 
   return { ok: false, error: '该插件来源无法自动更新' };
@@ -1530,15 +1567,106 @@ export function decidePluginUpdate({ kind, installedVersion, installedCommit, re
   };
 }
 
-/** 汇总面板/菜单要用的计数。 */
+/** 汇总面板/菜单要用的计数。已忽略的更新单独计数，不进 updateAvailable（角标/菜单据此归零）。 */
 export function summarizeUpdateInventory(inventory) {
   const items = Array.isArray(inventory) ? inventory : [];
+  const available = items.filter(item => item?.status === 'update-available');
   return {
     total: items.length,
-    updateAvailable: items.filter(item => item?.status === 'update-available').length,
+    updateAvailable: available.filter(item => !item.ignored).length,
+    ignored: available.filter(item => item.ignored).length,
     failed: items.filter(item => item?.status === 'failed').length,
     unknown: items.filter(item => item?.status === 'unknown').length
   };
+}
+
+// ---------------------------------------------------------------------------
+// 「忽略这个版本」：用户不想被某个插件的某个版本反复提醒时的出口。
+//
+// 只忽略**一个版本**（name + latestVersion 精确匹配）：远端出了更高的版本就重新提醒，
+// 所以忽略不会让插件永远停在旧版本上。记录写在 profile 下的
+// `.plugin-updates-ignored.json`；检测缓存本身保持原样——忽略只在"读的时候打标"，
+// 取消忽略立刻恢复显示，不需要再联网重测一轮（清理缓存会让角标先闪一下）。
+// ---------------------------------------------------------------------------
+
+const IGNORED_UPDATES_FILE = () => join(profilesWebDir(), '.plugin-updates-ignored.json');
+
+/**
+ * 已忽略的更新记录：`{ "<name>": { version, at } }`。
+ * 手工改坏 / 半截写入都会被过滤掉（读不出 version 的记录直接丢），不能让它变成新的故障源。
+ * @param {{file?:string}} [options] 单测可指定文件，避免写到真实 profile。
+ */
+export async function readIgnoredUpdates(options = {}) {
+  const raw = await readJsonQuiet(options.file ?? IGNORED_UPDATES_FILE());
+  const out = {};
+  for (const [name, value] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
+    if (!name) continue;
+    if (typeof value === 'string') {
+      if (value) out[name] = { version: value, at: null };
+      continue;
+    }
+    if (value && typeof value === 'object' && typeof value.version === 'string' && value.version) {
+      out[name] = { version: value.version, at: typeof value.at === 'string' ? value.at : null };
+    }
+  }
+  return out;
+}
+
+async function writeIgnoredUpdates(value, file) {
+  await writeTextAtomic(file ?? IGNORED_UPDATES_FILE(), JSON.stringify(value, null, 2));
+}
+
+/** 这条检测结果是否被用户忽略：只有 name 与目的版本（latestVersion）都对齐才算。 */
+export function isUpdateIgnored(entry, ignored) {
+  if (!entry || entry.status !== 'update-available' || !entry.name || !entry.latestVersion) return false;
+  const record = ignored?.[entry.name];
+  return Boolean(record?.version) && String(record.version) === String(entry.latestVersion);
+}
+
+/** 给检测结果打上 `ignored` 标记（汇总、角标、面板、启动器菜单都读这一个字段）。 */
+export function applyIgnoredUpdates(inventory, ignored) {
+  return (Array.isArray(inventory) ? inventory : [])
+    .map(entry => (isUpdateIgnored(entry, ignored) ? { ...entry, ignored: true } : entry));
+}
+
+/** 缓存里这个插件当前的目的版本：客户端没带版本号时靠它兜住，免得忽略变成一次静默空操作。 */
+async function cachedLatestVersion(name, options = {}) {
+  const cached = await readUpdateCache(options);
+  const entry = (cached?.inventory ?? []).find(item => item.name === name);
+  return entry?.latestVersion ?? null;
+}
+
+/**
+ * 记录「忽略这些插件的这些版本」。
+ * @param {Array<{name:string,version?:string|null}>} entries
+ * @returns {Promise<{ok:boolean,ignored?:string[],failed?:string[],error?:string}>}
+ */
+export async function ignorePluginUpdates(entries, options = {}) {
+  const list = (Array.isArray(entries) ? entries : [])
+    .filter(item => item && typeof item.name === 'string' && item.name);
+  if (list.length === 0) return { ok: false, error: '缺少要忽略的插件' };
+  const ignored = await readIgnoredUpdates(options);
+  const at = new Date().toISOString();
+  const done = [];
+  const failed = [];
+  for (const item of list) {
+    const version = item.version ? String(item.version) : await cachedLatestVersion(item.name, options);
+    if (!version) { failed.push(item.name); continue; }
+    ignored[item.name] = { version, at };
+    done.push(item.name);
+  }
+  if (done.length > 0) await writeIgnoredUpdates(ignored, options.file);
+  return { ok: failed.length === 0, ignored: done, failed };
+}
+
+/** 取消忽略：记录不存在也算成功，界面不必区分"本来就忽略着"和"这次才取消"。 */
+export async function unignorePluginUpdates(names, options = {}) {
+  const list = (Array.isArray(names) ? names : [names]).filter(name => typeof name === 'string' && name);
+  if (list.length === 0) return { ok: false, error: '缺少要取消忽略的插件' };
+  const ignored = await readIgnoredUpdates(options);
+  for (const name of list) delete ignored[name];
+  await writeIgnoredUpdates(ignored, options.file);
+  return { ok: true, unignored: list };
 }
 
 /** 并发上限内跑完一批探测，保证单个插件卡住不会拖死整轮检测。 */
@@ -1772,8 +1900,10 @@ export function readUpdateProgress() {
  * 缓存优先的检测入口（面板与启动器都走这里）。
  * - 缓存新鲜（< 6h）且未 force → 直接返回缓存，不联网；
  * - 否则返回当前缓存（可能为空）并**在后台**刷新，`refreshing: true` 表示还在跑。
+ * 返回的 inventory 已经按「已忽略」打过标：缓存文件存的是原始检测结论，忽略是读时
+ * 叠加的，所以取消忽略不需要联网重测。
  */
-export async function checkPluginUpdates({ force = false, probe = {}, cacheFile } = {}) {
+export async function checkPluginUpdates({ force = false, probe = {}, cacheFile, ignoredFile } = {}) {
   const cached = await readUpdateCache({ cacheFile });
   const fresh = cached && Date.now() - Date.parse(cached.checkedAt ?? 0) < UPDATES_TTL_MS;
   const needsRefresh = force || !fresh;
@@ -1796,9 +1926,11 @@ export async function checkPluginUpdates({ force = false, probe = {}, cacheFile 
   // 服务端再往已关闭的 socket 写响应会抛异常。统一"立刻返回当前缓存 + refreshing"，
   // 由调用方轮询。
   const current = cached ?? { checkedAt: null, inventory: [] };
+  const inventory = applyIgnoredUpdates(current.inventory, await readIgnoredUpdates({ file: ignoredFile }));
   return {
     ...current,
-    summary: summarizeUpdateInventory(current.inventory),
+    inventory,
+    summary: summarizeUpdateInventory(inventory),
     refreshing: Boolean(needsRefresh && updateCheckInFlight),
     progress: updateProgress,
     lastBatch: lastBatchUpdate
@@ -1813,6 +1945,22 @@ function json(response, status, value) {
 async function body(request) {
   const chunks = []; for await (const chunk of request) chunks.push(chunk);
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+}
+
+/**
+ * 忽略请求体归一成 `[{name, version}]`，三种写法都认：
+ * 单条 `{name, version}`、批量 `{items:[{name, version}]}`、只给名字 `{names:[…]}`
+ * （缺版本号时服务端从检测缓存里补，避免忽略变成一次静默空操作）。
+ */
+export function ignoreEntriesFromBody(value) {
+  const entries = [];
+  const push = (name, version) => {
+    if (typeof name === 'string' && name) entries.push({ name, version: version ? String(version) : null });
+  };
+  for (const item of Array.isArray(value?.items) ? value.items : []) push(item?.name, item?.version);
+  push(value?.name, value?.version);
+  for (const name of Array.isArray(value?.names) ? value.names : []) push(name, null);
+  return entries;
 }
 
 export const name = 'dsh-plugin-manager';
@@ -1864,6 +2012,24 @@ export function apply(ctx) {
             const payload = await checkPluginUpdates({ force: url.searchParams.get('refresh') === '1' });
             try { json(res, 200, payload); } catch { /* 客户端可能已断开（刷新要几秒） */ }
           } catch (error) { try { json(res, 500, { error: String(error?.message || error) }); } catch { /* 同上 */ } }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/ignore', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const entries = ignoreEntriesFromBody(await body(req));
+            if (entries.length === 0) { json(res, 400, { error: '缺少要忽略的插件' }); return; }
+            json(res, 200, await ignorePluginUpdates(entries));
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/unignore', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            const names = Array.isArray(value?.names) ? value.names : [value?.name];
+            const list = names.filter(name => typeof name === 'string' && name);
+            if (list.length === 0) { json(res, 400, { error: '缺少要取消忽略的插件' }); return; }
+            json(res, 200, await unignorePluginUpdates(list));
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/update-many', handler: async (req, res) => {
           if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
