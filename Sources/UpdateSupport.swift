@@ -97,7 +97,6 @@ final class LauncherSettings {
 
     private init() {
         defaults.register(defaults: [
-            "autoUpdateEnabled": true,
             "autoCheckPluginUpdates": true,
             "updateIntervalHours": 6.0,
             "openBrowserOnReady": true,
@@ -109,11 +108,8 @@ final class LauncherSettings {
         ])
     }
 
-    var autoUpdateEnabled: Bool {
-        get { defaults.bool(forKey: "autoUpdateEnabled") }
-        set { defaults.set(newValue, forKey: "autoUpdateEnabled") }
-    }
-
+    /// 后台检查周期（小时，默认 6，最小 1）。启动器自更新与 dsh 更新共用这一项，
+    /// 检查本身常开：只提示、从不静默安装，所以没有「要不要自动检查」的开关。
     var updateIntervalHours: Double {
         get { max(defaults.double(forKey: "updateIntervalHours"), 1) }
         set { defaults.set(max(newValue, 1), forKey: "updateIntervalHours") }

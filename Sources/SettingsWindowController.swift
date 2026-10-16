@@ -6,7 +6,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let onCheckNow: () -> Void
     private let settings = LauncherSettings.shared
 
-    private let autoUpdateCheckbox = NSButton(checkboxWithTitle: "自动检测启动器（DHL）更新", target: nil, action: nil)
     private let pluginUpdateCheckbox = NSButton(checkboxWithTitle: "自动检测插件更新", target: nil, action: nil)
     private let openBrowserCheckbox = NSButton(checkboxWithTitle: "就绪后自动打开浏览器", target: nil, action: nil)
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动", target: nil, action: nil)
@@ -19,8 +18,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var pendingHotKeyDisplay = "⌃⌥D"
     private let intervalField = NSTextField(string: "6")
     private let intervalStepper = NSStepper()
-    private var intervalLabel: NSTextField?
-    private var intervalSuffixLabel: NSTextField?
     private var hotkeyLabel: NSTextField?
     /// 设置卡片里“标签列”与“控件列”的分界，三张卡片共用同一个列，保证纵向对齐。
     private let controlColumn: CGFloat = 132
@@ -176,19 +173,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         ])
 
         let updateCard = makeCard()
-        let updateTitle = makeLabel("自动更新", size: 13, weight: .semibold, color: .secondaryLabelColor)
+        let updateTitle = makeLabel("更新检查", size: 13, weight: .semibold, color: .secondaryLabelColor)
         updateCard.addSubview(updateTitle)
-        configureCheckbox(autoUpdateCheckbox)
-        autoUpdateCheckbox.target = self
-        autoUpdateCheckbox.action = #selector(autoUpdateCheckChanged)
-        updateCard.addSubview(autoUpdateCheckbox)
         configureCheckbox(pluginUpdateCheckbox)
         updateCard.addSubview(pluginUpdateCheckbox)
 
+        // 后台检查是常开的：启动器自更新与 dsh 更新共用「检查频率」这一张定时器
+        // （默认 6 小时，发现新版本只在菜单栏角标/菜单标题里提示，从不静默安装），
+        // 所以这一栏没有「要不要自动检查」的开关，只有频率可调。
         let intervalDescLabel = makeLabel("检查频率", size: 13, weight: .regular, color: .labelColor)
-        intervalLabel = intervalDescLabel
         let intervalUnitLabel = makeLabel("小时一次", size: 13, weight: .regular, color: .secondaryLabelColor)
-        intervalSuffixLabel = intervalUnitLabel
         updateCard.addSubview(intervalDescLabel)
         updateCard.addSubview(intervalUnitLabel)
         configureTextField(intervalField, placeholder: "6")
@@ -216,11 +210,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         NSLayoutConstraint.activate([
             updateTitle.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
             updateTitle.topAnchor.constraint(equalTo: updateCard.topAnchor, constant: 12),
-            autoUpdateCheckbox.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
-            autoUpdateCheckbox.topAnchor.constraint(equalTo: updateTitle.bottomAnchor, constant: 8),
-            autoUpdateCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: updateCard.trailingAnchor, constant: -16),
             pluginUpdateCheckbox.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
-            pluginUpdateCheckbox.topAnchor.constraint(equalTo: autoUpdateCheckbox.bottomAnchor, constant: 4),
+            pluginUpdateCheckbox.topAnchor.constraint(equalTo: updateTitle.bottomAnchor, constant: 8),
             pluginUpdateCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: updateCard.trailingAnchor, constant: -16),
             intervalDescLabel.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
             intervalDescLabel.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
@@ -236,7 +227,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             sourceValue.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: controlColumn),
             sourceValue.trailingAnchor.constraint(lessThanOrEqualTo: updateCard.trailingAnchor, constant: -16),
             sourceValue.topAnchor.constraint(equalTo: intervalField.bottomAnchor, constant: 12),
-            updateCard.heightAnchor.constraint(equalToConstant: 170)
+            // 一栏标题 + 一个勾选框 + 频率行 + 来源行：固定高度，和另外两张卡片对齐。
+            updateCard.heightAnchor.constraint(equalToConstant: 148)
         ])
         root.addSubview(updateCard)
         NSLayoutConstraint.activate([
@@ -322,7 +314,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func loadSettings() {
-        autoUpdateCheckbox.state = settings.autoUpdateEnabled ? .on : .off
         pluginUpdateCheckbox.state = settings.autoCheckPluginUpdates ? .on : .off
         openBrowserCheckbox.state = settings.openBrowserOnReady ? .on : .off
         launchAtLoginCheckbox.state = settings.launchAtLogin ? .on : .off
@@ -336,11 +327,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let interval = max(settings.updateIntervalHours, 1)
         intervalField.doubleValue = interval
         intervalStepper.doubleValue = interval
-        setUpdateIntervalControlsEnabled(settings.autoUpdateEnabled)
-    }
-
-    @objc private func autoUpdateCheckChanged() {
-        setUpdateIntervalControlsEnabled(autoUpdateCheckbox.state == .on)
     }
 
     @objc private func intervalStepperChanged() {
@@ -354,13 +340,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField, field === intervalField else { return }
         intervalStepper.doubleValue = intervalField.doubleValue
-    }
-
-    private func setUpdateIntervalControlsEnabled(_ enabled: Bool) {
-        intervalField.isEnabled = enabled
-        intervalStepper.isEnabled = enabled
-        intervalLabel?.textColor = enabled ? .labelColor : .tertiaryLabelColor
-        intervalSuffixLabel?.textColor = enabled ? .secondaryLabelColor : .tertiaryLabelColor
     }
 
     private func setHotKeyControlsEnabled(_ enabled: Bool) {
@@ -425,7 +404,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let previousHotKeyKeyCode = settings.globalHotKeyKeyCode
         let previousHotKeyDisplay = settings.globalHotKeyDisplay
 
-        settings.autoUpdateEnabled = autoUpdateCheckbox.state == .on
         settings.autoCheckPluginUpdates = pluginUpdateCheckbox.state == .on
         settings.openBrowserOnReady = openBrowserCheckbox.state == .on
         settings.launchAtLogin = launchAtLoginCheckbox.state == .on

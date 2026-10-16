@@ -166,7 +166,26 @@ rg -Fq 'raw 卡住/超时时用 api.github.com 兜底' "$ROOT/Plugins/DSHPluginM
 rg -q '"\./client": "\./client/client.js"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q '"client"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q 'monitorSessionNotify' "$ROOT/Sources/main.swift"
-rg -q 'makeSessionNotifyBadgeImage' "$ROOT/Sources/main.swift"
+# 菜单栏角标：会话未读（红胶囊）+ 后台检查到的可用更新（蓝箭头圆盘），两条链路
+# 共用一张合成图。角标是「画」出来的，符号/坐标写错不会崩、只会画歪或看不见，
+# 所以除源码不变量外还有 scripts/test-status-badge.swift 逐像素验证。
+rg -q 'StatusBadgeSupport' "$ROOT/Sources/main.swift"
+rg -Fq 'private var updateAvailable: Bool' "$ROOT/Sources/main.swift"
+rg -Fq 'pendingUpdate != nil || (dshUpdateBadgeVisible' "$ROOT/Sources/main.swift"
+rg -Fq 'dshUpdateBadgeVisible = DSHUpdatePlanner.shouldAnnounce' "$ROOT/Sources/main.swift"
+if rg -q 'makeSessionNotifyBadgeImage' "$ROOT/Sources/main.swift"; then
+  echo "badge drawing must live in StatusBadgeSupport so it can be tested offscreen" >&2
+  exit 1
+fi
+# 后台检查常开：设置里不许再有「要不要自动检查更新」的开关。历史上它一关，启动器
+# 自检就只剩手动点击（用户会以为根本没有后台定时任务），而 dsh 检查却照跑。
+if rg -q 'autoUpdateEnabled' "$ROOT/Sources" "$ROOT/scripts/test-settings-window.swift"; then
+  echo "update checks must stay always-on: no autoUpdateEnabled toggle" >&2
+  exit 1
+fi
+rg -Fq 'scheduleAutoUpdateChecks' "$ROOT/Sources/main.swift"
+rg -Fq 'self.performUpdateCheck(interactive: false)' "$ROOT/Sources/main.swift"
+rg -Fq 'self.performDSHUpdateCheck(interactive: false)' "$ROOT/Sources/main.swift"
 rg -q 'dsh-session-notify' "$ROOT/scripts/uninstall.sh"
 rg -q 'DSHSessionNotify' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 if rg -Fq 'alert.informativeText = manifest.notes' "$ROOT/Sources/main.swift"; then
@@ -480,6 +499,9 @@ swiftc "$ROOT/scripts/test-alert-design.swift" "$ROOT/Sources/AlertDesign.swift"
 "$ROOT/build/test-alert-design"
 swiftc "$ROOT/scripts/test-launcher-support.swift" "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/Sources/LogSupport.swift" -o "$ROOT/build/test-launcher-support"
 "$ROOT/build/test-launcher-support"
+# 菜单栏角标：离屏合成后逐像素验（画歪/画重叠/看不见都不会崩，只能这么测）。
+swiftc "$ROOT/scripts/test-status-badge.swift" "$ROOT/Sources/StatusBadgeSupport.swift" -o "$ROOT/build/test-status-badge" -framework AppKit
+"$ROOT/build/test-status-badge"
 # 设置窗口是复用的：取消后再打开必须回到已保存的设置（否则界面显示的是被取消掉的
 # 勾选与间隔，用户以为生效了）。
 swiftc "$ROOT/scripts/test-settings-window.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-settings-window" -framework AppKit
