@@ -428,6 +428,19 @@ rg -Fq 'DSHUpdatePlanner.shouldAnnounce' "$ROOT/Sources/main.swift"
 rg -Fq 'if interactive { presentDSHUpdate(report: report) }' "$ROOT/Sources/main.swift"
 rg -Fq '跳过此版本' "$ROOT/Sources/main.swift"
 rg -Fq 'skippedDSHVersion' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateSupport.swift"
+# 「忽略/跳过」是两条链路都有的能力（启动器自更新以前没有，角标会一直亮到更新为止）：
+# 跳过的版本不进菜单标题、不亮角标，但手动点菜单仍会弹窗，所以第三个按钮要在
+# 「跳过此版本 / 取消跳过此版本」之间切换。
+rg -Fq 'skippedLauncherVersion' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateSupport.swift"
+rg -Fq 'LauncherUpdatePolicy.shouldAnnounce' "$ROOT/Sources/main.swift"
+rg -Fq 'skipped ? "取消跳过此版本" : "跳过此版本"' "$ROOT/Sources/main.swift"
+rg -Fq 'isSkipped' "$ROOT/scripts/test-update-support.swift" "$ROOT/scripts/test-dsh-version-support.swift"
+# 跳过之后菜单行必须回到普通标题：再挂一个「（已跳过 vX）」长标题，正是用户抱怨的
+# 「那行一直占在最显眼的位置」。
+if rg -Fq '（已跳过' "$ROOT/Sources/main.swift"; then
+  echo "skipped versions must not leave a long menu title behind" >&2
+  exit 1
+fi
 # 多个新版本时让用户挑：下拉列出全部比当前新的候选，切换时刷新说明与按钮。
 rg -Fq 'DSHUpdatePlanner.selectableUpdates' "$ROOT/Sources/main.swift" "$ROOT/Sources/DSHUpdateSupport.swift"
 rg -Fq 'NSPopUpButton' "$ROOT/Sources/DSHUpdateVersionPicker.swift"

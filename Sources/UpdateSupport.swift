@@ -91,6 +91,29 @@ private func parseVersion(_ value: String) -> ParsedVersion {
     return ParsedVersion(base: base, testSuffix: suffix, isSnapshot: isSnapshot)
 }
 
+/// 启动器自更新的「跳过此版本」口径，与 dsh 那条链路（`DSHUpdatePlanner`）对称：
+/// 跳过的版本不再进菜单标题、也不亮菜单栏角标；手动点菜单仍然弹窗（弹窗里可以
+/// 「取消跳过此版本」），所以跳过只是让它安静，不是让它消失。
+enum LauncherUpdatePolicy {
+    /// 按版本比较（不是字符串比较）：`v0.3.10` 与 `0.3.10` 视为同一版本。
+    static func isSkipped(version: String, skipped: String?) -> Bool {
+        guard let skipped, !skipped.isEmpty else { return false }
+        return compareVersions(normalize(skipped), normalize(version)) == .orderedSame
+    }
+
+    /// 这次检查结果要不要写进菜单标题与菜单栏角标。
+    static func shouldAnnounce(version: String, skipped: String?) -> Bool {
+        !isSkipped(version: version, skipped: skipped)
+    }
+
+    /// Release tag 有的带 `v` 前缀、有的不带；比较前统一去掉，免得同一个版本因为写法
+    /// 不同而绕过「跳过」记录（compareVersions 只认数字，带前缀会被当成别的版本）。
+    private static func normalize(_ version: String) -> String {
+        if version.hasPrefix("v") || version.hasPrefix("V") { return String(version.dropFirst()) }
+        return version
+    }
+}
+
 final class LauncherSettings {
     static let shared = LauncherSettings()
     private let defaults = UserDefaults.standard
@@ -127,8 +150,8 @@ final class LauncherSettings {
         set { defaults.set(newValue, forKey: "openBrowserOnReady") }
     }
 
-    /// 用户选择「跳过此版本」的 dsh 版本：自动检查只把菜单标题写成「已跳过 vX」，
-    /// 不再当作可用更新提示；手动检查仍然弹窗，并可以在弹窗里取消跳过。
+    /// 用户选择「跳过此版本」的 dsh 版本：不再写进菜单标题，也不亮菜单栏角标；
+    /// 手动点菜单仍然弹窗，并可以在弹窗里取消跳过。
     var skippedDSHVersion: String? {
         get { defaults.string(forKey: "skippedDSHVersion") }
         set {
@@ -136,6 +159,19 @@ final class LauncherSettings {
                 defaults.set(newValue, forKey: "skippedDSHVersion")
             } else {
                 defaults.removeObject(forKey: "skippedDSHVersion")
+            }
+        }
+    }
+
+    /// 用户选择「跳过此版本」的启动器版本（口径同 `skippedDSHVersion`）：菜单行回到
+    /// 「检测启动器（DHL）更新」、角标熄灭；手动点菜单仍会弹窗并可取消跳过。
+    var skippedLauncherVersion: String? {
+        get { defaults.string(forKey: "skippedLauncherVersion") }
+        set {
+            if let newValue, !newValue.isEmpty {
+                defaults.set(newValue, forKey: "skippedLauncherVersion")
+            } else {
+                defaults.removeObject(forKey: "skippedLauncherVersion")
             }
         }
     }

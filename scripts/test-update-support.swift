@@ -45,6 +45,19 @@ struct UpdateSupportChecks {
         precondition(UpdateDownloadProgress(bytesWritten: 24, totalBytes: 59).fraction! > 0.4)
         precondition(UpdateDownloadProgress(bytesWritten: 24, totalBytes: nil).fraction == nil)
 
+        // 「跳过此版本」：跳过的版本不再进菜单标题、也不亮角标；比较按版本语义走，
+        // 所以 v 前缀与位数写法差异不影响判断，更高的版本照常提示。
+        precondition(!LauncherUpdatePolicy.isSkipped(version: "0.3.10", skipped: nil))
+        precondition(!LauncherUpdatePolicy.isSkipped(version: "0.3.10", skipped: ""))
+        precondition(LauncherUpdatePolicy.isSkipped(version: "0.3.10", skipped: "0.3.10"))
+        precondition(LauncherUpdatePolicy.isSkipped(version: "0.3.10", skipped: "v0.3.10"))
+        precondition(!LauncherUpdatePolicy.isSkipped(version: "0.3.10", skipped: "0.3.9"))
+        precondition(LauncherUpdatePolicy.shouldAnnounce(version: "0.3.10", skipped: nil))
+        precondition(!LauncherUpdatePolicy.shouldAnnounce(version: "0.3.10", skipped: "0.3.10"))
+        // 提测/开发构建形态也按同一套版本语义比较。
+        precondition(LauncherUpdatePolicy.isSkipped(version: "0.3.10-1.1", skipped: "0.3.10-1.1"))
+        precondition(!LauncherUpdatePolicy.isSkipped(version: "0.3.10-1.1", skipped: "0.3.10-1.2-SNAPSHOT"))
+
         let manifestURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dhl-update-manifest-\(ProcessInfo.processInfo.processIdentifier).json")
         let manifest = "{\"tag_name\":\"v9.9.9\",\"name\":\"Deepseek Harness Launcher v9.9.9\",\"body\":\"test\",\"published_at\":\"2026-09-01T00:00:00Z\",\"assets\":[{\"name\":\"Deepseek.Harness.Launcher.dmg\",\"browser_download_url\":\"file:///tmp/Deepseek%20Harness%20Launcher.dmg\"}]}"
         try! manifest.data(using: .utf8)!.write(to: manifestURL)

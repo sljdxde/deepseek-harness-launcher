@@ -195,16 +195,16 @@ struct DSHVersionSupportChecks {
             releases: []
         )
         precondition(report.isUpdate)
-        // 自动检查：跳过过的版本不再提示；手动检查：永远弹窗（让用户能改主意）。
-        precondition(DSHUpdatePlanner.shouldAnnounce(report, interactive: false, skipped: nil))
-        precondition(!DSHUpdatePlanner.shouldAnnounce(report, interactive: false, skipped: "0.1.7-alpha.1"))
-        precondition(DSHUpdatePlanner.shouldAnnounce(report, interactive: true, skipped: "0.1.7-alpha.1"))
+        // 菜单标题与角标：跳过的版本一律不报告（自动检查与手动点击都一样），
+        // 手动点击照样弹窗，那里能取消跳过。
+        precondition(DSHUpdatePlanner.shouldAnnounce(report, skipped: nil))
+        precondition(!DSHUpdatePlanner.shouldAnnounce(report, skipped: "0.1.7-alpha.1"))
         // GitHub tag 形式与 npm 版本形式视为同一版本。
         precondition(DSHUpdatePlanner.isSkipped(version: "0.1.7-alpha.1", skipped: "dsh-v0.1.7-alpha.1"))
         precondition(!DSHUpdatePlanner.isSkipped(version: "0.1.7-alpha.2", skipped: "0.1.7-alpha.1"))
         // 无关版本不参与提示：没有更新时怎么都不弹。
         let current = DSHUpdatePlanner.report(current: "0.1.5-rc.2", npm: DSHNpmMetadata(distTags: ["latest": "0.1.5-rc.2"], versions: ["0.1.5-rc.2"]), releases: [])
-        precondition(!DSHUpdatePlanner.shouldAnnounce(current, interactive: true, skipped: nil))
+        precondition(!DSHUpdatePlanner.shouldAnnounce(current, skipped: nil))
     }
 
     /// 多个新版本时弹窗要给出可选项：只列比当前新的（最新的在前），当前版本与更旧的

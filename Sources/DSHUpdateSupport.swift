@@ -439,11 +439,11 @@ enum DSHUpdatePlanner {
         return normalizedDSHVersion(skipped) == normalizedDSHVersion(version)
     }
 
-    /// 自动检查只更新菜单提示、从不静默安装；被用户跳过的版本也不再改菜单标题。
-    /// 手动检查永远给弹窗，让用户能改主意。
-    static func shouldAnnounce(_ report: DSHUpdateReport, interactive: Bool, skipped: String?) -> Bool {
+    /// 菜单标题与菜单栏角标要不要报告这次找到的更新：被用户「跳过此版本」的那个版本
+    /// 一律不报告——不管是自动检查还是手动点击。手动点击照样会弹窗（弹窗里能取消
+    /// 跳过），所以「跳过」既不会让用户再也看不到这版，也不会让提示一直挂在菜单上。
+    static func shouldAnnounce(_ report: DSHUpdateReport, skipped: String?) -> Bool {
         guard report.isUpdate else { return false }
-        if interactive { return true }
         return !isSkipped(version: report.best.version, skipped: skipped)
     }
 }

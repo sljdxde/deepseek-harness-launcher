@@ -392,19 +392,22 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         dshUpdateReport = report
-        dshUpdateBadgeVisible = DSHUpdatePlanner.shouldAnnounce(report, interactive: interactive, skipped: settings.skippedDSHVersion)
+        dshUpdateBadgeVisible = DSHUpdatePlanner.shouldAnnounce(report, skipped: settings.skippedDSHVersion)
         if dshUpdateBadgeVisible {
             setDSHUpdateMenuTitle("Deepseek Harness 更新可用：v\(report.best.version)（\(report.best.channel.label)）")
         } else {
-            setDSHUpdateMenuTitle("检查 Deepseek Harness 更新（已跳过 v\(report.best.version)）")
-            appendLogString("dsh v\(report.best.version) 已被跳过，自动检查不再提示\n")
+            // 跳过的版本不再占着菜单行：回到普通标题（角标也不亮）。手动点这一行照样
+            // 弹窗，弹窗里的第三个按钮是「取消跳过此版本」。
+            setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
+            appendLogString("dsh v\(report.best.version) 已被跳过，不改菜单标题与角标\n")
         }
         refreshUpdateIndicator()
         if interactive { presentDSHUpdate(report: report) }
     }
 
     /// 更新确认：把所有比当前新的版本列进下拉让用户选（只有一个时退化成单版本提示），
-    /// 选项为 更新 / 稍后 / 跳过此版本（跳过会被记住，菜单里仍能看到并随时取消）。
+    /// 选项为 更新 / 稍后 / 跳过此版本（跳过会被记住：菜单行回到普通标题、角标熄灭，
+    /// 但手动点菜单仍然弹到这里，可随时取消跳过）。
     /// 卡片里的「来源」行：GitHub Release · 发布于 2026-09-22 / npm next 标签。
     private static func sourceLine(for candidate: DSHUpdateCandidate) -> String {
         var text = candidate.source.label
@@ -488,7 +491,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 settings.skippedDSHVersion = version
                 dshUpdateReport = nil
                 dshUpdateBadgeVisible = false
-                setDSHUpdateMenuTitle("检查 Deepseek Harness 更新（已跳过 v\(version)）")
+                // 菜单行回到普通标题：跳过的版本不该继续占着最显眼的位置。
+                setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
                 refreshUpdateIndicator()
                 appendLogString("用户跳过 dsh v\(version) 的更新提示\n")
             }
@@ -1046,8 +1050,17 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.updateCheckInFlight = false
             switch result {
             case .available(let manifest):
-                self.pendingUpdate = manifest
-                self.setUpdateMenuTitle("更新可用：v\(manifest.version)")
+                // 被「跳过此版本」的那一版不再进菜单标题、也不亮角标（手动点击照样
+                // 弹窗，弹窗里能取消跳过），否则菜单上那行会一直挂在最显眼的位置。
+                let announce = LauncherUpdatePolicy.shouldAnnounce(
+                    version: manifest.version,
+                    skipped: self.settings.skippedLauncherVersion
+                )
+                self.pendingUpdate = announce ? manifest : nil
+                self.setUpdateMenuTitle(announce ? "更新可用：v\(manifest.version)" : "检测启动器（DHL）更新")
+                if !announce {
+                    self.appendLogString("启动器 v\(manifest.version) 已被跳过，不改菜单标题与角标\n")
+                }
                 self.refreshUpdateIndicator()
                 if interactive { self.presentUpdate(manifest: manifest) }
             case .current:
@@ -1091,7 +1104,32 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         alert.addButton(withTitle: "下载更新")
         alert.addButton(withTitle: "稍后")
-        if alert.runModal() == .alertFirstButtonReturn { downloadUpdate(manifest) }
+        // 与 dsh 更新弹窗同一套口径：跳过的版本只让菜单/角标安静下来，手动点菜单
+        // 仍然能弹到这里改主意（所以第三个按钮会在「跳过」与「取消跳过」之间切换）。
+        let skipped = LauncherUpdatePolicy.isSkipped(
+            version: manifest.version,
+            skipped: settings.skippedLauncherVersion
+        )
+        alert.addButton(withTitle: skipped ? "取消跳过此版本" : "跳过此版本")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            downloadUpdate(manifest)
+        case .alertThirdButtonReturn:
+            if skipped {
+                settings.skippedLauncherVersion = nil
+                pendingUpdate = manifest
+                setUpdateMenuTitle("更新可用：v\(manifest.version)")
+                appendLogString("已取消跳过启动器 v\(manifest.version)\n")
+            } else {
+                settings.skippedLauncherVersion = manifest.version
+                pendingUpdate = nil
+                setUpdateMenuTitle("检测启动器（DHL）更新")
+                appendLogString("用户跳过启动器 v\(manifest.version) 的更新提示\n")
+            }
+            refreshUpdateIndicator()
+        default:
+            appendLogString("用户选择稍后更新启动器（最新 v\(manifest.version)）\n")
+        }
     }
 
     /// 卡片里的「来源」副标题：把 Release 的发布时间写成一行短文案。
@@ -1146,6 +1184,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         appendLogString("用户确认安装更新：\(dmgURL.path)\n")
+        // 装上了，之前「跳过此版本」记的账就没有意义了（新版本起来后也读不到它）。
+        settings.skippedLauncherVersion = nil
         stopDHL()
         let appURL = Bundle.main.bundleURL
         let appDirectory = appURL.deletingLastPathComponent()
