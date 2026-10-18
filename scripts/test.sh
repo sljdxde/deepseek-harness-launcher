@@ -1,13 +1,39 @@
 #!/bin/zsh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# 前置自检：本脚本的源码不变量检查全部走 ripgrep。缺它时 zsh 只报
-# 「command not found: rg」然后立刻退出（实测：rg 被卸载后回归几秒内失败，
-# 看起来像测试挂了，实际是工具链缺件）。这里提前给一句能照做的提示。
+# 前置自检：本脚本的源码不变量检查全部走 ripgrep，缺它时 zsh 只报
+# 「command not found: rg」然后立刻退出——看起来像测试挂了，实际是工具链缺件。
+# CI 用 brew 装 ripgrep，开发机通常没有；但 harness 自带一份，先回退到它，
+# 真找不到再给一句能照做的提示（否则每次都要手工往 PATH 里加）。
+if ! command -v rg >/dev/null 2>&1; then
+  for candidate in ~/.dsh/runtime/node_modules/@vscode/ripgrep-*/bin/rg(N); do
+    if [[ -x $candidate ]]; then
+      path=(${candidate:h} $path); export PATH
+      print "回归：使用 harness 自带的 ripgrep（$candidate）"
+      break
+    fi
+  done
+fi
 if ! command -v rg >/dev/null 2>&1; then
   print -u2 "缺少 ripgrep：回归里的源码不变量检查依赖它（macOS: brew install ripgrep）"
   exit 127
 fi
+
+# 参数：默认全量回归；--fast 跳过打包（universal 构建、安装器、DMG），只跑断言。
+# 迭代单条测试用 scripts/test-one.sh <suite>，别为此整跑一遍。
+FAST=0
+for arg in "$@"; do
+  case $arg in
+    --fast) FAST=1 ;;
+    -h|--help)
+      print "用法：scripts/test.sh [--fast]"
+      print "  --fast  跳过打包三件套（universal 构建 / 安装器 / DMG），只跑断言"
+      exit 0 ;;
+    *)
+      print -u2 "未知参数：$arg（唯一支持的参数是 --fast）"
+      exit 2 ;;
+  esac
+done
 node --check "$ROOT/Plugins/DSHArchiveManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/running-session-ids.test.js"
@@ -172,7 +198,10 @@ rg -q 'monitorSessionNotify' "$ROOT/Sources/main.swift"
 rg -q 'StatusBadgeSupport' "$ROOT/Sources/main.swift"
 rg -Fq 'private var updateAvailable: Bool' "$ROOT/Sources/main.swift"
 rg -Fq 'pendingUpdate != nil || (dshUpdateBadgeVisible' "$ROOT/Sources/main.swift"
-rg -Fq 'dshUpdateBadgeVisible = DSHUpdatePlanner.shouldAnnounce' "$ROOT/Sources/main.swift"
+# 标题 / 角标 / tooltip 必须来自同一个判断：跳过记录之外的最高版本（bestAnnounceable）。
+# 只比对 best 的旧口径会让「在下拉里跳过次新版本」清掉整份报告，下一轮又按 best 公告。
+rg -Fq 'DSHUpdatePlanner.bestAnnounceable' "$ROOT/Sources/main.swift" "$ROOT/Sources/DSHUpdateSupport.swift"
+rg -Fq 'private func applyDSHUpdatePresentation()' "$ROOT/Sources/main.swift"
 if rg -q 'makeSessionNotifyBadgeImage' "$ROOT/Sources/main.swift"; then
   echo "badge drawing must live in StatusBadgeSupport so it can be tested offscreen" >&2
   exit 1
@@ -186,6 +215,12 @@ fi
 rg -Fq 'scheduleAutoUpdateChecks' "$ROOT/Sources/main.swift"
 rg -Fq 'self.performUpdateCheck(interactive: false)' "$ROOT/Sources/main.swift"
 rg -Fq 'self.performDSHUpdateCheck(interactive: false)' "$ROOT/Sources/main.swift"
+# 首检只排一次：启动传 true，保存设置重挂定时器时用默认 false。否则每保存一次设置
+# 就多排一个 8 秒首检（多一轮联网检查），6 小时周期也被反复推后。
+rg -Fq 'scheduleAutoUpdateChecks(initialCheck: true)' "$ROOT/Sources/main.swift"
+rg -Fq 'scheduleAutoUpdateChecks(initialCheck: Bool = false)' "$ROOT/Sources/main.swift"
+rg -Fq 'self.scheduleAutoUpdateChecks()' "$ROOT/Sources/main.swift"
+rg -Fq 'AutoUpdateSchedule.intervalSeconds' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateSupport.swift"
 rg -q 'dsh-session-notify' "$ROOT/scripts/uninstall.sh"
 rg -q 'DSHSessionNotify' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 if rg -Fq 'alert.informativeText = manifest.notes' "$ROOT/Sources/main.swift"; then
@@ -424,7 +459,12 @@ rg -Fq '检查 Deepseek Harness 更新' "$ROOT/Sources/main.swift"
 rg -Fq '["view", "@deepseek-ai/dsh", "dist-tags", "versions", "--json"]' "$ROOT/Sources/DSHUpdateSupport.swift"
 rg -Fq 'deepseek-ai/deepseek-harness/releases.atom' "$ROOT/Sources/DSHUpdateSupport.swift"
 rg -Fq 'compareDSHVersions' "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/scripts/test-dsh-version-support.swift"
-rg -Fq 'DSHUpdatePlanner.shouldAnnounce' "$ROOT/Sources/main.swift"
+rg -Fq 'static func bestAnnounceable' "$ROOT/Sources/DSHUpdateSupport.swift"
+rg -Fq 'checkAnnounceable' "$ROOT/scripts/test-dsh-version-support.swift"
+if rg -q 'DSHUpdatePlanner\.shouldAnnounce' "$ROOT/Sources" "$ROOT/scripts"; then
+  echo "dsh 公告口径只能有一个入口（bestAnnounceable），不要再引入 shouldAnnounce" >&2
+  exit 1
+fi
 rg -Fq 'if interactive { presentDSHUpdate(report: report) }' "$ROOT/Sources/main.swift"
 rg -Fq '跳过此版本' "$ROOT/Sources/main.swift"
 rg -Fq 'skippedDSHVersion' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateSupport.swift"
@@ -434,6 +474,32 @@ rg -Fq 'skippedDSHVersion' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateSuppo
 rg -Fq 'skippedLauncherVersion' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateSupport.swift"
 rg -Fq 'LauncherUpdatePolicy.shouldAnnounce' "$ROOT/Sources/main.swift"
 rg -Fq 'skipped ? "取消跳过此版本" : "跳过此版本"' "$ROOT/Sources/main.swift"
+# 跳过记录只在「真的装上了 ≥ 跳过版本」之后作废（检查开头的自愈），以及用户点
+# 「取消跳过」。历史 bug 是在安装脚本动手前就清空：hdiutil/安装失败时版本没换成，
+# 跳过决定却已经丢了。清空点只有这两处；新增第三处请连同这条断言一起改。
+rg -Fq 'LauncherUpdatePolicy.shouldClearSkip' "$ROOT/Sources/main.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/scripts/test-update-support.swift"
+if [[ "$(rg -c 'skippedLauncherVersion = nil' "$ROOT/Sources/main.swift")" != "2" ]]; then
+  echo "skippedLauncherVersion 只允许在「检查开头自愈」与「取消跳过」两处清空" >&2
+  exit 1
+fi
+# 菜单标题只在 LauncherMenuTitle 里定义：四个检查结果各自写字面量，正是「.failed 只改
+# 标题、角标却不动」那类不一致的来源。
+rg -Fq 'enum LauncherMenuTitle' "$ROOT/Sources/UpdateSupport.swift"
+rg -Fq 'LauncherMenuTitle.launcherUpdate' "$ROOT/Sources/main.swift"
+rg -Fq 'LauncherMenuTitle.idle' "$ROOT/Sources/main.swift"
+rg -Fq 'launcherUpdate(pendingVersion: nil)' "$ROOT/scripts/test-update-support.swift"
+if rg -Fq '检测启动器（DHL）更新' "$ROOT/Sources/main.swift"; then
+  echo "菜单标题必须走 LauncherMenuTitle，main.swift 里不许再写标题字面量" >&2
+  exit 1
+fi
+# main.swift 约 2700 行且主类只有一个：定位靠 // MARK 分区，少一段等于那一段又得靠
+# grep 从头翻。新增章节时把名字加进这个列表。
+for section in 顶部辅助类型 生命周期 状态栏与菜单 'dsh 更新检查' 浏览器打开与连接探测 进程停止与重启 设置窗口与全局快捷键 启动器自更新 启动与端口选择 运行环境安装与恢复 会话完成提醒与菜单栏角标; do
+  if ! rg -Fq "// MARK: - $section" "$ROOT/Sources/main.swift"; then
+    echo "main.swift 缺少 // MARK 分区：$section" >&2
+    exit 1
+  fi
+done
 rg -Fq 'isSkipped' "$ROOT/scripts/test-update-support.swift" "$ROOT/scripts/test-dsh-version-support.swift"
 # 跳过之后菜单行必须回到普通标题：再挂一个「（已跳过 vX）」长标题，正是用户抱怨的
 # 「那行一直占在最显眼的位置」。
@@ -476,10 +542,32 @@ if rg -q 'applyDSHUpdateReport.*updateDSHNow|performDSHUpdateCheck.*updateDSHNow
   exit 1
 fi
 rg -Fq 'npm dist-tags' "$ROOT/README.md" "$ROOT/README.en.md"
+# README 里的「当前 App 版本」必须与包内版本一致：脚本化之前两边各走各的
+# （README 停在 0.3.9，包内已是 0.3.10-1.1），用户照 README 会以为是另一版。
+rg -Fq "当前 App 版本为 \`$APP_VERSION\`" "$ROOT/README.md"
+rg -Fq "The current App version is \`$APP_VERSION\`" "$ROOT/README.en.md"
 if rg -Fq 'dsh 检查只比较 npm 最新版本' "$ROOT/README.md"; then
   echo "README must document the dual-source dsh update check" >&2
   exit 1
 fi
+# 文档标点：区间与约数一律用 `-` / 「约」，不写 `~`。这套渲染器把成对的 `~` 当
+# 删除线，中文写作又习惯拿它当区间符，结果是「0.3~0.6GB … ~3GB」整段被划掉并误读。
+# 路径里的 `~/` 不动（`~` 后面不是数字），所以只堵「数字~数字」和「~数字」。
+if rg -n -e '[0-9]~[0-9]' -e '~[0-9]' "$ROOT/README.md" "$ROOT/README.en.md" "$ROOT/TESTING.md" "$ROOT"/docs/*.md; then
+  echo "文档里的区间/约数请用 - 或「约」，不要用 ~（成对的 ~ 会渲染成删除线）" >&2
+  exit 1
+fi
+# 中英两份 README 是同一份内容的两个手写副本，长期以来一直漂移（补齐前：中文 11 个
+# 二级标题 / 英文 10 个，表格行 24 vs 27）。这里卡结构与行数，不卡措辞：新增一节或
+# 一行表格必须同时落到两份文件上。
+for marker in '^## ' '^### ' '^\| '; do
+  zh="$(rg -c "$marker" "$ROOT/README.md" || true)"
+  en="$(rg -c "$marker" "$ROOT/README.en.md" || true)"
+  if [[ "${zh:-0}" != "${en:-0}" ]]; then
+    echo "中英 README 结构不一致：$marker 中文 ${zh:-0} 处 / 英文 ${en:-0} 处" >&2
+    exit 1
+  fi
+done
 rg -Fq 'globalHotKeyEnabled' "$ROOT/Sources/UpdateSupport.swift"
 rg -Fq '请按下快捷键' "$ROOT/Sources/SettingsWindowController.swift"
 # 复用的设置窗口：窗口不可见时 present() 必须重新按已保存设置填一遍控件。
@@ -536,28 +624,34 @@ DSH_HOME="$RUNTIME_TEST_HOME" "$ROOT/build/test-dsh-runtime-support"
 find "$RUNTIME_TEST_HOME" -depth -type f -delete 2>/dev/null || true
 find "$RUNTIME_TEST_HOME" -depth -type l -delete 2>/dev/null || true
 find "$RUNTIME_TEST_HOME" -depth -type d -empty -delete 2>/dev/null || true
-"$ROOT/scripts/build-app.sh" >/dev/null
-test -x "$ROOT/build/Deepseek Harness Launcher.app/Contents/MacOS/DHL"
-plutil -extract CFBundleDisplayName raw "$ROOT/build/Deepseek Harness Launcher.app/Contents/Info.plist" | grep -qx 'Deepseek Harness Launcher'
-test -f "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/DHL.icns"
-test -x "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/install-from-app.sh"
-"$ROOT/scripts/build-universal.sh" >/dev/null
-lipo -info "$ROOT/build/Deepseek Harness Launcher.app/Contents/MacOS/DHL" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
-test -f "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/menubar-creature.png"
-codesign --verify --deep --strict "$ROOT/build/Deepseek Harness Launcher.app"
-"$ROOT/scripts/build-installer-app.sh" >/dev/null
-test -x "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DHLInstaller"
-test -x "$ROOT/build/双击完成安装或更新.app/Contents/Resources/install-from-app.sh"
-test -d "$ROOT/build/双击完成安装或更新.app/Contents/Resources/Deepseek Harness Launcher.app"
-lipo -info "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DHLInstaller" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
-codesign --verify --deep --strict "$ROOT/build/双击完成安装或更新.app"
-rg -Fq 'appendingPathComponent(".Deepseek Harness Launcher-payload.app")' "$ROOT/Installer/main.swift"
-rg -Fq 'cp -R "$ROOT/build/Deepseek Harness Launcher.app" "$STAGE/.Deepseek Harness Launcher-payload.app"' "$ROOT/scripts/build-dmg.sh"
-if rg -Fq 'ln -s /Applications' "$ROOT/scripts/build-dmg.sh"; then
-  echo "DMG must expose only the installation entry" >&2
-  exit 1
+# 打包三件套（universal 构建 / 安装器 / DMG）占了整轮回归的大头，却和逻辑改动
+# 无关：迭代时用 --fast 跳过，提交前和 CI 仍然跑全量。
+if (( FAST )); then
+  echo "跳过打包（--fast）：universal 构建 / 安装器 / DMG 均未跑"
+else
+  "$ROOT/scripts/build-app.sh" >/dev/null
+  test -x "$ROOT/build/Deepseek Harness Launcher.app/Contents/MacOS/DHL"
+  plutil -extract CFBundleDisplayName raw "$ROOT/build/Deepseek Harness Launcher.app/Contents/Info.plist" | grep -qx 'Deepseek Harness Launcher'
+  test -f "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/DHL.icns"
+  test -x "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/install-from-app.sh"
+  "$ROOT/scripts/build-universal.sh" >/dev/null
+  lipo -info "$ROOT/build/Deepseek Harness Launcher.app/Contents/MacOS/DHL" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
+  test -f "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/menubar-creature.png"
+  codesign --verify --deep --strict "$ROOT/build/Deepseek Harness Launcher.app"
+  "$ROOT/scripts/build-installer-app.sh" >/dev/null
+  test -x "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DHLInstaller"
+  test -x "$ROOT/build/双击完成安装或更新.app/Contents/Resources/install-from-app.sh"
+  test -d "$ROOT/build/双击完成安装或更新.app/Contents/Resources/Deepseek Harness Launcher.app"
+  lipo -info "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DHLInstaller" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
+  codesign --verify --deep --strict "$ROOT/build/双击完成安装或更新.app"
+  rg -Fq 'appendingPathComponent(".Deepseek Harness Launcher-payload.app")' "$ROOT/Installer/main.swift"
+  rg -Fq 'cp -R "$ROOT/build/Deepseek Harness Launcher.app" "$STAGE/.Deepseek Harness Launcher-payload.app"' "$ROOT/scripts/build-dmg.sh"
+  if rg -Fq 'ln -s /Applications' "$ROOT/scripts/build-dmg.sh"; then
+    echo "DMG must expose only the installation entry" >&2
+    exit 1
+  fi
+  "$ROOT/scripts/build-dmg.sh" >/dev/null
+  test -s "$ROOT/dist/Deepseek Harness Launcher.dmg"
+  hdiutil verify "$ROOT/dist/Deepseek Harness Launcher.dmg" >/dev/null
 fi
-"$ROOT/scripts/build-dmg.sh" >/dev/null
-test -s "$ROOT/dist/Deepseek Harness Launcher.dmg"
-hdiutil verify "$ROOT/dist/Deepseek Harness Launcher.dmg" >/dev/null
 echo "Deepseek Harness Launcher regression checks passed"
