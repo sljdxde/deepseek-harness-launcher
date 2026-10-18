@@ -25,6 +25,7 @@ struct DSHVersionSupportChecks {
         checkReleaseFeed()
         checkPlanner()
         checkSkipPolicy()
+        checkAnnounceable()
         checkSelectableUpdates()
         print("dsh version support checks passed")
     }
@@ -195,16 +196,47 @@ struct DSHVersionSupportChecks {
             releases: []
         )
         precondition(report.isUpdate)
-        // 菜单标题与角标：跳过的版本一律不报告（自动检查与手动点击都一样），
-        // 手动点击照样弹窗，那里能取消跳过。
-        precondition(DSHUpdatePlanner.shouldAnnounce(report, skipped: nil))
-        precondition(!DSHUpdatePlanner.shouldAnnounce(report, skipped: "0.1.7-alpha.1"))
+        // 菜单标题与角标报哪一版：跳过记录之外的最高版本。手动点击照样弹窗，
+        // 那里能取消跳过。
+        precondition(DSHUpdatePlanner.bestAnnounceable(report, skipped: nil)?.version == "0.1.7-alpha.1")
+        // 唯一的候选被跳过 → 什么都不报（报告本身不丢，见 checkAnnounceable）。
+        precondition(DSHUpdatePlanner.bestAnnounceable(report, skipped: "0.1.7-alpha.1") == nil)
         // GitHub tag 形式与 npm 版本形式视为同一版本。
         precondition(DSHUpdatePlanner.isSkipped(version: "0.1.7-alpha.1", skipped: "dsh-v0.1.7-alpha.1"))
         precondition(!DSHUpdatePlanner.isSkipped(version: "0.1.7-alpha.2", skipped: "0.1.7-alpha.1"))
         // 无关版本不参与提示：没有更新时怎么都不弹。
         let current = DSHUpdatePlanner.report(current: "0.1.5-rc.2", npm: DSHNpmMetadata(distTags: ["latest": "0.1.5-rc.2"], versions: ["0.1.5-rc.2"]), releases: [])
-        precondition(!DSHUpdatePlanner.shouldAnnounce(current, skipped: nil))
+        precondition(DSHUpdatePlanner.bestAnnounceable(current, skipped: nil) == nil)
+    }
+
+    /// 跳过次新版本不该把整份报告作废：菜单标题/角标要换到「跳过记录之外的最高
+    /// 版本」，而不是按 best 一直亮着（用户已经拒绝过那一版）或整份丢掉（下一轮
+    /// 检查又按 best 公告，角标先熄再亮）。
+    static func checkAnnounceable() {
+        let multi = DSHUpdatePlanner.report(
+            current: "0.1.5-rc.2",
+            npm: DSHNpmMetadata(
+                distTags: ["alpha": "0.1.7-alpha.1", "next": "0.1.5-rc.3"],
+                versions: ["0.1.5-rc.2", "0.1.5-rc.3", "0.1.7-alpha.1"]
+            ),
+            releases: [
+                DSHReleaseEntry(version: "0.1.7-alpha.1", tag: "dsh-v0.1.7-alpha.1", publishedAt: nil, notes: nil, htmlURL: nil)
+            ]
+        )
+        precondition(multi.candidates.map(\.version) == ["0.1.7-alpha.1", "0.1.5-rc.3"])
+        // 跳过的若是次新那版，最高那版照常提示。
+        precondition(DSHUpdatePlanner.bestAnnounceable(multi, skipped: "0.1.5-rc.3")?.version == "0.1.7-alpha.1")
+        // best 被跳过、次新未跳过 → 报次新（不是 nil，也不是 best）。
+        precondition(DSHUpdatePlanner.bestAnnounceable(multi, skipped: "0.1.7-alpha.1")?.version == "0.1.5-rc.3")
+        precondition(DSHUpdatePlanner.bestAnnounceable(multi, skipped: nil)?.version == "0.1.7-alpha.1")
+        // 只有当前版本：没有任何可公告的更新。
+        let upToDate = DSHUpdatePlanner.report(
+            current: "0.1.7-alpha.1",
+            npm: DSHNpmMetadata(distTags: ["alpha": "0.1.7-alpha.1"], versions: ["0.1.7-alpha.1"]),
+            releases: []
+        )
+        precondition(multi.isUpdate)
+        precondition(DSHUpdatePlanner.bestAnnounceable(upToDate, skipped: nil) == nil)
     }
 
     /// 多个新版本时弹窗要给出可选项：只列比当前新的（最新的在前），当前版本与更旧的

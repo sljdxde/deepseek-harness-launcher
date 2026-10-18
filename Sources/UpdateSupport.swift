@@ -106,11 +106,45 @@ enum LauncherUpdatePolicy {
         !isSkipped(version: version, skipped: skipped)
     }
 
+    /// 「跳过此版本」的账什么时候作废：真的换成 ≥ 跳过版本之后才清。`downloadUpdate`
+    /// 曾经在安装脚本动手之前就清空，hdiutil 或安装失败时版本没换成、跳过决定却丢了，
+    /// 下一次检查又把刚被忽略的版本亮成角标——判断必须落在「已装版本」上。
+    static func shouldClearSkip(currentVersion: String, skipped: String?) -> Bool {
+        guard let skipped, !skipped.isEmpty else { return false }
+        return compareVersions(normalize(currentVersion), normalize(skipped)) != .orderedAscending
+    }
+
     /// Release tag 有的带 `v` 前缀、有的不带；比较前统一去掉，免得同一个版本因为写法
     /// 不同而绕过「跳过」记录（compareVersions 只认数字，带前缀会被当成别的版本）。
     private static func normalize(_ version: String) -> String {
         if version.hasPrefix("v") || version.hasPrefix("V") { return String(version.dropFirst()) }
         return version
+    }
+}
+
+/// 启动器更新那一行菜单的文案。四个检查结果（有更新 / 已最新 / 暂无发布 / 检查失败）
+/// 都走这里：标题必须由 `pendingUpdate` 推出来，否则失败分支就会出现「菜单行说没有
+/// 更新、角标和 tooltip 还在说可更新」的两套口径。
+enum LauncherMenuTitle {
+    static let idle = "检测启动器（DHL）更新"
+
+    /// `pendingVersion` 是「上次已知可用的更新」。没版本时回普通文案，有版本时统一
+    /// 去掉可能存在的 `v` 前缀再加回去（Release tag 带的 `v` 不会变成 `vv`）。
+    static func launcherUpdate(pendingVersion: String?) -> String {
+        guard let version = pendingVersion, !version.isEmpty else { return idle }
+        let normalized = version.hasPrefix("v") || version.hasPrefix("V") ? String(version.dropFirst()) : version
+        return "更新可用：v\(normalized)"
+    }
+}
+
+/// 「检查频率」换算成定时器间隔。设置里存的可能是历史遗留的 0 或负数（旧版本允许
+/// 关掉后台检查），Timer 拿到非正间隔会连续空转，所以这里统一钳到最小 1 小时——
+/// 与 `LauncherSettings.updateIntervalHours` 的下限同口径，两处只留这一个公式。
+enum AutoUpdateSchedule {
+    static let minimumHours: Double = 1
+
+    static func intervalSeconds(hours: Double) -> TimeInterval {
+        max(hours, minimumHours) * 3600
     }
 }
 

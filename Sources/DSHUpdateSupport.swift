@@ -439,12 +439,17 @@ enum DSHUpdatePlanner {
         return normalizedDSHVersion(skipped) == normalizedDSHVersion(version)
     }
 
-    /// 菜单标题与菜单栏角标要不要报告这次找到的更新：被用户「跳过此版本」的那个版本
-    /// 一律不报告——不管是自动检查还是手动点击。手动点击照样会弹窗（弹窗里能取消
-    /// 跳过），所以「跳过」既不会让用户再也看不到这版，也不会让提示一直挂在菜单上。
-    static func shouldAnnounce(_ report: DSHUpdateReport, skipped: String?) -> Bool {
-        guard report.isUpdate else { return false }
-        return !isSkipped(version: report.best.version, skipped: skipped)
+    /// 菜单标题与菜单栏角标该报告哪一版：**跳过记录之外**的最高版本（全被跳过时
+    /// nil）。只比 `report.best` 是不够的——用户在下拉里跳过的常常是次新版本，
+    /// 那之后按 best 公告就会一直亮一盏用户已经拒绝过的灯，而把整份报告丢掉又会
+    /// 让下一次检查重新按 best 公告（角标先熄再亮）。
+    ///
+    /// 手动点菜单照样弹窗（弹窗里能取消跳过），所以「跳过」只是让提示安静，不让
+    /// 版本消失。
+    static func bestAnnounceable(_ report: DSHUpdateReport, skipped: String?) -> DSHUpdateCandidate? {
+        let newer = report.candidates.filter { compareDSHVersions($0.version, report.current) == .orderedDescending }
+        let pool = newer.isEmpty ? (report.isUpdate ? [report.best] : []) : newer
+        return pool.first { !isSkipped(version: $0.version, skipped: skipped) }
     }
 }
 

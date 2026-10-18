@@ -58,6 +58,29 @@ struct UpdateSupportChecks {
         precondition(LauncherUpdatePolicy.isSkipped(version: "0.3.10-1.1", skipped: "0.3.10-1.1"))
         precondition(!LauncherUpdatePolicy.isSkipped(version: "0.3.10-1.1", skipped: "0.3.10-1.2-SNAPSHOT"))
 
+        // 四个检查结果（available / current / noPublishedRelease / failed）共用同一处
+        // 标题文案：没有「上次已知可用的更新」时回普通文案，有版本时统一写「更新可用」。
+        // 检查失败时 pendingUpdate 保留，标题才不会掉回普通文案、角标却还亮着。
+        precondition(LauncherMenuTitle.launcherUpdate(pendingVersion: nil) == "检测启动器（DHL）更新")
+        precondition(LauncherMenuTitle.launcherUpdate(pendingVersion: "0.3.10") == "更新可用：v0.3.10")
+        // Release tag 带 v 前缀，拼进标题时不能变成 vv0.3.10。
+        precondition(LauncherMenuTitle.launcherUpdate(pendingVersion: "v0.3.10") == "更新可用：v0.3.10")
+
+        // 跳过记录只在「真的换成 ≥ 跳过版本」之后作废：装前清空会把 hdiutil/安装失败
+        // 也当成已装，下一次检查又把刚被忽略的版本亮成角标。
+        precondition(LauncherUpdatePolicy.shouldClearSkip(currentVersion: "0.3.10", skipped: "0.3.10"))
+        precondition(LauncherUpdatePolicy.shouldClearSkip(currentVersion: "0.3.10", skipped: "0.3.9"))
+        precondition(LauncherUpdatePolicy.shouldClearSkip(currentVersion: "0.3.10", skipped: "v0.3.10"))
+        precondition(!LauncherUpdatePolicy.shouldClearSkip(currentVersion: "0.3.9", skipped: "0.3.10"))
+        precondition(!LauncherUpdatePolicy.shouldClearSkip(currentVersion: "0.3.10", skipped: nil))
+        precondition(!LauncherUpdatePolicy.shouldClearSkip(currentVersion: "0.3.10", skipped: ""))
+
+        // 「检查频率」→ 定时器间隔：0 或负数（旧偏好里的残留）必须钳到最小 1 小时，
+        // 否则 Timer 拿到非正间隔会连续空转。
+        precondition(AutoUpdateSchedule.intervalSeconds(hours: 6) == 21600)
+        precondition(AutoUpdateSchedule.intervalSeconds(hours: 0) == 3600)
+        precondition(AutoUpdateSchedule.intervalSeconds(hours: -3) == 3600)
+
         let manifestURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dhl-update-manifest-\(ProcessInfo.processInfo.processIdentifier).json")
         let manifest = "{\"tag_name\":\"v9.9.9\",\"name\":\"Deepseek Harness Launcher v9.9.9\",\"body\":\"test\",\"published_at\":\"2026-09-01T00:00:00Z\",\"assets\":[{\"name\":\"Deepseek.Harness.Launcher.dmg\",\"browser_download_url\":\"file:///tmp/Deepseek%20Harness%20Launcher.dmg\"}]}"
         try! manifest.data(using: .utf8)!.write(to: manifestURL)

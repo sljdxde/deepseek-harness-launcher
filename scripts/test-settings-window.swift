@@ -82,17 +82,35 @@ struct SettingsWindowChecks {
         check(pluginBox?.state != expectedPlugin, "窗口已打开时 present() 不该重填控件、冲掉正在改的内容")
         controller.close()
 
-        // 版式：更新卡片少了一行，卡片仍必须完整落在窗口里（高度改错会把底部
-        // 按钮挤出可视区，而这对纯逻辑断言是不可见的）。
+        // 版式：更新卡片高度是固定的（170→148 削过一次），里面的控件一旦溢出卡片，
+        // 底部按钮就会被挤出可视区，而这对纯逻辑断言完全不可见。
+        // 只遍历 root 的三张卡片本身是空转的——卡片自己当然在 root 里，溢出的是卡片
+        // 里的子视图。定位不到卡片必须失败，否则层级一变断言就静默通过。
         controller.window?.layoutIfNeeded()
-        if let root = content.subviews.first?.subviews.first, !root.subviews.isEmpty {
-            for subview in root.subviews {
-                // 标签列刻意左移 2pt 做视觉对齐（makeLabel 的历史行为），所以只卡
-                // 「别越出可视区」这一条，并给 2pt 容差。
-                let allowed = root.bounds.insetBy(dx: -2, dy: -2)
-                check(allowed.contains(subview.frame),
-                      "设置窗口控件超出可视区：\(type(of: subview)) \(subview.frame) 不在 \(root.bounds)")
-            }
+        guard let root = content.subviews.first?.subviews.first, !root.subviews.isEmpty else {
+            print("settings window check failed: 找不到设置窗口的根视图（版式断言会空转）")
+            exit(1)
+        }
+        for subview in root.subviews {
+            // 标签列刻意左移 2pt 做视觉对齐（makeLabel 的历史行为），所以只卡
+            // 「别越出可视区」这一条，并给 2pt 容差。
+            let allowed = root.bounds.insetBy(dx: -2, dy: -2)
+            check(allowed.contains(subview.frame),
+                  "设置窗口控件超出可视区：\(type(of: subview)) \(subview.frame) 不在 \(root.bounds)")
+        }
+
+        // 更新卡片按标题文字定位（makeLabel 建的是 NSTextField，superview 就是卡片），
+        // 然后逐个检查卡片内子视图——卡片高度是固定 148pt，行数一多就会顶出去。
+        let updateTitleLabel = textFields(in: content).first { $0.stringValue == "更新检查" }
+        guard let updateCard = updateTitleLabel?.superview else {
+            print("settings window check failed: 找不到「更新检查」卡片，无法断言卡片内版式")
+            exit(1)
+        }
+        check(!updateCard.subviews.isEmpty, "「更新检查」卡片里没有子视图：卡片内版式断言会空转")
+        let cardBounds = updateCard.bounds.insetBy(dx: -2, dy: -2)
+        for subview in updateCard.subviews {
+            check(cardBounds.contains(subview.frame),
+                  "更新卡片控件溢出卡片：\(type(of: subview)) \(subview.frame) 不在 \(updateCard.bounds)")
         }
         writePreviewIfRequested(content)
 

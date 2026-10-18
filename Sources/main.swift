@@ -2,6 +2,8 @@ import AppKit
 import Foundation
 import Darwin
 
+// MARK: - 顶部辅助类型
+
 private enum LauncherState { case stopped, checking, running, failed }
 private enum PortChoice { case reuse(Int), launch(Int) }
 private enum DSHInstallMode: Equatable { case firstInstall, upgrade, repair, dshUpdate(version: String) }
@@ -251,9 +253,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return current
     }
 
+    // MARK: - 生命周期
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory); configureStatusItem(); applyGlobalHotKey(showAlert: false); start(); scheduleAutoUpdateChecks(); scheduleDSHUpdateCheck()
+        NSApp.setActivationPolicy(.accessory); configureStatusItem(); applyGlobalHotKey(showAlert: false); start(); scheduleAutoUpdateChecks(initialCheck: true); scheduleDSHUpdateCheck()
     }
+
+    // MARK: - 状态栏与菜单
 
     private func configureStatusItem() {
         statusItem.button?.image = makeStatusImage()
@@ -270,7 +276,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let port = menuRowItem(title: "端口：未运行", action: nil, enabled: { false }); port.tag = 1001
         portMenuRow = port.view as? MenuRowView
         let restart = menuRowItem(title: "重启 Deepseek Harness", action: #selector(restartDSH), keyEquivalent: "r")
-        let update = menuRowItem(title: "检测启动器（DHL）更新", action: #selector(checkForUpdates))
+        let update = menuRowItem(title: LauncherMenuTitle.idle, action: #selector(checkForUpdates))
         update.tag = 1002; updateMenuItem = update; updateMenuRow = update.view as? MenuRowView
         let dshUpdate = menuRowItem(title: "检查 Deepseek Harness 更新", action: #selector(checkDSHForUpdates))
         dshUpdate.tag = 1003; dshUpdateMenuItem = dshUpdate; dshUpdateMenuRow = dshUpdate.view as? MenuRowView
@@ -319,6 +325,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dshUpdateMenuRow?.title = title
     }
 
+    // MARK: - dsh 更新检查
+
     private func scheduleDSHUpdateCheck() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.performDSHUpdateCheck(interactive: false)
@@ -359,9 +367,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.applyDSHUpdateReport(report, interactive: interactive)
             case .failed(let message):
                 self.dshUpdateReport = nil
-                self.dshUpdateBadgeVisible = false
-                self.setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
-                self.refreshUpdateIndicator()
+                self.applyDSHUpdatePresentation()
                 self.appendLogString("dsh 更新检查失败：\(message)\n")
                 if interactive { self.showInfo(title: "检查 Deepseek Harness 更新失败", message: message) }
             }
@@ -377,9 +383,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         guard report.isUpdate else {
             dshUpdateReport = nil
-            dshUpdateBadgeVisible = false
-            setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
-            refreshUpdateIndicator()
+            applyDSHUpdatePresentation()
             if interactive {
                 var message = "当前版本：v\(report.current)"
                 if compareDSHVersions(report.best.version, report.current) != .orderedSame {
@@ -391,18 +395,33 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
+        // 报告整份留着：跳过某一版不等于「这份检查结果作废」，菜单行与角标由
+        // applyDSHUpdatePresentation 按「跳过记录之外的最高版本」重新算。
         dshUpdateReport = report
-        dshUpdateBadgeVisible = DSHUpdatePlanner.shouldAnnounce(report, skipped: settings.skippedDSHVersion)
-        if dshUpdateBadgeVisible {
-            setDSHUpdateMenuTitle("Deepseek Harness 更新可用：v\(report.best.version)（\(report.best.channel.label)）")
-        } else {
-            // 跳过的版本不再占着菜单行：回到普通标题（角标也不亮）。手动点这一行照样
-            // 弹窗，弹窗里的第三个按钮是「取消跳过此版本」。
-            setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
+        applyDSHUpdatePresentation()
+        let announceable = DSHUpdatePlanner.bestAnnounceable(report, skipped: settings.skippedDSHVersion)
+        if let announceable, announceable.version != report.best.version {
+            appendLogString("dsh v\(report.best.version) 已被跳过，改按 v\(announceable.version) 提示\n")
+        } else if announceable == nil {
             appendLogString("dsh v\(report.best.version) 已被跳过，不改菜单标题与角标\n")
         }
-        refreshUpdateIndicator()
         if interactive { presentDSHUpdate(report: report) }
+    }
+
+    /// 「dsh 更新」菜单行与菜单栏角标的唯一落点：都从 dshUpdateReport + 跳过记录推出
+    /// 来，三者不会再各说各话。跳过/取消跳过之后重走这里，而不是清空 dshUpdateReport
+    /// ——报告一丢，下一轮检查又按 best 公告，角标先熄再亮。
+    private func applyDSHUpdatePresentation() {
+        guard let report = dshUpdateReport, report.isUpdate,
+              let announceable = DSHUpdatePlanner.bestAnnounceable(report, skipped: settings.skippedDSHVersion) else {
+            dshUpdateBadgeVisible = false
+            setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
+            refreshUpdateIndicator()
+            return
+        }
+        dshUpdateBadgeVisible = true
+        setDSHUpdateMenuTitle("Deepseek Harness 更新可用：v\(announceable.version)（\(announceable.channel.label)）")
+        refreshUpdateIndicator()
     }
 
     /// 更新确认：把所有比当前新的版本列进下拉让用户选（只有一个时退化成单版本提示），
@@ -483,19 +502,14 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let version = selected().version
             if DSHUpdatePlanner.isSkipped(version: version, skipped: settings.skippedDSHVersion) {
                 settings.skippedDSHVersion = nil
-                dshUpdateBadgeVisible = true
-                setDSHUpdateMenuTitle("Deepseek Harness 更新可用：v\(newest.version)（\(newest.channel.label)）")
-                refreshUpdateIndicator()
                 appendLogString("已取消跳过 dsh v\(version)\n")
             } else {
                 settings.skippedDSHVersion = version
-                dshUpdateReport = nil
-                dshUpdateBadgeVisible = false
-                // 菜单行回到普通标题：跳过的版本不该继续占着最显眼的位置。
-                setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
-                refreshUpdateIndicator()
                 appendLogString("用户跳过 dsh v\(version) 的更新提示\n")
             }
+            // 只重算菜单标题与角标，整份报告留着：跳过的若是次新版本，次新那版照常
+            // 提示；连 best 都被跳过了才回到普通标题。手动点这一行照样弹到这里。
+            applyDSHUpdatePresentation()
         default:
             appendLogString("用户选择稍后更新 dsh（最新 v\(newest.version)，可选 \(choices.count) 个版本）\n")
         }
@@ -541,6 +555,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             begin()
         }
     }
+
+    // MARK: - 浏览器打开与连接探测
 
     @objc private func openDHL() {
         openDHLForSession(nil)
@@ -869,6 +885,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
     }
 
+    // MARK: - 进程停止与重启
+
     private func stopDHL(completion: (() -> Void)? = nil) {
         cancelDSHInstall()
         let trackedPID = process?.processIdentifier ?? 0
@@ -975,6 +993,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appendLogString("无法确认 \(LauncherBrand.fullName) 进程组已退出\n")
     }
 
+    // MARK: - 设置窗口与全局快捷键
+
     @objc private func openLogs() { NSWorkspace.shared.open(logURL) }
     @objc private func openSettings() {
         if settingsWindow == nil {
@@ -1008,6 +1028,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return applied
     }
 
+    // MARK: - 启动器自更新
+
     @objc private func checkForUpdates() {
         if updateDownloadInFlight {
             updateDownloadWindow?.present()
@@ -1025,9 +1047,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 链路——启动器自更新、dsh 更新、插件更新探测。启动后 8 秒先做一次，用户不用
     /// 等满一个周期；发现新版本只改菜单提示/菜单栏角标，从不静默安装（是否更新由
     /// 用户在弹窗里决定）。设置里改「检查频率」会重新挂一次这张定时器。
-    private func scheduleAutoUpdateChecks() {
+    ///
+    /// `initialCheck` 只给启动路径传 true：设置保存也会重挂这张定时器，若每次顺手
+    /// 再排一个 8 秒首检，保存 N 次设置就多 N 次联网检查，还会把周期起点一再推后。
+    private func scheduleAutoUpdateChecks(initialCheck: Bool = false) {
         autoUpdateTimer?.invalidate(); autoUpdateTimer = nil
-        let interval = settings.updateIntervalHours * 3600
+        let interval = AutoUpdateSchedule.intervalSeconds(hours: settings.updateIntervalHours)
         autoUpdateTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.performUpdateCheck(interactive: false)
@@ -1036,13 +1061,29 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // 「自动检测插件更新」开关决定（关闭时该函数直接返回）。
             self.requestPluginUpdatesRefresh()
         }
+        guard initialCheck else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             self?.performUpdateCheck(interactive: false)
         }
     }
 
+    /// 「启动器更新」菜单行与 pendingUpdate 的唯一落点：标题从 pendingUpdate 推出来，
+    /// 角标与 tooltip 也都看 pendingUpdate，三者不会各说各话。调用方只改
+    /// pendingUpdate，不再各自拼文案。
+    private func applyLauncherUpdateState(_ manifest: UpdateManifest?) {
+        pendingUpdate = manifest
+        setUpdateMenuTitle(LauncherMenuTitle.launcherUpdate(pendingVersion: manifest?.version))
+    }
+
     private func performUpdateCheck(interactive: Bool) {
         guard !updateCheckInFlight else { return }
+        // 真的换成 ≥ 跳过版本之后，「跳过此版本」的账就作废了。装前清空是错的：
+        // 安装脚本可能在中途失败（hdiutil 挂载失败、备份失败），版本没换成却把
+        // 用户的跳过决定丢掉，下一次检查又把刚被忽略的版本亮成角标。
+        if LauncherUpdatePolicy.shouldClearSkip(currentVersion: currentVersion, skipped: settings.skippedLauncherVersion) {
+            settings.skippedLauncherVersion = nil
+            appendLogString("已安装 v\(currentVersion)，清除启动器跳过记录\n")
+        }
         updateCheckInFlight = true
         if interactive { setUpdateMenuTitle("正在检测启动器更新…") }
         updateService.check(currentVersion: currentVersion) { [weak self] result in
@@ -1056,25 +1097,26 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     version: manifest.version,
                     skipped: self.settings.skippedLauncherVersion
                 )
-                self.pendingUpdate = announce ? manifest : nil
-                self.setUpdateMenuTitle(announce ? "更新可用：v\(manifest.version)" : "检测启动器（DHL）更新")
+                self.applyLauncherUpdateState(announce ? manifest : nil)
                 if !announce {
                     self.appendLogString("启动器 v\(manifest.version) 已被跳过，不改菜单标题与角标\n")
                 }
                 self.refreshUpdateIndicator()
                 if interactive { self.presentUpdate(manifest: manifest) }
             case .current:
-                self.pendingUpdate = nil
-                self.setUpdateMenuTitle("检测启动器（DHL）更新")
+                self.applyLauncherUpdateState(nil)
                 self.refreshUpdateIndicator()
                 if interactive { self.showInfo(title: "已是最新版本", message: "当前版本：v\(self.currentVersion)") }
             case .noPublishedRelease:
-                self.pendingUpdate = nil
-                self.setUpdateMenuTitle("检测启动器（DHL）更新")
+                self.applyLauncherUpdateState(nil)
                 self.refreshUpdateIndicator()
                 if interactive { self.showInfo(title: "暂无可用更新", message: "项目暂未发布可下载安装的 \(LauncherBrand.fullName) 版本。") }
             case .failed(let message):
-                self.setUpdateMenuTitle("检测启动器（DHL）更新")
+                // 一次网络失败不等于「没有更新」：上次已知可用的更新（pendingUpdate）
+                // 要留着——标题、角标、tooltip 一起保持原样，点菜单也仍弹那个版本。
+                // 没有 pendingUpdate 时 applyLauncherUpdateState(nil) 把三者一起复位。
+                self.applyLauncherUpdateState(self.pendingUpdate)
+                self.refreshUpdateIndicator()
                 self.appendLogString("更新检查失败：\(message)\n")
                 if interactive { self.showInfo(title: "检测启动器更新失败", message: message) }
             }
@@ -1117,13 +1159,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .alertThirdButtonReturn:
             if skipped {
                 settings.skippedLauncherVersion = nil
-                pendingUpdate = manifest
-                setUpdateMenuTitle("更新可用：v\(manifest.version)")
+                applyLauncherUpdateState(manifest)
                 appendLogString("已取消跳过启动器 v\(manifest.version)\n")
             } else {
                 settings.skippedLauncherVersion = manifest.version
-                pendingUpdate = nil
-                setUpdateMenuTitle("检测启动器（DHL）更新")
+                applyLauncherUpdateState(nil)
                 appendLogString("用户跳过启动器 v\(manifest.version) 的更新提示\n")
             }
             refreshUpdateIndicator()
@@ -1159,7 +1199,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.updateDownloadWindow = nil
             switch result {
             case .success(let url):
-                self.setUpdateMenuTitle("更新可用：v\(manifest.version)")
+                self.applyLauncherUpdateState(manifest)
                 let alert = NSAlert()
                 AlertDesign.style(alert, tone: .success)
                 alert.messageText = "更新包已下载"
@@ -1172,7 +1212,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                 }
             case .failure(let error):
-                self.setUpdateMenuTitle("更新可用：v\(manifest.version)")
+                self.applyLauncherUpdateState(manifest)
                 self.showInfo(title: "下载更新失败", message: error.localizedDescription)
             }
         }
@@ -1184,8 +1224,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         appendLogString("用户确认安装更新：\(dmgURL.path)\n")
-        // 装上了，之前「跳过此版本」记的账就没有意义了（新版本起来后也读不到它）。
-        settings.skippedLauncherVersion = nil
+        // 装上了才作废「跳过此版本」——这条记录在 performUpdateCheck 里按「已装版本
+        // ≥ 跳过版本」自愈清掉。这里装前清空会把安装失败也当成已装。
         stopDHL()
         let appURL = Bundle.main.bundleURL
         let appDirectory = appURL.deletingLastPathComponent()
@@ -1232,6 +1272,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    // MARK: - 通用提示与退出
+
     private func showInfo(title: String, message: String, tone: AlertTone = .info) {
         let alert = NSAlert()
         AlertDesign.style(alert, tone: tone)
@@ -1249,6 +1291,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         stopDHL { NSApp.terminate(nil) }
     }
+
+    // MARK: - 启动与端口选择
 
     private func start() {
         if dshInstallHandle != nil { return }
@@ -1438,6 +1482,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshRuntimeMenuRow()
     }
 
+    // MARK: - 运行环境安装与恢复
 
     private func beginDSHInstall(
         port: Int,
@@ -1527,14 +1572,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.refreshRuntimeMenuRow()
                 if isDSHUpdate {
                     self.dshUpdateReport = nil
-                    self.dshUpdateBadgeVisible = false
                     // 已经装上了，之前跳过的同一版本就没有意义了。
                     if let installed = updateVersion,
                        DSHUpdatePlanner.isSkipped(version: installed, skipped: self.settings.skippedDSHVersion) {
                         self.settings.skippedDSHVersion = nil
                     }
-                    self.setDSHUpdateMenuTitle("检查 Deepseek Harness 更新")
-                    self.refreshUpdateIndicator()
+                    self.applyDSHUpdatePresentation()
                     if relaunchAfterInstall, self.state != .stopped {
                         self.appendLogString("dsh 更新完成，正在同步更新已安装插件…\n")
                         self.updateProfilePlugins(executableURL: executableURL, environment: environment) {
@@ -2409,6 +2452,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return "…（输出过长，仅保留末尾，完整内容请用「打开日志」查看）\n" + String(text.suffix(1500))
     }
 
+    // MARK: - 会话完成提醒与菜单栏角标
+
     private func makeStatusImage() -> NSImage {
         // 基于上游 deepseek-harness-desktop 的菜单栏图标（干净单 path 剪影），
         // 角标合成见 Sources/StatusBadgeSupport.swift。
@@ -2439,8 +2484,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateIndicatorTooltip() -> String {
         var lines = ["\(LauncherBrand.fullName) (\(LauncherBrand.shortName))"]
         if let pendingUpdate { lines.append("启动器可更新：v\(pendingUpdate.version)") }
-        if dshUpdateBadgeVisible, let report = dshUpdateReport {
-            lines.append("Deepseek Harness 可更新：v\(report.best.version)（\(report.best.channel.label)）")
+        if dshUpdateBadgeVisible, let report = dshUpdateReport,
+           let announceable = DSHUpdatePlanner.bestAnnounceable(report, skipped: settings.skippedDSHVersion) {
+            lines.append("Deepseek Harness 可更新：v\(announceable.version)（\(announceable.channel.label)）")
         }
         return lines.joined(separator: "\n")
     }
