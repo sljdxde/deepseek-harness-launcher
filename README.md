@@ -36,7 +36,6 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 11 | **后台定时检测更新（dsh + 启动器）** | 后台定时检查 npm 上 `@deepseek-ai/dsh` 与启动器自身的新版本（常开，默认每 6 小时一轮，启动后 8 秒先来一次），不阻塞启动；有新版本时菜单项标题写明，菜单栏图标同时亮一枚蓝色向上箭头角标（不打开菜单也看得见）。 |
 | 12 | **内置插件管理（DSHPluginManager）** | 侧边栏新增「插件管理」入口，含「已安装」与「插件市场」两个页面：已安装插件可查看/卸载/**更新到最新版本**，也可**忽略某个版本**（忽略后角标不再提示，远端出更高版本时会重新提醒）；市场数据来自 `awesome-dsh-plugin`（分类、搜索、按星级/下载排序、一键安装）。安装/卸载/更新通过 `dsh plugin --profile web` 执行，缺 pnpm 时自动用 corepack 自举，变更后提示重启 dsh 生效。可更新插件在侧边栏入口与面板里都有标记。 |
 | 13 | **会话完成通知（DSHSessionNotify）** | 内置服务端插件监听主会话 `turn/end`（方案同社区 dsh-notify 插件，但不弹系统通知）。会话回合结束时，菜单栏图标显示 Foxmail 式红色未读角标（**按会话计数**：同一会话连跑多轮仍只算一个），菜单顶部列出最近的完成/出错/中止会话（时间 · 标题 · 结果），点击条目打开 Harness 页面并清除角标，也可一键「清除完成提醒」。**看过即已读**：把该会话开在当前可见且有焦点的标签页也算已读，角标在一个轮询周期内消失；会话在用户眼前收尾时角标根本不亮。 |
-
 | 14 | **启动失败自动恢复** | 某个插件把 dsh 弄崩时（插件 import 失败会让整个进程以退出码 1 结束），启动器从 stderr 里认出是哪个插件，用自带的 `--patch` overlay 把它的行 `disabled: true` 再自动重启；认不出或隔离到上限就转入只加载 dsh 自带插件的安全模式。全过程不改动 profile 的依赖与 bundle 列表，菜单里可一键恢复。详见「启动失败自动恢复」。 |
 **边界与取舍**：
 
@@ -53,7 +52,7 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 - 已安装可从终端使用的 Node.js（建议 Node 22 或与当前 dsh 兼容的 LTS）及 npm。Deepseek Harness Launcher 不携带 Node 运行时。
 - 网络仅在首次安装/更新 `@deepseek-ai/dsh` 或检查/下载 Deepseek Harness Launcher 更新时需要。
 
-首次启动会先执行安装。App 内置锁定版本的 `dsh-runtime/package-lock.json`，安装走低内存的 `npm ci`（复放已解析的依赖集，峰值约 0.3~0.6GB，避免裸 `npm install` 全量解析导致的 ~3GB 内存占用）：
+首次启动会先执行安装。App 内置锁定版本的 `dsh-runtime/package-lock.json`，安装走低内存的 `npm ci`（复放已解析的依赖集，峰值约 0.3-0.6GB，避免裸 `npm install` 全量解析导致的约 3GB 内存占用）：
 
 ```sh
 npm ci --prefix ~/.dsh/runtime --no-audit --no-fund --prefer-offline \
@@ -146,7 +145,7 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 - 默认值：**后台检查常开**、每 6 小时一轮、启动后约 8 秒做首次后台检查；自动检测插件更新开启；就绪后自动打开浏览器开启；开机启动关闭；全局快捷键启用，默认 `⌃⌥D`。检查间隔最小为 1 小时。
 - 后台检查常开、只提示、从不静默安装：启动器自更新与 dsh 更新都不需要「要不要自动检查」的开关（历史上那个开关一关，启动器自检就只剩手动点击，用户会以为根本没有后台定时任务）。发现新版本时，菜单栏图标右上角亮一枚**蓝色向上箭头角标**（右下角红胶囊仍是会话未读），鼠标悬停能看到是「启动器可更新 vX」还是「Deepseek Harness 可更新 vX」；点击菜单里的对应条目才进入更新流程。
 - **两条链路都能「忽略」（跳过此版本）**：启动器自更新与 dsh 更新的弹窗第三个按钮都是「跳过此版本 / 取消跳过此版本」。跳过之后那一版**不再进菜单标题、也不亮角标**，菜单行回到普通的「检测启动器（DHL）更新」/「检查 Deepseek Harness 更新」，不会一直占着最显眼的位置；记录在偏好里跨重启保留，远端出了更高的版本会重新提示。想装回来随时点菜单那两行：弹窗照旧打开，按钮变成「取消跳过此版本」。真正装上之后跳过记录自动清空。
-- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.9`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
+- 更新源固定为本仓库 GitHub Releases（`sljdxde/deepseek-harness-launcher`），用户无需填写地址。当前 App 版本为 `0.3.10-1.1`，仅当 Release 版本号更高时提示；Release 正文（Markdown）会在更新弹窗中渲染为带标题、列表与行内样式的更新说明。
 - 启动器自身更新和 `@deepseek-ai/dsh` 更新是两条独立链路；dsh 检查同时读 **npm 的 dist-tags**（`latest` / `next` / `beta` / `alpha`）与 **GitHub Release**（`deepseek-ai/deepseek-harness` 的 `releases.atom`；匿名 API 常被 `403` 限流，feed 更稳），取两者中最新、且确实已发布到 npm 的版本，只提示，不修改 npm 缓存。菜单标题与弹窗都会标出通道（正式版 / 候选版 / 公测版 / 内测版）——npm 的 `latest` 常常落后于刚发的 Release，只看它就会漏掉新版本。
 - dsh 是否更新完全由用户决定：弹窗提供「更新到 vX / 稍后 / 跳过此版本」，预发布版本默认按钮是「稍后」（回车不会顺手装上内测版），弹窗里显示来源（GitHub Release / npm 某标签）、发布日期与 Release 正文（Markdown 渲染）。**找到多个比当前新的版本时，弹窗给出「更新到：[版本下拉]」**：一次列全（最新的在最上、最多 10 条、默认选最新一版），切换版本会同步刷新该版本的来源、日期与说明，按钮也跟着变成「更新到 vX」；只有一个候选时退化为原先的单版本提示。「跳过此版本」跳过的是当前下拉里选中的那一版，并会被记住：那一版不再进菜单标题、也不亮角标（菜单行回到普通标题），手动点菜单仍会弹窗（里面可「取消跳过此版本」）。自动检查只改菜单标题与菜单栏角标，**从不静默安装**。
 - dsh 的 Release tag 形如 `dsh-v0.1.7-alpha.1`，与 npm 版本 `0.1.7-alpha.1` 视为同一版本；同版本优先采用 GitHub Release（带发布日期与更新说明）。只有出现在 npm 版本列表里的候选才会被推荐——镜像滞后时 GitHub 刚发的 tag 还没上 npm，直接安装会 `ETARGET` 失败，这类候选会被忽略并写进日志。
@@ -282,7 +281,9 @@ dsh 就绪后启动器会做一次静态兼容性扫描（`Sources/PluginCompati
 ## 开发与测试
 
 - 要求：macOS 12+，Xcode Command Line Tools（`swiftc`）。Universal 2 交叉编译只需 CLT。
-- `./scripts/test.sh` 会执行插件语法与归档删除测试、启动器辅助逻辑测试、更新检查测试、安装替换测试，并构建与检查两个 Universal 2 App。
+- `./scripts/test.sh` 仍是全量回归：插件语法与归档删除测试、启动器辅助逻辑测试、更新检查测试、安装替换测试，并构建与检查两个 Universal 2 App。
+- `./scripts/test.sh --fast` 跳过打包（universal 构建、安装器、DMG），只跑断言，用于迭代。
+- `./scripts/test-one.sh <suite>` 只跑一条 Swift 测试，suite 名即 `scripts/test-<suite>.swift` 的中段（如 `update-support`、`status-badge`）。
 
 ```sh
 ./scripts/test.sh

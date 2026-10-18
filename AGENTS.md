@@ -38,17 +38,19 @@
    `Sources/UpdateSupport.swift` 的 `compareVersions` 已实现该语义并有测试
    覆盖（`scripts/test-update-support.swift`），因此开发/提测构建不会被提示
    「更新」到更旧的正式版，而提测机器会在正式发布后收到升级提示。
-3. **版本号落点**（改动版本时必须全部同步）：
-   - `Resources/Info.plist` → `CFBundleShortVersionString`
-   - `Resources/InstallerInfo.plist` → `CFBundleShortVersionString`（与上者一致，
-     `scripts/test.sh` 会校验格式规则与一致性，不锁定具体版本号）
-   - `README.md` 的「当前 App 版本」说明（正式发布时更新，测试期不必跟随）
+3. **版本号落点**（四处必须同步）：`Resources/Info.plist`、
+   `Resources/InstallerInfo.plist` 的 `CFBundleShortVersionString`，以及
+   `README.md` / `README.en.md` 的「当前 App 版本」那句。
+   **统一走 `./scripts/bump-version.sh <版本>`**：它按上面的正则校验格式、一次改完
+   四处、末尾读回四处一致；不要手改（历史上 v0.2.0 就是漏了一处，用户反复收到
+   更新提示）。`scripts/test.sh` 另会校验 plist 的格式规则与两处一致，不锁定具体
+   版本号。
 
 ## 版本周期流程
 
 每个发布周期（目标版本 `x.y.z`）按以下步骤执行：
 
-1. **开始开发**：把两处 plist 版本号改为 `x.y.z-1.1-SNAPSHOT` 并提交，开始开发。
+1. **开始开发**：`./scripts/bump-version.sh x.y.z-1.1-SNAPSHOT` 后提交，开始开发。
 2. **本地自测（每轮提交代码前必须完成）**：
    - `./scripts/test.sh` 全量回归必须全绿（含 JS/Swift 语法检查、单元测试、
      双架构构建、安装器构建、DMG 生成与校验）；
@@ -57,11 +59,11 @@
      功能；
    - 改动涉及安装/升级/卸载路径时，额外验证 `scripts/uninstall.sh` 与应用内
      更新流程。
-3. **提测**：开发完成后，版本号去掉 SNAPSHOT 改为 `x.y.z-1.1`，重新跑通
+3. **提测**：开发完成后 `./scripts/bump-version.sh x.y.z-1.1`（去掉 SNAPSHOT），重新跑通
    `./scripts/test.sh` 并完成本地安装验证，提交推送；该构建即为提测候选。
-4. **被打回**：把版本号递增为 `x.y.z-1.2-SNAPSHOT` 回到第 2 步；修复后重复
+4. **被打回**：`./scripts/bump-version.sh x.y.z-1.2-SNAPSHOT` 回到第 2 步；修复后重复
    第 3 步，提测 `x.y.z-1.2`。以此类推。
-5. **正式发布**：测试通过后，版本号改为 `x.y.z`，跑通全量回归并提交推送，
+5. **正式发布**：测试通过后 `./scripts/bump-version.sh x.y.z`，跑通全量回归并提交推送，
    打标签 `vx.y.z` 推送；`release.yml` 会先校验 tag 与包内版本一致，再在回归
    门禁与内存门禁通过后自动发布 GitHub Release 并上传 DMG。
 6. **发布收尾**：在 GitHub Release 页面把说明替换为 Markdown 更新日志
@@ -69,10 +71,17 @@
 
 ## 其他约定
 
-- 全量回归入口：`./scripts/test.sh`，提交前必须全绿。回归运行**不得停止真实
+- 全量回归入口：`./scripts/test.sh`，提交前必须全绿。迭代时不要整跑：`./scripts/test.sh
+  --fast` 跳过打包三件套（universal 构建 / 安装器 / DMG），`./scripts/test-one.sh
+  <suite>` 只跑一条 swift 测试（依赖列表从 test.sh 里原样取，别手抄）。`--fast` 只用于
+  迭代，提交前仍是完整 `./scripts/test.sh`。回归运行**不得停止真实
   安装的 launcher/dsh**：安装器测试通过 `DHL_STOP_SCOPE=target` 把进程停止
   限定在临时目标目录内，禁止移除该作用域限制（否则每次跑测试都会杀掉用户
   正在使用的菜单栏应用，表现为"自动退出"）。
+- 代码导航：`Sources/main.swift` 是唯一的 App 主类（约 2700 行），按 `// MARK:` 分区
+  （生命周期 / 菜单 / dsh 更新 / 启动器自更新 / 运行环境安装 / 会话提醒与角标）。
+  定位先 `rg -n '^// MARK' Sources/main.swift`，别从头翻。评审规则见
+  `CODING_STANDARDS.md`（给 review 阶段用，实现阶段不必读）。
 - 浏览器标签复用：禁止用 AppleScript 做"发现浏览器"的第一步（会触发自动化
   授权）；仅允许在 lsof 连接检测确认浏览器已连接后，用 AppleScript 精确选中
   标签，且必须保留降级路径（详见 `Sources/BrowserConnectionSupport.swift` 与

@@ -33,6 +33,7 @@ Deepseek Harness Launcher is a third, macOS-only option: a Swift/AppKit menu-bar
 | 11 | **Scheduled update checks (dsh + launcher)** | A background timer — always on, one round every 6 hours by default, the first 8 seconds after launch — checks npm for a newer `@deepseek-ai/dsh` and this repository's Releases for a newer launcher, without blocking startup. When something is available the menu row says so and the menu-bar icon gains a blue up-arrow badge, so you see it without opening the menu. |
 | 12 | **Built-in plugin manager** | Adds a Plugin Manager entry to the Harness Web sidebar with Installed and Marketplace pages: view/uninstall installed plugins, update them to the latest version, or **ignore one version** (the badge stops nagging; a higher remote version brings it back), and browse the `awesome-dsh-plugin` marketplace (categories, search, sort by stars/downloads, one-click install). Install/uninstall run through `dsh plugin --profile web`, bootstrapping pnpm via corepack when missing. |
 | 13 | **Session-completion notifications** (menu rows are labelled with the **workspace name**, resolved from the session id via `~/.dsh/storages/workspace.json`, falling back to the session title and then a short id; clicking one row marks only that row read and jumps to its session/workspace while the others stay clickable; `清除完成提醒` still clears everything) | A bundled server plugin watches root-session `turn/end` events (the same approach as the community dsh-notify plugin, but without OS popups). When a turn finishes, the menu-bar icon gains a Foxmail-style red unread badge (**counted per session**: a session that ends several turns still counts once) and the menu lists recent completions/errors (time · title · outcome); clicking an entry opens Harness and clears the badge, or clear everything with one click. **Interrupted turns and queued messages do not raise the badge**: a turn cancelled by the user (`reason.kind === 'user'`, which is what a queued/interjected message leaves behind) is not a completion, and every `turn/start` posts a `resumed` record that retracts that session's unread reminder — so a session that runs again right after finishing never shows as "finished". **Seeing it counts as reading it**: having that session open in the visible, focused Harness tab also retracts its reminder (the injected client piggybacks "which session am I showing" on its 750 ms poll; the plugin posts a `viewed` record only when that target changes, and a turn that ends in front of the user is followed by one immediately), so the badge drops within one poll cycle. A background or unfocused tab never reports, so it cannot pin other sessions as read. |
+| 14 | **Automatic recovery from startup failures** | When a plugin crashes dsh (an import failure ends the whole process with exit code 1), the launcher identifies that plugin from stderr, disables its row through its own `--patch` overlay, and restarts automatically; when the culprit cannot be identified or the isolation budget runs out, it falls back to a safe mode that loads only dsh's bundled plugins. The profile's dependencies and bundle list are never modified, and the menu offers a one-click restore. See "Startup failure auto-recovery". |
 
 **Scope and trade-offs**
 
@@ -56,7 +57,7 @@ npm ci --prefix ~/.dsh/runtime --no-audit --no-fund --prefer-offline \
   --registry <registry>
 ```
 
-The app ships a pinned `dsh-runtime/package-lock.json`, so the install replays an already-resolved dependency set through `npm ci` (peak RSS around 0.3–0.6 GB instead of the ~3 GB a bare `npm install` can need while re-resolving the whole graph).
+The app ships a pinned `dsh-runtime/package-lock.json`, so the install replays an already-resolved dependency set through `npm ci` (peak RSS around 0.3-0.6 GB instead of the about 3 GB a bare `npm install` can need while re-resolving the whole graph).
 
 Updating dsh never re-resolves the graph either: when a new app version ships a newer lockfile, the launcher **asks once** on start (**Update runtime** / **Later**). Choosing **Later** does not block anything — the current runtime starts as usual and the menu keeps an **Update runtime to vX (bundled)** entry you can use at any time. The launcher never starts an install just because an update exists.
 
@@ -130,6 +131,7 @@ Default builds are ad-hoc signed for local use. A directly downloaded copy can s
 
 | Menu item | Shortcut | Behavior |
 |---|---|---|
+| Session completions (N unread) | - | Only present while there are unread completion reminders: lists recently finished sessions (time · title · outcome), and clicking one entry selects the existing Harness tab, opens that session, and clears the badge; `清除完成提醒` clears them all |
 | Open Deepseek Harness | Command-O | Opens Harness at the current port; starts it if needed. |
 | Global quick summon | Control-Option-D | Summons Harness from any app; customizable in Settings. |
 | Port: xxxx | - | Shows the active port, or Not Running. |
@@ -144,7 +146,7 @@ Default builds are ad-hoc signed for local use. A directly downloaded copy can s
 - Defaults: **background checks are always on**, one round every 6 hours, with the first one about 8 seconds after launch; plugin-update checking is on; opening the browser is enabled; launch at login is disabled; the global shortcut is enabled as Control-Option-D. The minimum interval is one hour.
 - **Both update paths can be ignored ("skip this version")**: the launcher's own dialog and the dsh dialog both end with *Skip this version* / *Un-skip this version*. A skipped version never titles the menu and never raises the badge — the row returns to its plain "检测启动器（DHL）更新" / "检查 Deepseek Harness 更新" text instead of parking a long title in the most prominent slot. The record persists across restarts, a higher remote version notifies again, and clicking the row still opens the dialog where the skip can be undone.
 - Background checks are always on, report only, and never install silently: neither the launcher's own update check nor the dsh check has an on/off switch (historically that switch turned the launcher check into a manual-only click, which made it look like there was no background timer at all while dsh checks kept running). When a newer version exists, the menu-bar icon shows a **blue up-arrow badge** at its top-right (the red pill at the bottom-right is still the unread-session count) and hovering explains whether it is the launcher or Deepseek Harness that can be updated; the actual update still starts only from the menu entry.
-- The update source is fixed to GitHub Releases for `sljdxde/deepseek-harness-launcher`; users never need to enter a URL. The current App version is `0.3.9`, and only a higher Release version is offered.
+- The update source is fixed to GitHub Releases for `sljdxde/deepseek-harness-launcher`; users never need to enter a URL. The current App version is `0.3.10-1.1`, and only a higher Release version is offered.
 - Launcher updates and `@deepseek-ai/dsh` updates are separate paths. The dsh check reads both the **npm dist-tags** (`latest` / `next` / `beta` / `alpha`) and the **GitHub Releases feed** for `deepseek-ai/deepseek-harness` (the anonymous API is rate-limited with `403` often enough that the Atom feed is the reliable source), then takes the newest version that is actually published to npm. It only reports; it never modifies the npm cache. Menu and dialog both label the channel (stable / release candidate / beta / alpha), because npm's `latest` regularly lags behind a freshly published Release.
 - Whether dsh is updated is entirely the user's call: the dialog offers **Update to vX / Later / Skip this version**, a pre-release makes *Later* the default button (pressing Return never installs an alpha by accident), and the dialog shows the source (GitHub Release or an npm tag), the publish date, and the Markdown release notes. **When more than one version is newer than the installed one, the dialog adds an "Update to: [version ▾]" picker** listing them all (newest first, at most 10, newest preselected); switching refreshes that version's source, date and notes, and retitles the button to *Update to vX*. With a single candidate the dialog stays the plain one-version prompt. *Skip this version* skips the selected entry and is remembered: that version no longer titles the menu or raises the badge (the row goes back to its plain title), while a manual menu click still opens the dialog, where the skip can be undone. Automatic checks only update the menu title and the menu-bar badge — they **never install silently**.
 - A dsh Release tag looks like `dsh-v0.1.7-alpha.1` and is treated as the same version as the npm version `0.1.7-alpha.1`; GitHub Releases are preferred when both name a version (they carry the date and notes). Only candidates present in npm's version list are offered: when a mirror lags, a Release tag that npm does not serve yet would fail with `ETARGET`, so it is dropped and explained in the log.
@@ -173,6 +175,24 @@ Once dsh is ready the launcher runs one static scan (`Sources/PluginCompatibilit
 - **At most one warning per plugin**: a plugin with two bad peers merges both reasons into one line (`；`-joined), so the log counts plugins ("检测到 2 个插件兼容性问题：…") and the alerts appear once per plugin.
 - **Actions.** User plugins can be upgraded or uninstalled; bundled ones only offer a dsh restart. "忽略" applies to the current launcher run only, and every issue is written to the log as well.
 
+### Startup failure auto-recovery (plugin isolation and safe mode)
+
+The design goal: **clicking Restart must always get Harness back up.** dsh imports plugins one by one at startup, so a single throwing plugin ends the whole process with exit code 1 — and the plugin manager's HTTP API dies with it. Recovery therefore has to live in the launcher and must not depend on dsh staying alive.
+
+- **Only an exit during startup triggers it.** Runtime crashes have many causes; disabling plugins then is usually pointless and silently weakens the user's environment.
+- **Attribution.** The launcher reads this launch's stderr for `failed to import loader entry <row> (<package>)`, `Cannot find package '<package>'`, and the `node_modules` paths of `ERR_MODULE_NOT_FOUND`. When the parentheses hold a shared layer such as `@deepseek-ai/*`, it falls back to a **row-id reverse lookup** (the `# == <package>` blocks from `--dump-config` show which bundle owns that row) — the most common breakage after a dsh upgrade is "the module imports fine, the plugin init blows up", and that error names neither a package nor a path.
+- **Static pre-check before launch.** Before the first dsh launch, third-party bundles in the profile are scanned for relative imports and any bundle missing a file is **pre-isolated** (reason recorded as "启动前预检"), so "upstream only generates the shared module at packaging time" heals without a failed launch first. The single `--dump-config` cost is paid only when a problem is actually found.
+- **Bisect.** When nothing is named, the third-party entries in `dsh.profile.bundles` are disabled one at a time and retried. A failed exit takes seconds, so a few quick retries buy **disabling only the truly broken one** instead of disabling everything. Safe mode is reached only after every third-party bundle is disabled and startup still fails (a one-click dsh version rollback is offered first, and safe mode is entered only if that is not possible).
+- **Isolation.** It runs `dsh web --dump-config` once (compose only, no server, works even on a broken profile) to get the top-level row ids that package **contributes itself**, falling back to the `insert:` block of its bundled `cordis.patch.yml`; it then writes two files into `~/Library/Application Support/Deepseek Harness Launcher/`: `plugin-isolation.json` (state) and `plugin-isolation.yml` (overlay). The next launch passes `- id: <row>` + `disabled: true` through the highest-priority `--patch` and relaunches automatically.
+  - The profile's `dependencies` and `dsh.profile.bundles` are left alone (both are reconciled back by `dsh plugin`), no plugin file is deleted, and pnpm is not run.
+  - Bundled plugins (`@deepseek-ai/dsh-base`, `dsh-web-app`, and the launcher's own three plugins) are never isolated.
+  - One startup session isolates at most 3 plugins in a row, so a profile is never stripped clean plugin by plugin.
+- **Safe mode.** When the culprit cannot be identified, or the isolation budget is exhausted, the launcher switches to `dsh --profile rescue --from-default-profile web` — only dsh's own base + web-app (about 16K, no network), with no third-party plugin loaded. The archive/notification/plugin-update probes stay off so the user is not buried in "plugin unavailable" alerts.
+- **Recovery.** The menu shows "已隔离 N 个插件…（点按恢复）" or "退出安全模式并重启". Deleting `plugin-isolation.json` also resets it manually.
+- **Known cost.** An isolated plugin that injects a service into another bundle makes those rows fail again as `pending (waiting for services: …)`; the ladder then isolates the next suspect or moves to safe mode.
+- **When the dsh rollback snapshot is released.** A responding home page is not success — that recreates "dsh updated to X, every plugin fails to load, the UI says it worked, and there is no way back". The snapshot is pruned only after the bundled-plugin probe succeeds (the plugin tree really loaded).
+- **Known gap.** After a dsh upgrade the launcher runs `dsh plugin update --latest`, which goes through dsh's own CLI and does **not** use the peer gate or the post-install check above; its fallback is the launch pre-check, the bisect, and the compatibility scan warnings.
+
 ### Uninstall
 
 ```sh
@@ -198,6 +218,21 @@ Older DSH/DHL installations can leave `~/.dsh/profiles/web/node_modules/dsh-arch
 
 ---
 
+## Session notifications plugin (DSHSessionNotify)
+
+- Location: `Plugins/DSHSessionNotify/` (a server plugin in `lib/index.js` plus its `cordis.patch.yml` injection), shipped together with the archive plugin's patch.
+- Detection is the same approach as the community `dsh-notify` plugin: it subscribes to Harness's server-side `session/event` stream and records a completion when a root (non-subagent) session finishes a turn. The difference is that it never raises OS notifications — it exposes the events to the launcher for polling through `GET /dsh-session-notify/events?after=<seq>` (127.0.0.1 only, nothing leaves the machine).
+- Presentation: the menu-bar icon gains a Foxmail-style red unread badge (capped at `99+`, counted per session), and a **Session completions** group at the top of the menu lists the latest 6 entries (time · session title · outcome: completed / failed / aborted / token limit / blocked). Clicking an entry selects the already-open Harness tab and opens that session; `清除完成提醒` clears everything. On first use macOS asks whether the launcher may control Chrome/Safari; refusing, an external instance, or an unsupported browser degrades to the previous open/bring-forward behavior.
+- Queued-message (interjection) case: when the user sends another message while a turn is running, that turn may end as `aborted` (`reason.kind === 'user'`), or may `completed` and immediately start the next one — neither should raise a "session finished" badge. The plugin therefore **does not record interrupted turns** and writes a `resumed` record on every `turn/start`; the launcher retracts that session's unread reminder on `resumed` (recording and retracting inside the same poll is a net zero, so the badge never flashes). `aborted` events from older plugin versions or older buffers are treated as retractions on the launcher side too.
+- Menu rows are labelled with the **workspace name** (reverse-resolved from the sessionIds of each workspace in `~/.dsh/storages/workspace.json`), falling back to the session title and then a short id — no more a column of indistinguishable `session-` entries.
+- Clicking an entry marks **only that entry** read and jumps to its session (switching the workspace with it); the other entries stay listed and remain clickable. Unread rows are shown in semibold, and only `清除完成提醒` clears everything.
+- **Seeing it counts as reading it**: having that session open in the current tab (page visible and focused) also counts as read — the injected client's 750 ms poll reports which session it is showing, the plugin writes a `viewed` record only when that target changes, and the launcher retracts the unread state for it (within one poll cycle, about 3.5 seconds). A session that ends in front of the user is followed immediately by a `viewed` record, so its badge never lights up; a background or unfocused tab does not report, so it cannot pin other sessions as read.
+- Semantics: the badge counts **unread sessions**, not turns — a long session writes one `turn/end` per turn, and counting events produces obviously wrong numbers such as "1 session, 9 unread"; a later completion of the same session overwrites the previous entry (only the newest time and reason survive). The number drops to zero only when the user clicks, opens that session in Harness, or clears the reminders; a dsh restart (sequence numbers reset) does not double-count. Harness keeps only the latest 50 events, so the memory cost is negligible.
+- Title: the session's own `session/title` event is preferred; titles are generated asynchronously, so an early turn without a title falls back to the conversation id with the `session-` prefix stripped (8 characters), which keeps every entry from reading `session-`.
+- Availability: only when the launcher itself started or restarted dsh (with the bundled patch). When an external Harness is reused, or dsh was not restarted after an upgrade, the route does not exist — the launcher degrades silently and logs it once, the menu-bar badge simply never appears, and nothing else is affected.
+
+---
+
 ## Icons
 
 - **App icon:** a circular white background with the black creature, derived from `deepseek-harness-desktop`. Assets are under `Resources/icons/candidate-upstream/`; `DHL.iconset/` contains all standard sizes and `DHL.icns` is the packaged result.
@@ -210,22 +245,22 @@ Older DSH/DHL installations can leave `~/.dsh/profiles/web/node_modules/dsh-arch
 ## Architecture
 
 ```text
-+-----------------------------------------------+
-| Deepseek Harness Launcher menu-bar App        |
-| state icon · settings · updating · login item  |
-+-------------------------+---------------------+
-                          | ~/.dsh/runtime/node_modules/.bin/dsh
-                          | web --patch <cordis.patch.yml>
-                          | --no-open --port 3080..3099
-                          v
-+-----------------------------------------------+
-| dsh web profile (localhost, background server) |
-|   |- Harness UI  http://127.0.0.1:<port>/      |
-|   `- Archive plugin /dsh-archive-manager/*     |
-+-------------------------+---------------------+
-                          |
-                          v
-              System default browser opens Harness
+┌────────────────────────────────────────────────┐
+│ Deepseek Harness Launcher menu-bar app         │
+│   state icon · settings · updates · login      │
+└───────────────┬────────────────────────────────┘
+                │ launch: ~/.dsh/runtime/node_modules/.bin/dsh
+                │         web --patch <cordis.patch.yml>
+                │         --no-open --port 3080..3099
+                ▼
+┌────────────────────────────────────────────────┐
+│ dsh web profile (localhost, background)        │
+│   ├─ Harness UI  http://127.0.0.1:<port>/      │
+│   └─ Archive plugin  /dsh-archive-manager/*    │   <- injected by this project
+└────────────────────────────────────────────────┘
+                │
+                ▼
+       The system default browser opens Harness
 ```
 
 The dsh data directory is `~/.dsh`; dsh manages its profiles, sessions, and archives.
@@ -241,7 +276,9 @@ The dsh data directory is `~/.dsh`; dsh manages its profiles, sessions, and arch
 ## Development and tests
 
 - Requirements: macOS 12+ and Xcode Command Line Tools (`swiftc`). CLT is enough to cross-compile Universal 2 binaries.
-- `./scripts/test.sh` runs plugin syntax and archive-deletion tests, launcher helper tests, update-check tests, installer-replacement tests, and builds/checks both Universal 2 Apps.
+- `./scripts/test.sh` is still the full regression: plugin syntax and archive-deletion tests, launcher helper tests, update-check tests, installer-replacement tests, and builds/checks both Universal 2 Apps.
+- `./scripts/test.sh --fast` skips packaging (Universal 2 build, installer, DMG) and runs only the assertions, for quick iteration.
+- `./scripts/test-one.sh <suite>` runs a single Swift test, where `<suite>` is the middle of `scripts/test-<suite>.swift` (e.g. `update-support`, `status-badge`).
 
 ```sh
 ./scripts/test.sh
