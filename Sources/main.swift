@@ -176,7 +176,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var runtimeMenuRow: MenuRowView?
     // 会话完成提醒：内置 dsh-session-notify 插件把主会话 turn/end 记录在
     // Harness 侧，启动器轮询后以菜单栏角标（Foxmail 风格）+ 菜单区块呈现。
-    private let sessionNotifyStore = SessionNotifyStore()
+    // 未读落 UserDefaults：启动器重启（更新 / 崩溃 / 手动重开）不该把角标清零。
+    private let sessionNotifyStore = SessionNotifyStore(defaults: .standard)
     private var sessionNotifyMenuItems: [NSMenuItem] = []
     /// 菜单是否正在屏幕上（追踪中）；追踪期间不增删条目，只记下待重建。
     private var sessionNotifyMenuOpen = false
@@ -589,7 +590,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !sessionId.isEmpty,
               let url = URL(string: "http://127.0.0.1:\(port)/dsh-session-notify/open"),
               let body = try? JSONSerialization.data(withJSONObject: ["sessionId": sessionId]) else { return }
-        ServiceProbe.postJSON(at: url, body: body, timeout: 1)
+        ServiceProbe.postJSON(at: url, body: body, timeout: 1) { [weak self] status in
+            // 命令通道不存在（外部 Harness / 旧插件）时页面不会换会话：只有首页被
+            // 打开。记一行日志，别让「点了没跳」没有任何痕迹。
+            guard let self, status != 200 else { return }
+            let reason = status.map { "HTTP \($0)" } ?? "无响应"
+            self.appendLogString("会话跳转请求未被页面接收（\(reason)），当前 Harness 未加载 dsh-session-notify 内置插件\n")
+        }
     }
 
     private func openBrowserWhenReadyIfNeeded() {
@@ -739,6 +746,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if let browser {
             let browserName = browser.localizedName ?? "浏览器"
+            // 同一 bundle 可能同时跑着多个实例（例如 agent-browser 这类自动化浏览器
+            // 常驻）。AppleScript 只把事件发给最近启动的那个实例，而 lsof 命中的可能
+            // 是另一个——这时标签定位必然「找不到」，必须把实例数写进日志。
+            let instanceCount = NSRunningApplication
+                .runningApplications(withBundleIdentifier: browser.bundleIdentifier ?? "")
+                .count
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 // 重启接管：先关旧标签页，再新开页面（关不掉也照常新开，
                 // 保证重启后总有一张可用的新页面）。
@@ -751,8 +764,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         switch close {
                         case .closed:
                             self.appendLogString("dsh 已重启，已关闭 \(browserName) 的旧 Harness 标签页，正在打开新页面\n")
-                        case .missing:
-                            self.appendLogString("dsh 已重启，未找到 \(browserName) 的旧 Harness 标签页，直接打开新页面\n")
+                        case .missing(let tabs):
+                            let detail = BrowserConnectionSupport.tabReportDetail(
+                                tabs: tabs, instanceCount: instanceCount, browserName: browserName
+                            )
+                            self.appendLogString("dsh 已重启，未找到 \(browserName) 的旧 Harness 标签页\(detail)，直接打开新页面\n")
                         case .unsupported:
                             self.appendLogString("dsh 已重启，\(browserName) 不支持标签关闭，直接打开新页面（旧标签可手动关闭）\n")
                         case .failed(let message):
@@ -772,9 +788,14 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     switch result {
                     case .focused:
                         self.appendLogString("检测到 \(browserName) 已连接 Harness 端口 \(port)，已定位并前置 Harness 标签页\n")
-                    case .missing:
+                    case .missing(let tabs):
                         _ = browser.activate(options: [.activateIgnoringOtherApps])
-                        self.appendLogString("检测到 \(browserName) 已连接 Harness 端口 \(port)，但未找到匹配标签页；已前置浏览器\n")
+                        // 标签没选中时浏览器只会被前置到它自己当前的那个标签，用户看到
+                        // 的是「点了没跳」——把实际地址与实例数写进日志，失败才有据可查。
+                        let detail = BrowserConnectionSupport.tabReportDetail(
+                            tabs: tabs, instanceCount: instanceCount, browserName: browserName
+                        )
+                        self.appendLogString("检测到 \(browserName) 已连接 Harness 端口 \(port)，但未找到匹配标签页\(detail)；已前置浏览器\n")
                     case .unsupported:
                         _ = browser.activate(options: [.activateIgnoringOtherApps])
                         self.appendLogString("检测到 \(browserName) 已连接 Harness 端口 \(port)，该浏览器不支持标签定位；已前置浏览器\n")
@@ -2563,6 +2584,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func monitorSessionNotify(port: Int) {
         sessionNotifyLoopID += 1
         sessionNotifyFailureStreak = 0
+        // 未读是落盘的：重启启动器后把上次没看的提醒接回来，并在日志里留痕
+        // （否则「角标突然归零」又会像这次一样查不出原因）。
+        if sessionNotifyStore.unreadCount > 0 {
+            appendLogString("启动器重启，已恢复 \(sessionNotifyStore.unreadCount) 个会话的未读提醒\n")
+        }
         pollSessionNotify(port: port, loopID: sessionNotifyLoopID)
     }
 

@@ -52,11 +52,39 @@ struct BrowserConnectionTests {
         precondition(BrowserConnectionSupport.presenceActive("{}") == nil)
         precondition(BrowserConnectionSupport.presenceActive("not json") == nil)
         precondition(BrowserConnectionSupport.presenceActive(nil) == nil)
+        // 标签匹配必须按 origin（scheme://host:port）判定，而不是整串 URL：
+        // 入口 URL 带 `?token=…`、客户端可能留 `#` 片段或尾斜杠，整串比较会
+        // 一个标签都匹配不上（实测日志里 9 次点击 9 次「未找到匹配标签页」）。
+        // 标签定位失败的日志明细：单实例且没有任何标签时保持原文案不变；
+        // 有标签 / 多实例时把「实际地址」「实例数」写进去，否则无法判断是
+        // 页面没开、还是 AppleScript 寻址到了另一个浏览器实例。
+        precondition(BrowserConnectionSupport.tabReportDetail(tabs: [], instanceCount: 1, browserName: "Google Chrome") == "")
+        let detailOne = BrowserConnectionSupport.tabReportDetail(
+            tabs: ["http://127.0.0.1:3080/?token=t"], instanceCount: 1, browserName: "Google Chrome"
+        )
+        precondition(detailOne.contains("1 个已开标签"))
+        precondition(detailOne.contains("http://127.0.0.1:3080/?token=t"))
+        precondition(!detailOne.contains("实例在运行"))
+        let detailMulti = BrowserConnectionSupport.tabReportDetail(
+            tabs: ["chrome://newtab/"], instanceCount: 2, browserName: "Google Chrome"
+        )
+        precondition(detailMulti.contains("2 个实例在运行"))
+        precondition(detailMulti.contains("最近启动"))
+        // 长 URL 截断、只列前 limit 条，避免日志被几十个标签号塞满。
+        let many = (0..<9).map { _ in String(repeating: "x", count: 300) }
+        let detailMany = BrowserConnectionSupport.tabReportDetail(tabs: many, instanceCount: 1, browserName: "Safari")
+        precondition(detailMany.contains("9 个已开标签"))
+        precondition(detailMany.contains("…"))
+        precondition(detailMany.components(separatedBy: " | ").count == 4)
         let harnessURL = URL(string: "http://127.0.0.1:3080/")!
-        let localURLs = BrowserAutomationSupport.localHarnessURLStrings(for: harnessURL)
-        precondition(localURLs.contains("http://127.0.0.1:3080/"))
-        precondition(localURLs.contains("http://localhost:3080/"))
-        precondition(localURLs.contains("http://[::1]:3080/"))
+        let origins = BrowserAutomationSupport.harnessOrigins(for: harnessURL)
+        precondition(origins == ["http://127.0.0.1:3080", "http://localhost:3080", "http://[::1]:3080"])
+        // 带 token 的入口 URL 得到同一组 origin（query 不参与判定）。
+        let tokenURL = URL(string: "http://127.0.0.1:3080/?token=abc123")!
+        precondition(BrowserAutomationSupport.harnessOrigins(for: tokenURL) == origins)
+        // 非 loopback（外部/公网 Harness）保留自己的 authority，不做 127.0.0.1 折叠。
+        let remoteURL = URL(string: "https://harness.example.com/web/")!
+        precondition(BrowserAutomationSupport.harnessOrigins(for: remoteURL) == ["https://harness.example.com"])
         let chromeScript = BrowserAutomationSupport.browserFocusScript(
             bundleIdentifier: "com.google.Chrome", targetURL: harnessURL
         )
@@ -64,30 +92,52 @@ struct BrowserConnectionTests {
         precondition(chromeScript?.contains("active tab index") == true)
         precondition(chromeScript?.contains("repeat with tabIndex from") == true)
         precondition(chromeScript?.contains("index of browserTab") == false)
-        precondition(chromeScript?.contains("http://localhost:3080/") == true)
+        precondition(chromeScript?.contains("http://localhost:3080") == true)
+        // origin 判定：精确相等或紧跟 / ? # 才算命中，`:30800` 不会被误判。
+        precondition(chromeScript?.contains("on matchesHarnessOrigin(tabURL, origins)") == true)
+        precondition(chromeScript?.contains("tabURL starts with (base & \"?\")") == true)
+        precondition(chromeScript?.contains("tabURL starts with (base & \"#\")") == true)
+        precondition(chromeScript?.contains("my matchesHarnessOrigin(tabURL, targetOrigins)") == true)
+        precondition(chromeScript?.contains("targetURLs contains") == false)
+        // 匹配失败要把浏览器自己的标签页地址带回来（诊断证据）。
+        precondition(chromeScript?.contains("return \"missing\" & linefeed & tabReport") == true)
         precondition(NSAppleScript(source: chromeScript!) != nil)
         let safariScript = BrowserAutomationSupport.browserFocusScript(
             bundleIdentifier: "com.apple.Safari", targetURL: harnessURL
         )
         precondition(safariScript?.contains("current tab of browserWindow") == true)
+        precondition(safariScript?.contains("on matchesHarnessOrigin(tabURL, origins)") == true)
         precondition(NSAppleScript(source: safariScript!) != nil)
         precondition(BrowserAutomationSupport.browserFocusScript(bundleIdentifier: "org.mozilla.firefox", targetURL: harnessURL) == nil)
+        // 脚本返回值的解析：missing 之后每行一个标签页地址，超过上限只留前几条。
+        precondition(BrowserAutomationSupport.parseTabScriptResult("found") == .focused)
+        precondition(BrowserAutomationSupport.parseTabScriptResult("closed") == .closed)
+        precondition(BrowserAutomationSupport.parseTabScriptResult("missing\n") == .missing(tabs: []))
+        precondition(
+            BrowserAutomationSupport.parseTabScriptResult("missing\nhttp://127.0.0.1:3080/?token=t\nhttps://example.com/\n")
+                == .missing(tabs: ["http://127.0.0.1:3080/?token=t", "https://example.com/"])
+        )
+        let manyTabs = "missing\n" + (0..<9).map { "https://example.com/\($0)\n" }.joined()
+        precondition(BrowserAutomationSupport.parseTabScriptResult(manyTabs)
+            == .missing(tabs: (0..<BrowserAutomationSupport.missingTabReportLimit).map { "https://example.com/\($0)" }))
+        precondition(BrowserAutomationSupport.parseTabScriptResult("") != .focused)
+        precondition(BrowserAutomationSupport.parseTabScriptResult("garbage") == .failed("浏览器自动化未返回预期结果"))
         // 重启接管：先关闭匹配的旧标签页（dsh 会话全部持久化，仅刷新看
         // 不出重启发生过），再由启动器新开入口页面。匹配仍按去 query 的
-        // 本地地址进行，任何 token 打开的标签都能匹配。
+        // origin 进行，任何 token 打开的标签都能关掉。
         let entryURL = URL(string: "http://127.0.0.1:3080/?token=newtoken")!
         let chromeClose = BrowserAutomationSupport.browserCloseScript(
             bundleIdentifier: "com.google.Chrome", targetURL: entryURL
         )
         precondition(chromeClose?.contains("close browserTab") == true)
         precondition(chromeClose?.contains("return \"closed\"") == true)
-        precondition(chromeClose?.contains("http://localhost:3080/?token=newtoken") == false) // 匹配地址不带 token
+        precondition(chromeClose?.contains("newtoken") == false) // 匹配地址不带 token
         precondition(BrowserAutomationSupport.browserFocusScript(bundleIdentifier: "com.google.Chrome", targetURL: harnessURL)?.contains("close browserTab") == false)
         let safariClose = BrowserAutomationSupport.browserCloseScript(
             bundleIdentifier: "com.apple.Safari", targetURL: entryURL
         )
         precondition(safariClose?.contains("close browserTab") == true)
         precondition(NSAppleScript(source: chromeClose!) != nil)
-        print("PASS: connection direction, exact port, IPv6, deduplication, malformed records, helper ancestry, cycles, non-browser exclusion, existing-browser reuse, intent throttle, page URL, browser automation scripts, restart tab close")
+        print("PASS: connection direction, exact port, IPv6, deduplication, malformed records, helper ancestry, cycles, non-browser exclusion, existing-browser reuse, intent throttle, page URL, origin-based tab matching, missing-tab report, restart tab close")
     }
 }

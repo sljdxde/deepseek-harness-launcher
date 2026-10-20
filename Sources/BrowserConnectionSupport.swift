@@ -94,4 +94,29 @@ enum BrowserConnectionSupport {
         }
         return nil
     }
+
+    /// 标签定位失败时的日志明细（含括号，无信息时为空串）。
+    ///
+    /// 两个事实必须一起写进日志，否则「未找到匹配标签页」无法定位是哪一种：
+    /// - 浏览器自己报出来的标签地址：说明 AppleScript 实际寻址到了哪个实例；
+    /// - 同 bundle 的实例数：macOS 只把 AppleScript 事件发给**最近启动**的那个实例，
+    ///   而 `lsof` 找到的可能是另一个（例如 agent-browser 这类自动化浏览器常驻时）。
+    ///   多实例下「未找到标签页」并不等于页面没开，而是页面在不被寻址的实例里。
+    static func tabReportDetail(
+        tabs: [String],
+        instanceCount: Int,
+        browserName: String,
+        limit: Int = 4
+    ) -> String {
+        var details: [String] = []
+        if !tabs.isEmpty {
+            let shown = tabs.prefix(limit).map { $0.count > 160 ? String($0.prefix(160)) + "…" : $0 }
+            details.append("\(tabs.count) 个已开标签：" + shown.joined(separator: " | "))
+        }
+        if instanceCount > 1 {
+            details.append("\(browserName) 有 \(instanceCount) 个实例在运行，AppleScript 只会发给最近启动的那个，页面可能在另一个实例里")
+        }
+        guard !details.isEmpty else { return "" }
+        return "（" + details.joined(separator: "；") + "）"
+    }
 }

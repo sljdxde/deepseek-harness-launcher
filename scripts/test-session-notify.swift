@@ -225,6 +225,30 @@ struct SessionNotifyChecks {
         precondition(SessionNotifyStore.badgeText(for: 7) == "7")
         precondition(SessionNotifyStore.badgeText(for: 100) == "99+")
 
+        // 7. 未读要扛住启动器重启：未读只在内存里时，一次重启（更新 / 崩溃 / 重开）
+        // 角标数字就凭空归零，用户看到的是「提醒突然没了」——dsh 自己重启时未读是
+        // 保留的，启动器重启没理由更差。用独立 suite 模拟「重启后新建实例」。
+        let suiteName = "test-session-notify-\(UUID().uuidString)"
+        let suite = UserDefaults(suiteName: suiteName)!
+        let persisted = SessionNotifyStore(capacity: 50, defaults: suite)
+        _ = persisted.ingest(SessionNotifyFeed(bootId: "b1", seq: 2, items: [event(1, session: "p1"), event(2, session: "p2")]))
+        precondition(persisted.unreadCount == 2)
+        let relaunched = SessionNotifyStore(capacity: 50, defaults: suite)
+        precondition(relaunched.unreadCount == 2)                       // 重启后角标还在
+        precondition(relaunched.recent(limit: 2).map(\.sessionId) == ["p2", "p1"]) // 菜单行也能重画
+        relaunched.markRead("p2")                                        // 点开一条：只清一条并落盘
+        precondition(SessionNotifyStore(capacity: 50, defaults: suite).unreadCount == 1)
+        relaunched.markAllRead()                                         // 清除：落盘内容一起清掉
+        precondition(SessionNotifyStore(capacity: 50, defaults: suite).unreadCount == 0)
+        precondition(suite.data(forKey: SessionNotifyStore.defaultStorageKey) == nil)
+        // 未读被 viewed 撤掉时也要落盘，否则重启后又会复活。
+        let revocation = SessionNotifyStore(capacity: 50, defaults: suite)
+        _ = revocation.ingest(SessionNotifyFeed(bootId: "b2", seq: 1, items: [event(1, session: "p3")]))
+        precondition(revocation.unreadCount == 1)
+        _ = revocation.ingest(SessionNotifyFeed(bootId: "b2", seq: 2, items: [event(2, session: "p3", kind: "viewed")]))
+        precondition(SessionNotifyStore(capacity: 50, defaults: suite).unreadCount == 0)
+        suite.removePersistentDomain(forName: suiteName)
+
         print("session notify checks passed")
     }
 }

@@ -80,9 +80,54 @@ final class SessionNotifyStore {
     private var bootId: String?
     private var lastSeq = 0
     private let capacity: Int
+    /// 未读集合落盘用的存储。传 nil 表示纯内存（单测与旧行为）。
+    private let defaults: UserDefaults?
+    private let storageKey: String
 
-    init(capacity: Int = 50) {
+    /// 落盘键：存的是**未读**事件的完整记录，不只是 id——启动器重启后菜单还要
+    /// 能把这几行画出来，只有 id 的话标题/时间/结果都丢了。
+    static let defaultStorageKey = "sessionNotify.unreadEvents.v1"
+
+    init(
+        capacity: Int = 50,
+        defaults: UserDefaults? = nil,
+        storageKey: String = SessionNotifyStore.defaultStorageKey
+    ) {
         self.capacity = max(capacity, 1)
+        self.defaults = defaults
+        self.storageKey = storageKey
+        restoreUnread()
+    }
+
+    /// 启动器重启（更新、崩溃、手动重开）后把上次的未读接回来。以前未读只在内存里，
+    /// 一次重启角标数字就凭空归零——用户看到的就是「提醒突然没了」。dsh 自己重启时
+    /// 未读是保留的（游标归零但集合不动），启动器重启没有理由更差。
+    private func restoreUnread() {
+        guard let data = defaults?.data(forKey: storageKey),
+              let restored = try? JSONDecoder().decode([SessionNotifyEvent].self, from: data),
+              !restored.isEmpty else { return }
+        var seen = Set<String>()
+        for event in restored.suffix(capacity) where seen.insert(event.sessionId).inserted {
+            events.append(event)
+            unread.insert(event.sessionId)
+        }
+    }
+
+    /// 只在未读集合真的变了以后写盘，避免每次轮询都落一次盘。
+    private func persistUnreadIfChanged(_ before: Set<String>) {
+        guard unread != before else { return }
+        persistUnread()
+    }
+
+    private func persistUnread() {
+        guard let defaults else { return }
+        let unreadEvents = events.filter { unread.contains($0.sessionId) }
+        if unreadEvents.isEmpty {
+            defaults.removeObject(forKey: storageKey)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(unreadEvents) else { return }
+        defaults.set(data, forKey: storageKey)
     }
 
     /// 未读会话数：角标与菜单标题都用它。单位是**会话**而不是 turn——一个长
@@ -92,7 +137,8 @@ final class SessionNotifyStore {
 
     /// 某条会话的完成提醒已读（点开它时只清这一条，不动其它条目）。
     func markRead(_ sessionId: String) {
-        unread.remove(sessionId)
+        guard unread.remove(sessionId) != nil else { return }
+        persistUnread()
     }
 
     /// Sequence cursor for the next poll (`?after=`).
@@ -154,6 +200,7 @@ final class SessionNotifyStore {
         var completions: [SessionNotifyEvent] = []
         var resumed: [SessionNotifyEvent] = []
         var viewed: [String] = []
+        let unreadBefore = unread
         for event in fresh {
             // 同一会话只保留最近一条；随后按事件先后决定「记一条未读」还是「撤掉」。
             events.removeAll { $0.sessionId == event.sessionId }
@@ -179,12 +226,14 @@ final class SessionNotifyStore {
         if events.count > capacity { events.removeFirst(events.count - capacity) }
         // 未读只统计"列表里还看得见"的会话：列表被容量挤掉的行不该继续挂在角标上。
         unread.formIntersection(events.map(\.sessionId))
+        persistUnreadIfChanged(unreadBefore)
         return SessionNotifyIngest(completions: completions, resumed: resumed, viewed: viewed)
     }
 
     func markAllRead() {
         events.removeAll()
         unread.removeAll()
+        persistUnread()
     }
 
     // MARK: - Presentation
