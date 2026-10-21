@@ -422,3 +422,15 @@ test('会话正在用户眼前收尾：completion 后紧跟一条 viewed，角�
   const after = (await call('/dsh-session-notify/events')).json().items;
   assert.deepEqual(after.slice(-1).map(item => [item.kind, item.sessionId]), [['completion', 'session-away']]);
 });
+
+test('health 探针：注册在 webServer effect 里、零依赖、dispose 后消失', async () => {
+  const harness = makeHarness();
+  apply(harness.ctx);
+  // 启动器只凭这条路由判「插件是否随 dsh 加载」，它必须存在且不触碰任何会话状态。
+  const response = await harness.call('/dsh-session-notify/health');
+  assert.equal(response.status, 200);
+  assert.equal(response.json().ok, true);
+  assert.equal(typeof response.json().bootId, 'string');
+  harness.dispose();
+  assert.equal(harness.hasRoute('/dsh-session-notify/health'), false);
+});

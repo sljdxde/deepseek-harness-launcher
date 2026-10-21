@@ -2215,25 +2215,76 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         schedulePluginCompatibilityCheck(port: port)
     }
 
-    private func monitorArchivePlugin(port: Int, attempts: Int = 0) {
-        guard attempts < 40 else {
-            appendLogString("归档增强插件不可用，\(LauncherBrand.fullName) 将以基础模式运行\n")
-            return
-        }
-        guard let url = URL(string: "http://127.0.0.1:\(port)/dsh-archive-manager/archives") else { return }
-        ServiceProbe.body(at: url) { [weak self] body in
-            guard let self, self.state != .stopped else { return }
-            if body?.contains("items") == true {
-                self.appendLogString("归档增强插件已就绪\n")
-                // 走到这里才算「dsh 的插件树加载完成」：新版 dsh 的首启到此刻才算成功。
-                if DSHRuntimeSupport.hasRollback() {
-                    DSHRuntimeSupport.discardRollback()
-                    self.appendLogString("dsh 插件树加载完成，已清理回退快照\n")
+    /// 内置插件探针用的同步 HTTP 探测（区分状态码；超时/连接失败返回 nil）。
+    private static func probeResponse(_ url: URL, _ timeout: TimeInterval) -> (status: Int?, body: String?)? {
+        ServiceProbe.response(at: url, timeout: timeout)
+    }
+
+    /// 归档插件是否已随当前 dsh 加载。
+    ///
+    /// 首选零成本的 `/health`（重接口 `/archives` 要读会话日志、本机实测 2.3s，拿它当
+    /// 就绪探针就是误报来源）。只有 health **确定性 404**（老版本插件没有这条路由，或
+    /// profile 里的同名插件不是启动器内置的那份）才回退到 `/archives` 再确认一次。
+    /// 超时 / 非 404 一律 `.unknown`——证据不足不等于「没加载」。
+    private static func archivePluginVerdict(port: Int, policy: BuiltinPluginProbePolicy) -> BuiltinPluginVerdict {
+        let health = BuiltinPluginReadiness.inspect(
+            port: port,
+            path: "/dsh-archive-manager/health",
+            marker: "\"ok\":true",
+            policy: policy,
+            fetch: probeResponse
+        )
+        guard health == .missing else { return health }
+        return BuiltinPluginReadiness.inspect(
+            port: port,
+            path: "/dsh-archive-manager/archives",
+            marker: "items",
+            policy: .compatibilityFallback,
+            fetch: probeResponse
+        )
+    }
+
+    /// 会话通知插件是否已随当前 dsh 加载（同样只认确定性 404）。
+    private static func sessionNotifyPluginVerdict(port: Int, policy: BuiltinPluginProbePolicy) -> BuiltinPluginVerdict {
+        let health = BuiltinPluginReadiness.inspect(
+            port: port,
+            path: "/dsh-session-notify/health",
+            marker: "\"ok\":true",
+            policy: policy,
+            fetch: probeResponse
+        )
+        guard health == .missing else { return health }
+        return BuiltinPluginReadiness.inspect(
+            port: port,
+            path: "/dsh-session-notify/events",
+            marker: "bootId",
+            policy: .compatibilityFallback,
+            fetch: probeResponse
+        )
+    }
+
+    /// 等归档插件的路由探针就绪。预算见 BuiltinPluginProbePolicy.readiness。
+    /// 只有 `.ready` 才清理回退快照；`.missing`（确定 404）才记「基础模式」；
+    /// `.unknown` 只是这次没探到确定结论，不打扰用户。
+    /// 放到后台线程用同步探针，不占主线程。
+    private func monitorArchivePlugin(port: Int) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let verdict = Self.archivePluginVerdict(port: port, policy: .readiness)
+            DispatchQueue.main.async {
+                guard let self, self.state != .stopped, self.selectedPort == port else { return }
+                switch verdict {
+                case .ready:
+                    self.appendLogString("归档增强插件已就绪\n")
+                    // 走到这里才算「dsh 的插件树加载完成」：新版 dsh 的首启到此刻才算成功。
+                    if DSHRuntimeSupport.hasRollback() {
+                        DSHRuntimeSupport.discardRollback()
+                        self.appendLogString("dsh 插件树加载完成，已清理回退快照\n")
+                    }
+                case .missing:
+                    self.appendLogString("归档增强插件未随当前 dsh 加载（接口 404），\(LauncherBrand.fullName) 将以基础模式运行\n")
+                case .unknown:
+                    self.appendLogString("归档增强插件就绪探测未拿到确定结果（超时/非 404），本次不判未加载\n")
                 }
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                self.monitorArchivePlugin(port: port, attempts: attempts + 1)
             }
         }
     }
@@ -2244,9 +2295,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let items: [PluginCompatibilitySupport.InstalledPlugin]
     }
 
-    /// 启动/重启进入 running 后调度一次兼容性检查。dsh 加载插件需要几秒
-    /// （monitorArchivePlugin 同样给了约 10 秒窗口），过早探测会把「还在
-    /// 加载」误判成「未加载」。代际号随停止/重启递增，旧调度自动失效。
+    /// 启动/重启进入 running 后调度一次兼容性检查。dsh 加载插件需要几秒，
+    /// 这里只是「先等一会儿再开始复核」；超时/慢响应不会被当成问题（见
+    /// BuiltinPluginVerdict：只有确定性 404 才告警）。代际号随停止/重启递增，
+    /// 旧调度自动失效。
     private func schedulePluginCompatibilityCheck(port: Int) {
         pluginCompatGeneration += 1
         let generation = pluginCompatGeneration
@@ -2260,41 +2312,72 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func runPluginCompatibilityCheck(port: Int) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            var issues: [PluginCompatibilitySupport.Issue] = []
+            guard let self else { return }
             let home = FileManager.default.homeDirectoryForCurrentUser
             // 插件管理器可用才说明这是启动器管理的实例（内置插件已链接）；
             // 外部/旧实例没有这些路由，静默跳过，避免把正常降级误报成问题。
-            if let body = ServiceProbe.body(at: URL(string: "http://127.0.0.1:\(port)/dsh-plugin-manager/installed") ?? URL(fileURLWithPath: "/"), timeout: 3),
-               let data = body.data(using: .utf8),
-               let list = try? JSONDecoder().decode(PluginInstalledList.self, from: data) {
-                issues += PluginCompatibilitySupport.scan(
+            guard let body = ServiceProbe.body(
+                at: URL(string: "http://127.0.0.1:\(port)/dsh-plugin-manager/installed") ?? URL(fileURLWithPath: "/"),
+                timeout: 3
+            ), let data = body.data(using: .utf8),
+               let list = try? JSONDecoder().decode(PluginInstalledList.self, from: data) else { return }
+
+            // 用户插件的 peer 判定是纯静态的，先呈现，不必等内置插件探针。
+            self.presentCompatibilityIssues(
+                PluginCompatibilitySupport.scan(
                     plugins: list.items,
                     profileModules: home.appendingPathComponent(".dsh/profiles/web/node_modules"),
                     runtimeModules: home.appendingPathComponent(".dsh/runtime/node_modules")
-                )
-                // 内置插件接口缺失 = 没随当前 dsh 加载（启动时补链接也救不回
-                // 的场景：dsh 版本演进移除了插件依赖的 API）。
-                let archiveOK = (ServiceProbe.body(at: URL(string: "http://127.0.0.1:\(port)/dsh-archive-manager/archives") ?? URL(fileURLWithPath: "/"), timeout: 3) ?? "").contains("items")
-                if !archiveOK {
-                    issues.append(PluginCompatibilitySupport.Issue(
-                        pluginName: "dsh-archive-manager", version: nil,
-                        reason: "归档管理插件未随当前 dsh 加载", userPlugin: false
-                    ))
-                }
-                let notifyOK = (ServiceProbe.body(at: URL(string: "http://127.0.0.1:\(port)/dsh-session-notify/events") ?? URL(fileURLWithPath: "/"), timeout: 3) ?? "").contains("bootId")
-                if !notifyOK {
-                    issues.append(PluginCompatibilitySupport.Issue(
-                        pluginName: "dsh-session-notify", version: nil,
-                        reason: "会话完成通知插件未随当前 dsh 加载", userPlugin: false
-                    ))
+                ),
+                port: port
+            )
+
+            // 内置插件「是否随当前 dsh 加载」只认确定性 404（BuiltinPluginVerdict）：
+            // 超时、5xx、200 但响应形状不符都只是证据不足，记一条日志就够，
+            // 绝不拿去弹「插件可能与当前 dsh 版本不兼容」——那种弹窗会让用户
+            // 白重启、白升级，下一次启动照样弹。
+            var builtinIssues: [PluginCompatibilitySupport.Issue] = []
+            var undetermined: [String] = []
+            switch Self.archivePluginVerdict(port: port, policy: .compatibility) {
+            case .ready:
+                break
+            case .missing:
+                builtinIssues.append(PluginCompatibilitySupport.Issue(
+                    pluginName: "dsh-archive-manager", version: nil,
+                    reason: "归档管理插件未随当前 dsh 加载", userPlugin: false
+                ))
+            case .unknown:
+                undetermined.append("归档管理插件就绪探测未拿到确定结果（超时/非 404），本次不告警\n")
+            }
+            switch Self.sessionNotifyPluginVerdict(port: port, policy: .compatibility) {
+            case .ready:
+                break
+            case .missing:
+                builtinIssues.append(PluginCompatibilitySupport.Issue(
+                    pluginName: "dsh-session-notify", version: nil,
+                    reason: "会话完成通知插件未随当前 dsh 加载", userPlugin: false
+                ))
+            case .unknown:
+                undetermined.append("会话完成通知插件就绪探测未拿到确定结果（超时/非 404），本次不告警\n")
+            }
+            if !undetermined.isEmpty {
+                DispatchQueue.main.async {
+                    // 外层已把 self 解包成强引用（启动器与 App 同生命周期），这里直接判状态。
+                    guard self.state == .running, self.selectedPort == port else { return }
+                    undetermined.forEach { self.appendLogString($0) }
                 }
             }
-            guard !issues.isEmpty else { return }
-            DispatchQueue.main.async {
-                guard let self, self.state == .running, self.selectedPort == port else { return }
-                self.appendLogString("检测到 \(issues.count) 个插件兼容性问题：\(issues.map(\.pluginName).joined(separator: "、"))\n")
-                self.presentPluginIssues(issues)
-            }
+            self.presentCompatibilityIssues(builtinIssues, port: port)
+        }
+    }
+
+    /// 把一批兼容性问题交给弹窗流程（日志 + 逐个弹窗）。
+    private func presentCompatibilityIssues(_ issues: [PluginCompatibilitySupport.Issue], port: Int) {
+        guard !issues.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.state == .running, self.selectedPort == port else { return }
+            self.appendLogString("检测到 \(issues.count) 个插件兼容性问题：\(issues.map(\.pluginName).joined(separator: "、"))\n")
+            self.presentPluginIssues(issues)
         }
     }
 

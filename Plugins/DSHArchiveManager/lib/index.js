@@ -406,6 +406,15 @@ export function apply(ctx) {
   ctx.inject(['webServer', 'sessionPersistence', 'workspaceRegistry'], host => {
     host.effect(() => {
       const disposers = [
+        // 零成本的存活探针：启动器只凭它判「插件是否随 dsh 加载」，不再拿
+        // /archives（重接口：要遍历会话列表、读日志折叠标题，本机实测 2.3s，
+        // 冷启更久）当就绪探针——重接口一慢就会被误报成「插件与 dsh 不兼容」。
+        // 它和重接口注册在同一个 effect 里：能探到 health 就说明路由真的挂上了，
+        // 而不是「包在、但没接进 dsh」。
+        host.webServer.register({ kind: 'exact', path: '/dsh-archive-manager/health', handler: (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          json(res, 200, { ok: true });
+        }}),
         // 删除工作区前先把其会话转入归档区（见 patchWorkspaceDeleteForAutoArchive）。
         patchWorkspaceDeleteForAutoArchive(host.workspaceRegistry),
         host.webServer.register({ kind: 'exact', path: '/dsh-archive-manager/archives', handler: async (req, res) => {

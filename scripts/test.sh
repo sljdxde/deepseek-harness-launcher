@@ -39,6 +39,7 @@ node --check "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/running-session-ids.test.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/legacy-session-headers.test.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/workspace-auto-archive.test.js"
+node --test "$ROOT/Plugins/DSHArchiveManager/test/health-route.test.js"
 rg -q 'patchWorkspaceDeleteForAutoArchive' "$ROOT/Plugins/DSHArchiveManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/client/client.js"
@@ -178,6 +179,24 @@ rg -Fq 'func menuDidClose' "$ROOT/Sources/main.swift"
 rg -Fq 'mergeByPlugin' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
 rg -Fq 'resolvePeerVersion' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
 rg -Fq 'shellProvidedClientPeers' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
+# 内置插件的「是否随 dsh 加载」只认确定性证据：
+# - 探针走零成本的 /health（重接口 /archives 要读会话日志，本机热启 2.3s、冷启 >4s，
+#   拿它当就绪探针就是这次误报的来源）；
+# - 判定分 ready/missing/unknown 三态，只有整段窗口最后一次响应是 404 才算 missing
+#   并允许弹窗；超时、5xx、200 但形状不符都只能是 unknown（证据不足），不许告警。
+# 旧实现「1.5s 超时轮询 40 次」/「web 就绪 12s 后单次 3s 判定」把「慢」误报成
+# 「插件未随当前 dsh 加载」，重启 dsh 也不会好，因为下次启动照样慢。
+rg -Fq 'BuiltinPluginProbePolicy' "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/scripts/test-launcher-support.swift"
+rg -Fq 'BuiltinPluginVerdict' "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/Sources/main.swift" "$ROOT/scripts/test-launcher-support.swift"
+rg -Fq 'BuiltinPluginReadiness.inspect' "$ROOT/Sources/main.swift" "$ROOT/scripts/test-launcher-support.swift"
+rg -Fq 'policy: .readiness' "$ROOT/Sources/main.swift"
+rg -Fq 'policy: .compatibility' "$ROOT/Sources/main.swift"
+rg -Fq "'/dsh-archive-manager/health'" "$ROOT/Plugins/DSHArchiveManager/lib/index.js" "$ROOT/Sources/main.swift"
+rg -Fq "'/dsh-session-notify/health'" "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Sources/main.swift"
+# 兜底判定必须保留：health 404 时回退到重接口再确认一次（老版本插件 / 同名第三方插件），
+# 不能让「没有 /health」直接等于「没加载」。
+rg -Fq 'compatibilityFallback' "$ROOT/Sources/main.swift" "$ROOT/Sources/ArchivePluginSupport.swift"
+rg -Fq 'case .unknown:' "$ROOT/Sources/main.swift"
 # 原子写要自己收干净临时文件：进程被杀留下的 <file>.<pid>.tmp 会一直躺在 profile 里
 # （实测 ~/.dsh/profiles/web/.plugin-updates.json.11800.tmp），写同一个文件前收掉
 # 「进程已不在」的那些；活进程（EPERM）的一律保留。

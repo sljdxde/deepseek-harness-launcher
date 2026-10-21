@@ -329,6 +329,16 @@ export function apply(ctx) {
 
   ctx.inject(['webServer'], host => {
     host.effect(() => {
+      // 零成本的存活探针（启动器据此判「插件是否随 dsh 加载」，不再拿 /events
+      // 当就绪探针；两者注册在同一个 effect 里，能探到 health 就说明路由已挂上）。
+      const healthDispose = host.webServer.register({
+        kind: 'exact',
+        path: '/dsh-session-notify/health',
+        handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          json(res, { ok: true, bootId });
+        },
+      });
       const dispose = host.webServer.register({
         kind: 'exact',
         path: '/dsh-session-notify/events',
@@ -442,7 +452,7 @@ export function apply(ctx) {
           }
         },
       });
-      return () => [dispose, openDispose, listDispose, claimDispose, ackDispose, presenceDispose, byeDispose].forEach(disposeRoute => disposeRoute());
+      return () => [healthDispose, dispose, openDispose, listDispose, claimDispose, ackDispose, presenceDispose, byeDispose].forEach(disposeRoute => disposeRoute());
     }, 'dsh-session-notify: routes');
   });
 }
