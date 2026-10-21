@@ -1,6 +1,15 @@
 import AppKit
 import Foundation
 
+/// 设置窗口。
+///
+/// 版式约定（改这里之前先读）：
+/// - 窗口标题只写「启动器设置」，内容顶部的是**应用名**，不再重复一遍窗口标题；
+/// - 所有间距走 4/8/12/16/20 的倍数，卡片内部统一「标题 14 / 行距 8 / 底部 14」；
+/// - 三张卡片用同一个标签列宽（`labelColumn`），勾选项与标签行左缘对齐；
+/// - 卡片不写死高度，高度由内容顶出来——写死高度正是「控件溢出卡片、底部按钮被
+///   挤出可视区」这类问题的来源（scripts/test-settings-window.swift 会断言子视图
+///   必须落在卡片内）。
 final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     private let onSave: () -> Bool
     private let onCheckNow: () -> Void
@@ -19,20 +28,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let intervalField = NSTextField(string: "6")
     private let intervalStepper = NSStepper()
     private var hotkeyLabel: NSTextField?
-    /// 设置卡片里“标签列”与“控件列”的分界，三张卡片共用同一个列，保证纵向对齐。
-    private let controlColumn: CGFloat = 132
+
+    private let windowWidth: CGFloat = 520
+    private let cardInset: CGFloat = 16
+    /// 标签列宽：卡片左内缩 16 + 这一列，就是控件列的起点，三张卡片共用。
+    private let labelColumn: CGFloat = 80
 
     init(onSave: @escaping () -> Bool, onCheckNow: @escaping () -> Void) {
         self.onSave = onSave
         self.onCheckNow = onCheckNow
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 580),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: 420),
+            styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Deepseek Harness Launcher 设置"
+        window.title = "启动器设置"
         window.isReleasedWhenClosed = false
         // Keep a native glass surface without letting the desktop bleed
         // through and wash out the settings text.
@@ -40,7 +52,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         window.backgroundColor = .windowBackgroundColor
         window.titlebarAppearsTransparent = false
         window.titleVisibility = .visible
-        window.minSize = NSSize(width: 560, height: 520)
         window.delegate = nil
         super.init(window: window)
         window.delegate = self
@@ -66,6 +77,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    // MARK: - 布局
+
     private func configureWindow() {
         guard let window else { return }
         guard let contentView = window.contentView else { return }
@@ -87,111 +100,165 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             visualEffect.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
         ])
 
-        let root = NSView()
-        root.translatesAutoresizingMaskIntoConstraints = false
-        visualEffect.addSubview(root)
-        NSLayoutConstraint.activate([
-            root.leadingAnchor.constraint(equalTo: visualEffect.leadingAnchor, constant: 30),
-            root.trailingAnchor.constraint(equalTo: visualEffect.trailingAnchor, constant: -30),
-            root.topAnchor.constraint(equalTo: visualEffect.topAnchor, constant: 24),
-            root.bottomAnchor.constraint(equalTo: visualEffect.bottomAnchor, constant: -22)
-        ])
-
-        let title = makeLabel("Deepseek Harness Launcher 设置", size: 21, weight: .semibold, color: .labelColor)
-        let subtitle = makeLabel("启动器偏好与更新", size: 13, weight: .regular, color: .secondaryLabelColor)
-        root.addSubview(title)
-        root.addSubview(subtitle)
-        NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            title.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor),
-            title.topAnchor.constraint(equalTo: root.topAnchor),
-            subtitle.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            subtitle.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor),
-            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4)
-        ])
-
-        let startupCard = makeCard()
-        let startupTitle = makeLabel("启动行为", size: 13, weight: .semibold, color: .secondaryLabelColor)
-        startupCard.addSubview(startupTitle)
-        configureCheckbox(openBrowserCheckbox)
-        configureCheckbox(launchAtLoginCheckbox)
-        startupCard.addSubview(openBrowserCheckbox)
-        startupCard.addSubview(launchAtLoginCheckbox)
-        NSLayoutConstraint.activate([
-            startupTitle.leadingAnchor.constraint(equalTo: startupCard.leadingAnchor, constant: 16),
-            startupTitle.topAnchor.constraint(equalTo: startupCard.topAnchor, constant: 12),
-            openBrowserCheckbox.leadingAnchor.constraint(equalTo: startupCard.leadingAnchor, constant: 16),
-            openBrowserCheckbox.topAnchor.constraint(equalTo: startupTitle.bottomAnchor, constant: 8),
-            openBrowserCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: startupCard.trailingAnchor, constant: -16),
-            launchAtLoginCheckbox.leadingAnchor.constraint(equalTo: startupCard.leadingAnchor, constant: 16),
-            launchAtLoginCheckbox.topAnchor.constraint(equalTo: openBrowserCheckbox.bottomAnchor, constant: 4),
-            launchAtLoginCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: startupCard.trailingAnchor, constant: -16),
-            startupCard.heightAnchor.constraint(equalToConstant: 104)
-        ])
-        root.addSubview(startupCard)
-        NSLayoutConstraint.activate([
-            startupCard.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            startupCard.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            startupCard.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 20)
-        ])
-
-        let hotkeyCard = makeCard()
-        let hotkeyTitle = makeLabel("快捷呼出", size: 13, weight: .semibold, color: .secondaryLabelColor)
-        hotkeyCard.addSubview(hotkeyTitle)
-        configureCheckbox(globalHotKeyCheckbox)
         globalHotKeyCheckbox.target = self
         globalHotKeyCheckbox.action = #selector(globalHotKeyCheckChanged)
-        hotkeyCard.addSubview(globalHotKeyCheckbox)
-        let hotkeyDescLabel = makeLabel("快捷键", size: 13, weight: .regular, color: .labelColor)
-        hotkeyLabel = hotkeyDescLabel
-        hotkeyCard.addSubview(hotkeyDescLabel)
-        globalHotKeyButton.translatesAutoresizingMaskIntoConstraints = false
+
+        let column = makeColumn([
+            makeHeader(),
+            makeCard(
+                title: "启动行为",
+                rows: [configureCheckbox(openBrowserCheckbox), configureCheckbox(launchAtLoginCheckbox)]
+            ),
+            makeCard(
+                title: "快捷呼出",
+                rows: [configureCheckbox(globalHotKeyCheckbox), makeHotKeyRow()]
+            ),
+            makeCard(
+                title: "更新检查",
+                rows: [configureCheckbox(pluginUpdateCheckbox), makeIntervalRow(), makeSourceRow(), makeUpdateHint()],
+                accessory: makeCheckNowButton()
+            ),
+            makeFooter()
+        ])
+        column.translatesAutoresizingMaskIntoConstraints = false
+
+        let root = NSView()
+        root.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(column)
+        visualEffect.addSubview(root)
+        NSLayoutConstraint.activate([
+            root.leadingAnchor.constraint(equalTo: visualEffect.leadingAnchor, constant: 24),
+            root.trailingAnchor.constraint(equalTo: visualEffect.trailingAnchor, constant: -24),
+            root.topAnchor.constraint(equalTo: visualEffect.topAnchor, constant: 20),
+            root.bottomAnchor.constraint(equalTo: visualEffect.bottomAnchor, constant: -18),
+            column.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            column.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            column.topAnchor.constraint(equalTo: root.topAnchor),
+            column.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            root.widthAnchor.constraint(equalToConstant: windowWidth - 48)
+        ])
+
+        // 高度由内容决定：窗口不写死高度，卡片也不写死高度，避免「底部一片空白」
+        // 和「控件被挤出卡片」两种相反的毛病。
+        contentView.layoutSubtreeIfNeeded()
+        let height = ceil(contentView.fittingSize.height)
+        window.setContentSize(NSSize(width: windowWidth, height: height))
+
+        window.standardWindowButton(.closeButton)?.toolTip = "关闭设置"
+        window.standardWindowButton(.miniaturizeButton)?.isEnabled = true
+    }
+
+    /// 顶部：应用图标 + 应用名 + 一句用途说明。窗口标题已经写着「启动器设置」，
+    /// 这里不再重复同一句话。
+    private func makeHeader() -> NSView {
+        let name = makeLabel("Deepseek Harness Launcher", size: 15, weight: .semibold, color: .labelColor)
+        let subtitle = makeLabel("偏好与更新", size: 12, weight: .regular, color: .secondaryLabelColor)
+        let titles = NSStackView(views: [name, subtitle])
+        titles.orientation = .vertical
+        titles.alignment = .leading
+        titles.spacing = 2
+
+        var views: [NSView] = []
+        if let icon = NSApp.applicationIconImage {
+            let iconView = NSImageView()
+            iconView.image = icon
+            iconView.imageScaling = .scaleProportionallyUpOrDown
+            iconView.translatesAutoresizingMaskIntoConstraints = false
+            iconView.widthAnchor.constraint(equalToConstant: 36).isActive = true
+            iconView.heightAnchor.constraint(equalToConstant: 36).isActive = true
+            views.append(iconView)
+        }
+        views.append(titles)
+
+        let header = NSStackView(views: views)
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 10
+        return header
+    }
+
+    /// 纵向栈：把每个子视图的宽度钉到栈宽。
+    ///
+    /// 不能只靠 `alignment = .width`：纵向栈的 `.width` 对「行」这种本身有内在宽度的
+    /// 视图不生效，结果是整列按内容宽度收缩、右对齐——卡片会缩成一条，勾选框也会
+    /// 缩进到卡片中间。所以宽度用显式约束钉住，子视图内部的横向栈靠 spacer 吃掉余量。
+    private func makeColumn(_ views: [NSView], spacing: CGFloat = 12) -> NSStackView {
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = spacing
+        for view in views {
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        return stack
+    }
+
+    /// 一张卡片：小标题 + 若干行。高度由内容顶出来，不写死。
+    private func makeCard(title: String, rows: [NSView], accessory: NSView? = nil) -> NSView {
+        let card = NSView()
+        card.wantsLayer = true
+        card.layer?.cornerRadius = 10
+        card.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.78).cgColor
+        card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.7).cgColor
+        card.layer?.borderWidth = 1
+
+        let headerLabel = makeLabel(title, size: 12, weight: .semibold, color: .secondaryLabelColor)
+        headerLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        let headerSpacer = NSView()
+        headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let header = NSStackView(views: [headerLabel, headerSpacer] + (accessory.map { [$0] } ?? []))
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 8
+
+        let stack = makeColumn([header] + rows, spacing: 8)
+        stack.setCustomSpacing(12, after: header)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: cardInset),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -cardInset),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14)
+        ])
+        return card
+    }
+
+    /// 「标签 + 控件」行：标签列宽固定，控件列因此在三张卡片里纵向对齐。
+    private func makeRow(label: String, controls: [NSView], captureLabel: ((NSTextField) -> Void)? = nil) -> NSView {
+        let titleLabel = makeLabel(label, size: 13, weight: .regular, color: .labelColor)
+        titleLabel.widthAnchor.constraint(equalToConstant: labelColumn - 8).isActive = true
+        titleLabel.setContentHuggingPriority(.required, for: .horizontal)
+        captureLabel?(titleLabel)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [titleLabel] + controls + [spacer])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        return row
+    }
+
+    private func makeHotKeyRow() -> NSView {
         globalHotKeyButton.target = self
         globalHotKeyButton.action = #selector(toggleHotKeyRecording)
         globalHotKeyButton.bezelStyle = .rounded
         globalHotKeyButton.controlSize = .regular
-        globalHotKeyButton.widthAnchor.constraint(equalToConstant: 132).isActive = true
-        hotkeyCard.addSubview(globalHotKeyButton)
-        NSLayoutConstraint.activate([
-            hotkeyTitle.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: 16),
-            hotkeyTitle.topAnchor.constraint(equalTo: hotkeyCard.topAnchor, constant: 12),
-            globalHotKeyCheckbox.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: 16),
-            globalHotKeyCheckbox.topAnchor.constraint(equalTo: hotkeyTitle.bottomAnchor, constant: 8),
-            globalHotKeyCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: hotkeyCard.trailingAnchor, constant: -16),
-            hotkeyDescLabel.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: 16),
-            hotkeyDescLabel.centerYAnchor.constraint(equalTo: globalHotKeyButton.centerYAnchor),
-            globalHotKeyButton.leadingAnchor.constraint(equalTo: hotkeyCard.leadingAnchor, constant: controlColumn),
-            globalHotKeyButton.topAnchor.constraint(equalTo: globalHotKeyCheckbox.bottomAnchor, constant: 7),
-            globalHotKeyButton.heightAnchor.constraint(equalToConstant: 26),
-            hotkeyCard.heightAnchor.constraint(equalToConstant: 88)
-        ])
-        root.addSubview(hotkeyCard)
-        NSLayoutConstraint.activate([
-            hotkeyCard.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            hotkeyCard.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            hotkeyCard.topAnchor.constraint(equalTo: startupCard.bottomAnchor, constant: 14)
-        ])
+        globalHotKeyButton.font = NSFont.systemFont(ofSize: 13)
+        globalHotKeyButton.setAccessibilityLabel("全局快捷键")
+        globalHotKeyButton.widthAnchor.constraint(equalToConstant: 128).isActive = true
+        // 录制按钮跟着勾选框一起变灰，所以要把标签留一份引用。
+        return makeRow(label: "快捷键", controls: [globalHotKeyButton]) { self.hotkeyLabel = $0 }
+    }
 
-        let updateCard = makeCard()
-        let updateTitle = makeLabel("更新检查", size: 13, weight: .semibold, color: .secondaryLabelColor)
-        updateCard.addSubview(updateTitle)
-        configureCheckbox(pluginUpdateCheckbox)
-        updateCard.addSubview(pluginUpdateCheckbox)
-
-        // 后台检查是常开的：启动器自更新与 dsh 更新共用「检查频率」这一张定时器
-        // （默认 6 小时，发现新版本只在菜单栏角标/菜单标题里提示，从不静默安装），
-        // 所以这一栏没有「要不要自动检查」的开关，只有频率可调。
-        let intervalDescLabel = makeLabel("检查频率", size: 13, weight: .regular, color: .labelColor)
-        let intervalUnitLabel = makeLabel("小时一次", size: 13, weight: .regular, color: .secondaryLabelColor)
-        updateCard.addSubview(intervalDescLabel)
-        updateCard.addSubview(intervalUnitLabel)
+    private func makeIntervalRow() -> NSView {
         configureTextField(intervalField, placeholder: "6")
         intervalField.alignment = .right
         intervalField.target = self
         intervalField.action = #selector(intervalFieldChanged)
         intervalField.delegate = self
-        intervalField.widthAnchor.constraint(equalToConstant: 56).isActive = true
-        updateCard.addSubview(intervalField)
+        intervalField.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        intervalField.setAccessibilityLabel("检查频率（小时）")
 
         intervalStepper.minValue = 1
         intervalStepper.maxValue = 168
@@ -200,50 +267,41 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         intervalStepper.target = self
         intervalStepper.action = #selector(intervalStepperChanged)
         intervalStepper.translatesAutoresizingMaskIntoConstraints = false
-        updateCard.addSubview(intervalStepper)
 
-        let sourceLabel = makeLabel("更新来源", size: 13, weight: .regular, color: .labelColor)
-        let sourceValue = makeLabel("GitHub Releases · deepseek-harness-launcher", size: 13, weight: .regular, color: .secondaryLabelColor)
-        updateCard.addSubview(sourceLabel)
-        updateCard.addSubview(sourceValue)
+        let unit = makeLabel("小时一次", size: 13, weight: .regular, color: .secondaryLabelColor)
+        return makeRow(label: "检查频率", controls: [intervalField, intervalStepper, unit])
+    }
 
-        NSLayoutConstraint.activate([
-            updateTitle.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
-            updateTitle.topAnchor.constraint(equalTo: updateCard.topAnchor, constant: 12),
-            pluginUpdateCheckbox.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
-            pluginUpdateCheckbox.topAnchor.constraint(equalTo: updateTitle.bottomAnchor, constant: 8),
-            pluginUpdateCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: updateCard.trailingAnchor, constant: -16),
-            intervalDescLabel.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
-            intervalDescLabel.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
-            intervalField.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: controlColumn),
-            intervalField.topAnchor.constraint(equalTo: pluginUpdateCheckbox.bottomAnchor, constant: 7),
-            intervalField.heightAnchor.constraint(equalToConstant: 26),
-            intervalStepper.leadingAnchor.constraint(equalTo: intervalField.trailingAnchor, constant: 4),
-            intervalStepper.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
-            intervalUnitLabel.leadingAnchor.constraint(equalTo: intervalStepper.trailingAnchor, constant: 6),
-            intervalUnitLabel.centerYAnchor.constraint(equalTo: intervalField.centerYAnchor),
-            sourceLabel.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: 16),
-            sourceLabel.centerYAnchor.constraint(equalTo: sourceValue.centerYAnchor),
-            sourceValue.leadingAnchor.constraint(equalTo: updateCard.leadingAnchor, constant: controlColumn),
-            sourceValue.trailingAnchor.constraint(lessThanOrEqualTo: updateCard.trailingAnchor, constant: -16),
-            sourceValue.topAnchor.constraint(equalTo: intervalField.bottomAnchor, constant: 12),
-            // 一栏标题 + 一个勾选框 + 频率行 + 来源行：固定高度，和另外两张卡片对齐。
-            updateCard.heightAnchor.constraint(equalToConstant: 148)
-        ])
-        root.addSubview(updateCard)
-        NSLayoutConstraint.activate([
-            updateCard.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            updateCard.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            updateCard.topAnchor.constraint(equalTo: hotkeyCard.bottomAnchor, constant: 14)
-        ])
+    private func makeSourceRow() -> NSView {
+        let value = makeLabel("GitHub Releases · deepseek-harness-launcher", size: 12, weight: .regular, color: .secondaryLabelColor)
+        value.lineBreakMode = .byTruncatingMiddle
+        return makeRow(label: "更新来源", controls: [value])
+    }
 
-        let versionLabel = makeLabel("当前版本 v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0")", size: 12, weight: .regular, color: .secondaryLabelColor)
-        root.addSubview(versionLabel)
+    /// 为什么没有「要不要自动检查」的开关：后台检查常开，只提示不自动安装。
+    private func makeUpdateHint() -> NSView {
+        let hint = makeLabel("后台检查常开：发现新版本只在菜单栏提示，不会自动安装。", size: 11, weight: .regular, color: .tertiaryLabelColor)
+        hint.lineBreakMode = .byTruncatingTail
+        return hint
+    }
 
-        let checkButton = NSButton(title: "检测启动器（DHL）更新", target: self, action: #selector(checkNow))
-        checkButton.bezelStyle = .rounded
-        checkButton.controlSize = .regular
-        checkButton.setContentHuggingPriority(.required, for: .horizontal)
+    private func makeCheckNowButton() -> NSView {
+        let button = NSButton(title: "立即检查", target: self, action: #selector(checkNow))
+        button.isBordered = false
+        button.font = NSFont.systemFont(ofSize: 12)
+        button.contentTintColor = .linkColor
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        return button
+    }
+
+    private func makeFooter() -> NSView {
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+        let versionLabel = makeLabel("当前版本 v\(version)", size: 11, weight: .regular, color: .tertiaryLabelColor)
+
         let cancelButton = NSButton(title: "取消", target: self, action: #selector(cancel))
         cancelButton.bezelStyle = .rounded
         cancelButton.controlSize = .regular
@@ -253,34 +311,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         saveButton.controlSize = .regular
         saveButton.keyEquivalent = "\r"
         saveButton.setContentHuggingPriority(.required, for: .horizontal)
-        let buttons = NSStackView(views: [checkButton, cancelButton, saveButton])
-        buttons.orientation = .horizontal
-        buttons.spacing = 8
-        buttons.alignment = .centerY
-        buttons.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(buttons)
-        NSLayoutConstraint.activate([
-            versionLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            versionLabel.centerYAnchor.constraint(equalTo: buttons.centerYAnchor),
-            buttons.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            buttons.topAnchor.constraint(equalTo: updateCard.bottomAnchor, constant: 16),
-            buttons.bottomAnchor.constraint(equalTo: root.bottomAnchor)
-        ])
 
-        window.standardWindowButton(.closeButton)?.toolTip = "关闭设置"
-        window.standardWindowButton(.miniaturizeButton)?.isEnabled = true
-        window.standardWindowButton(.zoomButton)?.isEnabled = true
-    }
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [versionLabel, spacer, cancelButton, saveButton])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
 
-    private func makeCard() -> NSView {
-        let card = NSView()
-        card.translatesAutoresizingMaskIntoConstraints = false
-        card.wantsLayer = true
-        card.layer?.cornerRadius = 12
-        card.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.78).cgColor
-        card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.75).cgColor
-        card.layer?.borderWidth = 1
-        return card
+        let footer = makeColumn([separator, row], spacing: 12)
+        separator.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        return footer
     }
 
     private func makeLabel(_ text: String, size: CGFloat, weight: NSFont.Weight, color: NSColor) -> NSTextField {
@@ -292,13 +333,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         return label
     }
 
-    private func configureCheckbox(_ checkbox: NSButton) {
+    @discardableResult
+    private func configureCheckbox(_ checkbox: NSButton) -> NSButton {
         checkbox.translatesAutoresizingMaskIntoConstraints = false
         checkbox.setButtonType(.switch)
         checkbox.font = NSFont.systemFont(ofSize: 13)
         // Keep the switch glyph native while retaining readable label color.
         checkbox.contentTintColor = .labelColor
         checkbox.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        return checkbox
     }
 
     private func configureTextField(_ field: NSTextField, placeholder: String) {
@@ -312,6 +355,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         field.focusRingType = .default
         field.lineBreakMode = .byTruncatingTail
     }
+
+    // MARK: - 设置读写
 
     private func loadSettings() {
         pluginUpdateCheckbox.state = settings.autoCheckPluginUpdates ? .on : .off
