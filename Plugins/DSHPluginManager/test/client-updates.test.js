@@ -139,13 +139,14 @@ test('updateEntryFor / updatableNames：按名字对齐 inventory', async () => 
   assert.deepEqual(Array.from(plugin.updatableNames(updates)), ['dsh-notify']);
   assert.deepEqual(Array.from(plugin.updatableNames(false)), []);
   assert.deepEqual(Array.from(plugin.updatableNames(null)), []);
-  // 「全部更新」跳过已忽略的条目：忽略的意思就是"这个版本别再问我了"
+  // 新语义：忽略只屏蔽角标与自动提醒，不拦显式批量更新（否则唯一的可更新项
+  // 被忽略后「全部更新」永远禁用，用户两轮当 bug 报）。已忽略项一并提交。
   assert.deepEqual(
     Array.from(plugin.updatableNames({ inventory: [
       { name: 'a', status: 'update-available' },
       { name: 'b', status: 'update-available', ignored: true },
     ] })),
-    ['a']
+    ['a', 'b']
   );
 });
 
@@ -262,9 +263,9 @@ test('selectedUpdatableNames：只提交选中且 update-available 的名字', a
   assert.deepEqual(Array.from(plugin.selectedUpdatableNames(updates, new Set())), []);
   assert.deepEqual(Array.from(plugin.selectedUpdatableNames(updates, null)), []);
   assert.deepEqual(Array.from(plugin.selectedUpdatableNames(false, new Set(['a']))), []);
-  assert.deepEqual(Array.from(plugin.selectedUpdatableNames(updates, new Set(['a', 'd']))), ['a'],
-    '「更新选中」和「全部更新」同口径：已忽略的版本不更新');
-  assert.deepEqual(Array.from(plugin.updatableNames(updates)), ['a', 'c'], '「全部更新」提交所有可更新项（跳过已忽略）');
+  assert.deepEqual(Array.from(plugin.selectedUpdatableNames(updates, new Set(['a', 'd']))), ['a', 'd'],
+    '「更新选中」和「全部更新」同口径：显式动作包含已忽略项');
+  assert.deepEqual(Array.from(plugin.updatableNames(updates)), ['a', 'c', 'd'], '「全部更新」提交所有可更新项（含已忽略）');
 });
 
 test('mergeUpdates：刷新中的空 inventory 不抹掉已有标记，接口不可用照实降级', async () => {

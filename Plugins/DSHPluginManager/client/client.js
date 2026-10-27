@@ -371,9 +371,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
   /// 「全部更新」要提交的名字：只取 status === 'update-available' 且**没被忽略**的条目
   /// （忽略就是"这个版本别再问我要不要更新了"）。
   function updatableNames(updates) {
+    // 「忽略」只屏蔽角标与自动提醒；全部更新是用户的显式动作，包含已忽略项
+    //（与行内「更新」可强更已忽略项同一语义）。否则唯一的可更新插件被忽略后，
+    // 这个按钮永远禁用，用户只会觉得它坏了（实测两轮反馈）。
     if (!updates || !Array.isArray(updates.inventory)) return []
     return updates.inventory
-      .filter(entry => entry && entry.status === 'update-available' && !entry.ignored && entry.name)
+      .filter(entry => entry && entry.status === 'update-available' && entry.name)
       .map(entry => entry.name)
   }
 
@@ -417,9 +420,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
   /// 「全部更新」已经排除忽略项；这里不排除的话，勾选一个「已忽略 vX」的行再点
   /// 「更新选中」会把这个被忽略的版本更新掉，和胶囊上的「已忽略」自相矛盾。
   function selectedUpdatableNames(updates, selected) {
+    // 与全部更新同一语义：显式动作包含已忽略项（见 updatableNames）。
     if (!updates || !Array.isArray(updates.inventory) || !selected) return []
     return updates.inventory
-      .filter(entry => entry && entry.status === 'update-available' && !entry.ignored && entry.name && selected.has(entry.name))
+      .filter(entry => entry && entry.status === 'update-available' && entry.name && selected.has(entry.name))
       .map(entry => entry.name)
   }
 
@@ -887,8 +891,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         .catch(e => toast('error', `批量更新失败：${String(e.message || e)}`))
         .finally(() => { setBusy(''); setBatchSource('') })
     }
-    const updateAll = () => startBatch(updatableNames(updates), ignoredUpdatableCount(updates), '全部更新')
-    const updateSelected = () => startBatch(selectedUpdatableNames(updates, selected), selectedIgnoredCount(updates, selected), '更新选中')
+    const updateAll = () => startBatch(updatableNames(updates), 0, '全部更新')
+    const updateSelected = () => startBatch(selectedUpdatableNames(updates, selected), 0, '更新选中')
     const requestUninstall = (item) => { setError(''); setConfirmUninstall(item) }
     const confirmUninstallGo = () => {
       if (!confirmUninstall) return
@@ -1278,7 +1282,11 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     // 批量进度条：进度独立于按钮展示（magpie 式——按钮只表达「下一步动作」，
     // 进行中的事由一条状态条说明）。来源 + 进度 + 当前插件一起给出，
     // 杜绝「选中 2 个却更新 3 个」的来源歧义。
-    const updateAllCount = updatesAvailableCount(updates)
+    // 全部更新的候选：inventory 里全部 update-available（含已忽略）。summary 是
+    // 角标口径（排除已忽略），用它会让按钮在「有胶囊但按不动」时归零。
+    const updateAllCount = updates && Array.isArray(updates.inventory)
+      ? updates.inventory.filter(entry => entry && entry.status === 'update-available').length
+      : 0
     const batchStrip = batchRunning
       ? h('div', { className: 'dsh-pm-queue', role: 'status' },
           h('span', { className: 'dsh-pm-queue-dot', 'aria-hidden': true }, '◌'),
@@ -1290,9 +1298,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     // 「全部更新」的哑按钮要有解释：可更新项全部被忽略时按钮必然禁用，
     // 不写明原因用户只会觉得「按钮坏了」（实测：唯一的可更新插件被忽略后，
     // 全部更新/更新选中全部灰掉且无提示）。已忽略的项仍可用行内「更新」强更。
+    // 「全部更新」计全部可更新项（含已忽略）：忽略只屏蔽角标与自动提醒，
+    // 不拦用户的显式动作（行内「更新」本就如此）。这样按钮永远不会在「明明有
+    // 胶囊却按不动」的状态下出现（用户两轮实测反馈）。
     const ignoredUpdatable = ignoredUpdatableCount(updates)
-    const updateAllHint = updateAllCount === 0 && ignoredUpdatable > 0
-      ? `可更新的 ${ignoredUpdatable} 个插件都已被忽略：点行内「取消忽略」恢复提醒，或直接用行内「更新」强制更新`
+    const updateAllHint = ignoredUpdatable > 0
+      ? `更新所有可更新的插件（含已忽略的 ${ignoredUpdatable} 个；忽略只屏蔽提醒，不拦显式更新）`
       : '更新所有可更新的插件'
     const updatesBar = updates === false ? null : h('div', { className: 'dsh-pm-toolbar' },
       h('button', { className: 'dsh-pm-tool', disabled: checking || batchRunning || busyOther, onClick: checkUpdates, title: '联网检测每个已安装插件的远端版本' }, checking ? '检测中…' : '检查更新'),
@@ -1300,8 +1311,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         className: 'dsh-pm-tool',
         disabled: updateAllCount === 0 || batchRunning || busyOther,
         onClick: updateAll,
-        title: updateAllCount === 0 ? updateAllHint : `${updateAllHint}（共 ${updateAllCount} 个）`,
-      }, updateAllCount > 0 ? `全部更新 (${updateAllCount})` : ignoredUpdatable > 0 ? `全部更新（${ignoredUpdatable} 个已忽略）` : '全部更新'),
+        title: updateAllHint,
+      }, updateAllCount > 0 ? `全部更新 (${updateAllCount})` : '全部更新'),
       h('button', { className: 'dsh-pm-tool', disabled: selectedUpdatable.length === 0 || batchRunning || busyOther, onClick: updateSelected, title: '只更新选中且可更新的插件' }, `更新选中 (${selectedUpdatable.length})`),
       h('button', { className: 'dsh-pm-tool', disabled: selectedIgnorable.length === 0 || batchRunning || busyOther, onClick: () => ignoreEntries(selectedIgnorable), title: '不再提醒选中插件的当前版本（远端出更高版本时会再提醒）' }, `忽略选中 (${selectedIgnorable.length})`),
       h('span', { className: 'dsh-pm-selected-count' }, `已选 ${selectedNames.length} 个`),

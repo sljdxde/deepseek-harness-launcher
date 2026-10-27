@@ -640,10 +640,11 @@ const entry = (name, over) => ({
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
   assert.equal(badgeText(), '', '两条都忽略后角标消失（这正是用户要的效果）');
-  // 可更新项全被忽略：按钮禁用且文案自解释（不写原因用户只会觉得按钮坏了）
-  const ignoredAllButton = findByText(runtime.tree, 'button', '全部更新（2 个已忽略）');
-  assert.equal(ignoredAllButton.props.disabled, true, '全部被忽略时「全部更新」禁用');
-  assert.match(ignoredAllButton.props.title, /已被忽略/);
+  // 可更新项全被忽略：按钮仍然可用（忽略只屏蔽提醒，不拦显式更新），
+  // 计数含已忽略项，悬停说明这一点（此前禁用无解释，被用户两轮当 bug 报）。
+  const ignoredAllButton = findByText(runtime.tree, 'button', '全部更新 (2)');
+  assert.equal(ignoredAllButton.props.disabled, false, '全部被忽略时「全部更新」仍可用，计数含已忽略');
+  assert.match(ignoredAllButton.props.title, /含已忽略的 2 个/);
 
   // 「取消忽略」：只恢复 dsh-a，角标回到 1；「全部更新」的名单里也就只剩 dsh-a
   openPanel();
@@ -658,9 +659,10 @@ const entry = (name, over) => ({
   openPanel();
   await settle(runtime);
   assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill-ignored').length, 1, '只剩 dsh-b 还是已忽略');
-  findByText(runtime.tree, 'button', '全部更新 (1)').props.onClick();
+  // 新语义：显式批量包含已忽略项（b 虽被忽略但仍有更新）→ 计数 2、名单含 b
+  findByText(runtime.tree, 'button', '全部更新 (2)').props.onClick();
   const manyCall = calls.find(call => call.url === '/dsh-plugin-manager/update-many');
-  assert.deepEqual(JSON.parse(manyCall.options.body), { names: ['dsh-a'] }, '「全部更新」跳过已忽略的 dsh-b');
+  assert.deepEqual(JSON.parse(manyCall.options.body), { names: ['dsh-a', 'dsh-b'] }, '「全部更新」包含已忽略的 dsh-b（忽略只屏蔽提醒）');
   await settle(runtime, 20);
   console.log('场景7（忽略 / 取消忽略 / 忽略选中 / 角标归零）通过');
 }
