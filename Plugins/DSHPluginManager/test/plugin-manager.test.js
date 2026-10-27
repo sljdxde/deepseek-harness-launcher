@@ -3,7 +3,7 @@ import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parsePluginYml, installCandidates, listInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin } from '../lib/index.js';
+import { parsePluginYml, installCandidates, listInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin, fetchOfficialMarketPlugins, mergeMarketPlugins, readMarketplace } from '../lib/index.js';
 
 test('parsePluginYml 解析 awesome-dsh-plugin 的插件条目格式', () => {
   const text = `url: https://github.com/1624318455/dsh-plugin-tavily
@@ -33,6 +33,24 @@ description:
   const parsed = parsePluginYml(text);
   assert.equal(parsed.url, 'https://github.com/a/b');
   assert.equal(parsed.description.en, 'Has: a colon inside.');
+});
+
+test('parsePluginYml 去掉两端的引号（上游有 category: "browser" 这种写法）', () => {
+  const text = `url: "https://github.com/a/b"
+name: 'a/b'
+category: "browser"
+description:
+  en: "Quoted: description."
+  zh: '中文描述'
+`;
+  const parsed = parsePluginYml(text);
+  assert.equal(parsed.url, 'https://github.com/a/b');
+  assert.equal(parsed.name, 'a/b');
+  assert.equal(parsed.category, 'browser');
+  assert.equal(parsed.description.en, 'Quoted: description.');
+  assert.equal(parsed.description.zh, '中文描述');
+  // 不成对/正文里的引号保持原样
+  assert.equal(parsePluginYml('category: half"quoted').category, 'half"quoted');
 });
 
 test('installCandidates 先生成 npm 包名、再提供 git 回退', () => {
@@ -334,4 +352,82 @@ test('updatePlugin 拒绝非法插件名', async () => {
   const result = await updatePlugin('../escape');
   assert.equal(result.ok, false);
   assert.match(result.error, /非法/);
+});
+
+// ---------------------------------------------------------------------------
+// 官方插件源：DeepSeek 官方插件发布在 npm 的 @deepseek-ai scope 下，市场直接查 registry。
+// ---------------------------------------------------------------------------
+
+test('installCandidates：@scope/name 就是一个 npm 包名，不能再按作者/仓库拆', () => {
+  const { candidates, git, repoRef } = installCandidates({ name: '@deepseek-ai/dsh-experimental-voice-input-bundle' });
+  assert.deepEqual(candidates, ['@deepseek-ai/dsh-experimental-voice-input-bundle']);
+  assert.equal(git, null, 'scoped 包名没有对应的整仓 git 地址');
+  assert.equal(repoRef, null, '不能把 @deepseek-ai 当成作者去拼 github.com URL');
+});
+
+test('fetchOfficialMarketPlugins：只保留声明 dsh.bundle 的官方包，单个查询失败不影响另一路', async () => {
+  const calls = [];
+  const json = value => ({ ok: true, status: 200, json: async () => value });
+  const fetchImpl = async url => {
+    calls.push(url);
+    if (url.includes('/-/v1/search')) {
+      // 第一个查询整条挂掉：官方来源要能靠第二个查询继续。
+      if (url.includes(encodeURIComponent('@deepseek-ai/dsh-experimental-bundle'))) throw Error('network down');
+      return json({ objects: [
+        { package: { name: '@deepseek-ai/dsh-experimental-voice-input-bundle', date: '2026-10-01T00:00:00.000Z' }, downloads: { monthly: 321 } },
+        { package: { name: '@deepseek-ai/dsh-plugin-manager', date: '2026-09-01T00:00:00.000Z' }, downloads: { monthly: 999 } },
+        { package: { name: '@somebody-else/dsh-plugin-x' }, downloads: { monthly: 1 } },
+        { package: { name: '@deepseek-ai/dsh-fs' }, downloads: { monthly: 5 } }
+      ] });
+    }
+    if (url.includes('dsh-experimental-voice-input-bundle/latest')) {
+      return json({ name: '@deepseek-ai/dsh-experimental-voice-input-bundle', version: '0.2.1-alpha.4', description: 'voice input', dsh: { bundle: { patch: './cordis.patch.yml' } } });
+    }
+    if (url.includes('dsh-plugin-manager/latest')) {
+      // 框架包/库：没有 dsh.bundle，装进 profile 没有意义，不能进市场。
+      return json({ name: '@deepseek-ai/dsh-plugin-manager', version: '0.1.6-alpha.2', description: 'plugin management' });
+    }
+    return json({});
+  };
+  const plugins = await fetchOfficialMarketPlugins({ fetch: fetchImpl });
+  assert.deepEqual(plugins.map(item => item.name), ['@deepseek-ai/dsh-experimental-voice-input-bundle']);
+  const [entry] = plugins;
+  assert.equal(entry.url, entry.name, '官方条目直接用 npm 包名安装');
+  assert.equal(entry.category, 'official');
+  assert.equal(entry.source, 'official');
+  assert.equal(entry.author, '@deepseek-ai');
+  assert.equal(entry.repo, 'dsh-experimental-voice-input-bundle');
+  assert.equal(entry.version, '0.2.1-alpha.4');
+  assert.equal(entry.downloads, 321);
+  assert.equal(entry.addedDate, '2026-10-01T00:00:00.000Z');
+  assert.equal(calls.filter(url => url.includes('/-/v1/search')).length, 2, '两个查询都要发');
+});
+
+test('mergeMarketPlugins：官方条目排前面，按 url 去重', () => {
+  const official = [{ id: 'npm:@deepseek-ai/a', url: '@deepseek-ai/a', name: '@deepseek-ai/a' }];
+  const community = [
+    { id: 'x', url: 'https://github.com/o/x', name: 'o/x' },
+    { id: 'dup', url: '@deepseek-ai/a', name: '@deepseek-ai/a' }
+  ];
+  assert.deepEqual(mergeMarketPlugins(official, community).map(item => item.id), ['npm:@deepseek-ai/a', 'x']);
+  assert.deepEqual(mergeMarketPlugins(null, null), []);
+});
+
+test('readMarketplace：旧版索引（没有官方来源）标记为 stale，提示刷新一次', async () => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-market-'));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = dshHome;
+  try {
+    const marketDir = join(dshHome, 'plugin-market');
+    await mkdir(marketDir, { recursive: true });
+    const indexFile = join(marketDir, 'index.json');
+    await writeFile(indexFile, JSON.stringify({ version: 1, indexedAt: new Date().toISOString(), categories: ['tool'], plugins: [] }));
+    assert.equal((await readMarketplace()).stale, true, 'version 1 的旧索引要提示刷新');
+    await writeFile(indexFile, JSON.stringify({ version: 2, indexedAt: new Date().toISOString(), categories: ['official', 'tool'], plugins: [] }));
+    assert.equal((await readMarketplace()).stale, false, '新版索引且新鲜时不提示');
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
 });

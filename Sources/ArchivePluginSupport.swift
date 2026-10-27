@@ -18,12 +18,15 @@ struct BundledPlugin {
 ///
 /// 所以内置插件改用零成本的 `/health` 接口做就绪探针（路由与重接口注册在同一个
 /// effect 里：能探到 health 就说明插件真的接进了 dsh），并且判定只看**确定证据**：
-/// 成百上千分之一的慢响应不能再变成用户可见的「插件不兼容」。
+/// 成百上千分之一的慢响应不能再被判成「插件没加载」。
 ///
 /// 原来的「1.5s 超时轮询 40 次」和「web 就绪 12s 后单次 3s 判定」把「慢」当成了
-/// 「没加载」：既弹出「插件可能与当前 dsh 版本不兼容」的假告警（重启 dsh 也不会好，
-/// 因为下次启动照样慢），又让归档插件永远判不就绪（连带回退快照都从不清理）。
-/// 窗口要按最坏耗时给，不能按空闲时的响应给。
+/// 「没加载」：既让归档插件永远判不就绪（连带回退快照都从不清理），又弹出去重启了
+/// 也白搭的告警。窗口要按最坏耗时给，不能按空闲时的响应给。
+///
+/// 注意：就绪探测**只写日志，不再进兼容性告警**——内置插件是启动器自己带的，
+/// 用户升不了也卸不掉，弹窗只能把人引去「重启 dsh」白折腾（见
+/// `PluginCompatibilitySupport.bundledPluginNames`）。
 struct BuiltinPluginProbePolicy: Equatable {
     /// 单次请求的等待上限。
     let timeout: TimeInterval
@@ -34,18 +37,16 @@ struct BuiltinPluginProbePolicy: Equatable {
 
     /// 常规就绪等待：覆盖冷启与插件树加载的最坏耗时。
     static let readiness = BuiltinPluginProbePolicy(timeout: 3, interval: 1, deadline: 120)
-    /// 兼容性巡检：只用来确认「确定性 404」，窗口给足；health 是内存响应，探多少次都便宜。
-    static let compatibility = BuiltinPluginProbePolicy(timeout: 3, interval: 2, deadline: 90)
-    /// 老版本插件没有 /health 时的兜底接口（重接口）：窗口短一些，避免重复长时间探测。
-    static let compatibilityFallback = BuiltinPluginProbePolicy(timeout: 8, interval: 2, deadline: 30)
+    /// 老版本插件没有 `/health` 时的兜底接口（重接口）：窗口短一些，避免重复长时间探测。
+    static let legacyEndpointFallback = BuiltinPluginProbePolicy(timeout: 8, interval: 2, deadline: 30)
 }
 
 /// 内置插件就绪探测的结论。
 ///
-/// **只有 `.missing` 可以变成用户可见的告警**：它表示整段窗口里最后一次拿到的响应
-/// 确定是 404（插件没把路由挂上）。超时、连接失败、5xx、200 但响应形状不符都只算
-/// 「证据不足」（`.unknown`），一律不告警——误报比漏报更伤：用户会照弹窗去重启、
-/// 升级，折腾一圈发现插件本来是好的，下次照样报。
+/// **只有 `.missing` 会被写成「未随当前 dsh 加载」的日志结论**：它表示整段窗口里最后
+/// 一次拿到的响应确定是 404（插件没把路由挂上）。超时、连接失败、5xx、200 但响应形状
+/// 不符都只算「证据不足」（`.unknown`），不判未加载——误报比漏报更伤：用户会照日志去
+/// 重启、升级，折腾一圈发现插件本来是好的，下次启动照样报。
 enum BuiltinPluginVerdict: Equatable {
     case ready
     case missing

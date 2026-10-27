@@ -110,11 +110,10 @@ struct LauncherSupportChecks {
         precondition(clock == 6)
 
         // 预算必须按最坏耗时给：health 是内存响应，但插件树加载与 dsh 启动可能很慢。
-        // 退回单次 1.5s/3s 判定会重新制造「插件与 dsh 不兼容」的假告警。
+        // 退回单次 1.5s/3s 判定会把「慢」重新误判成「没加载」。
         precondition(BuiltinPluginProbePolicy.readiness.timeout >= 3)
         precondition(BuiltinPluginProbePolicy.readiness.deadline >= 60)
-        precondition(BuiltinPluginProbePolicy.compatibility.deadline >= 60)
-        precondition(BuiltinPluginProbePolicy.compatibilityFallback.deadline >= 20)
+        precondition(BuiltinPluginProbePolicy.legacyEndpointFallback.deadline >= 20)
 
         print("launcher support checks passed")
     }

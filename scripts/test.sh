@@ -126,6 +126,10 @@ rg -q '/dsh-plugin-manager/install' "$ROOT/Plugins/DSHPluginManager/lib/index.js
 rg -q '/dsh-plugin-manager/uninstall' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q '/dsh-plugin-manager/update' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'cleanupPluginSources' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+# 本地开发目录的数据安全红线：自动更新绝不改 plugin-sources 之外的用户目录。
+rg -q 'dev-linked' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+# 安装验收必须回读真实状态（pnpm 退出码 0 ≠ 装上了）。
+rg -q '没有出现在 node_modules 里' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'awesome-dsh-plugin' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'ensurePnpmPath' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'corepack' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
@@ -176,26 +180,38 @@ rg -Fq 'func menuDidClose' "$ROOT/Sources/main.swift"
 # 插件兼容性告警按插件计数：一个插件踩多个 peer 只报一条（日志行/弹窗都按插件走）；
 # peer 按 Node 顺序解析（插件自带、profile 提升的都要算）；浏览器侧的 react/react-dom
 # 由外壳注入，不能当成「运行时里不存在」劝用户卸载。
+# 内置插件（归档管理 / 插件管理 / 会话完成通知）永不参与兼容性扫描：用户升不了也
+# 卸不掉，报警只会把人引去白重启。名字集合是兜底（旧接口可能把它们标成 user/broken）。
 rg -Fq 'mergeByPlugin' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
 rg -Fq 'resolvePeerVersion' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
 rg -Fq 'shellProvidedClientPeers' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
-# 内置插件的「是否随 dsh 加载」只认确定性证据：
+rg -Fq 'bundledPluginNames' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
+# 内置插件也不许再被构造成「插件可能与当前 dsh 版本不兼容」的 Issue：它们的加载状态
+# 只由就绪探针写日志（monitorArchivePlugin）。这两条理由字符串是旧告警路径的指纹，
+# 出现即代表「为启动器自带插件弹窗」的老逻辑回来了。
+if rg -Fq 'reason: "归档管理插件未随当前 dsh 加载"' "$ROOT/Sources/main.swift"; then
+  echo "内置插件不许进兼容性告警（用户不需要为启动器自带插件重启 dsh）" >&2
+  exit 1
+fi
+if rg -Fq 'reason: "会话完成通知插件未随当前 dsh 加载"' "$ROOT/Sources/main.swift"; then
+  echo "内置插件不许进兼容性告警（用户不需要为启动器自带插件重启 dsh）" >&2
+  exit 1
+fi
+# 内置插件的就绪探测只认确定性证据：
 # - 探针走零成本的 /health（重接口 /archives 要读会话日志，本机热启 2.3s、冷启 >4s，
-#   拿它当就绪探针就是这次误报的来源）；
+#   拿它当就绪探针就是误报来源）；
 # - 判定分 ready/missing/unknown 三态，只有整段窗口最后一次响应是 404 才算 missing
-#   并允许弹窗；超时、5xx、200 但形状不符都只能是 unknown（证据不足），不许告警。
+#   并留下「未随当前 dsh 加载」的日志结论；超时、5xx、200 但形状不符都只能是 unknown。
 # 旧实现「1.5s 超时轮询 40 次」/「web 就绪 12s 后单次 3s 判定」把「慢」误报成
 # 「插件未随当前 dsh 加载」，重启 dsh 也不会好，因为下次启动照样慢。
 rg -Fq 'BuiltinPluginProbePolicy' "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/scripts/test-launcher-support.swift"
 rg -Fq 'BuiltinPluginVerdict' "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/Sources/main.swift" "$ROOT/scripts/test-launcher-support.swift"
 rg -Fq 'BuiltinPluginReadiness.inspect' "$ROOT/Sources/main.swift" "$ROOT/scripts/test-launcher-support.swift"
 rg -Fq 'policy: .readiness' "$ROOT/Sources/main.swift"
-rg -Fq 'policy: .compatibility' "$ROOT/Sources/main.swift"
 rg -Fq "'/dsh-archive-manager/health'" "$ROOT/Plugins/DSHArchiveManager/lib/index.js" "$ROOT/Sources/main.swift"
-rg -Fq "'/dsh-session-notify/health'" "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Sources/main.swift"
 # 兜底判定必须保留：health 404 时回退到重接口再确认一次（老版本插件 / 同名第三方插件），
 # 不能让「没有 /health」直接等于「没加载」。
-rg -Fq 'compatibilityFallback' "$ROOT/Sources/main.swift" "$ROOT/Sources/ArchivePluginSupport.swift"
+rg -Fq 'legacyEndpointFallback' "$ROOT/Sources/main.swift" "$ROOT/Sources/ArchivePluginSupport.swift"
 rg -Fq 'case .unknown:' "$ROOT/Sources/main.swift"
 # 原子写要自己收干净临时文件：进程被杀留下的 <file>.<pid>.tmp 会一直躺在 profile 里
 # （实测 ~/.dsh/profiles/web/.plugin-updates.json.11800.tmp），写同一个文件前收掉
@@ -407,6 +423,22 @@ plutil -extract NSAppleEventsUsageDescription raw "$ROOT/Resources/Info.plist" |
 rg -Fq 'BrowserConnectionTests' "$ROOT/scripts/test-browser-connection.swift"
 xcrun swiftc -o /tmp/dsh-test-browser-connection "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/BrowserAutomationSupport.swift" "$ROOT/scripts/test-browser-connection.swift" -framework AppKit
 /tmp/dsh-test-browser-connection
+# 会话提醒跳转的决策链必须留在可单测的 SessionJumpSupport 里（main.swift 只执行）：
+# 点击处置 / 页面重开 / 重启接管关旧标签 / 单实例与多实例的失败诊断 / 失败降级顺序。
+# 这些判断曾散在 main.swift 的异步回调里，改一处坏另一处、grep 字符串又抓不住。
+rg -Fq 'SessionJumpSupport' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
+rg -Fq 'clickDisposition' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
+rg -Fq 'pagePlan' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
+rg -Fq 'focusPlan' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
+# 任何分支都要投递「打开会话」命令：标签没选中只影响看得见看不见，不能连会话一起不切。
+rg -Fq 'sendsSessionOpen' "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
+rg -Fq 'requestSessionOpen' "$ROOT/Sources/main.swift"
+# 反例守卫：标签定位失败的文案与分支只许在 SessionJumpSupport 里定义，回退到
+# main.swift 的 switch 就是把可测逻辑又塞回不可测的地方。
+if rg -q '未找到匹配标签页' "$ROOT/Sources/main.swift"; then
+  echo "标签定位失败的判断/文案只许在 SessionJumpSupport（main.swift 只调用）" >&2
+  exit 1
+fi
 rg -q -- '--registry' "$ROOT/Sources/DSHRuntimeSupport.swift"
 if rg -q 'npx --prefer-offline --yes @deepseek-ai/dsh' "$ROOT/Sources/main.swift" "$ROOT/Sources/DSHUpdateSupport.swift"; then
   echo "launcher must not bootstrap dsh through npx" >&2
@@ -614,6 +646,9 @@ swiftc "$ROOT/scripts/test-plugin-isolation.swift" "$ROOT/Sources/PluginIsolatio
 swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupport.swift" -o "$ROOT/build/test-plugin-updates"
 "$ROOT/build/test-plugin-updates"
 "$ROOT/build/test-session-notify"
+# 点击「会话完成」→ 跳转：点击处置 / 页面计划 / 失败诊断 / 降级顺序 / 会话投递不变式。
+swiftc "$ROOT/scripts/test-session-jump.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/BrowserAutomationSupport.swift" -o "$ROOT/build/test-session-jump" -framework AppKit
+"$ROOT/build/test-session-jump"
 # 提示框外观与版本选择器：纯 AppKit 视图，直接构造/量尺寸/触发动作来断言。
 swiftc "$ROOT/scripts/test-alert-design.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/DSHUpdateVersionPicker.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-alert-design" -framework AppKit
 "$ROOT/build/test-alert-design"

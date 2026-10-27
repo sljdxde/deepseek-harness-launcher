@@ -67,3 +67,14 @@ test('订阅退订后不再收到通知', async () => {
   assert.equal(store.snapshot().length, 1);
   assert.equal(hits, 1, '只在 subscribe 的首次同步通知后命中，退订后 push 不再通知');
 });
+
+test('toast 栈上限 3 条：超出时最早的先消失，连续批量操作不糊屏', async () => {
+  const { store } = await loadToastStore();
+  store.push('success', '第一条');
+  store.push('success', '第二条');
+  store.push('info', '第三条');
+  store.push('success', '第四条');
+  const snapshot = store.snapshot();
+  assert.equal(snapshot.length, 3, '栈里最多 3 条');
+  assert.deepEqual(Array.from(snapshot, t => t.text), ['第二条', '第三条', '第四条'], '最早的一条被挤出');
+});

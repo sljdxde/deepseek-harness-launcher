@@ -10,8 +10,8 @@ import Foundation
 ///
 /// 判定规则与 `updateProfilePlugins` 的注释一致：插件依赖的 @deepseek-ai/*
 /// peer 随 dsh 版本演进，声明区间不满足即视为可能不兼容（旧插件会因 API
-/// 移除而加载失败）。内置插件不带 peer，其「是否随 dsh 加载」由启动器的
-/// 接口探针判定（见 main.swift 的 monitorArchivePlugin / monitorSessionNotify）。
+/// 移除而加载失败）。启动器自带的内置插件**完全不参与扫描**（见
+/// `bundledPluginNames`）：它们的加载状态由就绪探针只写日志，不进兼容性告警。
 ///
 /// 区间求值按 npm 的 semver 语义实现（`*`/`x`-range、`^`、`~`、`||`、空白分隔的比较子，
 /// 以及「预发布版本只在同 base 的比较子出现预发布时才满足」的门控），版本比较复用
@@ -27,13 +27,26 @@ enum PluginCompatibilitySupport {
         let broken: Bool?
     }
 
-    /// 一个需要用户处理的兼容性问题。
+    /// 启动器随包分发的内置插件。它们**永不参与兼容性扫描**。
+    ///
+    /// 为什么不在扫描范围里：内置插件跟着 App 一起分发，用户既升不了级、也卸不掉，
+    /// 弹「插件可能与当前 dsh 版本不兼容」只会把人引去「重启 dsh」白折腾一次——
+    /// 下一次启动同样的判定再来一遍。它们"有没有随当前 dsh 加载"另有就绪探针，
+    /// 只写日志（见 main.swift 的 monitorArchivePlugin / monitorSessionNotify）。
+    ///
+    /// 名字集合是兜底：插件管理器通常把这三个标成 `source: "bundled"`，但软链目标
+    /// 判定失败（App 被移动、旧版本接口）时可能标成 `user`/`broken`，那种也不许进扫描。
+    static let bundledPluginNames: Set<String> = [
+        "dsh-archive-manager",
+        "dsh-plugin-manager",
+        "dsh-session-notify",
+    ]
+
+    /// 一个需要用户处理的兼容性问题。只会来自用户插件（见 `bundledPluginNames`）。
     struct Issue {
         let pluginName: String
         let version: String?
         let reason: String
-        /// user 插件可在提示里选择升级/卸载；内置插件只提示。
-        let userPlugin: Bool
     }
 
     /// 判定单个比较子是否满足。comparator 形如 `>=0.1.0`、`<0.2.0`、
@@ -221,7 +234,8 @@ enum PluginCompatibilitySupport {
     }
 
     /// 对已安装插件做静态兼容性扫描。broken 残留与 peer 区间不满足都算问题；
-    /// peer 在 runtime 中不存在（API 被移除）也算问题。
+    /// peer 在 runtime 中不存在（API 被移除）也算问题。**启动器自带的内置插件
+    /// （归档管理 / 插件管理 / 会话完成通知）一律跳过**，见 `bundledPluginNames`。
     ///
     /// **每个插件最多返回一条** Issue：一个插件常同时踩到两个 peer（实测
     /// `dsh-connect-workbuddy`：`@earendil-works/pi-ai` 版本超界 + `react` 在运行时里
@@ -239,10 +253,13 @@ enum PluginCompatibilitySupport {
     ) -> [Issue] {
         var collected: [Issue] = []
         for plugin in plugins {
+            // 内置插件不是用户能处置的对象：插件管理器通常标成 bundled；名字集合
+            // 兜住旧接口/软链判定失败时的误标（那会让它们以 user 或 broken 出现）。
+            guard plugin.source != "bundled", !bundledPluginNames.contains(plugin.name) else { continue }
             if plugin.broken == true {
                 collected.append(Issue(
                     pluginName: plugin.name, version: plugin.version,
-                    reason: "安装不完整或已损坏", userPlugin: true
+                    reason: "安装不完整或已损坏"
                 ))
                 continue
             }
@@ -261,14 +278,14 @@ enum PluginCompatibilitySupport {
                 ) else {
                     collected.append(Issue(
                         pluginName: plugin.name, version: plugin.version,
-                        reason: "依赖的 \(peer)（\(range)）在当前 dsh 运行时中不存在", userPlugin: true
+                        reason: "依赖的 \(peer)（\(range)）在当前 dsh 运行时中不存在"
                     ))
                     continue
                 }
                 if !satisfiesRange(installed, range: range) {
                     collected.append(Issue(
                         pluginName: plugin.name, version: plugin.version,
-                        reason: "需要 \(peer) \(range)，当前为 \(installed)", userPlugin: true
+                        reason: "需要 \(peer) \(range)，当前为 \(installed)"
                     ))
                 }
             }
@@ -291,8 +308,7 @@ enum PluginCompatibilitySupport {
             merged[index] = Issue(
                 pluginName: previous.pluginName,
                 version: previous.version ?? issue.version,
-                reason: "\(previous.reason)；\(issue.reason)",
-                userPlugin: previous.userPlugin || issue.userPlugin
+                reason: "\(previous.reason)；\(issue.reason)"
             )
         }
         return merged

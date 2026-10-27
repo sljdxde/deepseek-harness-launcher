@@ -256,12 +256,71 @@ test('selectedUpdatableNames：只提交选中且 update-available 的名字', a
     { name: 'a', status: 'update-available' },
     { name: 'b', status: 'up-to-date' },
     { name: 'c', status: 'update-available' },
+    { name: 'd', status: 'update-available', ignored: true },
   ] };
   assert.deepEqual(Array.from(plugin.selectedUpdatableNames(updates, new Set(['a', 'b', 'zzz']))), ['a']);
   assert.deepEqual(Array.from(plugin.selectedUpdatableNames(updates, new Set())), []);
   assert.deepEqual(Array.from(plugin.selectedUpdatableNames(updates, null)), []);
   assert.deepEqual(Array.from(plugin.selectedUpdatableNames(false, new Set(['a']))), []);
-  assert.deepEqual(Array.from(plugin.updatableNames(updates)), ['a', 'c'], '「全部更新」提交所有可更新项');
+  assert.deepEqual(Array.from(plugin.selectedUpdatableNames(updates, new Set(['a', 'd']))), ['a'],
+    '「更新选中」和「全部更新」同口径：已忽略的版本不更新');
+  assert.deepEqual(Array.from(plugin.updatableNames(updates)), ['a', 'c'], '「全部更新」提交所有可更新项（跳过已忽略）');
+});
+
+test('mergeUpdates：刷新中的空 inventory 不抹掉已有标记，接口不可用照实降级', async () => {
+  const plugin = await loadPlugin();
+  const previous = {
+    checkedAt: '2026-10-21T10:00:00.000Z',
+    inventory: [{ name: 'a', status: 'update-available' }],
+    summary: { total: 1, updateAvailable: 1 }
+  };
+  const emptyRefresh = {
+    checkedAt: null, refreshing: true, inventory: [],
+    summary: { total: 0, updateAvailable: 0 }, lastBatch: null
+  };
+  const merged = plugin.mergeUpdates(previous, emptyRefresh);
+  assert.deepEqual(merged.inventory, previous.inventory, '空 inventory 保留旧数据（否则标记/角标全消失）');
+  assert.equal(merged.refreshing, true, '刷新状态照旧');
+  assert.deepEqual(merged.summary, previous.summary);
+  assert.equal(merged.checkedAt, previous.checkedAt);
+
+  const next = { checkedAt: 't2', inventory: [{ name: 'a', status: 'up-to-date' }], summary: { total: 1, updateAvailable: 0 } };
+  assert.equal(plugin.mergeUpdates(previous, next), next, '有数据时用新数据');
+  assert.equal(plugin.mergeUpdates(previous, null), null, '接口不可用照实降级');
+  assert.equal(plugin.mergeUpdates(false, next), next);
+  assert.equal(plugin.mergeUpdates(null, next), next);
+
+  // store 走同一条合并：先有数据、再收到空刷新，角标不会归零
+  const store = plugin.createUpdatesStore();
+  store.apply(previous);
+  store.apply(emptyRefresh);
+  assert.equal(store.snapshot().inventory.length, 1);
+  store.apply(null);
+  assert.equal(store.snapshot(), false, '降级仍然是 false');
+});
+
+test('batchProgressLabel：批次进行中显示「更新中… k/n」，缺 total 时回退', async () => {
+  const plugin = await loadPlugin();
+  assert.equal(plugin.batchProgressLabel({ active: true, total: 3, done: 1 }), '更新中… 2/3');
+  assert.equal(plugin.batchProgressLabel({ active: true, total: 1, done: 0 }), '更新中… 1/1');
+  assert.equal(plugin.batchProgressLabel({ active: true, total: 3, done: 3 }), '更新中… 3/3', 'done 不会越过 total');
+  assert.equal(plugin.batchProgressLabel({ active: false, total: 2, done: 1 }), null);
+  assert.equal(plugin.batchProgressLabel({ active: true }), null, '没有 total 时回退普通「更新中…」');
+  assert.equal(plugin.batchProgressLabel(null), null);
+});
+
+test('忽略计数：给「已开始更新 N 个」补一句「有几个因已忽略没更新」', async () => {
+  const plugin = await loadPlugin();
+  const updates = { inventory: [
+    { name: 'a', status: 'update-available' },
+    { name: 'b', status: 'update-available', ignored: true },
+    { name: 'c', status: 'update-available', ignored: true },
+    { name: 'd', status: 'up-to-date', ignored: true }
+  ] };
+  assert.equal(plugin.ignoredUpdatableCount(updates), 2, '只数「可更新且已忽略」的');
+  assert.equal(plugin.selectedIgnoredCount(updates, new Set(['a', 'b', 'd'])), 1, '只数选中集合里的');
+  assert.equal(plugin.ignoredUpdatableCount(false), 0);
+  assert.equal(plugin.selectedIgnoredCount(updates, null), 0);
 });
 
 test('batchToast：failed === 0 走成功文案（含重启提示）', async () => {
@@ -270,16 +329,25 @@ test('batchToast：failed === 0 走成功文案（含重启提示）', async () 
     { kind: 'success', text: '已更新 2 个插件，重启 dsh 后生效' });
   assert.equal(plugin.batchToast(null), null, '没有批次');
   assert.equal(plugin.batchToast({ startedAt: 't1', finishedAt: null, updated: 0, failed: 0, results: [] }), null, '后台还在跑');
+  assert.deepEqual(plain(plugin.batchToast({
+    finishedAt: 't5', updated: 2, failed: 0,
+    results: [{ name: 'a', ok: true }, { name: 'b', ok: true, verified: false }],
+  })), { kind: 'success', text: '已更新 2 个插件（1 个需重启 dsh 后确认生效），重启 dsh 后生效' },
+  'verified === false 的条目不算失败，但要提示重启后才能确认生效');
 });
 
-test('batchToast：有失败时是错误文案并带第一个失败插件的 error', async () => {
+test('batchToast：有失败时是错误文案并点名失败的插件', async () => {
   const plugin = await loadPlugin();
   assert.deepEqual(plain(plugin.batchToast({
     finishedAt: 't3', updated: 1, failed: 2,
     results: [{ name: 'a', ok: true }, { name: 'b', ok: false, error: 'git ls-remote 超时' }, { name: 'c', ok: false, error: '另一个错误' }],
-  })), { kind: 'error', text: '1 个更新成功、2 个失败：git ls-remote 超时' });
+  })), { kind: 'error', text: '1 个更新成功、2 个失败（b、c）：git ls-remote 超时' });
   assert.deepEqual(plain(plugin.batchToast({ finishedAt: 't4', updated: 0, failed: 1, results: [{ name: 'b', ok: false }] })),
-    { kind: 'error', text: '0 个更新成功、1 个失败：未知错误' }, '失败结果缺少 error 时兜底');
+    { kind: 'error', text: '0 个更新成功、1 个失败（b）：未知错误' }, '失败结果缺少 error 时兜底');
+  assert.deepEqual(plain(plugin.batchToast({
+    finishedAt: 't6', updated: 0, failed: 4,
+    results: ['a', 'b', 'c', 'd'].map(name => ({ name, ok: false, error: 'boom' })),
+  })).text, '0 个更新成功、4 个失败（a、b、c 等 4 个）：boom', '失败插件太多时只点名前三个');
 });
 
 test('同一批次只提示一次：finishedAt 相同就不再认领', async () => {
@@ -361,6 +429,14 @@ test('markPluginsUpdated：成功的条目本地变「已是最新」并重算 s
   assert.equal(payload.inventory[0].status, 'update-available', '不改写原 payload');
   assert.equal(plugin.markPluginsUpdated(payload, []), payload, '没有成功条目时原样返回同一引用');
   assert.equal(plugin.markPluginsUpdated(false, [{ name: 'a', ok: true }]), false, '降级时保持降级');
+  // verified === false：源码换了但 node_modules 还是旧版本（重启后才生效），不能先标成已最新，
+  // 否则下一次检测会把胶囊亮回来，看起来像「更新完还能更新」。
+  const pending = plain(plugin.markPluginsUpdated(payload, [{ name: 'dsh-notify', ok: true, verified: false, updatedTo: '0.6.0' }]));
+  assert.deepEqual(pending, plain(plugin.markPluginsUpdated(payload, [])), 'verified === false 的条目本地保持原样');
+  assert.equal(pending.inventory[0].status, 'update-available');
+  // verified === true / 缺省（老服务端）仍然乐观归零
+  const verified = plain(plugin.markPluginsUpdated(payload, [{ name: 'dsh-notify', ok: true, verified: true, updatedTo: '0.6.0' }]));
+  assert.equal(verified.inventory[0].status, 'up-to-date');
 });
 
 test('updateSuccessText：单条更新的 toast 文案', async () => {

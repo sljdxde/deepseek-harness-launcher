@@ -90,11 +90,25 @@ struct PluginCompatibilityTests {
             "peerDependencies": ["@deepseek-ai/dsh-llm": ">=0.1.0 <0.2.0"]
         ] as [String: Any])
 
+        // 内置插件：插件管理器通常标 bundled；旧接口/软链判定失败时可能标成 user
+        // 或 broken（App 被移动、同名软链指向别处）。三种都不许进兼容性扫描——
+        // 用户升不了也卸不掉，报警只能把人引去白重启。这里故意给它们塞一个必然
+        // 不满足的 peer，证明不是「碰巧没触发」。
+        writeManifest(profileModules.appendingPathComponent("dsh-archive-manager"), [
+            "name": "dsh-archive-manager", "version": "0.1.0",
+            "peerDependencies": ["@deepseek-ai/nonexistent-builtin-api": "^9.0.0"]
+        ] as [String: Any])
+
         let plugins: [PluginCompatibilitySupport.InstalledPlugin] = [
             .init(name: "memory-plugin", version: "0.3.0", source: "user", broken: nil),
             .init(name: "legacy-plugin", version: "0.1.0", source: "user", broken: nil),
             .init(name: "fine-plugin", version: "1.0.0", source: "user", broken: nil),
             .init(name: "dsh-archive-manager", version: "0.1.0", source: "bundled", broken: nil),
+            // 同一内置插件被旧接口错标成 user：名字集合必须兜住。
+            .init(name: "dsh-archive-manager", version: "0.1.0", source: "user", broken: nil),
+            // 内置插件的「损坏残留」也不许报：那不是用户能清理/重装的东西。
+            .init(name: "dsh-plugin-manager", version: nil, source: "broken", broken: true),
+            .init(name: "dsh-session-notify", version: nil, source: "user", broken: nil),
             .init(name: "dsh-broken-thing", version: nil, source: "broken", broken: true),
         ]
         let issues = PluginCompatibilitySupport.scan(plugins: plugins, profileModules: profileModules, runtimeModules: runtimeModules)
@@ -103,9 +117,10 @@ struct PluginCompatibilityTests {
               "peer 超界问题的 reason 应包含区间与实际版本：\(issues.first?.reason ?? "")")
         check(issues.contains { $0.pluginName == "legacy-plugin" && $0.reason.contains("dsh-removed-api") && $0.reason.contains("不存在") },
               "peer 缺失问题应点名包并说明不存在")
-        check(issues.contains { $0.pluginName == "dsh-broken-thing" && $0.userPlugin }, "broken 残留按用户插件处理")
+        check(issues.contains { $0.pluginName == "dsh-broken-thing" }, "用户插件的 broken 残留仍要报（可以清理/重装）")
         check(!issues.contains { $0.pluginName == "fine-plugin" }, "区间满足的插件不应报问题")
-        check(!issues.contains { !$0.userPlugin }, "bundled 插件不做 peer 扫描（其检测走接口探针）")
+        check(!issues.contains { PluginCompatibilitySupport.bundledPluginNames.contains($0.pluginName) },
+              "内置插件永不参与兼容性扫描（bundled/user/broken 三种标记都一样）：\(issues.map(\.pluginName))")
 
         // 一个插件同时踩两个 peer（实测 dsh-connect-workbuddy：pi-ai 超界 + react 缺失）
         // 只能报**一条**：日志行按插件计数、弹窗按插件逐个呈现，一条一条报会让同一插件

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { apply } from '../lib/index.js';
+import { apply, updatePlugins, isBatchUpdateRunning } from '../lib/index.js';
 
 function makeRes() {
   const calls = [];
@@ -56,6 +56,7 @@ test('apply 注册全部插件管理路由', () => {
     '/dsh-plugin-manager/installed',
     '/dsh-plugin-manager/marketplace',
     '/dsh-plugin-manager/refresh',
+    '/dsh-plugin-manager/release-notes',
     '/dsh-plugin-manager/restart',
     '/dsh-plugin-manager/unignore',
     '/dsh-plugin-manager/uninstall',
@@ -204,4 +205,79 @@ test('ignore / unignore 路由：写记录、拒绝空请求、取消后记录�
     else process.env.DSH_HOME = previousHome;
     await rm(dshHome, { recursive: true, force: true });
   }
+});
+
+// 单条更新与批量更新都会写同一个 profile：批量在跑时 /update 必须拒绝，否则 pnpm 并发。
+test('update 路由在批量更新进行中返回 409', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-route-409-'));
+  process.env.DSH_HOME = dshHome;
+  try {
+    const profile = join(dshHome, 'profiles', 'web');
+    await mkdir(join(profile, 'node_modules', 'demo'), { recursive: true });
+    await writeFile(join(profile, 'node_modules', 'demo', 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }), 'utf8');
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: 'github:o/demo' },
+      dsh: { profile: { bundles: ['demo'] } }
+    }), 'utf8');
+
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const running = updatePlugins(['demo'], {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      peerProbe: async () => ({}),
+      command: async () => { await gate; }
+    });
+    // 等批次真正进入执行（/update 路由读的是同一个互斥标志）。
+    for (let i = 0; i < 300 && !isBatchUpdateRunning(); i += 1) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(isBatchUpdateRunning(), true, '批次应当已经在跑');
+
+    const { routes } = boot();
+    const update = routes.find(route => route.path === '/dsh-plugin-manager/update');
+    const res = makeRes();
+    await update.handler(makeReqWithBody('POST', { name: 'demo' }), res);
+    const status = res.calls.find(call => call[0] === 'writeHead')[1];
+    const payload = JSON.parse(res.calls.find(call => call[0] === 'end')[1]);
+    assert.equal(status, 409);
+    assert.match(payload.error, /批量更新/);
+
+    // 其它会写 profile 的路由同样要拒绝：它们和批量更新都调 pnpm 改同一个 profile。
+    const guarded = [
+      ['/dsh-plugin-manager/install', { name: 'demo' }],
+      ['/dsh-plugin-manager/uninstall', { name: 'demo' }],
+      ['/dsh-plugin-manager/uninstall-many', { names: ['demo'] }],
+      ['/dsh-plugin-manager/cleanup', { name: 'demo' }]
+    ];
+    for (const [path, body] of guarded) {
+      const route = routes.find(item => item.path === path);
+      const blocked = makeRes();
+      await route.handler(makeReqWithBody('POST', body), blocked);
+      const blockedStatus = blocked.calls.find(call => call[0] === 'writeHead')[1];
+      const blockedPayload = JSON.parse(blocked.calls.find(call => call[0] === 'end')[1]);
+      assert.equal(blockedStatus, 409, path + ' 在批量更新期间必须拒绝');
+      assert.match(blockedPayload.error, /批量更新/, path);
+    }
+
+    release();
+    await running;
+    assert.equal(isBatchUpdateRunning(), false, '批次结束后要放行');
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('release-notes 路由拒绝缺少插件名或版本号的请求', async () => {
+  const { routes } = boot();
+  const route = routes.find(item => item.path === '/dsh-plugin-manager/release-notes');
+  assert.ok(route, '路由已注册');
+  const missingVersion = makeRes();
+  await route.handler(makeReqWithBody('POST', { name: 'dsh-notify' }), missingVersion);
+  assert.equal(missingVersion.calls.find(call => call[0] === 'writeHead')[1], 400);
+  assert.match(JSON.parse(missingVersion.calls.find(call => call[0] === 'end')[1]).error, /缺少/);
+  const missingName = makeRes();
+  await route.handler(makeReqWithBody('POST', { version: '2.0.0' }), missingName);
+  assert.equal(missingName.calls.find(call => call[0] === 'writeHead')[1], 400);
 });

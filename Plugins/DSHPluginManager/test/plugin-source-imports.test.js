@@ -129,7 +129,9 @@ async function withFileSourceUpdate(fixtureFiles, body) {
   // DSH_HOME 也指到临时目录：收尾的版本复核会读 node_modules，不能碰真实 profile。
   process.env.DSH_HOME = home;
   try {
-    const sourcesDir = join(home, 'plugin-sources');
+    // 与真实布局一致：file: 克隆来源在 $DSH_HOME/profiles/web/plugin-sources，
+    // dev-linked 守卫（applyPluginUpdate）只放行这里的目录。
+    const sourcesDir = join(home, 'profiles', 'web', 'plugin-sources');
     const dir = join(sourcesDir, 'owner-repo');
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'index.js'), '// 旧版本', 'utf8');

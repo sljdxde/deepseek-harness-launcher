@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -11,19 +11,26 @@ import {
   collectPluginSources,
   comparePluginVersions,
   decidePluginUpdate,
+  extractChangelogSection,
+  fetchPluginReleaseNotes,
   fetchRemotePackageVersion,
   fetchTargetPeerDependencies,
+  githubRepoFromUrl,
   ignorePluginUpdates,
+  isBatchUpdateRunning,
   isUpdateIgnored,
   parseLockCommit,
   parsePluginVersion,
   pluginMajorVersion,
   probeGitHead,
+  patchUpdateCacheAfterUpdate,
   pruneSourceBackups,
   readIgnoredUpdates,
+  readLastBatchUpdate,
   readUpdateCache,
   readUpdateProgress,
   unignorePluginUpdates,
+  updatePlugins,
   writeUpdateCache,
   runUpdateCheck,
   summarizeUpdateInventory,
@@ -604,8 +611,12 @@ test('用例7 applyPluginUpdate：github: 来源按原 spec 重新解析', async
 
 test('用例7 applyPluginUpdate：file: 克隆来源先备份、clone 重建、再 add file:<新目录>', async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-pm-apply-'));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
   try {
-    const sourcesDir = join(home, 'plugin-sources');
+    // 与真实布局一致：启动器克隆的目录在 $DSH_HOME/profiles/web/plugin-sources，
+    // 更新的「备份-改名-重克隆」只允许动这里（见 applyPluginUpdate 的 dev-linked 守卫）。
+    const sourcesDir = join(home, 'profiles', 'web', 'plugin-sources');
     const dir = join(sourcesDir, 'owner-repo');
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'index.js'), '// 旧版本', 'utf8');
@@ -653,14 +664,19 @@ test('用例7 applyPluginUpdate：file: 克隆来源先备份、clone 重建、�
     assert.equal(result.restartRequired, true);
     assert.match(result.note, /owner-repo\.bak-/);
   } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 });
 
 test('用例7 applyPluginUpdate：clone 失败时回滚备份（原目录恢复、无 .bak 残留）', async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-pm-apply-fail-'));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
   try {
-    const sourcesDir = join(home, 'plugin-sources');
+    // 同上：对齐真实布局，让目录落在守卫允许的 $DSH_HOME/profiles/web/plugin-sources。
+    const sourcesDir = join(home, 'profiles', 'web', 'plugin-sources');
     const dir = join(sourcesDir, 'owner-repo');
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'index.js'), '// 旧版本', 'utf8');
@@ -696,6 +712,8 @@ test('用例7 applyPluginUpdate：clone 失败时回滚备份（原目录恢复�
     // clone 失败时不应去改 pnpm 依赖
     assert.deepEqual(commands, []);
   } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 });
@@ -730,6 +748,7 @@ test('用例7 updatePlugin：clone 失败时公开接口返回 ok:false 且旧�
 
     const result = await updatePlugin('repo', {
       check: async () => [{ status: 'update-available', latestVersion: '1.1.0' }],
+      peerProbe: async () => ({}),
       command: async () => {},
       clone: async () => ({ ok: false, error: 'boom' })
     });
@@ -932,6 +951,7 @@ test('进度：单插件更新走 准备 → 步骤 → 完成，并保留结果
     const seen = [];
     const result = await updatePlugin('demo-plugin', {
       check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      peerProbe: async () => ({}),
       command: async args => { seen.push({ args, step: readUpdateProgress()?.step, done: readUpdateProgress()?.done }); }
     });
     assert.equal(result.ok, true);
@@ -1057,43 +1077,79 @@ test('回归 6：缓存文件里的畸形 JSON 不能让调用方崩', async () 
 // （用户实测：更新完插件，菜单还显示"2 个可更新"）。
 // ---------------------------------------------------------------------------
 
-test('回归 7：更新成功后缓存失效，下一次 /updates 会重新检测', async () => {
+test('回归 7：更新成功后修补缓存里这一条，其它插件的标记与角标不受影响', async () => {
   await withTempDshHome('dsh-pm-invalidate-', async home => {
     const profile = join(home, 'profiles', 'web');
-    await mkdir(join(profile, 'node_modules', 'demo'), { recursive: true });
+    for (const name of ['demo', 'other']) {
+      await mkdir(join(profile, 'node_modules', name), { recursive: true });
+      await writeFile(join(profile, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '1.0.0' }));
+    }
     await writeFile(join(profile, 'package.json'), JSON.stringify({
       name: 'web', private: true,
-      dependencies: { demo: 'github:o/demo' },
-      dsh: { profile: { bundles: ['demo'] } }
+      dependencies: { demo: 'github:o/demo', other: 'github:o/other' },
+      dsh: { profile: { bundles: ['demo', 'other'] } }
     }));
-    await writeFile(join(profile, 'node_modules', 'demo', 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }));
     const cacheFile = join(home, 'cache.json');
+    const checkedAt = new Date().toISOString();
 
-    // 先造一份"有可用更新"的缓存
     await writeUpdateCache({
-      checkedAt: new Date().toISOString(),
-      inventory: [{ name: 'demo', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' }]
+      checkedAt,
+      inventory: [
+        { name: 'demo', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' },
+        { name: 'other', status: 'update-available', installedVersion: '1.0.0', latestVersion: '3.0.0' }
+      ]
     }, cacheFile);
-    assert.equal((await readUpdateCache({ cacheFile })).inventory[0].status, 'update-available');
 
-    // 更新这个插件（注入假命令，不碰 pnpm）
     const result = await updatePlugin('demo', {
       check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      peerProbe: async () => ({}),
       command: async () => {},
       cacheFile
     });
     assert.equal(result.ok, true);
-    assert.equal(await readUpdateCache({ cacheFile }), null, '更新成功后缓存必须失效');
 
-    // 下一次检测会真的重新跑（probe 被调用）
+    const patched = await readUpdateCache({ cacheFile });
+    assert.ok(patched, '缓存不能整份删掉：删掉会让面板上其它插件的更新标记一起消失、按钮全变灰');
+    const byName = Object.fromEntries(patched.inventory.map(item => [item.name, item]));
+    assert.equal(byName.demo.status, 'up-to-date', '刚更新的插件立刻变成「已是最新」');
+    assert.equal(byName.demo.installedVersion, '2.0.0');
+    assert.equal(byName.other.status, 'update-available', '其它插件的检测结论原样保留');
+    assert.equal(patched.checkedAt, checkedAt, '检测时间不动：其它条目还是同一轮结论');
+
+    // 缓存仍然新鲜 → 下一次 /updates 不该触发重检，其它插件的标记立刻就能读到。
     let probes = 0;
-    const refreshed = await checkPluginUpdates({
+    const snapshot = await checkPluginUpdates({
       cacheFile,
-      probe: { git: async () => { probes += 1; return { version: '2.0.0', commit: 'c'.repeat(40) }; } }
+      probe: { git: async () => { probes += 1; return { version: '3.0.0', commit: 'c'.repeat(40) }; } }
     });
-    assert.ok(refreshed.refreshing, '缓存失效后 GET 会触发后台重检');
-    for (let i = 0; i < 100 && probes === 0; i += 1) await sleep(30);
-    assert.ok(probes > 0, '应当真的重新探测了');
+    assert.equal(snapshot.refreshing, false);
+    assert.equal(probes, 0);
+    assert.deepEqual(snapshot.summary, { total: 2, updateAvailable: 1, ignored: 0, failed: 0, unknown: 0 });
+  });
+});
+
+test('patchUpdateCacheAfterUpdate：批量结果逐条修补，失败条目和其它条目都不动', async () => {
+  await withTempDshHome('dsh-pm-patch-cache-', async () => {
+    const cacheFile = join(process.env.DSH_HOME, 'cache.json');
+    await writeUpdateCache({
+      checkedAt: new Date().toISOString(),
+      inventory: [
+        { name: 'a', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' },
+        { name: 'b', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' },
+        { name: 'c', status: 'up-to-date', installedVersion: '1.0.0', latestVersion: '1.0.0' }
+      ]
+    }, cacheFile);
+
+    assert.equal(await patchUpdateCacheAfterUpdate([
+      { name: 'a', ok: true, updatedTo: '2.0.0' },
+      { name: 'b', ok: false, error: 'boom' }
+    ], cacheFile), true);
+    const byName = Object.fromEntries((await readUpdateCache({ cacheFile })).inventory.map(item => [item.name, item]));
+    assert.equal(byName.a.status, 'up-to-date');
+    assert.equal(byName.b.status, 'update-available', '失败的插件保持可更新');
+    assert.equal(byName.c.status, 'up-to-date', '本来就没更新的条目保持原样');
+    assert.equal(await patchUpdateCacheAfterUpdate([{ name: 'zzz', ok: true }], cacheFile), false, '缓存里没有这个插件就不改');
+    assert.equal(await patchUpdateCacheAfterUpdate([], cacheFile), false);
   });
 });
 
@@ -1141,6 +1197,7 @@ test('回归 8：更新后复核版本，没生效就删掉包目录强制重装
 
     const result = await updatePlugin('demo', {
       check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      peerProbe: async () => ({}),
       command,
       clone
     });
@@ -1174,6 +1231,7 @@ test('回归 8b：强制重装后仍未生效则如实标记 verified=false（�
 
     const result = await updatePlugin('demo', {
       check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      peerProbe: async () => ({}),
       command: async () => {},          // pnpm 假装置之不理
       clone: async () => ({ ok: true, dest: sourcesDir, packageName: 'demo' })
     });
@@ -1320,4 +1378,314 @@ test('原子写顺手收掉上次被杀留下的临时文件；活进程的 stag
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// 回归 9：pnpm 没有重新物化 `file:` 依赖时，node_modules 还链在**旧目录**上。
+// 旧代码在收尾阶段查的是 node_modules 解析出来的目录，于是把旧目录里更新前就存在的
+// import 缺口报成"新源码残缺"，回滚时还把 package.json 的依赖改成指向 `.bak-…` 目录。
+// 用户实测的 qoder 插件就是这样卡在 0.5.0：每点一次更新，`.bak-` 名字就多套一层
+// （…bak-A.bak-B.bak-C），永远升不上去。
+// ---------------------------------------------------------------------------
+
+test('回归 9：node_modules 仍指向旧目录时，旧目录的缺口不算新源码残缺（不回滚、不把依赖改成 .bak）', async () => {
+  await withTempDshHome('dsh-pm-stale-tree-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    const sourcesDir = join(profile, 'plugin-sources', 'o-demo');
+    const devDir = join(home, 'dev-checkout');
+    const installedDir = join(profile, 'node_modules', 'demo');
+    // 旧源码（node_modules 还链着它）本身就有 import 缺口：更新前就存在，和这次更新无关。
+    await mkdir(devDir, { recursive: true });
+    await writeFile(join(devDir, 'package.json'), JSON.stringify({ name: 'demo', version: '0.5.0' }), 'utf8');
+    await writeFile(join(devDir, 'probe.mjs'), "import { x } from '../lib/claim.js'\n", 'utf8');
+    // 克隆出来的新源码是完整的 0.7.4。
+    await mkdir(sourcesDir, { recursive: true });
+    await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '0.7.4' }), 'utf8');
+    await writeFile(join(sourcesDir, '.dsh-source.json'), JSON.stringify({
+      author: 'o', repo: 'demo', subdir: null, url: 'https://github.com/o/demo.git', commit: 'b'.repeat(40)
+    }), 'utf8');
+    await mkdir(join(profile, 'node_modules'), { recursive: true });
+    await symlink(devDir, installedDir, 'dir');
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: `file:${sourcesDir}` },
+      dsh: { profile: { bundles: ['demo'] } }
+    }), 'utf8');
+
+    const commands = [];
+    const command = async (args) => {
+      commands.push(args);
+      // 模拟实测的 pnpm 行为：`add file:<新目录>` 之后 node_modules 仍然链在旧目录上。
+      await rm(installedDir, { recursive: true, force: true }).catch(() => {});
+      await mkdir(join(profile, 'node_modules'), { recursive: true });
+      await symlink(devDir, installedDir, 'dir');
+    };
+    const clone = async () => {
+      await mkdir(sourcesDir, { recursive: true });
+      await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '0.7.4' }), 'utf8');
+      return { ok: true, dest: sourcesDir, packageName: 'demo' };
+    };
+
+    const result = await updatePlugin('demo', {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '0.7.4', error: null })),
+      // 门禁探测在真实入口会联网；单测注入空 peer，保证离线可跑。
+      peerProbe: async () => ({}),
+      command,
+      clone
+    });
+
+    assert.equal(result.ok, true, '源码已换成新版就算成功（node_modules 没跟上只是待重启确认）');
+    assert.equal(result.verified, false, '没复核上就如实上报');
+    assert.match(result.note, /重启 dsh 后确认/);
+    assert.doesNotMatch(result.note, /源码缺少模块/, '旧目录更新前就有的缺口不能报成新源码残缺');
+    assert.equal(commands.some(args => String(args[1]).includes('.bak-')), false,
+      '不能把依赖改成指向 .bak 目录（那会让 .bak 名字逐次叠加，更新永远回不来）');
+    // 新源码完整、旧目录没被动过、依赖记录仍指向原源码目录。
+    assert.equal(JSON.parse(await readFile(join(sourcesDir, 'package.json'), 'utf8')).version, '0.7.4');
+    assert.equal(JSON.parse(await readFile(join(devDir, 'package.json'), 'utf8')).version, '0.5.0');
+    const manifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'));
+    assert.equal(manifest.dependencies.demo, `file:${sourcesDir}`);
+  });
+});
+
+test('回归 10：新源码真的残缺时回滚成原目录内容，依赖不被改成 .bak 目录', async () => {
+  await withTempDshHome('dsh-pm-broken-new-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    const sourcesDir = join(profile, 'plugin-sources', 'o-demo');
+    const installedDir = join(profile, 'node_modules', 'demo');
+    await mkdir(sourcesDir, { recursive: true });
+    await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }), 'utf8');
+    await writeFile(join(sourcesDir, 'index.js'), '// 旧版本', 'utf8');
+    await writeFile(join(sourcesDir, '.dsh-source.json'), JSON.stringify({
+      author: 'o', repo: 'demo', subdir: null, url: 'https://github.com/o/demo.git', commit: 'c'.repeat(40)
+    }), 'utf8');
+    await mkdir(installedDir, { recursive: true });
+    await writeFile(join(installedDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }), 'utf8');
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: `file:${sourcesDir}` },
+      dsh: { profile: { bundles: ['demo'] } }
+    }), 'utf8');
+
+    const commands = [];
+    const command = async (args) => {
+      commands.push(args);
+      // 第二次 add（收尾重装）后源码变残缺、但版本号是新的：版本复核会通过，
+      // 只有 import 图能发现它是坏的。
+      if (commands.filter(item => item[0] === 'add').length === 2) {
+        await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '2.0.0' }), 'utf8');
+        await writeFile(join(sourcesDir, 'probe.mjs'), "import { x } from './missing.js'\n", 'utf8');
+      }
+    };
+    const clone = async () => {
+      await mkdir(sourcesDir, { recursive: true });
+      await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '2.0.0' }), 'utf8');
+      return { ok: true, dest: sourcesDir, packageName: 'demo' };
+    };
+
+    const result = await updatePlugin('demo', {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      // 门禁探测在真实入口会联网；单测注入空 peer，保证离线可跑。
+      peerProbe: async () => ({}),
+      command,
+      clone
+    });
+
+    assert.equal(result.ok, false, '残缺源码必须让更新失败');
+    assert.match(result.error, /缺少模块/);
+    // 旧内容回到依赖目录（内容级回滚），版本也退回 1.0.0。
+    assert.equal(await readFile(join(sourcesDir, 'index.js'), 'utf8'), '// 旧版本');
+    assert.equal(JSON.parse(await readFile(join(sourcesDir, 'package.json'), 'utf8')).version, '1.0.0');
+    // 回滚命令指回原目录，不是 .bak 目录。
+    assert.deepEqual(commands.at(-1), ['add', `file:${sourcesDir}`]);
+    assert.equal(commands.some(args => String(args[1]).includes('.bak-')), false, '依赖不能被改成指向 .bak 目录');
+    assert.deepEqual((await readdir(join(profile, 'plugin-sources'))).filter(name => name.includes('.bak-')), [],
+      '备份被换回原位，不留 .bak 残留');
+  });
+});
+
+test('回归 11：批量更新不允许并发（第二次直接拒绝），空名单不产生假批次', async () => {
+  await withTempDshHome('dsh-pm-batch-guard-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    await mkdir(join(profile, 'node_modules', 'plugin-a'), { recursive: true });
+    await writeFile(join(profile, 'node_modules', 'plugin-a', 'package.json'), JSON.stringify({ name: 'plugin-a', version: '1.0.0' }), 'utf8');
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { 'plugin-a': 'github:o/plugin-a' },
+      dsh: { profile: { bundles: ['plugin-a'] } }
+    }), 'utf8');
+
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const first = updatePlugins(['plugin-a'], {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '3.0.0', error: null })),
+      // 门禁探测在真实入口会联网；单测注入空 peer，保证离线可跑。
+      peerProbe: async () => ({}),
+      command: async () => { await gate; }
+    });
+    assert.equal(await waitFor(() => isBatchUpdateRunning()), true, '第一批应当已受理并进入执行');
+
+    const second = await updatePlugins(['plugin-a'], {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '3.0.0', error: null })),
+      // 门禁探测在真实入口会联网；单测注入空 peer，保证离线可跑。
+      peerProbe: async () => ({}),
+      command: async () => {}
+    });
+    assert.equal(second.ok, false);
+    assert.equal(second.busy, true);
+    assert.match(second.error, /已有批量更新/);
+    const running = readUpdateProgress();
+    assert.equal(running.active, true, '拒绝第二个批次不能破坏正在跑的进度对象');
+    assert.equal(running.total, 1);
+    assert.equal(readLastBatchUpdate().finishedAt, null, '被拒绝的请求不能写收尾批次');
+
+    release();
+    const summary = await first;
+    assert.equal(summary.ok, true);
+    assert.equal(summary.updated, 1);
+    assert.equal(summary.failed, 0);
+    assert.equal(isBatchUpdateRunning(), false, '批次结束后放行下一次');
+
+    const empty = await updatePlugins([]);
+    assert.equal(empty.ok, false);
+    assert.match(empty.error, /没有要更新的插件/);
+    assert.equal((await updatePlugins(null)).ok, false, '非数组入参同样拒绝');
+    assert.notEqual(readLastBatchUpdate().finishedAt, null, '空名单不能把上次的真实批次冲掉');
+  });
+});
+
+test('进度：批量更新在「检查远端」阶段就写上当前插件（面板才不会只显示等待中）', async () => {
+  await withTempDshHome('dsh-pm-progress-check-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    for (const name of ['plugin-a', 'plugin-b']) {
+      await mkdir(join(profile, 'node_modules', name), { recursive: true });
+      await writeFile(join(profile, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '1.0.0' }));
+    }
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { 'plugin-a': 'github:o/plugin-a', 'plugin-b': 'github:o/plugin-b' },
+      dsh: { profile: { bundles: ['plugin-a', 'plugin-b'] } }
+    }));
+
+    const seen = [];
+    const summary = await updatePlugins(['plugin-a', 'plugin-b'], {
+      // 联网检查这一步以前是「无主」阶段：progress.current 还是 null，
+      // 面板上已经轮到的插件也只显示「等待中」。
+      check: async sources => {
+        const progress = readUpdateProgress();
+        seen.push({ current: progress.current, step: progress.step });
+        return sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '3.0.0', error: null }));
+      },
+      peerProbe: async () => ({}),
+      command: async () => {}
+    });
+    assert.deepEqual(seen.map(item => item.current), ['plugin-a', 'plugin-b'], '检查阶段进度里已经是当前插件');
+    assert.ok(seen.every(item => /正在检查远端/.test(item.step ?? '')), '阶段文案要说明在检查远端：' + JSON.stringify(seen));
+    assert.equal(summary.ok, true);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// 「这个版本改了什么」：Release notes / CHANGELOG 解析
+// ---------------------------------------------------------------------------
+
+test('githubRepoFromUrl：repository/homepage 里认出 GitHub owner/repo', () => {
+  assert.deepEqual(githubRepoFromUrl('git+https://github.com/o/repo.git'), { author: 'o', repo: 'repo' });
+  assert.deepEqual(githubRepoFromUrl({ url: 'https://github.com/o/repo' }), { author: 'o', repo: 'repo' });
+  assert.deepEqual(githubRepoFromUrl('https://github.com/o/repo/tree/main/packages/x'), { author: 'o', repo: 'repo' });
+  assert.equal(githubRepoFromUrl('https://gitlab.com/o/repo'), null);
+  assert.equal(githubRepoFromUrl(null), null);
+});
+
+test('extractChangelogSection：按版本号取段落，遇到同级 heading 为止', () => {
+  const changelog = [
+    '# Changelog',
+    '',
+    '## [2.1.0] - 2026-10-20',
+    '- 新版本的功能',
+    '',
+    '### 修复',
+    '- 某个修复',
+    '',
+    '## [2.0.0] - 2026-10-01',
+    '- 老版本',
+    ''
+  ].join('\n');
+  assert.match(extractChangelogSection(changelog, '2.1.0'), /新版本的功能/);
+  assert.match(extractChangelogSection(changelog, '2.1.0'), /某个修复/, '子标题内容也要带上');
+  assert.doesNotMatch(extractChangelogSection(changelog, '2.1.0'), /老版本/, '不能捞到下个版本的段落');
+  assert.match(extractChangelogSection(changelog, '2.0.0'), /老版本/);
+  assert.equal(extractChangelogSection(changelog, '9.9.9'), null, '没有这个版本返回 null');
+  assert.equal(extractChangelogSection('', '1.0.0'), null);
+  // 版本号不能匹配到更长版本号的前缀：2.0.0 不应命中 2.0.01
+  assert.equal(extractChangelogSection('## 2.0.01\n- x', '2.0.0'), null);
+  assert.match(extractChangelogSection('## v1.2.3\n- ok', '1.2.3'), /ok/, '标题带 v 前缀也认');
+});
+
+test('fetchPluginReleaseNotes：优先 GitHub Release，没有就用 CHANGELOG 兜底并缓存', async () => {
+  await withTempDshHome('dsh-pm-notes-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    await mkdir(join(profile, 'node_modules', 'demo'), { recursive: true });
+    await writeFile(join(profile, 'node_modules', 'demo', 'package.json'), JSON.stringify({
+      name: 'demo', version: '1.0.0', repository: { url: 'git+https://github.com/o/demo.git' }
+    }));
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: 'github:o/demo' },
+      dsh: { profile: { bundles: ['demo'] } }
+    }));
+
+    let calls = 0;
+    const fetchImpl = async url => {
+      calls += 1;
+      const notFound = { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+      if (url.includes('/releases/tags/')) return notFound;
+      if (url.endsWith('/CHANGELOG.zh.md')) return notFound;
+      if (url.endsWith('/CHANGELOG.md')) {
+        return { ok: true, status: 200, text: async () => '## [2.0.0] - 2026-10-01\n- 支持新东西\n\n## [1.0.0]\n- 老东西\n', json: async () => ({}) };
+      }
+      return notFound;
+    };
+    const notes = await fetchPluginReleaseNotes('demo', '2.0.0', { fetch: fetchImpl });
+    assert.equal(notes.ok, true);
+    assert.equal(notes.kind, 'changelog');
+    assert.match(notes.notes, /支持新东西/);
+    assert.doesNotMatch(notes.notes, /老东西/);
+    assert.match(notes.url, /github\.com\/o\/demo\/blob\//);
+
+    // 缓存命中：同一个 name@version 不再联网
+    const before = calls;
+    const cached = await fetchPluginReleaseNotes('demo', '2.0.0', { fetch: fetchImpl });
+    assert.deepEqual(cached, notes);
+    assert.equal(calls, before, '30 分钟内复用缓存');
+  });
+});
+
+test('fetchPluginReleaseNotes：有 GitHub Release 就用它的正文', async () => {
+  await withTempDshHome('dsh-pm-notes-release-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    // 用另一个仓库名：缓存按「包名@版本」全局共享，不能命中上一个用例的结果。
+    await mkdir(join(profile, 'node_modules', 'demo2'), { recursive: true });
+    await writeFile(join(profile, 'node_modules', 'demo2', 'package.json'), JSON.stringify({ name: 'demo2', version: '1.0.0' }));
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo2: 'github:q/demo2' },
+      dsh: { profile: { bundles: ['demo2'] } }
+    }));
+    const fetchImpl = async url => {
+      if (url.includes('/repos/q/demo2/releases/tags/v2.0.0')) {
+        return { ok: true, status: 200, json: async () => ({ name: 'v2.0.0', body: '## 亮点\n- 发布说明正文', html_url: 'https://github.com/q/demo2/releases/tag/v2.0.0' }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    };
+    const notes = await fetchPluginReleaseNotes('demo2', '2.0.0', { fetch: fetchImpl });
+    assert.equal(notes.ok, true);
+    assert.equal(notes.kind, 'release');
+    assert.match(notes.notes, /发布说明正文/);
+    assert.match(notes.url, /releases\/tag\/v2\.0\.0/);
+    // 拿不到名字/版本时直接报错，不发请求
+    assert.equal((await fetchPluginReleaseNotes('', '1.0.0')).ok, false);
+    assert.equal((await fetchPluginReleaseNotes('demo2', '')).ok, false);
+  });
 });

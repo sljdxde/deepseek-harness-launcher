@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  acceptInstalledPackage,
   applyPluginUpdate,
   findPeerIncompatibilities,
   satisfiesPluginRange
@@ -205,4 +206,72 @@ test('已装版本不满足、目标版本满足：升级放行且没有多余�
     assert.equal(result.ok, true);
     assert.doesNotMatch(result.note ?? '', /升级前的版本也是这么声明的/);
   });
+});
+
+test('link: 指向用户开发目录时拒绝自动更新：绝不改名/克隆用户的目录', async () => {
+  await withRuntime({ '@deepseek-ai/dsh-llm': '0.1.5-rc.2' }, async () => {
+    const commands = [];
+    const result = await applyPluginUpdate({
+      name: '@changfenhuang/dsh-genui',
+      kind: 'git',
+      spec: 'link:/Users/x/dev/dsh-genui',
+      installedVersion: '0.12.0',
+      installedCommit: null,
+      remote: {
+        type: 'git',
+        url: 'https://github.com/changfenhuang/dsh-genui.git',
+        author: 'changfenhuang', repo: 'dsh-genui', subdir: null,
+        dir: '/Users/x/dev/dsh-genui'
+      }
+    }, {
+      check: async () => [{ status: 'update-available', latestVersion: '0.15.0' }],
+      command: async args => { commands.push(args); },
+      clone: async () => { throw new Error('clone 不该被调用：用户目录不能动'); },
+      peerProbe: async () => ({})
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'dev-linked');
+    assert.match(result.error, /链接到本地目录/);
+    assert.match(result.error, /git pull/);
+    assert.deepEqual(commands, [], '被拒绝的更新不能碰 profile');
+  });
+});
+
+test('plugin-sources 内的克隆目录照常走重克隆更新（守卫不误伤）', async () => {
+  await withRuntime({ '@deepseek-ai/dsh-llm': '0.1.5-rc.2' }, async home => {
+    const dir = join(home, 'profiles', 'web', 'plugin-sources', 'a-b');
+    await mkdir(dir, { recursive: true });
+    const commands = [];
+    let cloned = false;
+    const result = await applyPluginUpdate({
+      name: '@a/b', kind: 'git', spec: `file:${dir}`,
+      installedVersion: '1.0.0', installedCommit: null,
+      remote: { type: 'git', url: 'https://github.com/a/b.git', author: 'a', repo: 'b', subdir: null, dir }
+    }, {
+      check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
+      command: async args => { commands.push(args); },
+      clone: async () => { cloned = true; return { ok: true, dest: dir }; },
+      peerProbe: async () => ({})
+    });
+    assert.notEqual(result.status, 'dev-linked', 'plugin-sources 内的目录不触发守卫');
+    assert.equal(cloned, true, '守卫放行后应继续重克隆流程');
+  });
+});
+
+
+test('安装验收：包没物化进 node_modules → 不算成功，自动撤销并如实上报', async () => {
+  const commands = [];
+  const result = await acceptInstalledPackage('dsh-foo', 'pnpm 说 ok', async args => { commands.push(args); }, async () => null);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /dsh-foo 没有出现在 node_modules 里（未生效）/);
+  assert.match(result.error, /已自动撤销这次安装/);
+  assert.deepEqual(commands, [['remove', 'dsh-foo']], '验收不过要自动撤销这次安装');
+});
+
+test('安装验收：包已物化且 import 可落地 → 通过', async () => {
+  const commands = [];
+  const result = await acceptInstalledPackage('dsh-foo', 'pnpm 说 ok', async args => { commands.push(args); }, async () => '2.0.0');
+  assert.equal(result.ok, true);
+  assert.equal(result.note, 'pnpm 说 ok');
+  assert.deepEqual(commands, [], '验收通过不做任何撤销');
 });

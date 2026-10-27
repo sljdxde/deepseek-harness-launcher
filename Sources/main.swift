@@ -664,15 +664,41 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.finishBrowserOpen(port: port, error: nil, completion: completion)
                     return
                 }
-                if let active = pagePresence, !active {
-                    self.appendLogString("Harness 页面已全部关闭，重新打开页面\n")
-                    self.deliverPage(url, to: nil, port: port, completion: completion)
+                let browser = self.browserConnected(clientPIDs: clientPIDs, table: table, port: port)
+                // 页面怎么处理由 SessionJumpSupport.pagePlan 决定（可单测）：
+                // 心跳说页面全关 / 没找到浏览器 → 重开页面；重启接管 → 先关旧标签；
+                // 其余 → 精确选中已有标签，绝不把 URL 再交给浏览器（会开出重复标签）。
+                let plan = SessionJumpSupport.pagePlan(
+                    presenceActive: pagePresence,
+                    browser: browser.map(self.browserInfo),
+                    restartTakeover: restartTakeover
+                )
+                if plan.usesConnectedBrowser, let browser {
+                    self.deliverPage(
+                        url, to: browser, port: port,
+                        restartTakeover: plan.closesOldTab, completion: completion
+                    )
                     return
                 }
-                let browser = self.browserConnected(clientPIDs: clientPIDs, table: table, port: port)
-                self.deliverPage(url, to: browser, port: port, restartTakeover: restartTakeover, completion: completion)
+                if pagePresence == false {
+                    self.appendLogString("Harness 页面已全部关闭，重新打开页面\n")
+                }
+                self.deliverPage(url, to: nil, port: port, completion: completion)
             }
         }
+    }
+
+    /// 已连接浏览器 → 计划用的描述（名称 / 实例数）。
+    /// 同一 bundle 可能同时跑着多个实例（agent-browser 这类自动化浏览器常驻），
+    /// AppleScript 只把事件发给最近启动的那个，实例数是诊断「未找到标签页」的关键。
+    private func browserInfo(for app: NSRunningApplication) -> SessionJumpSupport.BrowserInfo {
+        SessionJumpSupport.BrowserInfo(
+            name: app.localizedName ?? "浏览器",
+            bundleIdentifier: app.bundleIdentifier,
+            instanceCount: NSRunningApplication
+                .runningApplications(withBundleIdentifier: app.bundleIdentifier ?? "")
+                .count
+        )
     }
 
     /// 打开页面用的入口 URL：dsh 打印过带 token 的认证入口就优先用它
@@ -745,13 +771,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         if let browser {
-            let browserName = browser.localizedName ?? "浏览器"
-            // 同一 bundle 可能同时跑着多个实例（例如 agent-browser 这类自动化浏览器
-            // 常驻）。AppleScript 只把事件发给最近启动的那个实例，而 lsof 命中的可能
-            // 是另一个——这时标签定位必然「找不到」，必须把实例数写进日志。
-            let instanceCount = NSRunningApplication
-                .runningApplications(withBundleIdentifier: browser.bundleIdentifier ?? "")
-                .count
+            let info = browserInfo(for: browser)
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 // 重启接管：先关旧标签页，再新开页面（关不掉也照常新开，
                 // 保证重启后总有一张可用的新页面）。
@@ -761,21 +781,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     )
                     DispatchQueue.main.async { [weak self] in
                         guard let self else { return }
-                        switch close {
-                        case .closed:
-                            self.appendLogString("dsh 已重启，已关闭 \(browserName) 的旧 Harness 标签页，正在打开新页面\n")
-                        case .missing(let tabs):
-                            let detail = BrowserConnectionSupport.tabReportDetail(
-                                tabs: tabs, instanceCount: instanceCount, browserName: browserName
-                            )
-                            self.appendLogString("dsh 已重启，未找到 \(browserName) 的旧 Harness 标签页\(detail)，直接打开新页面\n")
-                        case .unsupported:
-                            self.appendLogString("dsh 已重启，\(browserName) 不支持标签关闭，直接打开新页面（旧标签可手动关闭）\n")
-                        case .failed(let message):
-                            self.appendLogString("dsh 已重启，关闭 \(browserName) 旧标签页失败（\(message)），直接打开新页面\n")
-                        case .focused:
-                            break
-                        }
+                        let line = SessionJumpSupport.closeLog(result: close, browser: info)
+                        if !line.isEmpty { self.appendLogString(line + "\n") }
                         openInBrowser()
                     }
                     return
@@ -785,26 +792,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 )
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
-                    switch result {
-                    case .focused:
-                        self.appendLogString("检测到 \(browserName) 已连接 Harness 端口 \(port)，已定位并前置 Harness 标签页\n")
-                    case .missing(let tabs):
+                    let plan = SessionJumpSupport.focusPlan(result: result, browser: info)
+                    if plan.activateBrowser {
                         _ = browser.activate(options: [.activateIgnoringOtherApps])
-                        // 标签没选中时浏览器只会被前置到它自己当前的那个标签，用户看到
-                        // 的是「点了没跳」——把实际地址与实例数写进日志，失败才有据可查。
-                        let detail = BrowserConnectionSupport.tabReportDetail(
-                            tabs: tabs, instanceCount: instanceCount, browserName: browserName
-                        )
-                        self.appendLogString("检测到 \(browserName) 已连接 Harness 端口 \(port)，但未找到匹配标签页\(detail)；已前置浏览器\n")
-                    case .unsupported:
-                        _ = browser.activate(options: [.activateIgnoringOtherApps])
-                        self.appendLogString("检测到 \(browserName) 已连接 Harness 端口 \(port)，该浏览器不支持标签定位；已前置浏览器\n")
-                    case .failed(let message):
-                        _ = browser.activate(options: [.activateIgnoringOtherApps])
-                        self.appendLogString("定位 \(browserName) Harness 标签页失败（\(message)）；已前置浏览器\n")
-                    case .closed:
-                        break
                     }
+                    // 结果解释与文案统一在 SessionJumpSupport（可单测）；这里只落地。
+                    let line = SessionJumpSupport.focusLog(plan, browser: info, port: port)
+                    if !line.isEmpty { self.appendLogString(line + "\n") }
                     self.finishBrowserOpen(port: port, error: nil, completion: completion)
                 }
             }
@@ -2239,26 +2233,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             port: port,
             path: "/dsh-archive-manager/archives",
             marker: "items",
-            policy: .compatibilityFallback,
-            fetch: probeResponse
-        )
-    }
-
-    /// 会话通知插件是否已随当前 dsh 加载（同样只认确定性 404）。
-    private static func sessionNotifyPluginVerdict(port: Int, policy: BuiltinPluginProbePolicy) -> BuiltinPluginVerdict {
-        let health = BuiltinPluginReadiness.inspect(
-            port: port,
-            path: "/dsh-session-notify/health",
-            marker: "\"ok\":true",
-            policy: policy,
-            fetch: probeResponse
-        )
-        guard health == .missing else { return health }
-        return BuiltinPluginReadiness.inspect(
-            port: port,
-            path: "/dsh-session-notify/events",
-            marker: "bootId",
-            policy: .compatibilityFallback,
+            policy: .legacyEndpointFallback,
             fetch: probeResponse
         )
     }
@@ -2296,9 +2271,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// 启动/重启进入 running 后调度一次兼容性检查。dsh 加载插件需要几秒，
-    /// 这里只是「先等一会儿再开始复核」；超时/慢响应不会被当成问题（见
-    /// BuiltinPluginVerdict：只有确定性 404 才告警）。代际号随停止/重启递增，
-    /// 旧调度自动失效。
+    /// 这里只是「先等一会儿再开始复核」。代际号随停止/重启递增，旧调度自动失效。
+    ///
+    /// 只扫用户插件：启动器自带的内置插件（归档管理 / 插件管理 / 会话完成通知）
+    /// 不参与兼容性告警——用户升不了也卸不掉，弹窗只会把人引去白重启一次。
+    /// 它们的加载状态由就绪探针只写日志（monitorArchivePlugin / monitorSessionNotify）。
     private func schedulePluginCompatibilityCheck(port: Int) {
         pluginCompatGeneration += 1
         let generation = pluginCompatGeneration
@@ -2322,7 +2299,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ), let data = body.data(using: .utf8),
                let list = try? JSONDecoder().decode(PluginInstalledList.self, from: data) else { return }
 
-            // 用户插件的 peer 判定是纯静态的，先呈现，不必等内置插件探针。
+            // 扫描只覆盖用户插件（内置插件由 PluginCompatibilitySupport 跳过）；
+            // peer 判定是纯静态的，扫完直接呈现。
             self.presentCompatibilityIssues(
                 PluginCompatibilitySupport.scan(
                     plugins: list.items,
@@ -2331,43 +2309,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 ),
                 port: port
             )
-
-            // 内置插件「是否随当前 dsh 加载」只认确定性 404（BuiltinPluginVerdict）：
-            // 超时、5xx、200 但响应形状不符都只是证据不足，记一条日志就够，
-            // 绝不拿去弹「插件可能与当前 dsh 版本不兼容」——那种弹窗会让用户
-            // 白重启、白升级，下一次启动照样弹。
-            var builtinIssues: [PluginCompatibilitySupport.Issue] = []
-            var undetermined: [String] = []
-            switch Self.archivePluginVerdict(port: port, policy: .compatibility) {
-            case .ready:
-                break
-            case .missing:
-                builtinIssues.append(PluginCompatibilitySupport.Issue(
-                    pluginName: "dsh-archive-manager", version: nil,
-                    reason: "归档管理插件未随当前 dsh 加载", userPlugin: false
-                ))
-            case .unknown:
-                undetermined.append("归档管理插件就绪探测未拿到确定结果（超时/非 404），本次不告警\n")
-            }
-            switch Self.sessionNotifyPluginVerdict(port: port, policy: .compatibility) {
-            case .ready:
-                break
-            case .missing:
-                builtinIssues.append(PluginCompatibilitySupport.Issue(
-                    pluginName: "dsh-session-notify", version: nil,
-                    reason: "会话完成通知插件未随当前 dsh 加载", userPlugin: false
-                ))
-            case .unknown:
-                undetermined.append("会话完成通知插件就绪探测未拿到确定结果（超时/非 404），本次不告警\n")
-            }
-            if !undetermined.isEmpty {
-                DispatchQueue.main.async {
-                    // 外层已把 self 解包成强引用（启动器与 App 同生命周期），这里直接判状态。
-                    guard self.state == .running, self.selectedPort == port else { return }
-                    undetermined.forEach { self.appendLogString($0) }
-                }
-            }
-            self.presentCompatibilityIssues(builtinIssues, port: port)
         }
     }
 
@@ -2381,7 +2322,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// 逐个呈现兼容性问题；「忽略」只对本次启动器运行生效。
+    /// 逐个呈现兼容性问题（只来自用户插件）；「忽略」只对本次启动器运行生效。
     private func presentPluginIssues(_ issues: [PluginCompatibilitySupport.Issue]) {
         guard !issues.isEmpty else { return }
         var remaining = issues
@@ -2394,29 +2335,17 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         AlertDesign.style(alert, tone: .warning)
         alert.messageText = "插件可能与当前 dsh 版本不兼容"
         let versionSuffix = issue.version.map { "（v\($0)）" } ?? ""
-        alert.informativeText = "\(issue.pluginName)\(versionSuffix)：\(issue.reason)。\n\n\(issue.userPlugin ? "可尝试升级到适配版本，或卸载该插件；操作后需重启 dsh 生效。" : "可重启 dsh 重试加载；若持续出现，请更新启动器以获取适配的内置插件。")"
+        alert.informativeText = "\(issue.pluginName)\(versionSuffix)：\(issue.reason)。\n\n可尝试升级到适配版本，或卸载该插件；操作后需重启 dsh 生效。"
         alert.alertStyle = .warning
-        alert.addButton(withTitle: issue.userPlugin ? "升级插件" : "重启 dsh")
-        if issue.userPlugin { alert.addButton(withTitle: "卸载插件") }
+        alert.addButton(withTitle: "升级插件")
+        alert.addButton(withTitle: "卸载插件")
         alert.addButton(withTitle: "忽略")
-        let answer = alert.runModal()
-        if issue.userPlugin {
-            switch answer {
-            case .alertFirstButtonReturn: upgradePluginIssue(issue, remaining: remaining)
-            case .alertSecondButtonReturn: uninstallPluginIssue(issue, remaining: remaining)
-            default:
-                pluginCompatAlerted.insert(issue.pluginName)
-                presentPluginIssues(remaining)
-            }
-        } else {
-            switch answer {
-            case .alertFirstButtonReturn:
-                appendLogString("用户选择重启 dsh 以重试加载内置插件\n")
-                restartDSH()
-            default:
-                pluginCompatAlerted.insert(issue.pluginName)
-                presentPluginIssues(remaining)
-            }
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: upgradePluginIssue(issue, remaining: remaining)
+        case .alertSecondButtonReturn: uninstallPluginIssue(issue, remaining: remaining)
+        default:
+            pluginCompatAlerted.insert(issue.pluginName)
+            presentPluginIssues(remaining)
         }
     }
 
@@ -2839,12 +2768,21 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let sessionId { sessionNotifyStore.markRead(sessionId) }
         rebuildSessionNotifyMenuSection()
         appendLogString("用户查看会话完成提醒：\(sessionId ?? "")\n")
-        if state == .running, let port = selectedPort {
+        // 处置分支由 SessionJumpSupport 判定（可单测）：实例在跑就直接跳；
+        // 没在跑 / 正在装运行环境都交给 openDHLForSession——它会把这次点击记进
+        // pendingSessionId，就绪后照常跳过去，不能因为「晚了几秒」把点击丢掉。
+        switch SessionJumpSupport.clickDisposition(
+            isRunning: state == .running,
+            hasPort: selectedPort != nil,
+            isInstalling: dshInstallWindow != nil
+        ) {
+        case .jumpInPlace:
+            guard let port = selectedPort else { return }
             openWebPage(on: port) { [weak self] in
                 guard let sessionId else { return }
                 self?.requestSessionOpen(sessionId: sessionId, port: port)
             }
-        } else {
+        case .startThenJump, .waitForInstall:
             openDHLForSession(sessionId)
         }
     }

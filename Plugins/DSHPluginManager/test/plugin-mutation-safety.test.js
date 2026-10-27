@@ -165,7 +165,7 @@ const fileSource = dir => ({
 
 test('clone 被校验拒绝时，错误要说明原有源码没被动过', async () => {
   await withProfile('dsh-ms-clone-refuse-', async ({ home }) => {
-    const dir = join(home, 'plugin-sources', 'owner-repo');
+    const dir = join(home, 'profiles', 'web', 'plugin-sources', 'owner-repo');
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'index.js'), '// 旧版本', 'utf8');
     const commands = [];
@@ -185,12 +185,11 @@ test('clone 被校验拒绝时，错误要说明原有源码没被动过', async
 
 test('node_modules 重装失败时用更新前的源码副本兜底，并上报失败', async () => {
   await withProfile('dsh-ms-finalize-restore-', async ({ home, modules }) => {
-    const dir = join(home, 'plugin-sources', 'owner-repo');
+    const dir = join(home, 'profiles', 'web', 'plugin-sources', 'owner-repo');
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'repo', version: '1.1.0' }), 'utf8');
     // node_modules 里版本停在 1.0.0 → 复核不过 → 走「删包重装」这条路。
     await seedPackage(modules, 'repo', { version: '1.0.0' });
-    // applyPluginUpdate 自己会建一个 .bak-<时间戳>；这里只断言"重装用的是 .bak 目录"。
     const commands = [];
     let addToFile = 0;
     const result = await applyPluginUpdate(fileSource(dir), {
@@ -203,18 +202,23 @@ test('node_modules 重装失败时用更新前的源码副本兜底，并上报�
       clone: async () => ({ ok: true, dest: dir, packageName: 'repo' })
     });
     assert.equal(result.ok, false, '包没装上不能报成功');
-    const spec = String(result.error ?? '');
-    assert.match(spec, /pnpm 被中断/);
-    const restores = commands.filter(args => /\.bak-/.test(String(args[1])));
-    assert.equal(restores.length, 1, '应该改用更新前的 .bak 源码副本重装一次');
+    assert.match(String(result.error ?? ''), /pnpm 被中断/);
+    assert.match(String(result.error ?? ''), /已改回更新前的源码副本/, '兜底要如实说清楚用了旧源码');
+    // 兜底是把旧源码换回**原目录**再指回去，不是把依赖改成指向 `.bak-…` 目录
+    //（那样每失败一次名字就多套一层 .bak-，更新再也回不来）。
+    assert.equal(String(commands.at(-1)?.[1] ?? ''), `file:${dir}`, '最后一步指回原源码目录');
+    assert.equal(commands.some(args => /\.bak-/.test(String(args[1]))), false, '不能让依赖指向 .bak 目录');
+    assert.equal(JSON.parse(await readFileText(join(dir, 'package.json'))).version, '1.1.0', '旧源码内容回到原位');
+    assert.deepEqual((await readdir(join(home, 'profiles', 'web', 'plugin-sources'))).filter(name => name.includes('.bak-')), [],
+      '备份被换回原位，不留 .bak 残留');
   });
 });
 
-test('重装成功但源码仍残缺：不许留下坏包，退回更新前的源码副本', async () => {
+test('重装后 node_modules 仍指向旧目录（新源码本身完整）：报待重启确认，不回滚、不把依赖改成 .bak', async () => {
   await withProfile('dsh-ms-finalize-gaps-', async ({ home, modules }) => {
-    const dir = join(home, 'plugin-sources', 'owner-repo');
+    const dir = join(home, 'profiles', 'web', 'plugin-sources', 'owner-repo');
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'repo', version: '1.1.0' }), 'utf8');
+    await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'repo', version: '1.0.0' }), 'utf8');
     await seedPackage(modules, 'repo', { version: '1.0.0' });
     const commands = [];
     let addToFile = 0;
@@ -224,26 +228,30 @@ test('重装成功但源码仍残缺：不许留下坏包，退回更新前的�
         commands.push(args);
         if (!String(args[1]).startsWith('file:')) return;
         addToFile += 1;
-        // 第二次（finalize 的删包重装）才把残缺源码物化进 node_modules：版本对了，
-        // 但 import 落不了地——正是那次事故的形状。
-        if (addToFile === 2) {
-          // 真实的 pnpm 会自己把包目录建回来（finalize 之前把它删过）。
-          await mkdir(join(modules, 'repo'), { recursive: true });
-          await writeFile(join(modules, 'repo', 'index.mjs'), "import { x } from './shared/gone.mjs';\nexport const a = x;\n", 'utf8');
-          await writeFile(join(modules, 'repo', 'package.json'), JSON.stringify({ name: 'repo', version: '1.1.0' }), 'utf8');
-        }
+        // 模拟实测的 pnpm 行为：删包重装之后 node_modules 里还是旧版本（没重新物化）。
+        if (addToFile === 2) await seedPackage(modules, 'repo', { version: '1.0.0' });
       },
-      clone: async () => ({ ok: true, dest: dir, packageName: 'repo' })
+      // 新源码是完整的 1.1.0（import 全都能落地）。
+      clone: async () => {
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'repo', version: '1.1.0' }), 'utf8');
+        await writeFile(join(dir, 'index.mjs'), 'export const a = 1;\n', 'utf8');
+        return { ok: true, dest: dir, packageName: 'repo' };
+      }
     });
-    assert.equal(result.ok, false);
-    assert.match(result.error, /\.\/shared\/gone\.mjs/);
-    assert.ok(commands.some(args => /\.bak-/.test(String(args[1]))), '应退回更新前的源码副本');
+    // 源码已经换成新版，只是 node_modules 没跟上：这是「重启 dsh 后确认」，不是失败，
+    // 更不能拿旧目录的缺口回滚（用户实测的 qoder 死循环）。
+    assert.equal(result.ok, true);
+    assert.equal(result.verified, false);
+    assert.match(String(result.note ?? ''), /重启 dsh 后确认/);
+    assert.equal(commands.some(args => /\.bak-/.test(String(args[1]))), false, '不能让依赖指向 .bak 目录');
+    assert.equal(JSON.parse(await readFileText(join(dir, 'package.json'))).version, '1.1.0', '新源码保持不动');
   });
 });
 
 test('pruneSourceBackups 顺手清掉中断留下的 .staged-* 副本', async () => {
   await withProfile('dsh-ms-prune-', async ({ home }) => {
-    const sources = join(home, 'plugin-sources');
+    const sources = join(home, 'profiles', 'web', 'plugin-sources');
     const dir = join(sources, 'owner-repo');
     await mkdir(dir, { recursive: true });
     for (const stale of ['owner-repo.staged-1-100', 'owner-repo.bak-20260101000000', 'owner-repo.bak-20260201000000', 'other.staged-9']) {

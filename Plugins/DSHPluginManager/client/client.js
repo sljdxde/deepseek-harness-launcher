@@ -55,29 +55,18 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-bulkbar .dsh-pm-tool{font-size:12px;padding:4px 10px}
 .dsh-pm-search{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);border-radius:8px;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;flex:1 1 220px;min-width:180px;padding:7px 12px}
 .dsh-pm-search:focus{border-color:var(--dsw-alias-brand-primary);outline:none}
-.dsh-pm-chips{display:flex;gap:6px;flex-wrap:wrap}
-.dsh-pm-chip{border:1px solid var(--dsw-alias-border-l2);background:transparent;border-radius:999px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:12px;line-height:18px;padding:4px 12px}
+.dsh-pm-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.dsh-pm-chip{border:1px solid var(--dsw-alias-border-l2);background:transparent;border-radius:999px;color:var(--dsw-alias-label-secondary);cursor:pointer;flex:0 0 auto;font:inherit;font-size:12px;line-height:18px;padding:4px 12px}
 .dsh-pm-chip:hover{background:var(--dsw-alias-button-ghost-active-fill)}
 .dsh-pm-chip-active{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}
+/* 尾部分类的下拉：平铺放不下的分类收进来（带数量），不用横拉去找 */
+.dsh-pm-cat-more{background:transparent;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:12px;line-height:18px;padding:4px 8px}
+.dsh-pm-cat-more-active{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}
 .dsh-pm-sort{margin-left:auto}
-.dsh-pm-grid{display:flex;flex-direction:column;gap:10px}
-.dsh-pm-card{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;cursor:pointer;display:flex;gap:12px;padding:12px 14px;width:100%}
-.dsh-pm-card:hover{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l3)}
-.dsh-pm-card-icon{flex:0 0 36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;background:var(--dsw-alias-bg-module-platform)}
-.dsh-pm-card-main{flex:1;min-width:0}
-.dsh-pm-card-title{font-size:13px;font-weight:600;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-pm-card-author{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-pm-card-desc{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;margin:6px 0 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.dsh-pm-card-side{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
-.dsh-pm-card-meta{display:flex;gap:10px;align-items:center;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}
-.dsh-pm-card-actions{display:flex;gap:8px;align-items:center}
-.dsh-pm-install{box-sizing:border-box;background:var(--dsw-alias-button-primary-fill);border:0;border-radius:8px;color:var(--dsw-alias-label-primary-foreground);cursor:pointer;font:inherit;font-size:12px;line-height:18px;padding:6px 14px}
-.dsh-pm-install:hover{background:var(--dsw-alias-button-primary-hover)}
-.dsh-pm-install:disabled{cursor:not-allowed;opacity:.6}
-.dsh-pm-installed-tag{color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px}
-.dsh-pm-cat{color:var(--dsw-alias-label-tertiary);font-size:11px}
-.dsh-pm-list{display:flex;flex-direction:column;gap:8px}
-.dsh-pm-row{align-items:center;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;display:flex;gap:12px;padding:12px 14px}
+/* 单容器行列表（magpie 式）：一张卡片、行间发丝线，替代逐卡描边堆叠 */
+.dsh-pm-list{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}
+.dsh-pm-row{align-items:center;display:flex;gap:12px;padding:11px 14px}
+.dsh-pm-row + .dsh-pm-row{border-top:1px solid var(--dsw-alias-border-l2)}
 .dsh-pm-row:hover{background:var(--dsw-alias-bg-layer-2)}
 .dsh-pm-row-main{flex:1;min-width:0}
 .dsh-pm-row-title{font-size:14px;font-weight:600;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -86,6 +75,33 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-row-action{background:transparent;border:0;border-radius:6px;color:var(--dsw-alias-state-error-primary);cursor:pointer;font:inherit;font-size:12px;line-height:18px;padding:5px 10px}
 .dsh-pm-row-action:hover{background:rgba(220,50,47,.1)}
 .dsh-pm-row-action:disabled{cursor:not-allowed;opacity:.5}
+/* 渐进披露：magpie「Show 21 more」式居中文字按钮，替代一次渲染全部卡片 */
+.dsh-pm-more{background:transparent;border:0;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:12px;line-height:18px;padding:10px 0;text-align:center;width:100%}
+.dsh-pm-more:hover{color:var(--dsw-alias-label-primary)}
+/* 安装队列状态条：一行小字说明整体进度，安静、不抢焦点、不打断继续点按 */
+.dsh-pm-queue{align-items:center;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;display:flex;font-size:12px;gap:8px;line-height:18px;margin-bottom:10px;padding:6px 10px}
+.dsh-pm-queue-dot{animation:dsh-pm-spin 1s linear infinite;flex:none}
+.dsh-pm-queue-text{color:var(--dsw-alias-label-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-pm-queue-text strong{color:var(--dsw-alias-label-primary);font-weight:600}
+@keyframes dsh-pm-spin{to{transform:rotate(360deg)}}
+/* 市场行：与已安装行同一套单容器样式；描述只留一行，完整描述在详情抽屉 */
+.dsh-pm-grid{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}
+.dsh-pm-card{align-items:center;box-sizing:border-box;cursor:pointer;display:flex;gap:12px;padding:11px 14px;width:100%}
+.dsh-pm-card + .dsh-pm-card{border-top:1px solid var(--dsw-alias-border-l2)}
+.dsh-pm-card:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-pm-card-icon{align-items:center;background:var(--dsw-alias-bg-module-platform);border-radius:8px;display:flex;flex:0 0 32px;font-size:15px;height:32px;justify-content:center;width:32px}
+.dsh-pm-card-main{flex:1;min-width:0}
+.dsh-pm-card-title{font-size:13px;font-weight:600;line-height:19px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-pm-card-author{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:17px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-pm-card-desc{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;margin:3px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-pm-card-side{align-items:center;display:flex;flex:0 0 auto;gap:12px}
+.dsh-pm-card-meta{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;flex-direction:column;font-size:11px;gap:0;line-height:16px;text-align:right}
+.dsh-pm-card-actions{display:flex;gap:8px;align-items:center}
+.dsh-pm-install{box-sizing:border-box;background:var(--dsw-alias-button-primary-fill);border:0;border-radius:8px;color:var(--dsw-alias-label-primary-foreground);cursor:pointer;font:inherit;font-size:12px;line-height:18px;padding:6px 14px;white-space:nowrap}
+.dsh-pm-install:hover{background:var(--dsw-alias-button-primary-hover)}
+.dsh-pm-install:disabled{cursor:not-allowed;opacity:.6}
+.dsh-pm-installed-tag{color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px;white-space:nowrap}
+.dsh-pm-cat{color:var(--dsw-alias-label-tertiary);font-size:11px}
 .dsh-pm-drawer{background:var(--dsw-alias-bg-layer-1);border-left:1px solid var(--dsw-alias-border-l2);box-sizing:border-box;display:flex;flex-direction:column;height:100%;max-width:420px;min-width:300px;padding:18px;position:absolute;right:0;top:0;width:40%;z-index:2147483002}
 .dsh-pm-drawer-head{display:flex;gap:10px;align-items:center}
 .dsh-pm-drawer-title{font-size:16px;font-weight:600;line-height:22px}
@@ -130,8 +146,19 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-selectarea{min-height:52px;position:relative}
 .dsh-pm-band{background:var(--dsw-alias-state-business-primary);border:1px solid var(--dsw-alias-state-business-primary);border-radius:4px;opacity:.22;pointer-events:none;position:absolute;z-index:3}
 .dsh-pm-row-progress{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-pm-row-selectable{cursor:pointer}`
-  const CATEGORY_EMOJI = { browser: '🌐', tool: '🛠️', ui: '🎨', storage: '🗄️', workflow: '🔀', agent: '🤖', search: '🔍', data: '📊', network: '🌍', dev: '💻', other: '🧩' }
+.dsh-pm-row-selectable{cursor:pointer}
+.dsh-pm-notes-page{max-width:640px}
+.dsh-pm-notes-body{flex:1;overflow-y:auto;padding:14px 18px 22px}
+.dsh-pm-notes-title{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;margin-bottom:8px}
+.dsh-pm-notes-text{font:inherit;font-size:12px;line-height:20px;margin:0;white-space:pre-wrap;word-break:break-word}
+.dsh-pm-notes-error{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px;margin-bottom:10px}
+.dsh-pm-notes-link{font-size:12px}`
+  const CATEGORY_EMOJI = { official: '🛡️', browser: '🌐', tool: '🛠️', ui: '🎨', storage: '🗄️', workflow: '🔀', agent: '🤖', search: '🔍', data: '📊', network: '🌍', dev: '💻', other: '🧩' }
+  // 市场分类显示名：官方来源是服务端合成的 'official' 分类，其余分类沿用远端给的原词。
+  const CATEGORY_LABELS = { official: '官方' }
+  const categoryLabel = category => CATEGORY_LABELS[category] || category || '其他'
+  /** 市场列表首屏与每次「显示更多」的行数（渐进披露，性能关键路径）。 */
+  const PAGE_SIZE = 60
 
   function ensureStyles() {
     if (document.getElementById(NS + '-style')) return
@@ -145,7 +172,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
   /// Toast 队列：安装/卸载/清理/刷新等操作结果用浮层提示呈现并自动消失。
   /// 纯逻辑（计时器通过 schedule 注入），与 React 解耦，可直接单测：
-  /// 成功/提示 3.2s 自动消失，失败 6s（读清错误需要更长时间）。
+  /// 成功/提示 3.2s 自动消失，失败 6s（读清错误需要更长时间）；
+  /// 栈上限 3 条，超出时最早的先消失，连续批量操作不会糊满屏幕。
+  const TOAST_STACK_LIMIT = 3
   function createToastStore(schedule = (fn, ms) => setTimeout(fn, ms)) {
     let nextId = 0
     let items = []
@@ -155,6 +184,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       push(kind, text) {
         const id = ++nextId
         items = [...items, { id, kind, text }]
+        if (items.length > TOAST_STACK_LIMIT) items = items.slice(items.length - TOAST_STACK_LIMIT)
         emit()
         schedule(() => { items = items.filter(toast => toast.id !== id); emit() }, kind === 'error' ? 6000 : 3200)
         return id
@@ -181,14 +211,6 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     if (!value) return '0'
     if (value >= 1000) return `${(value / 1000).toFixed(1)}k`
     return String(value)
-  }
-  function installedKey(plugin, installed) {
-    const repo = normalizeText(plugin.repo)
-    return installed.some(item => {
-      if (item.broken) return false
-      const name = normalizeText(item.name)
-      return name === repo || name.endsWith('/' + repo) || (plugin.url && normalizeText(plugin.url).includes(normalizeText(item.name)))
-    })
   }
   function descOf(plugin, zh) {
     if (zh && plugin.descriptionZh) return plugin.descriptionZh
@@ -226,6 +248,25 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
   /// 更新检测结果的小 store：侧边栏角标（PluginTrigger）与面板（PluginManagerPage）
   /// 共用同一份数据，避免两处各请求一次后互相矛盾。
   /// null = 还没读到；false = 接口不可用（降级）；对象 = 服务端返回体。
+  /// /updates 的两类响应要合并：后台重检进行中时服务端可能先返回空 inventory（缓存刚
+  /// 失效那一刻），直接 apply 会把面板上所有「可更新」标记和角标一起抹掉、按钮因为
+  /// count=0 全变灰（用户实测：更新一个插件后剩下的更新全消失，手动刷新才回来）。
+  /// 空 inventory 不覆盖旧数据；「接口不可用」(null/false) 仍然照实降级。
+  function mergeUpdates(previous, next) {
+    if (!next) return next
+    if (!previous || previous === false || !Array.isArray(previous.inventory)) return next
+    const incoming = Array.isArray(next.inventory) ? next.inventory : []
+    if (incoming.length > 0 || previous.inventory.length === 0) return next
+    return {
+      ...next,
+      inventory: previous.inventory,
+      summary: next.summary && Number(next.summary.total) > 0 ? next.summary : previous.summary,
+      checkedAt: next.checkedAt || previous.checkedAt,
+      lastBatch: next.lastBatch || previous.lastBatch,
+      progress: next.progress !== undefined ? next.progress : previous.progress,
+    }
+  }
+
   function createUpdatesStore(initial = null) {
     let value = initial
     // 已经提示过的批量更新批次完成时间：60 秒轮询、面板重开、强制检测都会重复读到
@@ -235,7 +276,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const emit = () => { for (const notify of listeners) notify(value) }
     return {
       snapshot: () => value,
-      apply(next) { value = next || false; emit() },
+      apply(next) { value = (next ? mergeUpdates(value, next) : next) || false; emit() },
       subscribe(listener) { listeners.add(listener); listener(value); return () => listeners.delete(listener) },
       /// 这个批次完成时间是否需要提示？是则记下来并返回 true。
       claimBatchFinish(finishedAt) {
@@ -338,13 +379,22 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
   }
 
   /// 批量更新批次（lastBatch）结束后的汇总 toast：finishedAt 为空表示后台还在跑，不提示。
+  /// 有失败时点名失败的插件（只报一句「N 个失败」用户不知道该找谁），并区分
+  /// 「已更新但没复核上」的条目——那是重启 dsh 后才生效，不是失败。
   function batchToast(batch) {
     if (!batch || !batch.finishedAt) return null
+    const results = Array.isArray(batch.results) ? batch.results : []
     const updated = Number(batch.updated) || 0
     const failed = Number(batch.failed) || 0
-    if (failed === 0) return { kind: 'success', text: `已更新 ${updated} 个插件，重启 dsh 后生效` }
-    const first = (Array.isArray(batch.results) ? batch.results : []).find(result => result && !result.ok)
-    return { kind: 'error', text: `${updated} 个更新成功、${failed} 个失败：${(first && first.error) || '未知错误'}` }
+    const pending = results.filter(result => result && result.ok && result.verified === false).length
+    const pendingNote = pending > 0 ? `（${pending} 个需重启 dsh 后确认生效）` : ''
+    if (failed === 0) return { kind: 'success', text: `已更新 ${updated} 个插件${pendingNote}，重启 dsh 后生效` }
+    const failures = results.filter(result => result && !result.ok)
+    const names = failures.map(result => result.name).filter(Boolean)
+    const shown = names.length > 3 ? `${names.slice(0, 3).join('、')} 等 ${names.length} 个` : names.join('、')
+    const reason = truncateNote((failures[0] && failures[0].error) || '未知错误')
+    const base = shown ? `${updated} 个更新成功、${failed} 个失败（${shown}）` : `${updated} 个更新成功、${failed} 个失败`
+    return { kind: 'error', text: `${base}：${reason}${pending > 0 ? `；另有 ${pending} 个待重启确认` : ''}` }
   }
 
   /// 异步批次是否收尾：优先看 lastBatch.finishedAt 与进度字段的 active；
@@ -356,11 +406,13 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     return updatesAvailableCount(value) === 0
   }
 
-  /// 「更新选中」提交的名字：选中集合与 update-available 的交集。
+  /// 「更新选中」提交的名字：选中集合与 update-available 的交集，**同样跳过已忽略的条目**。
+  /// 「全部更新」已经排除忽略项；这里不排除的话，勾选一个「已忽略 vX」的行再点
+  /// 「更新选中」会把这个被忽略的版本更新掉，和胶囊上的「已忽略」自相矛盾。
   function selectedUpdatableNames(updates, selected) {
     if (!updates || !Array.isArray(updates.inventory) || !selected) return []
     return updates.inventory
-      .filter(entry => entry && entry.status === 'update-available' && selected.has(entry.name))
+      .filter(entry => entry && entry.status === 'update-available' && !entry.ignored && entry.name && selected.has(entry.name))
       .map(entry => entry.name)
   }
 
@@ -377,6 +429,32 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     if (!progress || progress.active !== true) return null
     if (entry && progress.current && progress.current === entry.name) return progressStepText(entry, progress)
     return updatable ? '等待中' : null
+  }
+
+  /// 批次进度文案（工具栏按钮）：只在服务端进度里能读出总数时才带「k/n」。
+  function batchProgressLabel(progress) {
+    if (!progress || progress.active !== true) return null
+    const total = Number(progress.total)
+    if (!Number.isFinite(total) || total <= 0) return null
+    const done = Math.max(Number(progress.done) || 0, 0)
+    return `更新中… ${Math.min(done + 1, total)}/${total}`
+  }
+
+  /// 因「已忽略」而不会进这批更新的条数：全部更新 / 更新选中都拿它补一句说明，
+  /// 否则用户看着两行都可更新、点了却只更新 1 个，会以为漏更新了。
+  function ignoredUpdatableCount(updates) {
+    if (!updates || !Array.isArray(updates.inventory)) return 0
+    return updates.inventory
+      .filter(entry => entry && entry.status === 'update-available' && entry.ignored && entry.name)
+      .length
+  }
+
+  /// 选中集合里因已忽略被排除的条数（「更新选中」用）。
+  function selectedIgnoredCount(updates, selected) {
+    if (!updates || !Array.isArray(updates.inventory) || !selected) return 0
+    return updates.inventory
+      .filter(entry => entry && entry.status === 'update-available' && entry.ignored && entry.name && selected.has(entry.name))
+      .length
   }
 
   /// 两点 → 规范化矩形（橡皮筋框选的本地坐标）。
@@ -428,9 +506,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
   /// 更新成功后本地先把条目改成「已是最新」：角标/胶囊立刻归零，不用等服务端重新联网。
   /// 之后会再跑一次强制检测，用服务端结论覆盖这份乐观结果。
+  /// verified === false 的结果不算「已是最新」：源码换了但 node_modules 还是旧版本，
+  /// 那是「重启 dsh 后确认」的状态——先标成已最新，下一次检测又会把胶囊亮回来，用户
+  /// 只会看到「更新完还能更新」。
   function markPluginsUpdated(payload, results) {
     if (!payload || !Array.isArray(payload.inventory)) return payload
-    const done = new Map((results || []).filter(result => result && result.ok && result.name).map(result => [result.name, result.updatedTo || null]))
+    const done = new Map((results || [])
+      .filter(result => result && result.ok && result.verified !== false && result.name)
+      .map(result => [result.name, result.updatedTo || null]))
     if (done.size === 0) return payload
     const inventory = payload.inventory.map(entry => {
       if (!entry || !done.has(entry.name)) return entry
@@ -495,6 +578,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const [confirmBatch, setConfirmBatch] = React.useState(false)
     // 卸载成功后暂存插件名，非 null 时弹「是否立即重启 dsh」确认框。
     const [restartPrompt, setRestartPrompt] = React.useState(null)
+    // 「更新内容」弹窗：{name, version, loading, data}
+    const [notes, setNotes] = React.useState(null)
     const [error, setError] = React.useState('')
     // 更新检测：从 PluginTrigger 注入的 store 读取（角标与面板同源）；单独渲染时自建一个。
     const updatesStore = React.useMemo(() => store || createUpdatesStore(), [store])
@@ -518,9 +603,15 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); setInstalled(v.items || []); setError('') })
       .catch(e => setError(String(e.message || e)))
     const loadMarket = () => fetch('/dsh-plugin-manager/marketplace', { cache: 'no-store' })
-      .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); setMarket(v); setError('') })
+      .then(r => r.json()).then(v => {
+        if (v.error) throw Error(v.error)
+        setMarket(v)
+        setError('')
+        // 索引过期、或还是旧版索引（没有官方插件来源）时自动重建一次，别让用户手动找按钮。
+        if (v.stale && !autoRefreshed.current) { autoRefreshed.current = true; refreshMarket() }
+      })
       .catch(e => {
-        // 无本地索引/索引过期时自动刷新一次，避免用户手动找「刷新市场」
+        // 无本地索引时自动刷新一次，避免用户手动找「刷新市场」
         if (!autoRefreshed.current) { autoRefreshed.current = true; return refreshMarket() }
         setError(String(e.message || e)); setMarket(false)
       })
@@ -545,21 +636,75 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const refreshMarket = () => {
       setBusy('refresh')
       fetch('/dsh-plugin-manager/refresh', { method: 'POST' })
-        .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); toast('success', `市场已刷新：${v.count} 个插件`); return loadMarket() })
+        .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); toast('success', v.official > 0 ? `市场已刷新：${v.count} 个插件（含 ${v.official} 个 DeepSeek 官方）` : `市场已刷新：${v.count} 个插件`); return loadMarket() })
         .catch(e => toast('error', `刷新市场失败：${String(e.message || e)}`)).finally(() => setBusy(''))
     }
-    const install = (plugin) => {
-      setBusy(plugin.id)
-      fetch('/dsh-plugin-manager/install', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: plugin.url, name: plugin.name }) })
-        .then(r => r.json()).then(v => {
-          if (v.error) throw Error(v.error)
-          if (!v.ok) throw Error(v.error || '安装失败')
-          if (v.alreadyInstalled) toast('info', `${plugin.name} 已安装过，无需重复安装`)
-          else toast('success', `已安装 ${plugin.name}，重启 dsh 后生效`)
-          setDetail(null)
-          return loadInstalled()
+    // 安装队列：点按立即入队、顺序执行（magpie 式——进度是一条安静的
+    // 状态条，全部结束后才给一条汇总 toast）。installStatus 记录每个
+    // 插件的排队/执行态，供按钮文案与禁用使用。
+    const installQueueRef = React.useRef([])
+    const installRunningRef = React.useRef(false)
+    const installTotalRef = React.useRef(0)
+    const [installStatus, setInstallStatus] = React.useState({})
+    const [queueView, setQueueView] = React.useState([])
+    /// 单个安装请求；返回 'ok' | 'already' | 'fail'。失败当场 toast（读错误需要时间）。
+    const installOne = async (plugin) => {
+      try {
+        const r = await fetch('/dsh-plugin-manager/install', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: plugin.url, name: plugin.name }) })
+        const v = await r.json()
+        if (v.error) throw Error(v.error)
+        if (!v.ok) throw Error(v.error || '安装失败')
+        return v.alreadyInstalled ? 'already' : 'ok'
+      } catch (e) {
+        toast('error', `安装失败：${plugin.repo || plugin.name} — ${String(e.message || e)}`)
+        return 'fail'
+      }
+    }
+    const pumpInstalls = async () => {
+      if (installRunningRef.current) return
+      installRunningRef.current = true
+      const installedNames = []
+      while (installQueueRef.current.length > 0) {
+        const plugin = installQueueRef.current[0]
+        setInstallStatus(s => ({ ...s, [plugin.id]: 'installing' }))
+        const outcome = await installOne(plugin)
+        installQueueRef.current = installQueueRef.current.slice(1)
+        setQueueView([...installQueueRef.current])
+        setInstallStatus(s => { const next = { ...s }; delete next[plugin.id]; return next })
+        if (outcome === 'ok') installedNames.push(plugin.repo || plugin.name)
+        else if (outcome === 'already') toast('info', `${plugin.repo || plugin.name} 已安装过，无需重复安装`)
+      }
+      installRunningRef.current = false
+      installTotalRef.current = 0
+      if (installedNames.length > 0) {
+        setDetail(null)
+        await loadInstalled()
+        // 验收回读：接口说 ok 不等于插件真的出现在已安装列表（magpie 的规矩）。
+        // 缺席的点名报错，别让汇总 toast 替命令退出码背书。
+        let listing = []
+        try {
+          const r = await fetch('/dsh-plugin-manager/installed', { cache: 'no-store' })
+          listing = (await r.json()).items || []
+        } catch { /* 列表读不到就不做缺席判定，保留成功汇总 */ }
+        const present = new Set(listing.map(item => String(item.name).toLowerCase()))
+        const missing = installedNames.filter(name => {
+          const repo = String(name).toLowerCase()
+          return !present.has(repo) && ![...present].some(n => n.endsWith('/' + repo))
         })
-        .catch(e => toast('error', `安装失败：${String(e.message || e)}`)).finally(() => setBusy(''))
+        if (missing.length > 0) {
+          toast('error', `安装未生效（已安装列表里没有出现）：${missing.join('、')}。请重启 dsh 后重试`)
+        } else {
+          toast('success', installedNames.length === 1 ? '已安装，重启 dsh 后生效' : `已安装 ${installedNames.length} 个插件，重启 dsh 后生效`)
+        }
+      }
+    }
+    const install = (plugin) => {
+      if (installStatus[plugin.id] || batchRunning || busyOther) return
+      installTotalRef.current += 1
+      installQueueRef.current = [...installQueueRef.current, plugin]
+      setQueueView([...installQueueRef.current])
+      setInstallStatus(s => ({ ...s, [plugin.id]: 'queued' }))
+      void pumpInstalls()
     }
     const cleanupBroken = (item) => {
       setBusy('cleanup-' + item.name)
@@ -606,12 +751,29 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         .then(r => r.json()).then(v => {
           if (v.error) throw Error(v.error)
           if (!v.ok) throw Error(v.error || '更新失败')
-          toast('success', updateSuccessText(item.name, v))
+          // 验收未过（node_modules 版本没跟上）不是成功：用中性提示如实说，
+          // 别让绿色 toast 把「需重启确认」装饰成「已完成」。
+          toast(v.verified === false ? 'info' : 'success', updateSuccessText(item.name, v))
           settleUpdates([{ name: item.name, ok: true, updatedTo: v.updatedTo }])
           return loadInstalled()
         })
         .catch(e => toast('error', `更新 ${item.name} 失败：${String(e.message || e)}`))
         .finally(() => setBusy(''))
+    }
+    /// 「这个版本改了什么」：行内入口按需拉一次发布说明（服务端缓存 30 分钟，失败也给仓库链接）。
+    const openNotes = (item, entry) => {
+      const version = entry && entry.latestVersion ? entry.latestVersion : null
+      if (!version) return
+      setNotes({ name: item.name, version, loading: true, data: null })
+      fetch('/dsh-plugin-manager/release-notes', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: item.name, version }),
+      })
+        .then(r => r.json())
+        .then(data => setNotes(current => (current && current.name === item.name ? { ...current, loading: false, data } : current)))
+        .catch(error => setNotes(current => (current && current.name === item.name
+          ? { ...current, loading: false, data: { ok: false, error: String(error.message || error) } }
+          : current)))
     }
     /// 批量更新被异步受理：每 2 秒读一次 /updates，直到批次收尾（lastBatch/progress），最多约 5 分钟。
     /// 批次结束时把 results 里成功的条目本地改成「已是最新」，角标与胶囊立刻归零。
@@ -624,24 +786,36 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       if (attempt >= UPDATES_BATCH_MAX_POLLS) return next
       return delay(UPDATES_BATCH_POLL_MS).then(() => waitForBatch(attempt + 1))
     })
+    /// 批量更新的来源（「全部更新」/「更新选中」）：进度条上必须写明，
+    /// 否则任何批次看起来都像全部更新干的（用户实测：选中 2 个点了更新，
+    /// 进度却显示 1/3，无法分辨点的是哪个按钮）。
+    const batchSourceRef = React.useRef('')
+    const [batchSource, setBatchSource] = React.useState('')
     /// 「全部更新」与「更新选中」共用：提交 names 后走异步受理流程。
-    const startBatch = (names) => {
+    const startBatch = (names, ignored = 0, source = '全部更新') => {
       if (!names || names.length === 0) return
+      batchSourceRef.current = source
+      setBatchSource(source)
       setBusy('update-many')
       fetch('/dsh-plugin-manager/update-many', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ names }) })
         .then(r => r.json()).then(v => {
           if (v.error) throw Error(v.error)
           if (!v.ok) throw Error(v.error || '批量更新失败')
-          // 202：更新在服务端后台顺序执行，先回「已开始」，结束后由 lastBatch 汇总。
-          toast('info', `已开始更新 ${Number(v.accepted) || names.length} 个插件`)
+          // 202：更新在服务端后台顺序执行。受理 toast 点名清单（≤3 个全列），
+          // 让「更新的是谁」在第一秒就没有歧义。
+          const count = Number(v.accepted) || names.length
+          const listed = names.length <= 3 ? `：${names.join('、')}` : `：${names.slice(0, 3).join('、')} 等 ${names.length} 个`
+          toast('info', ignored > 0
+            ? `已开始更新 ${count} 个插件${listed}（另有 ${ignored} 个已忽略，未更新）`
+            : `已开始更新 ${count} 个插件${listed}`)
           return waitForBatch()
         })
         .then(() => loadInstalled())
         .catch(e => toast('error', `批量更新失败：${String(e.message || e)}`))
-        .finally(() => setBusy(''))
+        .finally(() => { setBusy(''); setBatchSource('') })
     }
-    const updateAll = () => startBatch(updatableNames(updates))
-    const updateSelected = () => startBatch(selectedUpdatableNames(updates, selected))
+    const updateAll = () => startBatch(updatableNames(updates), ignoredUpdatableCount(updates), '全部更新')
+    const updateSelected = () => startBatch(selectedUpdatableNames(updates, selected), selectedIgnoredCount(updates, selected), '更新选中')
     const requestUninstall = (item) => { setError(''); setConfirmUninstall(item) }
     const confirmUninstallGo = () => {
       if (!confirmUninstall) return
@@ -703,8 +877,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const progress = updates && updates.progress && typeof updates.progress === 'object' ? updates.progress : null
     const progressActive = Boolean(progress && progress.active === true)
     const progressCurrent = progress && typeof progress.current === 'string' ? progress.current : null
+    // 「有批次在跑」：自己点的（busy）或服务端进程里别人的批次（progress.active）。
+    // 行内按钮/卸载/安装都要读它，所以必须在渲染行之前声明。
+    const updatingAll = busy === 'update-many'
+    const batchRunning = updatingAll || progressActive
     // 任何更新动作进行中都不再并发开新的（pnpm 会写同一个 profile）。
     const busyAny = busy !== ''
+    // 「检测中」只占住检查按钮：它不写 profile，整条工具栏跟着变灰会让用户以为坏掉了。
+    const busyOther = busyAny && busy !== 'check-updates'
     const toggleSelect = (name) => {
       const next = new Set(selected)
       if (next.has(name)) next.delete(name); else next.add(name)
@@ -809,15 +989,47 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         .catch(e => toast('error', `批量卸载失败：${String(e.message || e)}`)).finally(() => setBusy(''))
     }
 
-    const plugins = (market?.plugins || []).filter(plugin => {
-      const term = normalizeText(search)
-      const inTerm = !term || normalizeText(plugin.name + ' ' + plugin.repo + ' ' + plugin.descriptionEn + ' ' + plugin.descriptionZh).includes(term)
-      const inCategory = category === 'all' || plugin.category === category
-      return inTerm && inCategory
+    // 渐进披露（magpie「Show more」式）：市场索引可能数千条，一次性渲染
+    // 全部 DOM 是面板卡顿的主因；首屏只渲染 PAGE_SIZE 行，往下翻再加载。
+    const [visibleCount, setVisibleCount] = React.useState(PAGE_SIZE)
+    React.useEffect(() => { setVisibleCount(PAGE_SIZE) }, [search, category])
+    // 已安装索引：一次构建，市场卡片与详情抽屉只查数组（此前每卡片每次
+    // render 都重扫 installed 并做字符串包含）。
+    const installedIndex = React.useMemo(
+      () => installed.filter(item => !item.broken).map(item => normalizeText(item.name)),
+      [installed]
+    )
+    const isInstalledPlugin = plugin => installedIndex.some(name => {
+      const repo = normalizeText(plugin.repo)
+      return name === repo || name.endsWith('/' + repo) || (plugin.url && normalizeText(plugin.url).includes(name))
     })
-    if (sort === 'downloads') plugins.sort((a, b) => (b.downloads || 0) - (a.downloads || 0))
-    else if (sort === 'newest') plugins.sort((a, b) => String(b.addedDate || '').localeCompare(String(a.addedDate || '')))
-    else plugins.sort((a, b) => (b.stars || 0) - (a.stars || 0))
+    // 筛选 + 排序只在输入变化时计算（此前每次 render 都全量 filter + sort）。
+    const marketPlugins = market?.plugins || []
+    const plugins = React.useMemo(() => {
+      const term = normalizeText(search)
+      const out = marketPlugins.filter(plugin => {
+        const inTerm = !term || normalizeText(plugin.name + ' ' + plugin.repo + ' ' + plugin.descriptionEn + ' ' + plugin.descriptionZh).includes(term)
+        const inCategory = category === 'all' || plugin.category === category
+        return inTerm && inCategory
+      })
+      if (sort === 'downloads') out.sort((a, b) => (b.downloads || 0) - (a.downloads || 0))
+      else if (sort === 'newest') out.sort((a, b) => String(b.addedDate || '').localeCompare(String(a.addedDate || '')))
+      else out.sort((a, b) => (b.stars || 0) - (a.stars || 0))
+      return out
+    }, [marketPlugins, search, category, sort])
+    // 分类展示：市场近 30 个分类，全部平铺是三排 chip 墙、横拉又要拖动（用户都嫌）。
+    // 按插件数量取前 10 平铺，其余收进带数量的「更多分类」下拉，两下都能到。
+    const categoryCounts = React.useMemo(() => {
+      const counts = new Map()
+      for (const plugin of marketPlugins) counts.set(plugin.category, (counts.get(plugin.category) || 0) + 1)
+      return counts
+    }, [marketPlugins])
+    const topCategories = React.useMemo(() =>
+      [...(market?.categories || [])].sort((a, b) => (categoryCounts.get(b) || 0) - (categoryCounts.get(a) || 0)).slice(0, 10),
+    [market, categoryCounts])
+    const tailCategories = React.useMemo(() =>
+      (market?.categories || []).filter(cat => !topCategories.includes(cat)),
+    [market, topCategories])
 
     const installedRows = installed.map((item, index) => {
       const selectable = !item.broken && item.source !== 'bundled'
@@ -847,12 +1059,20 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           h('span', { className: 'dsh-pm-row-version' }, updateVersionLabel(installedVersionOf(entry, item))),
           updatable ? h('span', { className: `dsh-pm-update-pill${entry.major && !ignored ? ' dsh-pm-update-pill-major' : ''}${ignored ? ' dsh-pm-update-pill-ignored' : ''}` }, updatePillText(entry)) : null,
           updatable
-            ? h('button', { className: 'dsh-pm-update', disabled: updating || busyAny, onClick: () => updateOne(item), title: `更新 ${item.name} 到 v${entry.latestVersion}` }, updating ? '更新中…' : '更新')
+            ? h('button', {
+                className: 'dsh-pm-row-action dsh-pm-notes-link',
+                disabled: busyOther || batchRunning,
+                onClick: event => { event.stopPropagation(); openNotes(item, entry) },
+                title: `看看 v${entry.latestVersion} 改了什么`,
+              }, '更新内容')
+            : null,
+          updatable
+            ? h('button', { className: 'dsh-pm-update', disabled: updating || batchRunning || busyOther, onClick: () => updateOne(item), title: progressActive && !updating ? '批量更新进行中，等它结束再更新这个插件' : `更新 ${item.name} 到 v${entry.latestVersion}` }, updating ? '更新中…' : '更新')
             : null,
           updatable
             ? h('button', {
                 className: 'dsh-pm-row-action dsh-pm-ignore',
-                disabled: busyAny,
+                disabled: busyOther,
                 onClick: () => (ignored ? unignoreOne(item) : ignoreOne(item, entry)),
                 title: ignored ? '恢复这个版本的更新提醒' : `不再提醒 ${item.name} 的 v${entry.latestVersion}（远端出更高版本时会再提醒）`,
               }, ignored ? '取消忽略' : '忽略')
@@ -860,35 +1080,60 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         item.source === 'bundled' ? h('span', { className: 'dsh-pm-badge' }, '内置') : null,
         item.broken ? h('span', { className: 'dsh-pm-badge', style: { borderColor: 'var(--dsw-alias-state-error-primary)', color: 'var(--dsw-alias-state-error-primary)' } }, '损坏') : null,
         item.broken
-          ? h('button', { className: 'dsh-pm-row-action', disabled: busy === 'cleanup-' + item.name, onClick: () => cleanupBroken(item), title: '清理损坏的安装残留' }, busy === 'cleanup-' + item.name ? '清理中…' : '清理')
+          ? h('button', { className: 'dsh-pm-row-action', disabled: busy === 'cleanup-' + item.name || batchRunning || busyOther, onClick: () => cleanupBroken(item), title: batchRunning ? '批量更新进行中，等它结束后再清理' : '清理损坏的安装残留' }, busy === 'cleanup-' + item.name ? '清理中…' : '清理')
           : item.source === 'bundled'
             ? h('button', { className: 'dsh-pm-row-action', disabled: true, title: '内置插件不可卸载' }, '—')
-            : h('button', { className: 'dsh-pm-row-action', disabled: busy === 'uninstall' || busy === 'uninstall-many', onClick: () => requestUninstall(item), title: '卸载' }, '卸载'))
+            : h('button', { className: 'dsh-pm-row-action', disabled: busy === 'uninstall' || busy === 'uninstall-many' || batchRunning || busyOther, onClick: () => requestUninstall(item), title: batchRunning ? '批量更新进行中，等它结束后再卸载' : '卸载' }, '卸载'))
     })
 
-    const marketCards = plugins.map(plugin => {
-      const isInstalled = installedKey(plugin, installed)
+    const marketCards = plugins.slice(0, visibleCount).map(plugin => {
+      const isInstalled = isInstalledPlugin(plugin)
+      const status = installStatus[plugin.id]
       return h('div', { className: 'dsh-pm-card', key: plugin.id, onClick: () => setDetail(plugin) },
         h('div', { className: 'dsh-pm-card-icon' }, CATEGORY_EMOJI[plugin.category] || '🧩'),
         h('div', { className: 'dsh-pm-card-main' },
           h('div', { className: 'dsh-pm-card-title' }, plugin.repo || plugin.name),
-          h('div', { className: 'dsh-pm-card-author' }, plugin.author || plugin.name),
+          h('div', { className: 'dsh-pm-card-author' }, `${plugin.author || plugin.name} · ${categoryLabel(plugin.category)}`),
           h('div', { className: 'dsh-pm-card-desc' }, descOf(plugin, true) || descOf(plugin))),
         h('div', { className: 'dsh-pm-card-side' },
           h('div', { className: 'dsh-pm-card-meta' },
             h('span', null, `★ ${formatNumber(plugin.stars)}`),
-            h('span', null, `↓ ${formatNumber(plugin.downloads)}`),
-            h('span', { className: 'dsh-pm-cat' }, plugin.category)),
+            h('span', null, `↓ ${formatNumber(plugin.downloads)}`)),
           isInstalled
             ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
-            : h('button', { className: 'dsh-pm-install', disabled: busy === plugin.id, onClick: (e) => { e.stopPropagation(); install(plugin) } }, busy === plugin.id ? '安装中…' : '安装')))
+            : h('button', {
+                className: 'dsh-pm-install',
+                disabled: batchRunning || busyOther || Boolean(status),
+                onClick: (e) => { e.stopPropagation(); install(plugin) },
+                title: batchRunning ? '批量更新进行中，等它结束再安装' : status === 'queued' ? '已加入安装队列' : status === 'installing' ? '正在安装' : undefined,
+              }, status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装')))
     })
 
+    const notesModal = notes ? h('div', {
+      className: 'dsh-pm-backdrop',
+      onClick: () => setNotes(null),
+    },
+      h('div', { className: 'dsh-pm-page dsh-pm-notes-page', onClick: event => event.stopPropagation() },
+        h('div', { className: 'dsh-pm-header' },
+          h('strong', null, `${notes.name} ${notes.version ? `v${notes.version}` : ''} 的更新内容`),
+          h('div', { className: 'dsh-pm-header-spacer' }),
+          h('button', { className: 'dsh-pm-tool dsh-pm-close', onClick: () => setNotes(null), 'aria-label': '关闭' }, '×')),
+        h('div', { className: 'dsh-pm-notes-body' },
+          notes.loading
+            ? h('div', { className: 'dsh-pm-empty' }, '正在读取发布说明…')
+            : notes.data && notes.data.ok
+              ? h('div', null,
+                  h('div', { className: 'dsh-pm-notes-title' }, notes.data.title || ''),
+                  h('pre', { className: 'dsh-pm-notes-text' }, notes.data.notes || ''),
+                  notes.data.url ? h('a', { className: 'dsh-pm-drawer-link', href: notes.data.url, target: '_blank', rel: 'noreferrer' }, '在 GitHub 上查看 ↗') : null)
+              : h('div', null,
+                  h('div', { className: 'dsh-pm-notes-error' }, (notes.data && notes.data.error) || '读取发布说明失败'),
+                  notes.data && notes.data.url ? h('a', { className: 'dsh-pm-drawer-link', href: notes.data.url, target: '_blank', rel: 'noreferrer' }, '打开插件仓库 ↗') : null)))) : null
     const drawer = detail ? h('div', { className: 'dsh-pm-drawer' },
       h('div', { className: 'dsh-pm-drawer-head' },
         h('div', { style: { flex: 1, minWidth: 0 } },
           h('div', { className: 'dsh-pm-drawer-title' }, detail.repo || detail.name),
-          h('div', { className: 'dsh-pm-drawer-meta' }, `${detail.author || detail.name} · ${detail.category}`)),
+          h('div', { className: 'dsh-pm-drawer-meta' }, `${detail.author || detail.name} · ${categoryLabel(detail.category)}`)),
         h('button', { className: 'dsh-pm-drawer-close', onClick: () => setDetail(null), 'aria-label': '关闭' }, '×')),
       h('div', { className: 'dsh-pm-drawer-desc' }, descOf(detail, true) || descOf(detail) || '暂无描述'),
       h('div', { className: 'dsh-pm-drawer-stats' },
@@ -896,44 +1141,84 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         h('span', null, `下载 ${detail.downloads || 0}`),
         detail.addedDate ? h('span', null, `添加于 ${detail.addedDate}`) : null),
       h('div', { className: 'dsh-pm-drawer-actions' },
-        installedKey(detail, installed)
-          ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
-          : h('button', { className: 'dsh-pm-install', disabled: busy === detail.id, onClick: () => install(detail) }, busy === detail.id ? '安装中…' : '安装')),
+        installStatus[detail.id]
+          ? h('span', { className: 'dsh-pm-badge' }, installStatus[detail.id] === 'installing' ? '安装中…' : '排队中…')
+          : isInstalledPlugin(detail)
+            ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
+            : h('button', { className: 'dsh-pm-install', disabled: batchRunning || busyOther, onClick: () => install(detail), title: batchRunning ? '批量更新进行中，等它结束再安装' : undefined }, '安装')),
       detail.url ? h('a', { className: 'dsh-pm-drawer-link', href: detail.url, target: '_blank', rel: 'noreferrer' }, '在 GitHub 上查看 ↗') : null)
+      : null
+
+    // 队列状态条：只在有安装任务时出现；完成后随 installRunningRef 清零消失。
+    const installingNow = installTotalRef.current - queueView.length + 1
+    const queueStrip = queueView.length > 0
+      ? h('div', { className: 'dsh-pm-queue', role: 'status' },
+          h('span', { className: 'dsh-pm-queue-dot', 'aria-hidden': true }, '◌'),
+          h('span', { className: 'dsh-pm-queue-text' },
+            h('strong', null, `正在安装 ${installingNow}/${installTotalRef.current}`),
+            ` · ${queueView[0].repo || queueView[0].name}`,
+            queueView.length > 1 ? `，还有 ${queueView.length - 1} 个排队` : ''))
       : null
 
     const marketTab = h('div', null,
       market === null ? h('div', { className: 'dsh-pm-empty' }, '加载中…') :
       market === false ? h('div', { className: 'dsh-pm-empty' }, '市场数据未就绪') :
       h('div', null,
+        queueStrip,
         h('div', { className: 'dsh-pm-toolbar' },
           h('input', { className: 'dsh-pm-search', placeholder: '搜索插件 / 作者 / 描述…', value: search, onChange: (e) => setSearch(e.target.value) }),
           h('div', { className: 'dsh-pm-chips' },
-            ['all', ...(market.categories || [])].map(cat => h('button', { key: cat, className: `dsh-pm-chip${category === cat ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory(cat) }, cat === 'all' ? '全部' : cat))),
+            h('button', { key: 'all', className: `dsh-pm-chip${category === 'all' ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory('all') }, '全部'),
+            topCategories.map(cat => h('button', { key: cat, className: `dsh-pm-chip${category === cat ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory(cat) }, categoryLabel(cat))),
+            tailCategories.length > 0
+              ? h('select', {
+                  key: 'cat-more',
+                  className: `dsh-pm-cat-more${tailCategories.includes(category) ? ' dsh-pm-cat-more-active' : ''}`,
+                  value: tailCategories.includes(category) ? category : '',
+                  onChange: (e) => { if (e.target.value) setCategory(e.target.value) },
+                  title: '其余分类（按插件数量）',
+                },
+                h('option', { value: '' }, '更多分类…'),
+                tailCategories.map(cat => h('option', { key: cat, value: cat }, `${categoryLabel(cat)} · ${categoryCounts.get(cat) || 0}`)))
+              : null),
           h('select', { className: 'dsh-pm-sort', value: sort, onChange: (e) => setSort(e.target.value), style: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px', padding: '5px 8px' } },
             h('option', { value: 'stars' }, '按 ★ 排序'),
             h('option', { value: 'downloads' }, '按下载量'),
             h('option', { value: 'newest' }, '按最新'))),
         market.plugins.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无插件') :
         marketCards.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '没有匹配的插件') :
-        h('div', { className: 'dsh-pm-grid' }, marketCards)))
+        h('div', null,
+          h('div', { className: 'dsh-pm-grid' }, marketCards),
+          plugins.length > visibleCount
+            ? h('button', { className: 'dsh-pm-more', onClick: () => setVisibleCount(c => c + PAGE_SIZE) },
+                `显示更多（还有 ${plugins.length - visibleCount} 个）`)
+            : h('div', { className: 'dsh-pm-more', style: { cursor: 'default' } }, `已显示全部 ${plugins.length} 个`))))
 
     // 更新工具栏：接口不可用（updates === false）时整条不渲染，静默降级成原来的已安装页。
     const clock = formatCheckedClock(updates && updates.checkedAt)
     const checking = busy === 'check-updates'
-    const updatingAll = busy === 'update-many'
-    // 服务端进程也在跑批次（别人的批量更新）时，按钮同样进入「更新中…」并禁用。
-    const batchRunning = updatingAll || progressActive
     const selectedUpdatable = selectedUpdatableNames(updates, selected)
     const selectedIgnorable = ignorableEntries(updates, selected)
     // 检测/批量更新都在后台跑，面板要能关掉（批量更新可能几分钟）；安装/卸载仍锁住。
     // 忽略只是写一次本地记录，不该把「关闭」也锁上。
     const closable = !busy || checking || updatingAll || busy === 'ignore'
+    // 批量进度条：进度独立于按钮展示（magpie 式——按钮只表达「下一步动作」，
+    // 进行中的事由一条状态条说明）。来源 + 进度 + 当前插件一起给出，
+    // 杜绝「选中 2 个却更新 3 个」的来源歧义。
+    const updateAllCount = updatesAvailableCount(updates)
+    const batchStrip = batchRunning
+      ? h('div', { className: 'dsh-pm-queue', role: 'status' },
+          h('span', { className: 'dsh-pm-queue-dot', 'aria-hidden': true }, '◌'),
+          h('span', { className: 'dsh-pm-queue-text' },
+            h('strong', null, batchProgressLabel(progress) || '更新中…'),
+            ` · 来源：${batchSource || '批量更新'}`,
+            progressCurrent ? ` · ${progressCurrent}` : ''))
+      : null
     const updatesBar = updates === false ? null : h('div', { className: 'dsh-pm-toolbar' },
-      h('button', { className: 'dsh-pm-tool', disabled: checking || batchRunning || busyAny && !checking, onClick: checkUpdates, title: '联网检测每个已安装插件的远端版本' }, checking ? '检测中…' : '检查更新'),
-      h('button', { className: 'dsh-pm-tool', disabled: updatesAvailableCount(updates) === 0 || batchRunning || checking || busyAny, onClick: updateAll, title: '更新所有可更新的插件' }, batchRunning ? '更新中…' : '全部更新'),
-      h('button', { className: 'dsh-pm-tool', disabled: selectedUpdatable.length === 0 || batchRunning || checking || busyAny, onClick: updateSelected, title: '只更新选中且可更新的插件' }, '更新选中'),
-      h('button', { className: 'dsh-pm-tool', disabled: selectedIgnorable.length === 0 || batchRunning || checking || busyAny, onClick: () => ignoreEntries(selectedIgnorable), title: '不再提醒选中插件的当前版本（远端出更高版本时会再提醒）' }, '忽略选中'),
+      h('button', { className: 'dsh-pm-tool', disabled: checking || batchRunning || busyOther, onClick: checkUpdates, title: '联网检测每个已安装插件的远端版本' }, checking ? '检测中…' : '检查更新'),
+      h('button', { className: 'dsh-pm-tool', disabled: updateAllCount === 0 || batchRunning || busyOther, onClick: updateAll, title: '更新所有可更新的插件' }, updateAllCount > 0 ? `全部更新 (${updateAllCount})` : '全部更新'),
+      h('button', { className: 'dsh-pm-tool', disabled: selectedUpdatable.length === 0 || batchRunning || busyOther, onClick: updateSelected, title: '只更新选中且可更新的插件' }, `更新选中 (${selectedUpdatable.length})`),
+      h('button', { className: 'dsh-pm-tool', disabled: selectedIgnorable.length === 0 || batchRunning || busyOther, onClick: () => ignoreEntries(selectedIgnorable), title: '不再提醒选中插件的当前版本（远端出更高版本时会再提醒）' }, `忽略选中 (${selectedIgnorable.length})`),
       h('span', { className: 'dsh-pm-selected-count' }, `已选 ${selectedNames.length} 个`),
       h('button', { className: 'dsh-pm-tool', disabled: selectedNames.length === 0, onClick: () => { setSelected(new Set()); lastIndexRef.current = null }, title: '清空选择' }, '取消选择'),
       h('span', { className: 'dsh-pm-updates-time' }, clock ? `上次检测：${clock}` : '尚未检测'))
@@ -974,18 +1259,20 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           tab === 'installed'
             ? h('div', null,
                 updatesBar,
+                batchStrip,
                 installed.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '还没有已安装的插件，去插件市场看看吧')
                   : h('div', null,
                       h('div', { className: 'dsh-pm-bulkbar' },
                         h('button', { className: 'dsh-pm-tool', onClick: toggleSelectAll }, manageable.length > 0 && selectedNames.length === manageable.length ? '取消全选' : '全选'),
                         h('button', { className: 'dsh-pm-tool', onClick: toggleInvert }, '反选'),
-                        h('button', { className: 'dsh-pm-tool', disabled: selectedNames.length === 0 || busy === 'uninstall-many', onClick: () => setConfirmBatch(true), style: selectedNames.length > 0 ? { color: 'var(--dsw-alias-state-error-primary)' } : undefined }, `批量卸载${selectedNames.length ? ` (${selectedNames.length})` : ''}`)),
+                        h('button', { className: 'dsh-pm-tool', disabled: selectedNames.length === 0 || busy === 'uninstall-many' || batchRunning || busyOther, onClick: () => setConfirmBatch(true), style: selectedNames.length > 0 ? { color: 'var(--dsw-alias-state-error-primary)' } : undefined }, `批量卸载${selectedNames.length ? ` (${selectedNames.length})` : ''}`)),
                       // 拖拽框选：在这块区域按下并拖动，实时把相交的行选上。
                       h('div', { className: 'dsh-pm-selectarea', ref: listAreaRef, onMouseDown: startBand },
                         h('div', { className: 'dsh-pm-list' }, installedRows),
                         band ? h('div', { className: 'dsh-pm-band', style: { height: `${band.height}px`, left: `${band.left}px`, top: `${band.top}px`, width: `${band.width}px` } }) : null)))
             : marketTab,
-          drawer)))
+          drawer,
+          notesModal)))
   }
 
   function apply(ctx) {
@@ -1014,12 +1301,16 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     selectedUpdatableNames,
     progressStepText,
     progressNoteFor,
+    batchProgressLabel,
+    ignoredUpdatableCount,
+    selectedIgnoredCount,
     bandRect,
     rectsIntersect,
     namesInBand,
     bandSelection,
     rangeSelection,
     markPluginsUpdated,
+    mergeUpdates,
     summarizeUpdates,
     formatCheckedClock,
     loadUpdates,
