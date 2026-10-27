@@ -152,7 +152,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-notes-title{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;margin-bottom:8px}
 .dsh-pm-notes-text{font:inherit;font-size:12px;line-height:20px;margin:0;white-space:pre-wrap;word-break:break-word}
 .dsh-pm-notes-error{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px;margin-bottom:10px}
-.dsh-pm-notes-link{font-size:12px}`
+.dsh-pm-notes-link{font-size:12px}
+/* 更新内容 markdown：CHANGELOG 实际用到的语法（标题/列表/行内代码/加粗/链接），
+   其余按纯文本段落兜底，不引入外部渲染器 */
+.dsh-pm-notes-md .dsh-pm-md-h{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;line-height:20px;margin:14px 0 6px}
+.dsh-pm-notes-md .dsh-pm-md-p{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px;margin:6px 0}
+.dsh-pm-notes-md .dsh-pm-md-ul{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px;margin:6px 0;padding-left:18px}
+.dsh-pm-notes-md .dsh-pm-md-ul li{margin:3px 0}
+.dsh-pm-notes-md .dsh-pm-md-code{background:var(--dsw-alias-bg-layer-2);border-radius:4px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;padding:1px 5px}`
   const CATEGORY_EMOJI = { official: '🛡️', browser: '🌐', tool: '🛠️', ui: '🎨', storage: '🗄️', workflow: '🔀', agent: '🤖', search: '🔍', data: '📊', network: '🌍', dev: '💻', other: '🧩' }
   // 市场分类显示名：官方来源是服务端合成的 'official' 分类，其余分类沿用远端给的原词。
   const CATEGORY_LABELS = { official: '官方' }
@@ -532,6 +539,63 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     return `${pad(date.getHours())}:${pad(date.getMinutes())}`
   }
 
+  /// 行内 markdown 片段：`code`、**加粗**、[文字](链接)。React 文本节点天然安全，
+  /// 不用 innerHTML，也就不需要转义层。
+  function mdInline(text, keyBase) {
+    const nodes = []
+    let rest = String(text ?? '')
+    let i = 0
+    const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)\s]+\))/
+    while (rest) {
+      const match = rest.match(pattern)
+      if (!match) { nodes.push(h('span', { key: keyBase + 't' + i }, rest)); break }
+      if (match.index > 0) nodes.push(h('span', { key: keyBase + 'p' + i }, rest.slice(0, match.index)))
+      const token = match[0]
+      if (token.startsWith('`')) nodes.push(h('code', { key: keyBase + 'c' + i, className: 'dsh-pm-md-code' }, token.slice(1, -1)))
+      else if (token.startsWith('**')) nodes.push(h('strong', { key: keyBase + 'b' + i }, token.slice(2, -2)))
+      else {
+        const link = token.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/)
+        if (link) nodes.push(h('a', { key: keyBase + 'a' + i, href: link[2], target: '_blank', rel: 'noreferrer' }, link[1]))
+        else nodes.push(h('span', { key: keyBase + 'f' + i }, token))
+      }
+      rest = rest.slice(match.index + token.length)
+      i += 1
+    }
+    return nodes
+  }
+
+  /// 极简 markdown：标题 / 无序列表 / 段落，覆盖 CHANGELOG 实际用到的语法；
+  /// 认不出的行按段落兜底，绝不因为陌生语法渲染成空白。
+  function renderMarkdown(text) {
+    const blocks = []
+    let list = null
+    let para = []
+    const flushPara = () => { if (para.length) { const key = 'p' + blocks.length; blocks.push(h('p', { key, className: 'dsh-pm-md-p' }, mdInline(para.join(' '), key))); para = [] } }
+    const flushList = () => { if (list) { const key = 'l' + blocks.length; blocks.push(h('ul', { key, className: 'dsh-pm-md-ul' }, list)); list = null } }
+    for (const rawLine of String(text ?? '').split('\n')) {
+      const line = rawLine.replace(/\s+$/, '')
+      if (!line.trim()) { flushPara(); flushList(); continue }
+      const heading = line.match(/^(#{1,6})\s+(.*)$/)
+      if (heading) {
+        flushPara(); flushList()
+        const key = 'h' + blocks.length
+        blocks.push(h('div', { key, className: 'dsh-pm-md-h' }, mdInline(heading[2], key)))
+        continue
+      }
+      const bullet = line.match(/^\s*[-*]\s+(.*)$/)
+      if (bullet) {
+        flushPara()
+        if (!list) list = []
+        list.push(h('li', { key: 'li' + list.length }, mdInline(bullet[1], 'li' + blocks.length + '-' + list.length)))
+        continue
+      }
+      flushList()
+      para.push(line)
+    }
+    flushPara(); flushList()
+    return blocks
+  }
+
   /// Sidebar entry: a button that opens the plugin manager page on click.
   /// The slot renders this component in the sidebar footer, so the page itself
   /// must NOT be registered directly (it would render the full-screen modal on
@@ -745,12 +809,21 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       if (!updatesStore.claimBatchFinish(batch.finishedAt)) return
       toast(summary.kind, summary.text)
     }
-    const updateOne = (item) => {
+    // dev-linked（本地开发目录链接的）插件点「更新」后：服务端拒绝自动更新，
+    // 这里给出二选一的显式确认块（magpie 式——动用户目录的决定必须显式发起）。
+    const [devLinkedChoice, setDevLinkedChoice] = React.useState(null)
+    const updateOne = (item, mode) => {
       setBusy('update-' + item.name)
-      fetch('/dsh-plugin-manager/update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: item.name }) })
+      fetch('/dsh-plugin-manager/update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: item.name, mode }) })
         .then(r => r.json()).then(v => {
-          if (v.error) throw Error(v.error)
+          if (v.error && v.status !== 'dev-linked') throw Error(v.error)
+          if (v.status === 'dev-linked') {
+            // 服务端要求用户显式选择更新方式；确认块本身就是反馈，不再叠 error toast。
+            setDevLinkedChoice({ name: item.name, error: v.error })
+            return null
+          }
           if (!v.ok) throw Error(v.error || '更新失败')
+          setDevLinkedChoice(null)
           // 验收未过（node_modules 版本没跟上）不是成功：用中性提示如实说，
           // 别让绿色 toast 把「需重启确认」装饰成「已完成」。
           toast(v.verified === false ? 'info' : 'success', updateSuccessText(item.name, v))
@@ -1124,7 +1197,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             : notes.data && notes.data.ok
               ? h('div', null,
                   h('div', { className: 'dsh-pm-notes-title' }, notes.data.title || ''),
-                  h('pre', { className: 'dsh-pm-notes-text' }, notes.data.notes || ''),
+                  h('div', { className: 'dsh-pm-notes-md' }, renderMarkdown(notes.data.notes || '')),
                   notes.data.url ? h('a', { className: 'dsh-pm-drawer-link', href: notes.data.url, target: '_blank', rel: 'noreferrer' }, '在 GitHub 上查看 ↗') : null)
               : h('div', null,
                   h('div', { className: 'dsh-pm-notes-error' }, (notes.data && notes.data.error) || '读取发布说明失败'),
@@ -1214,9 +1287,21 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             ` · 来源：${batchSource || '批量更新'}`,
             progressCurrent ? ` · ${progressCurrent}` : ''))
       : null
+    // 「全部更新」的哑按钮要有解释：可更新项全部被忽略时按钮必然禁用，
+    // 不写明原因用户只会觉得「按钮坏了」（实测：唯一的可更新插件被忽略后，
+    // 全部更新/更新选中全部灰掉且无提示）。已忽略的项仍可用行内「更新」强更。
+    const ignoredUpdatable = ignoredUpdatableCount(updates)
+    const updateAllHint = updateAllCount === 0 && ignoredUpdatable > 0
+      ? `可更新的 ${ignoredUpdatable} 个插件都已被忽略：点行内「取消忽略」恢复提醒，或直接用行内「更新」强制更新`
+      : '更新所有可更新的插件'
     const updatesBar = updates === false ? null : h('div', { className: 'dsh-pm-toolbar' },
       h('button', { className: 'dsh-pm-tool', disabled: checking || batchRunning || busyOther, onClick: checkUpdates, title: '联网检测每个已安装插件的远端版本' }, checking ? '检测中…' : '检查更新'),
-      h('button', { className: 'dsh-pm-tool', disabled: updateAllCount === 0 || batchRunning || busyOther, onClick: updateAll, title: '更新所有可更新的插件' }, updateAllCount > 0 ? `全部更新 (${updateAllCount})` : '全部更新'),
+      h('button', {
+        className: 'dsh-pm-tool',
+        disabled: updateAllCount === 0 || batchRunning || busyOther,
+        onClick: updateAll,
+        title: updateAllCount === 0 ? updateAllHint : `${updateAllHint}（共 ${updateAllCount} 个）`,
+      }, updateAllCount > 0 ? `全部更新 (${updateAllCount})` : ignoredUpdatable > 0 ? `全部更新（${ignoredUpdatable} 个已忽略）` : '全部更新'),
       h('button', { className: 'dsh-pm-tool', disabled: selectedUpdatable.length === 0 || batchRunning || busyOther, onClick: updateSelected, title: '只更新选中且可更新的插件' }, `更新选中 (${selectedUpdatable.length})`),
       h('button', { className: 'dsh-pm-tool', disabled: selectedIgnorable.length === 0 || batchRunning || busyOther, onClick: () => ignoreEntries(selectedIgnorable), title: '不再提醒选中插件的当前版本（远端出更高版本时会再提醒）' }, `忽略选中 (${selectedIgnorable.length})`),
       h('span', { className: 'dsh-pm-selected-count' }, `已选 ${selectedNames.length} 个`),
@@ -1256,6 +1341,26 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             h('div', { className: 'dsh-pm-confirm-actions' },
               h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setRestartPrompt(null) }, '稍后'),
               h('button', { className: 'dsh-pm-confirm-primary', onClick: restartNow, disabled: busy === 'restart' }, busy === 'restart' ? '重启中…' : '立即重启'))),
+          devLinkedChoice && h('div', { className: 'dsh-pm-confirm' },
+            h('div', { className: 'dsh-pm-confirm-title' }, `选择 ${devLinkedChoice.name} 的更新方式`),
+            h('div', { className: 'dsh-pm-confirm-copy' },
+              '这个插件链接到你的本地开发目录，自动更新不会擅动它。两种方式二选一：',
+              h('br'), '· 更新本地目录：在目录里 git pull、装依赖并重新构建（会改动该目录，本地有未推送提交时会被拒绝）；',
+              h('br'), '· 切换为 npm 发行版：改用发布的版本，完全不碰本地目录。'),
+            h('div', { className: 'dsh-pm-confirm-actions' },
+              h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setDevLinkedChoice(null), disabled: busy === 'update-' + devLinkedChoice.name }, '取消'),
+              h('button', {
+                className: 'dsh-pm-confirm-cancel',
+                disabled: Boolean(busy),
+                onClick: () => updateOne({ name: devLinkedChoice.name }, 'switch-release'),
+                title: '改用 npm 上发布的版本，本地目录保持原样',
+              }, '切换为发行版'),
+              h('button', {
+                className: 'dsh-pm-confirm-primary',
+                disabled: Boolean(busy),
+                onClick: () => updateOne({ name: devLinkedChoice.name }, 'pull-local'),
+                title: '在本地目录里 git pull + 装依赖 + 重新构建',
+              }, '更新本地目录'))),
           tab === 'installed'
             ? h('div', null,
                 updatesBar,

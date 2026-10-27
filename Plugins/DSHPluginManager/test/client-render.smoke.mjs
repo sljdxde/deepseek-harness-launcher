@@ -640,7 +640,10 @@ const entry = (name, over) => ({
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
   assert.equal(badgeText(), '', '两条都忽略后角标消失（这正是用户要的效果）');
-  assert.equal(findByText(runtime.tree, 'button', '全部更新').props.disabled, true, '没有「可更新」项时「全部更新」禁用');
+  // 可更新项全被忽略：按钮禁用且文案自解释（不写原因用户只会觉得按钮坏了）
+  const ignoredAllButton = findByText(runtime.tree, 'button', '全部更新（2 个已忽略）');
+  assert.equal(ignoredAllButton.props.disabled, true, '全部被忽略时「全部更新」禁用');
+  assert.match(ignoredAllButton.props.title, /已被忽略/);
 
   // 「取消忽略」：只恢复 dsh-a，角标回到 1；「全部更新」的名单里也就只剩 dsh-a
   openPanel();
@@ -678,7 +681,7 @@ const entry = (name, over) => ({
       });
     }
     if (url.startsWith('/dsh-plugin-manager/release-notes')) {
-      return respond({ ok: true, kind: 'release', version: '2.0.0', title: 'v2.0.0', notes: '## 亮点\n- 支持新功能', url: 'https://github.com/o/dsh-notes/releases/tag/v2.0.0' });
+      return respond({ ok: true, kind: 'release', version: '2.0.0', title: 'v2.0.0', notes: '## 亮点\n- 支持 `markdown` 渲染', url: 'https://github.com/o/dsh-notes/releases/tag/v2.0.0' });
     }
     return respond({});
   };
@@ -691,10 +694,56 @@ const entry = (name, over) => ({
   await settle(runtime);
   const text = textOf(runtime.tree);
   assert.ok(text.includes('dsh-notes v2.0.0 的更新内容'), '弹出更新内容窗口，实际：' + text.slice(0, 300));
-  assert.ok(text.includes('支持新功能'), '显示发布说明正文');
+  assert.ok(text.includes('markdown'), '显示发布说明正文（经 markdown 渲染）');
   const call = calls.find(item => item.url === '/dsh-plugin-manager/release-notes');
   assert.deepEqual(JSON.parse(call.options.body), { name: 'dsh-notes', version: '2.0.0' }, '提交插件名与目标版本');
+  // markdown 渲染成结构化元素（标题/列表/行内代码），不再是 <pre> 原文
+  const headings = findAll(runtime.tree, node => String(node.props.className || '').includes('dsh-pm-md-h'));
+  assert.ok(headings.length >= 1, '标题渲染为 .dsh-pm-md-h 元素');
+  const listItems = findAll(runtime.tree, node => node.type === 'li');
+  assert.ok(listItems.length >= 1, '列表项渲染为 <li>');
+  const inlineCode = findAll(runtime.tree, node => String(node.props.className || '').includes('dsh-pm-md-code'));
+  assert.ok(inlineCode.length >= 1, '行内代码渲染为 .dsh-pm-md-code');
   console.log('场景8（更新内容弹窗）通过');
 }
 
 console.log('== 冒烟全部通过 ==');
+
+/** 场景 9：dev-linked 插件更新 → 二选一确认块（更新本地目录 / 切换为发行版） */
+{
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [{ name: 'dsh-dev', version: '1.0.0', description: '本地开发' }] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({ checkedAt: '2026-09-22T11:00:00.000Z', refreshing: false, lastBatch: null,
+        summary: { total: 1, updateAvailable: 1, failed: 0, unknown: 0 },
+        inventory: [entry('dsh-dev', { status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' })] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/update')) {
+      const asked = JSON.parse(options.body || '{}');
+      if (!asked.mode) return respond({ ok: false, status: 'dev-linked', error: '该插件链接到本地目录，已被拒绝' });
+      return respond({ ok: true, updatedTo: '2.0.0', verified: true, restartRequired: true, note: '已更新' });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  findByText(runtime.tree, 'button', '更新').props.onClick({ stopPropagation() {} });
+  await settle(runtime);
+  assert.ok(findByText(runtime.tree, 'button', '更新本地目录'), 'dev-linked 出现「更新本地目录」选项');
+  assert.ok(findByText(runtime.tree, 'button', '切换为发行版'), 'dev-linked 出现「切换为发行版」选项');
+
+  // 选「切换为发行版」：请求带 mode，成功后确认块消失
+  findByText(runtime.tree, 'button', '切换为发行版').props.onClick();
+  await settle(runtime, 20);
+  const modeCall = calls.filter(call => call.url === '/dsh-plugin-manager/update' && call.options.body).map(call => JSON.parse(call.options.body)).find(body => body.mode);
+  assert.deepEqual(modeCall, { name: 'dsh-dev', mode: 'switch-release' }, '显式动作带 mode 透传');
+  assert.equal(findByText(runtime.tree, 'button', '更新本地目录'), undefined, '选择后确认块消失');
+  assert.ok(toasts(runtime.tree).some(item => item.kind === 'success'), '成功后弹汇总提示');
+  console.log('场景9（dev-linked 二选一）通过');
+}

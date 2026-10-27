@@ -2750,7 +2750,9 @@ export function apply(ctx) {
                   if (!value?.name) { json(res, 400, { error: '缺少插件名' }); return; }
                   // 批量更新正在跑时不让单条更新插进来：两者都写同一个 profile，并发会互相踩。
                   if (rejectWhileBatchRunning(res)) return;
-                  json(res, 200, await updatePlugin(value.name));
+                  // dev-linked 插件的显式动作由前端二选一传入（pull-local / switch-release）。
+                  const mode = value.mode === 'pull-local' || value.mode === 'switch-release' ? value.mode : undefined;
+                  json(res, 200, await updatePlugin(value.name, { mode }));
                 } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
               }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/updates', handler: async (req, res) => {
