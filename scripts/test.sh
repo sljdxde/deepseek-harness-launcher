@@ -129,6 +129,14 @@ rg -q '/dsh-plugin-manager/installed' "$ROOT/Plugins/DSHPluginManager/lib/index.
 rg -q '/dsh-plugin-manager/marketplace' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q '/dsh-plugin-manager/install' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q '/dsh-plugin-manager/uninstall' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+# 已安装列表排序：用户插件按「最近安装/更新」倒序在上、内置垫底、损坏最后。
+# 不得退回按名字字母序（那样刚装的插件会掉到列表中间，用户找不到）。
+rg -Fq 'compareInstalledPlugins' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-manager.test.js"
+rg -Fq 'pluginInstalledAtIso' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+if rg -Fq 'out.sort((a, b) => a.name.localeCompare(b.name))' "$ROOT/Plugins/DSHPluginManager/lib/index.js"; then
+  echo "installed plugin list must sort by recency with bundled last, not by name" >&2
+  exit 1
+fi
 rg -q '/dsh-plugin-manager/update' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'cleanupPluginSources' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 # 本地开发目录的数据安全红线：自动更新绝不改 plugin-sources 之外的用户目录。

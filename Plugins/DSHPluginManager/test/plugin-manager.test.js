@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parsePluginYml, installCandidates, listInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin, fetchOfficialMarketPlugins, mergeMarketPlugins, readMarketplace } from '../lib/index.js';
+import { parsePluginYml, installCandidates, listInstalledPlugins, compareInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin, fetchOfficialMarketPlugins, mergeMarketPlugins, readMarketplace } from '../lib/index.js';
 
 test('parsePluginYml 解析 awesome-dsh-plugin 的插件条目格式', () => {
   const text = `url: https://github.com/1624318455/dsh-plugin-tavily
@@ -122,6 +122,76 @@ test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依�
     else process.env.DSH_HOME = previousHome;
     await rm(dshHome, { recursive: true, force: true });
   }
+});
+
+test('listInstalledPlugins 排序：用户插件按安装/更新时间倒序在上，内置垫底', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-order-'));
+  process.env.DSH_HOME = dshHome;
+
+  // 目录 mtime 用 utimes 钉死（birthtime 不可控也不可信）；来源标记的 clonedAt
+  // 取到比目录更新时应胜出，覆盖「本地 pull 之后目录没动」的情形。
+  const stamp = async (path, iso) => utimes(path, new Date(iso), new Date(iso));
+  try {
+    const modules = join(dshHome, 'profiles', 'web', 'node_modules');
+    const profileDir = join(dshHome, 'profiles', 'web');
+    await mkdir(modules, { recursive: true });
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', private: true,
+      dependencies: { 'dsh-new': 'file:/x', 'dsh-old': 'file:/y', 'dsh-marker': 'file:/z' },
+      dsh: { profile: { bundles: ['dsh-new', 'dsh-old', 'dsh-marker'] } }
+    }));
+    for (const [name, mtime] of [['dsh-new', '2026-10-28T10:00:00.000Z'], ['dsh-old', '2026-10-01T10:00:00.000Z'], ['dsh-marker', '2026-09-01T10:00:00.000Z']]) {
+      const dir = join(modules, name);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'package.json'), JSON.stringify({ name, version: '1.0.0', description: name }));
+      // 来源标记先写再钉目录时间：写文件本身会把目录 mtime 顶成「现在」，
+      // 顺序反了断言就会随机器时钟漂移。
+      if (name === 'dsh-marker') {
+        // 目录时间很旧，但来源标记记着更晚的更新 → 应取标记时间、排到最新
+        await writeFile(join(dir, '.dsh-source.json'), JSON.stringify({
+          author: 'a', repo: 'dsh-marker', url: 'https://github.com/a/dsh-marker', commit: null,
+          clonedAt: '2026-10-27T10:00:00.000Z',
+        }));
+      }
+      await stamp(dir, mtime);
+    }
+    // bundled：时间在用户插件之后也必须垫底
+    const bundleFixture = join(dshHome, 'fixtures', 'DSHPluginManager');
+    await mkdir(bundleFixture, { recursive: true });
+    await writeFile(join(bundleFixture, 'package.json'), JSON.stringify({ name: 'dsh-bundled-one', version: '0.1.0', description: '内置' }));
+    const bundledLink = join(modules, 'dsh-bundled-one');
+    await symlink(bundleFixture, bundledLink);
+    await stamp(bundleFixture, '2026-10-29T10:00:00.000Z');
+    // broken：悬空软链，取不到时间，排最后
+    await symlink(join(dshHome, 'nope'), join(modules, 'dsh-broken-one'));
+
+    const items = await listInstalledPlugins();
+    assert.deepEqual(items.map(item => item.name), ['dsh-new', 'dsh-marker', 'dsh-old', 'dsh-broken-one', 'dsh-bundled-one'],
+      '越新越靠上；内置永远在最后（用户自己装的东西，包括待清理的残留，都在它上面）');
+    assert.deepEqual(items.map(item => item.source), ['user', 'user', 'user', 'broken', 'bundled']);
+    assert.equal(items.find(item => item.name === 'dsh-marker').installedAt, '2026-10-27T10:00:00.000Z', '来源标记的 clonedAt 比目录更新时以它为准');
+    assert.equal(items.find(item => item.name === 'dsh-new').installedAt, '2026-10-28T10:00:00.000Z');
+    assert.equal(items.find(item => item.name === 'dsh-broken-one').installedAt, null, '损坏残留取不到时间，排到用户档末尾');
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('compareInstalledPlugins：同一档内时间相同按名字稳定排序，脏时间值不炸', () => {
+  const base = { version: '1.0.0', description: '' };
+  const rows = [
+    { ...base, name: 'zeta', source: 'user', installedAt: '2026-10-01T00:00:00.000Z' },
+    { ...base, name: 'alpha', source: 'user', installedAt: '2026-10-01T00:00:00.000Z' },
+    { ...base, name: 'bogus', source: 'user', installedAt: 'not-a-date' },
+    { ...base, name: 'no-time', source: 'user', installedAt: null },
+    { ...base, name: 'zzz-bundled', source: 'bundled', installedAt: '2026-10-30T00:00:00.000Z' },
+    { ...base, name: 'aaa-broken', source: 'broken', broken: true, installedAt: null },
+  ].sort(compareInstalledPlugins);
+  assert.deepEqual(rows.map(item => item.name), ['alpha', 'zeta', 'aaa-broken', 'bogus', 'no-time', 'zzz-bundled'],
+    '档内新→旧；取不到时间（损坏/非法值）排到该档末尾并按名字兜底；内置永远最后');
 });
 
 test('installPlugin 已安装的纯 repo 插件直接返回 alreadyInstalled，不触发安装', async () => {

@@ -252,7 +252,7 @@ async function resolveModule(modulesDir, packageName) {
  * plugin layer), one of the launcher's bundled plugins, or a broken leftover
  * of a failed install. Ordinary npm dependencies (d3, lodash, …) that happen
  * to sit in node_modules are NOT plugins and must never be listed.
- * @returns {Promise<Array<{name:string,version:string|null,description:string,source:'bundled'|'user'|'broken',broken?:boolean}>>}
+ * @returns {Promise<Array<{name:string,version:string|null,description:string,source:'bundled'|'user'|'broken',installedAt:string|null,broken?:boolean}>>}
  */
 export async function listInstalledPlugins() {
   const modulesDir = profilesWebModules();
@@ -277,7 +277,7 @@ export async function listInstalledPlugins() {
       const target = await linkTarget(entry.path);
       const source = target && BUNDLED_MARKERS.some(marker => target.includes(marker)) ? 'bundled' : 'user';
       seen.add(meta.name);
-      out.push({ name: meta.name, version: meta.version, description: meta.description, source });
+      out.push({ name: meta.name, version: meta.version, description: meta.description, source, installedAt: await pluginInstalledAtIso(entry.path) });
     }
   }
 
@@ -289,7 +289,7 @@ export async function listInstalledPlugins() {
       const meta = await readPackageMeta(entry.path);
       if (meta?.name && !seen.has(meta.name)) {
         seen.add(meta.name);
-        out.push({ name: meta.name, version: meta.version, description: meta.description, source: 'bundled' });
+        out.push({ name: meta.name, version: meta.version, description: meta.description, source: 'bundled', installedAt: await pluginInstalledAtIso(entry.path) });
       }
     }
   }
@@ -300,12 +300,58 @@ export async function listInstalledPlugins() {
     const meta = await readPackageMeta(entry.path);
     if (!meta?.name) {
       seen.add(entry.package);
-      out.push({ name: entry.package, version: null, description: '安装不完整或已损坏，可清理后重新安装', source: 'broken', broken: true });
+      out.push({ name: entry.package, version: null, description: '安装不完整或已损坏，可清理后重新安装', source: 'broken', installedAt: null, broken: true });
     }
   }
 
-  out.sort((a, b) => a.name.localeCompare(b.name));
+  out.sort(compareInstalledPlugins);
   return out;
+}
+
+/**
+ * 已安装列表的排序：用户插件在上面并按「最近安装/更新」倒序（越新越靠上），
+ * 启动器自带的内置插件固定垫底（它们永远不能卸载、版本恒为 0.1.0，排在
+ * 中间只会挤占视线）。损坏残留（source 恒为 broken）属于用户层的残留，与用户
+ * 插件同档，但它取不到时间，天然落在该档末尾。档内时间越新越靠前，时间相同按名字兜底，
+ * 保证顺序稳定可复现。
+ */
+export function compareInstalledPlugins(left, right) {
+  const rank = item => (item.source === 'bundled' ? 1 : 0);
+  const byRank = rank(left) - rank(right);
+  if (byRank !== 0) return byRank;
+  const byTime = stampMs(right.installedAt) - stampMs(left.installedAt);
+  if (byTime !== 0) return byTime;
+  return String(left.name).localeCompare(String(right.name));
+}
+
+/** ISO 时间串转毫秒；取不到（null / 非法值）返回 -1，永远排在有时间的之后。 */
+function stampMs(value) {
+  const ms = Date.parse(value ?? '');
+  return Number.isFinite(ms) ? ms : -1;
+}
+
+/**
+ * 插件「最近一次安装/更新」的时刻，取以下几个信号里最新的那个：
+ * - 来源标记 `.dsh-source.json` 的 clonedAt / updatedAt（本插件在克隆或本地
+ *   pull 时写入，语义最准，且不受文件系统时间戳语义差异影响）；
+ * - 插件目录的 mtime（node_modules 里指向 plugin-sources 的软链先解析真实路径）。
+ *   只用目录 mtime：安装必然新建目录，更新会增删其中的文件；package.json 这类
+ *   文件的 mtime 会保留打包时间、不可信；birthtime 不用——复制/迁移目录会把它
+ *   刷成当下，比 mtime 更会骗人。
+ * 全都取不到时返回 null（例如悬空软链的损坏残留）。
+ * @returns {Promise<string|null>}
+ */
+async function pluginInstalledAtIso(directory) {
+  const real = await fs.realpath(directory).catch(() => directory);
+  let best = -1;
+  const marker = await readJsonQuiet(join(real, SOURCE_MARKER_NAME));
+  for (const value of [marker?.clonedAt, marker?.updatedAt]) {
+    const ms = stampMs(value);
+    if (ms > best) best = ms;
+  }
+  const info = await fs.stat(real).catch(() => null);
+  if (info && Number.isFinite(info.mtimeMs) && info.mtimeMs > best) best = info.mtimeMs;
+  return best >= 0 ? new Date(best).toISOString() : null;
 }
 
 const dshCli = () => join(dshHome(), 'runtime', 'node_modules', '.bin', 'dsh');
