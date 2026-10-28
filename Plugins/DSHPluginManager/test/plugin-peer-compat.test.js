@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -7,6 +7,7 @@ import {
   acceptInstalledPackage,
   applyPluginUpdate,
   isDevLinkedSource,
+  stripStaleLockEntry,
   findPeerIncompatibilities,
   satisfiesPluginRange
 } from '../lib/index.js';
@@ -86,6 +87,7 @@ test('目标版本 peer 不满足当前 dsh：直接阻断，一条 pnpm 命令�
     const result = await applyPluginUpdate(npmSource, {
       check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
       command: async args => { commands.push(args); },
+      verifyApplied: async () => true,
       peerProbe: async () => ({ '@deepseek-ai/dsh-llm': '>=0.2.0' })
     });
     assert.equal(result.ok, false);
@@ -103,6 +105,7 @@ test('目标版本 peer 满足：照常执行更新（真实 openviking 多分�
     const result = await applyPluginUpdate(npmSource, {
       check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
       command: async args => { commands.push(args); },
+      verifyApplied: async () => true,
       peerProbe: async () => ({ '@deepseek-ai/dsh-llm': '>=0.1.0-rc.6 <0.2.0 || ^0.1.5-rc.1' })
     });
     assert.equal(result.ok, true);
@@ -116,6 +119,7 @@ test('探测不到 peer 声明时不阻断（门禁不能变成新的故障源�
     const result = await applyPluginUpdate(npmSource, {
       check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
       command: async args => { commands.push(args); },
+      verifyApplied: async () => true,
       peerProbe: async () => { throw new Error('registry 不可达'); }
     });
     assert.equal(result.ok, true);
@@ -160,6 +164,7 @@ test('已装版本同样不满足的 peer：放过升级，只带一句提示', 
     const result = await applyPluginUpdate(npmSource, {
       check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
       command: async args => { commands.push(args); },
+      verifyApplied: async () => true,
       peerProbe: async () => ({ '@earendil-works/pi-ai': '>=0.85.0 <0.88.0' })
     });
     assert.equal(result.ok, true, '升级前的版本本来就不满足，挡住它只会把用户卡死');
@@ -175,6 +180,7 @@ test('目标版本新增的不兼容 peer：仍然阻断，一条 pnpm 命令都
     const result = await applyPluginUpdate(npmSource, {
       check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
       command: async args => { commands.push(args); },
+      verifyApplied: async () => true,
       peerProbe: async () => ({ '@deepseek-ai/dsh-llm': '>=0.2.0' })
     });
     assert.equal(result.ok, false);
@@ -189,6 +195,7 @@ test('已装版本没声明这个 peer 时，目标版本的不兼容照样挡�
     const result = await applyPluginUpdate(npmSource, {
       check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
       command: async args => { commands.push(args); },
+      verifyApplied: async () => true,
       peerProbe: async () => ({ '@deepseek-ai/dsh-llm': '>=0.2.0' })
     });
     assert.equal(result.ok, false);
@@ -227,6 +234,7 @@ test('link: 指向用户开发目录时拒绝自动更新：绝不改名/克隆�
     }, {
       check: async () => [{ status: 'update-available', latestVersion: '0.15.0' }],
       command: async args => { commands.push(args); },
+      verifyApplied: async () => true,
       clone: async () => { throw new Error('clone 不该被调用：用户目录不能动'); },
       peerProbe: async () => ({})
     });
@@ -287,4 +295,53 @@ test('isDevLinkedSource：plugin-sources 之外的开发目录识别为 dev-link
     assert.equal(isDevLinkedSource(npmSource), false, 'npm 来源没有 dir，不算');
     assert.equal(isDevLinkedSource(null), false);
   });
+});
+
+test('stripStaleLockEntry：只删目标包的 importers 记录，别的条目与其他段不动', async () => {
+  await withRuntime({}, async home => {
+    const lockPath = join(home, 'profiles', 'web', 'pnpm-lock.yaml');
+    await mkdir(join(home, 'profiles', 'web'), { recursive: true });
+    await writeFile(lockPath, [
+      'lockfileVersion: 9.0',
+      '', 'importers:', '',
+      "  '@changfenhuang/dsh-genui':",
+      '    specifier: file:/Users/x/dev/dsh-genui',
+      '    version: link:../../../004个人代码仓库/dsh-genui',
+      '', "  dsh-notify:", '    specifier: github:zhengjy01/dsh-notify',
+      '    version: github:zhengjy01/dsh-notify', '',
+      'packages:', "  dsh-notify@1.0.0:", '    resolution: {integrity: sha512-x}',
+    ].join('\n'), 'utf8');
+    const changed = await stripStaleLockEntry('@changfenhuang/dsh-genui');
+    assert.equal(changed, true, '有钉死的记录要报改动');
+    const after = await readFile(lockPath, 'utf8');
+    assert.equal(after.includes('dsh-genui'), false, '目标记录整块删除');
+    assert.ok(after.includes('dsh-notify'), '别的 importers 条目保留');
+    assert.ok(after.includes('packages:'), '其他顶层段保留');
+    assert.equal(await stripStaleLockEntry('not-in-lock'), false, '没有记录时报未改动');
+  });
+});
+
+test('安装验收：第一次没物化 → 清钉重装一次 → 物化了就算成功，不回滚', async () => {
+  const commands = [];
+  let first = true;
+  const result = await acceptInstalledPackage('dsh-foo', 'pnpm 说 ok', async args => {
+    commands.push(args);
+  }, async () => {
+    const present = !first; first = false; return present;
+  }, 'dsh-foo@2.0.0');
+  assert.equal(result.ok, true, '重装后物化了就别报失败');
+  // 直接调用验收时，第一次「没物化」发生在任何命令之前；重试只补一次 add
+  assert.deepEqual(commands, [['add', 'dsh-foo@2.0.0']], '重试恰好多跑一次 add');
+  assert.equal(commands.some(args => args[0] === 'remove'), false, '成功路径不回滚');
+});
+
+test('安装验收：重装后仍未物化 → 回滚并如实上报', async () => {
+  const commands = [];
+  const result = await acceptInstalledPackage('dsh-foo', 'pnpm 说 ok', async args => {
+    commands.push(args);
+  }, async () => null, 'dsh-foo@2.0.0');
+  assert.equal(result.ok, false);
+  assert.match(result.error, /没有出现在 node_modules 里/);
+  assert.deepEqual(commands, [['add', 'dsh-foo@2.0.0'], ['remove', 'dsh-foo']],
+    '重试一次仍失败才回滚（重试的 add + 撤销的 remove）');
 });

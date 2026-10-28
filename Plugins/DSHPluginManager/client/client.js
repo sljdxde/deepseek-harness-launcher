@@ -717,6 +717,16 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const installTotalRef = React.useRef(0)
     const [installStatus, setInstallStatus] = React.useState({})
     const [queueView, setQueueView] = React.useState([])
+    // 更新队列：与安装队列共用同一把串行锁（都要跑 pnpm，并发写同一 profile
+    // 会互相踩）。点多个「更新」依次排队，排队期间还能继续点其他的。
+    const updateQueueRef = React.useRef([])
+    const [updateStatus, setUpdateStatus] = React.useState({}) // name -> 'queued' | 'updating'
+    const [updateQueueView, setUpdateQueueView] = React.useState([])
+    const updateTotalRef = React.useRef(0)
+    const mutationRunningRef = React.useRef(false)
+    const [mutationActive, setMutationActive] = React.useState(false)
+    const busyRef = React.useRef('')
+    busyRef.current = busy
     /// 单个安装请求；返回 'ok' | 'already' | 'fail'。失败当场 toast（读错误需要时间）。
     const installOne = async (plugin) => {
       try {
@@ -818,26 +828,114 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     // dev-linked（本地开发目录链接的）插件点「更新」后：服务端拒绝自动更新，
     // 这里给出二选一的显式确认块（magpie 式——动用户目录的决定必须显式发起）。
     const [devLinkedChoice, setDevLinkedChoice] = React.useState(null)
+    /// 单条更新请求；成功返回 {name, updatedTo, verified}，失败返回 null（已 toast）。
+    const updateOneRequest = async (name, mode) => {
+      try {
+        const r = await fetch('/dsh-plugin-manager/update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, mode }) })
+        const v = await r.json()
+        if (v.error && v.status !== 'dev-linked') throw Error(v.error)
+        if (v.status === 'dev-linked') {
+          // 服务端要求用户显式选择更新方式；确认块本身就是反馈，不再叠 error toast。
+          setDevLinkedChoice({ name, error: v.error })
+          return null
+        }
+        if (!v.ok) throw Error(v.error || '更新失败')
+        setDevLinkedChoice(null)
+        // 验收未过（node_modules 版本没跟上）不是成功：用中性提示如实说，
+        // 别让绿色 toast 把「需重启确认」装饰成「已完成」。
+        toast(v.verified === false ? 'info' : 'success', updateSuccessText(name, v))
+        return { name, updatedTo: v.updatedTo, verified: v.verified !== false }
+      } catch (e) {
+        toast('error', `更新 ${name} 失败：${String(e.message || e)}`)
+        return null
+      }
+    }
     const updateOne = (item, mode) => {
-      setBusy('update-' + item.name)
-      fetch('/dsh-plugin-manager/update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: item.name, mode }) })
-        .then(r => r.json()).then(v => {
-          if (v.error && v.status !== 'dev-linked') throw Error(v.error)
-          if (v.status === 'dev-linked') {
-            // 服务端要求用户显式选择更新方式；确认块本身就是反馈，不再叠 error toast。
-            setDevLinkedChoice({ name: item.name, error: v.error })
-            return null
+      // 入队即返回：更新走与安装同一把串行锁，点多个依次执行，互不阻塞。
+      if (updateStatus[item.name] || batchRunning) return
+      updateTotalRef.current += 1
+      updateQueueRef.current = [...updateQueueRef.current, { item, mode }]
+      setUpdateQueueView([...updateQueueRef.current])
+      setUpdateStatus(s => ({ ...s, [item.name]: 'queued' }))
+      void pumpMutations()
+    }
+    /// 统一串行泵：更新与安装共用（都要跑 pnpm，并发写同一 profile 会互相踩）。
+    /// 队列非空就持续处理；卸载/清理这类非排队操作进行中时先让行。
+    const waitWhileDestructive = async () => {
+      while (/^(uninstall|uninstall-many|cleanup-)/.test(busyRef.current)) {
+        await new Promise(resolve => setTimeout(resolve, 250))
+      }
+    }
+    const runOneUpdate = async (task) => {
+      await waitWhileDestructive()
+      setUpdateStatus(s => ({ ...s, [task.item.name]: 'updating' }))
+      const outcome = await updateOneRequest(task.item.name, task.mode)
+      updateQueueRef.current = updateQueueRef.current.slice(1)
+      setUpdateQueueView([...updateQueueRef.current])
+      setUpdateStatus(s => { const next = { ...s }; delete next[task.item.name]; return next })
+      if (outcome) {
+        settleUpdates([{ name: outcome.name, ok: true, updatedTo: outcome.updatedTo }])
+        return outcome
+      }
+      return null
+    }
+    const runOneInstall = async (plugin) => {
+      await waitWhileDestructive()
+      setInstallStatus(s2 => ({ ...s2, [plugin.id]: 'installing' }))
+      const outcome = await installOne(plugin)
+      installQueueRef.current = installQueueRef.current.slice(1)
+      setQueueView([...installQueueRef.current])
+      setInstallStatus(s2 => { const next = { ...s2 }; delete next[plugin.id]; return next })
+      return { outcome, name: plugin.repo || plugin.name }
+    }
+    const pumpMutations = async () => {
+      if (mutationRunningRef.current) return
+      mutationRunningRef.current = true
+      setMutationActive(true)
+      try {
+        const installedNames = []
+        const updatedRecords = []
+        let sawInstall = false
+        let sawUpdate = false
+        while (updateQueueRef.current.length > 0 || installQueueRef.current.length > 0) {
+          while (updateQueueRef.current.length > 0) {
+            sawUpdate = true
+            const outcome = await runOneUpdate(updateQueueRef.current[0])
+            if (outcome) updatedRecords.push(outcome)
           }
-          if (!v.ok) throw Error(v.error || '更新失败')
-          setDevLinkedChoice(null)
-          // 验收未过（node_modules 版本没跟上）不是成功：用中性提示如实说，
-          // 别让绿色 toast 把「需重启确认」装饰成「已完成」。
-          toast(v.verified === false ? 'info' : 'success', updateSuccessText(item.name, v))
-          settleUpdates([{ name: item.name, ok: true, updatedTo: v.updatedTo }])
-          return loadInstalled()
-        })
-        .catch(e => toast('error', `更新 ${item.name} 失败：${String(e.message || e)}`))
-        .finally(() => setBusy(''))
+          while (installQueueRef.current.length > 0) {
+            sawInstall = true
+            const { outcome, name } = await runOneInstall(installQueueRef.current[0])
+            if (outcome === 'ok') installedNames.push(name)
+          }
+        }
+        if (sawInstall && installedNames.length > 0) {
+          setDetail(null)
+          await loadInstalled()
+          // 验收回读：接口说 ok 不等于插件真的出现在已安装列表（magpie 的规矩）。
+          let listing = []
+          try {
+            const r = await fetch('/dsh-plugin-manager/installed', { cache: 'no-store' })
+            listing = (await r.json()).items || []
+          } catch { /* 列表读不到就不做缺席判定，保留成功汇总 */ }
+          const present = new Set(listing.map(item => String(item.name).toLowerCase()))
+          const missing = installedNames.filter(name => {
+            const repo = String(name).toLowerCase()
+            return !present.has(repo) && ![...present].some(n => n.endsWith('/' + repo))
+          })
+          if (missing.length > 0) {
+            toast('error', `安装未生效（已安装列表里没有出现）：${missing.join('、')}。请重启 dsh 后重试`)
+          } else {
+            toast('success', installedNames.length === 1 ? '已安装，重启 dsh 后生效' : `已安装 ${installedNames.length} 个插件，重启 dsh 后生效`)
+          }
+        }
+        if (sawUpdate && updatedRecords.length > 0) await loadInstalled()
+      } finally {
+        mutationRunningRef.current = false
+        installTotalRef.current = 0
+        updateTotalRef.current = 0
+        setMutationActive(false)
+      }
     }
     /// 「这个版本改了什么」：行内入口按需拉一次发布说明（服务端缓存 30 分钟，失败也给仓库链接）。
     const openNotes = (item, entry) => {
@@ -1146,7 +1244,17 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
               }, '更新内容')
             : null,
           updatable
-            ? h('button', { className: 'dsh-pm-update', disabled: updating || batchRunning || busyOther, onClick: () => updateOne(item), title: progressActive && !updating ? '批量更新进行中，等它结束再更新这个插件' : `更新 ${item.name} 到 v${entry.latestVersion}` }, updating ? '更新中…' : '更新')
+            ? h('button', {
+                className: 'dsh-pm-update',
+                disabled: batchRunning || Boolean(updateStatus[item.name]),
+                onClick: () => updateOne(item),
+                title: batchRunning ? '批量更新进行中，等它结束再更新这个插件'
+                  : updateStatus[item.name] === 'queued' ? '已加入更新队列'
+                  : updateStatus[item.name] === 'updating' ? '正在更新'
+                  : `更新 ${item.name} 到 v${entry.latestVersion}`,
+              }, updateStatus[item.name] === 'updating' || updating ? '更新中…'
+                : updateStatus[item.name] === 'queued' ? (updateQueueView.length > 1 ? '排队中…' : '更新中…')
+                : '更新')
             : null,
           updatable
             ? h('button', {
@@ -1162,7 +1270,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           ? h('button', { className: 'dsh-pm-row-action', disabled: busy === 'cleanup-' + item.name || batchRunning || busyOther, onClick: () => cleanupBroken(item), title: batchRunning ? '批量更新进行中，等它结束后再清理' : '清理损坏的安装残留' }, busy === 'cleanup-' + item.name ? '清理中…' : '清理')
           : item.source === 'bundled'
             ? h('button', { className: 'dsh-pm-row-action', disabled: true, title: '内置插件不可卸载' }, '—')
-            : h('button', { className: 'dsh-pm-row-action', disabled: busy === 'uninstall' || busy === 'uninstall-many' || batchRunning || busyOther, onClick: () => requestUninstall(item), title: batchRunning ? '批量更新进行中，等它结束后再卸载' : '卸载' }, '卸载'))
+            : h('button', { className: 'dsh-pm-row-action', disabled: busy === 'uninstall' || busy === 'uninstall-many' || batchRunning || busyOther || mutationActive, onClick: () => requestUninstall(item), title: mutationActive ? '安装/更新进行中，结束后再卸载' : batchRunning ? '批量更新进行中，等它结束后再卸载' : '卸载' }, '卸载'))
     })
 
     const marketCards = plugins.slice(0, visibleCount).map(plugin => {
@@ -1182,7 +1290,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
             : h('button', {
                 className: 'dsh-pm-install',
-                disabled: batchRunning || busyOther || Boolean(status),
+                disabled: batchRunning || Boolean(status),
                 onClick: (e) => { e.stopPropagation(); install(plugin) },
                 title: batchRunning ? '批量更新进行中，等它结束再安装' : status === 'queued' ? '已加入安装队列' : status === 'installing' ? '正在安装' : undefined,
               }, status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装')))
@@ -1307,6 +1415,16 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const updateAllHint = ignoredUpdatable > 0
       ? `更新所有可更新的插件（含已忽略的 ${ignoredUpdatable} 个；忽略只屏蔽提醒，不拦显式更新）`
       : '更新所有可更新的插件'
+    // 更新队列状态条：与批量条同一形态；正在更新谁 + 还剩几个排队。
+    const updateNowIndex = updateTotalRef.current - updateQueueView.length + 1
+    const updateQueueStrip = updateQueueView.length > 0
+      ? h('div', { className: 'dsh-pm-queue', role: 'status' },
+          h('span', { className: 'dsh-pm-queue-dot', 'aria-hidden': true }, '◌'),
+          h('span', { className: 'dsh-pm-queue-text' },
+            h('strong', null, `正在更新 ${updateNowIndex}/${updateTotalRef.current}`),
+            ` · ${updateQueueView[0].item.name}`,
+            updateQueueView.length > 1 ? `，还有 ${updateQueueView.length - 1} 个排队` : ''))
+      : null
     const updatesBar = updates === false ? null : h('div', { className: 'dsh-pm-toolbar' },
       h('button', { className: 'dsh-pm-tool', disabled: checking || batchRunning || busyOther, onClick: checkUpdates, title: '联网检测每个已安装插件的远端版本' }, checking ? '检测中…' : '检查更新'),
       h('button', {
@@ -1377,6 +1495,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           tab === 'installed'
             ? h('div', null,
                 updatesBar,
+                updateQueueStrip,
                 batchStrip,
                 installed.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '还没有已安装的插件，去插件市场看看吧')
                   : h('div', null,

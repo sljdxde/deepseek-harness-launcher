@@ -194,10 +194,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pluginUpdatesAvailableCount = 0
     // 插件更新的进度窗口：与 dsh 安装共用 DSHInstallWindowController（同一套布局/
     // 进度条/已用时长），插件侧只换文案角色，保证三种更新的进度界面一致。
-    private var pluginUpdateWindow: DSHInstallWindowController?
     private var pluginUpdateProgressActive = false
     private var pluginUpdateFinishedAt: String?
-    private var pluginUpdateDismissScheduled = false
     // A notification can be clicked while dsh is still starting. Keep the
     // target until the Harness page and its client are ready.
     private var pendingSessionId: String?
@@ -2717,29 +2715,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 把插件侧的更新进度映射到进度窗口：文案、进度条与 dsh 安装完全同款，
     /// 只有措辞不同（见 ProgressWindowWording.pluginUpdate）。
     private func applyPluginUpdateProgress(_ progress: PluginUpdatesSnapshot.Progress?) {
-        let active = progress?.active == true
-        pluginUpdateProgressActive = active
-        guard active else {
-            // 更新收尾：窗口切到"已完成"再自动收起，用户可以跟着进度条看到结束。
-            guard pluginUpdateWindow != nil, !pluginUpdateDismissScheduled else { return }
-            pluginUpdateDismissScheduled = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                guard let self else { return }
-                self.pluginUpdateDismissScheduled = false
-                self.pluginUpdateWindow?.dismiss()
-                self.pluginUpdateWindow = nil
-            }
-            return
-        }
-        // dsh 正在安装/更新时不再叠一个插件窗口：两者都会重启 Harness。
-        guard dshInstallWindow == nil else { return }
-
-        guard let presentation = PluginUpdatePresentation.progress(progress) else { return }
-        if pluginUpdateWindow == nil {
-            pluginUpdateWindow = DSHInstallWindowController(wording: .pluginUpdate) { /* 隐藏窗口，不打断更新 */ }
-            pluginUpdateWindow?.present()
-        }
-        pluginUpdateWindow?.update(status: presentation.status, detail: presentation.detail, percentage: presentation.percentage)
+        // 不再弹原生进度窗口：更新进度的呈现归插件管理面板（状态条 + 行内状态 +
+        // 收尾提示），启动器弹窗会盖住面板（用户实测要求去掉）。这里只维护 active
+        // 标志，让轮询在更新期间加快节奏、结束后及时读到收尾结果。
+        pluginUpdateProgressActive = progress?.active == true
     }
 
     /// 批量更新结束（面板点了「全部更新」）：日志 + 窗口上给一句收尾。
@@ -2750,7 +2729,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let summary = PluginUpdatePresentation.batchSummary(batch) else { return }
         pluginUpdateFinishedAt = finishedAt
         appendLogString("\(summary)（插件批量更新）\n")
-        pluginUpdateWindow?.update(status: summary, detail: "重启 dsh 之后新版本生效。", percentage: 100)
     }
 
     /// 触发插件后台刷新：`?refresh=1` 只发出去、不等长结果（探测结果由插件

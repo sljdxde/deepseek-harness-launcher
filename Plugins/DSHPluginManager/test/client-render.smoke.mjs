@@ -249,13 +249,14 @@ const entry = (name, over) => ({
   assert.ok(text.includes('已安装版本比远端更高'), 'ahead 显示小字');
   assert.equal(findByText(tree, 'button', '全部更新 (1)').props.disabled, false, '有可更新项时「全部更新」可用');
 
-  // 3. 单条更新
+  // 3. 单条更新（经队列泵发起，先等泵跑起来再断言请求体）
   findByText(tree, 'button', '更新').props.onClick();
+  // 入队即显示「更新中…」（单任务即刻开跑）
+  assert.ok(textOf(runtime.repaint()).includes('更新中…'), '更新期间按钮显示「更新中…」');
+  await settle(runtime);
   const updateCall = calls.find(call => call.url === '/dsh-plugin-manager/update');
   assert.equal(updateCall.options.method, 'POST');
   assert.deepEqual(JSON.parse(updateCall.options.body), { name: 'dsh-notify' });
-  assert.ok(textOf(runtime.repaint()).includes('更新中…'), '更新期间按钮显示「更新中…」');
-  await settle(runtime);
   tree = runtime.tree;
   assert.ok(textOf(tree).includes('dsh-notify 已更新到 v0.6.0，重启 dsh 后生效'), '成功 toast 含 note 与重启提示');
   assert.deepEqual(toasts(tree).filter(item => item.kind === 'success').map(item => item.text), ['dsh-notify 已更新到 v0.6.0，重启 dsh 后生效']);

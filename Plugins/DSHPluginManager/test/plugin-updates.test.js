@@ -579,7 +579,9 @@ test('用例7 applyPluginUpdate：npm 来源执行 `add <name>@<latest>`', async
   };
   const result = await applyPluginUpdate(source, {
     check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
-    command: async args => { commands.push(args); return { note: 'ok' }; }
+    command: async args => { commands.push(args); return { note: 'ok' }; },
+    // 离线单测没有真实 node_modules：注入「已物化」，重试路径不触发
+    verifyApplied: async () => true
   });
 
   assert.deepEqual(commands, [['add', 'dsh-notify@2.0.0']]);

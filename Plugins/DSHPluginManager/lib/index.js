@@ -181,12 +181,56 @@ async function rollbackFailedInstall(name, command) {
   }
 }
 
+/**
+ * 清掉 pnpm 对某个包的「钉死」状态：node_modules 里的残留目录/链接 + 锁文件
+ * importers 里该包的记录。pnpm 对 file:/link: 依赖经常「退出码 0 但不重新
+ * 物化」——锁文件还钉着旧解析（实测：link: 切 file: 后两次 add 都是 added 0，
+ * node_modules 里的旧符号链接原样保留），不拆掉这些残留，重装多少次都没用。
+ * @returns {Promise<boolean>} 锁文件是否被改动。
+ */
+async function clearPinnedPackage(name) {
+  const packageDir = join(profilesWebModules(), ...String(name).split('/'));
+  await fs.rm(packageDir, { recursive: true, force: true }).catch(() => {});
+  return stripStaleLockEntry(name);
+}
+
+/** 从锁文件 importers 段删除一个顶层依赖的记录（名字行 + specifier/version 行）。 */
+export async function stripStaleLockEntry(name) {
+  const lockPath = join(profilesWebDir(), 'pnpm-lock.yaml');
+  let text;
+  try { text = await fs.readFile(lockPath, 'utf8'); } catch { return false; }
+  const lines = text.split('\n');
+  const out = [];
+  let inImporters = false;
+  let skipping = false;
+  let changed = false;
+  for (const line of lines) {
+    if (/^importers:/.test(line)) { inImporters = true; out.push(line); continue; }
+    if (inImporters && /^[^\s#]/.test(line)) { inImporters = false; skipping = false; } // 下一个顶层段
+    if (inImporters) {
+      // importers 下的条目键是两空格缩进；specifier/version 等子行缩进更深
+      if (/^ {2}[^ ]/.test(line)) skipping = line.includes(name);
+      if (skipping) { changed = true; continue; }
+    }
+    out.push(line);
+  }
+  if (changed) await fs.writeFile(lockPath, out.join('\n'), 'utf8');
+  return changed;
+}
+
 /** 安装后验收：装进来的包 import 落不了地就当场撤销，绝不留给下一次 dsh 启动去炸。 */
-export async function acceptInstalledPackage(name, note, command = pluginCommand, verifyPresent) {
+export async function acceptInstalledPackage(name, note, command = pluginCommand, verifyPresent, spec, allowRetry = true) {
   // `pnpm add` 退出码 0 不等于装上了：依赖可能没物化（node_modules 里根本没有这个包）。
   // 先回读真实状态（magpie 的规矩：操作后回读，而不是转述命令退出码），再说 import。
   const present = verifyPresent ?? (async () => (await installedVersionOf(name)) !== null);
   if (!(await present(name))) {
+    // 没物化的常见根因是 pnpm 把 file:/link: 的旧解析钉在锁文件里。自动
+    // 「清钉 + 重装一次」再验收；还不行才回滚报错（重试是机制，不是碰运气）。
+    if (allowRetry && spec) {
+      await clearPinnedPackage(name);
+      await command(['add', spec]);
+      return acceptInstalledPackage(name, note, command, verifyPresent, spec, false);
+    }
     const rollback = await rollbackFailedInstall(name, command);
     return { ok: false, error: `安装命令已执行，但 ${name} 没有出现在 node_modules 里（未生效）；${rollback}` };
   }
@@ -433,13 +477,19 @@ export function installCandidates(entry) {
  * @returns {Promise<boolean>}
  */
 async function npmViewExists(name, timeoutMs = 8000) {
+  /// true = 包存在；false = 确认不存在（404）；'unreachable' = registry 暂时
+  /// 连不上（超时/DNS/拒连）。把「连不上」误报成「包不存在」会误导用户去排查
+  /// 一个不存在的包名，真实的网络问题反而被掩盖。
   try {
     await ensurePnpmPath();
     const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
     await run(cli, ['view', name, 'version'], { timeout: timeoutMs });
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    const message = [error?.message, error?.stderr, error?.stdout].filter(Boolean).join(' ');
+    if (/E404|404\s|not found/i.test(message) && !/ETIMEDOUT|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|fetch failed|timed out/i.test(message)) return false;
+    if (/E404/i.test(message)) return false;
+    return 'unreachable';
   }
 }
 
@@ -624,7 +674,7 @@ async function installSubdirPlugin(ref, installedNames, command = pluginCommand,
   }
   try {
     const result = await command(['add', `file:${src.dest}`]);
-    const accepted = await acceptInstalledPackage(src.packageName, result.note, command, verifyPresent);
+    const accepted = await acceptInstalledPackage(src.packageName, result.note, command, verifyPresent, `file:${src.dest}`);
     if (!accepted.ok) return accepted;
     return { ok: true, installedAs: `file:${src.dest}`, packageName: src.packageName, note: accepted.note };
   } catch (error) {
@@ -670,10 +720,11 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
   // exists, so a missing name never makes pnpm wait on a network failure.
   const probes = await Promise.all(candidates.map(name => npmViewExists(name)));
   for (let i = 0; i < candidates.length; i++) {
-    if (!probes[i]) { lastError = `npm 包 ${candidates[i]} 不存在`; continue; }
+    if (probes[i] === 'unreachable') { lastError = `npm registry 暂时不可达，无法确认 ${candidates[i]}（网络恢复后会自动重试 git 源）`; continue; }
+    if (!probes[i]) { lastError = `npm 上没有 ${candidates[i]}`; continue; }
     try {
       const result = await command(['add', candidates[i]]);
-      const accepted = await acceptInstalledPackage(candidates[i], result.note, command, verifyPresent);
+      const accepted = await acceptInstalledPackage(candidates[i], result.note, command, verifyPresent, candidates[i]);
       if (!accepted.ok) return accepted;
       return { ok: true, installedAs: candidates[i], packageName: candidates[i], note: accepted.note };
     } catch (error) {
@@ -688,7 +739,7 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
     if (src.ok) {
       try {
         const result = await command(['add', `file:${src.dest}`]);
-        const accepted = await acceptInstalledPackage(src.packageName, result.note, command, verifyPresent);
+        const accepted = await acceptInstalledPackage(src.packageName, result.note, command, verifyPresent, `file:${src.dest}`);
         if (!accepted.ok) return accepted;
         return { ok: true, installedAs: `file:${src.dest}`, packageName: src.packageName, note: accepted.note };
       } catch (error) {
@@ -1278,7 +1329,16 @@ export async function applyPluginUpdate(source, options = {}) {
       };
     }
     stepUpdateProgress(source.name, `正在同步 profile…`);
-    const applied = await verifyUpdateApplied(source.name, target);
+    // verifyApplied 可注入：离线单测没有真实 node_modules 物化，注入固定结论。
+    const verify = options.verifyApplied ?? verifyUpdateApplied;
+    let applied = await verify(source.name, target);
+    if (!applied) {
+      // pnpm 对既有包的版本更新常不重新物化（退出 0、node_modules 停在旧值）：
+      // 清掉包目录与锁文件记录再装一次，能掰回来就不把「重启确认」推给用户。
+      await clearPinnedPackage(source.name);
+      await command(['add', `${source.name}@${target}`]);
+      applied = await verify(source.name, target);
+    }
     return withCarryOver({
       ok: true,
       updatedTo: target,
@@ -1454,6 +1514,7 @@ async function finalizeFileSourceUpdate(name, target, dest, command, backup, sou
   }
   const packageDir = join(profilesWebModules(), ...String(name).split('/'));
   await fs.rm(packageDir, { recursive: true, force: true }).catch(() => {});
+  await stripStaleLockEntry(name);
   try {
     await command(['add', `file:${dest}`]);
   } catch (error) {

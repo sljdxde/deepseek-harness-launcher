@@ -271,8 +271,11 @@ rg -q 'miniaturizable' "$ROOT/Sources/UpdateDownloadWindowController.swift"
 # 三种更新的进度窗口都走 DSHInstallWindowController，必须可最小化。
 rg -Fq '.titled, .closable, .miniaturizable' "$ROOT/Sources/DSHInstallWindowController.swift"
 rg -Fq 'static let pluginUpdate = ProgressWindowWording(' "$ROOT/Sources/DSHInstallWindowController.swift"
-rg -Fq 'DSHInstallWindowController(wording: .pluginUpdate)' "$ROOT/Sources/main.swift"
-rg -Fq 'PluginUpdatePresentation.progress' "$ROOT/Sources/main.swift"
+# 插件更新不弹原生窗口（进度归插件管理面板呈现），启动器只更新角标与日志。
+if rg -Fq 'DSHInstallWindowController(wording: .pluginUpdate)' "$ROOT/Sources/main.swift"; then
+  echo "plugin updates must not pop the native progress window (panel renders progress)" >&2
+  exit 1
+fi
 rg -Fq 'PluginUpdatesSnapshot.parse' "$ROOT/Sources/main.swift"
 rg -Fq '/dsh-plugin-manager/updates' "$ROOT/Sources/main.swift"
 rg -q 'onProgress' "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift"
