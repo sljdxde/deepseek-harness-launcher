@@ -1356,16 +1356,19 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           h('input', { className: 'dsh-pm-search', placeholder: '搜索插件 / 作者 / 描述…', value: search, onChange: (e) => setSearch(e.target.value) }),
           h('div', { className: 'dsh-pm-chips' },
             h('button', { key: 'all', className: `dsh-pm-chip${category === 'all' ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory('all') }, '全部'),
-            topCategories.map(cat => h('button', { key: cat, className: `dsh-pm-chip${category === cat ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory(cat) }, categoryLabel(cat))),
+            // 已选中的 chip 再点一次＝取消筛选（与「全部」等价），省得用户找不到退出口。
+            topCategories.map(cat => h('button', { key: cat, className: `dsh-pm-chip${category === cat ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory(category === cat ? 'all' : cat) }, categoryLabel(cat))),
             tailCategories.length > 0
               ? h('select', {
                   key: 'cat-more',
                   className: `dsh-pm-cat-more${tailCategories.includes(category) ? ' dsh-pm-cat-more-active' : ''}`,
                   value: tailCategories.includes(category) ? category : '',
+                  // 占位项「更多分类…」value 为空，选中它保持原样；真正的退出口是下面的「全部分类」。
                   onChange: (e) => { if (e.target.value) setCategory(e.target.value) },
-                  title: '其余分类（按插件数量）',
+                  title: '其余分类（按插件数量）；选「全部分类」取消筛选',
                 },
                 h('option', { value: '' }, '更多分类…'),
+                h('option', { value: 'all' }, '全部分类'),
                 tailCategories.map(cat => h('option', { key: cat, value: cat }, `${categoryLabel(cat)} · ${categoryCounts.get(cat) || 0}`)))
               : null),
           h('select', { className: 'dsh-pm-sort', value: sort, onChange: (e) => setSort(e.target.value), style: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px', padding: '5px 8px' } },

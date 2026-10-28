@@ -750,3 +750,87 @@ console.log('== 冒烟全部通过 ==');
   assert.ok(toasts(runtime.tree).some(item => item.kind === 'success'), '成功后弹汇总提示');
   console.log('场景9（dev-linked 二选一）通过');
 }
+
+/** 场景 10：市场分类筛选 —「更多分类」下拉选中后必须还能退回「全部」 */
+{
+  // 12 个分类：插件多的 10 个平铺成 chip，official / a（各 1 个）落进「更多分类」下拉。
+  // 总数刻意小于分页阈值 PAGE_SIZE，「全部」时一次列完，便于用卡片数量判断筛选结果。
+  const categoryCounts = { official: 1, a: 1, b: 5, c: 5, d: 5, e: 5, f: 5, g: 5, h: 5, i: 5, j: 5, k: 5 };
+  const categories = Object.keys(categoryCounts);
+  const marketPlugins = [];
+  for (const cat of categories) {
+    for (let n = 0; n < categoryCounts[cat]; n++) {
+      marketPlugins.push({
+        id: `${cat}-${n}`, name: `p-${cat}-${n}`, repo: `owner/p-${cat}-${n}`,
+        author: cat, category: cat, descriptionEn: `插件 ${cat}-${n}`,
+        stars: 1, downloads: 0, addedDate: '2026-01-01',
+      });
+    }
+  }
+  const fetchImpl = url => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({ count: marketPlugins.length, official: 0, categories, indexedAt: '2026-09-22T11:00:00.000Z', stale: false, plugins: marketPlugins });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '插件市场')[0].props.onClick();
+  await settle(runtime, 10);
+
+  const chips = () => findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-chip( |$)/.test(String(node.props.className || '')));
+  const chipByLabel = label => chips().find(node => textOf(node) === label);
+  const chipsRow = findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '') === 'dsh-pm-chips')[0];
+  const moreSelect = () => findAll(runtime.tree, node => node.type === 'select' && String(node.props.className || '').includes('dsh-pm-cat-more'))[0];
+  const options = () => findAll(chipsRow, node => node.type === 'option');
+  const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+
+  assert.ok(moreSelect(), '尾部分类收进「更多分类」下拉');
+  assert.equal(textOf(options()[0]), '更多分类…', '下拉第一项是占位');
+  assert.equal(options()[0].props.value, '', '占位项没有值：选中它不该改动筛选');
+  assert.ok(options().some(node => node.props.value === 'all'), '下拉里有「全部分类」出口（此前缺失，选了尾部分类就退不回去）');
+  assert.equal(moreSelect().props.value, '', '筛选为全部时下拉显示占位，而不是回显某个分类');
+  assert.equal(textOf(chips()[0]), '全部', '第一颗 chip 是「全部」');
+  assert.ok(/dsh-pm-chip-active/.test(String(chips()[0].props.className)), '进市场默认选中「全部」');
+  assert.equal(cards().length, marketPlugins.length, '「全部」列出所有插件');
+
+  // 1. 从「更多分类」下拉选尾部分类 → 只看该分类
+  moreSelect().props.onChange({ target: { value: 'official' } });
+  await settle(runtime);
+  assert.equal(cards().length, categoryCounts.official, '尾部分类筛选生效');
+  assert.equal(moreSelect().props.value, 'official', '下拉回显当前分类');
+  assert.ok(/dsh-pm-cat-more-active/.test(String(moreSelect().props.className)), '下拉自带选中态');
+  assert.equal(chipByLabel('全部').props.className.includes('dsh-pm-chip-active'), false, '选了尾部分类后「全部」chip 不再高亮');
+
+  // 2. 再选占位项「更多分类…」：保持原样（它是标题不是退出口）
+  moreSelect().props.onChange({ target: { value: '' } });
+  await settle(runtime);
+  assert.equal(cards().length, categoryCounts.official, '选中占位项不改变当前筛选');
+
+  // 3. 选「全部分类」→ 退回全部（本次修复的主入口）
+  moreSelect().props.onChange({ target: { value: 'all' } });
+  await settle(runtime);
+  assert.equal(cards().length, marketPlugins.length, '「全部分类」退回所有插件');
+  assert.ok(/dsh-pm-chip-active/.test(String(chipByLabel('全部').props.className)), '退回后「全部」chip 高亮');
+  assert.equal(moreSelect().props.value, '', '退回后下拉回到占位显示');
+
+  // 4. 平铺 chip 再点一次也取消筛选（另一条退出口，避免只能去下拉里找）
+  const flatChip = chips()[1];
+  const flatLabel = textOf(flatChip);
+  flatChip.props.onClick();
+  await settle(runtime);
+  assert.equal(cards().length, categoryCounts[flatLabel], `点「${flatLabel}」chip 只看该分类`);
+  assert.ok(/dsh-pm-chip-active/.test(String(chipByLabel(flatLabel).props.className)), 'chip 选中后高亮');
+  chipByLabel(flatLabel).props.onClick();
+  await settle(runtime);
+  assert.equal(cards().length, marketPlugins.length, '再点一次已选中的 chip 回到全部');
+  console.log('场景10（分类筛选可退回「全部」）通过');
+}

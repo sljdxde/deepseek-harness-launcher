@@ -120,6 +120,11 @@ rg -Fq "const rail = wide === false" "$ROOT/Plugins/DSHPluginManager/client/clie
 rg -Fq "rail ? 'dsh-pm-trigger dsh-pm-trigger-rail' : 'dsh-pm-trigger'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq '!rail && h' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq "wide === false ? 'dsh-archive-trigger dsh-archive-trigger-rail' : 'dsh-archive-trigger'" "$ROOT/Plugins/DSHArchiveManager/client/client.js"
+# 市场分类筛选必须留退出口：下拉里的「全部分类」与 chip 的「再点一次取消筛选」，
+# 否则从「更多分类」里选中分类后就再也回不到全部（渲染冒烟场景 10 断言行为）。
+rg -Fq "h('option', { value: 'all' }, '全部分类')" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "setCategory(category === cat ? 'all' : cat)" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "全部分类" "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -q '/dsh-plugin-manager/installed' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q '/dsh-plugin-manager/marketplace' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q '/dsh-plugin-manager/install' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
