@@ -398,7 +398,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const failed = Number(batch.failed) || 0
     const pending = results.filter(result => result && result.ok && result.verified === false).length
     const pendingNote = pending > 0 ? `（${pending} 个需重启 dsh 后确认生效）` : ''
-    if (failed === 0) return { kind: 'success', text: `已更新 ${updated} 个插件${pendingNote}，重启 dsh 后生效` }
+    const skipped = results.filter(result => result && result.skipped === true).length
+    const skippedNote = skipped > 0 ? `；${skipped} 个为本地开发链接，请在其行内「更新」中选择更新方式` : ''
+    if (failed === 0) return { kind: skipped > 0 ? 'info' : 'success', text: `已更新 ${updated} 个插件${pendingNote}${skippedNote}，重启 dsh 后生效` }
     const failures = results.filter(result => result && !result.ok)
     const names = failures.map(result => result.name).filter(Boolean)
     const shown = names.length > 3 ? `${names.slice(0, 3).join('、')} 等 ${names.length} 个` : names.join('、')

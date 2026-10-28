@@ -1521,6 +1521,17 @@ export function isBatchUpdateRunning() {
   return batchUpdateRunning;
 }
 
+/**
+ * link:/file: 依赖指向 plugin-sources 之外的目录 = 用户自己的开发 checkout
+ *（批量更新对它们只能跳过：动用户目录是红线，见 applyPluginUpdate 的守卫）。
+ */
+export function isDevLinkedSource(source) {
+  const dir = source?.remote?.dir;
+  if (!dir) return false;
+  const sourcesRoot = resolve(join(profilesWebModules(), '..', 'plugin-sources'));
+  return !resolve(dir).startsWith(sourcesRoot + sep);
+}
+
 export async function updatePlugins(names, options = {}) {
   if (batchUpdateRunning) {
     return { ok: false, busy: true, error: '已有批量更新正在进行，请等它结束后再试' };
@@ -1534,10 +1545,24 @@ export async function updatePlugins(names, options = {}) {
   const results = [];
   const summary = { startedAt, finishedAt: null, updated: 0, failed: 0, results };
   try {
+    // 一次解析来源，逐个判断：dev-linked（本地开发目录链接）的插件批量跳过——
+    // 默认模式会拒绝它们（实测：全部更新每跑一次就报一次失败，用户以为坏了），
+    // 正确出路是行内「更新」的二选一确认块。
+    const sources = await collectPluginSources();
+    const byName = new Map(sources.map(item => [item.name, item]));
     for (const name of list) {
       // 轮到谁就把「当前插件 + 正在检查」写进进度：从受理到联网探测完的这几秒里，
       // 面板要能显示正在检查谁，而不是全列「等待中」。
       stepUpdateProgress(name, '正在检查远端最新版本');
+      if (isDevLinkedSource(byName.get(name))) {
+        const skipped = {
+          name, ok: false, skipped: true, status: 'dev-linked',
+          error: '本地开发目录链接的插件不走批量更新；请在行内「更新」里选择「更新本地目录」或「切换为发行版」',
+        };
+        recordUpdateProgress({ ...skipped });
+        results.push(skipped);
+        continue;
+      }
       // eslint-disable-next-line no-await-in-loop -- 顺序更新避免 pnpm 并发写同一个 profile
       const result = await updatePlugin(name, { ...options, batch: true });
       recordUpdateProgress({ name, ...result });

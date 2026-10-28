@@ -130,6 +130,8 @@ rg -q 'cleanupPluginSources' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'dev-linked' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 # 安装验收必须回读真实状态（pnpm 退出码 0 ≠ 装上了）。
 rg -q '没有出现在 node_modules 里' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+# 批量更新遇本地开发链接插件：跳过并如实标注，不报「失败」。
+rg -q 'isDevLinkedSource' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'awesome-dsh-plugin' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'ensurePnpmPath' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'corepack' "$ROOT/Plugins/DSHPluginManager/lib/index.js"

@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   acceptInstalledPackage,
   applyPluginUpdate,
+  isDevLinkedSource,
   findPeerIncompatibilities,
   satisfiesPluginRange
 } from '../lib/index.js';
@@ -274,4 +275,16 @@ test('安装验收：包已物化且 import 可落地 → 通过', async () => {
   assert.equal(result.ok, true);
   assert.equal(result.note, 'pnpm 说 ok');
   assert.deepEqual(commands, [], '验收通过不做任何撤销');
+});
+
+test('isDevLinkedSource：plugin-sources 之外的开发目录识别为 dev-linked', async () => {
+  await withRuntime({}, async home => {
+    const inSources = { kind: 'git', remote: { dir: join(home, 'profiles', 'web', 'plugin-sources', 'a-b') } };
+    const outside = { kind: 'git', remote: { dir: '/Users/x/dev/dsh-genui' } };
+    const npmSource = { kind: 'npm', remote: { type: 'npm' } };
+    assert.equal(isDevLinkedSource(inSources), false, 'plugin-sources 内的克隆目录不算');
+    assert.equal(isDevLinkedSource(outside), true, '用户目录应识别为 dev-linked');
+    assert.equal(isDevLinkedSource(npmSource), false, 'npm 来源没有 dir，不算');
+    assert.equal(isDevLinkedSource(null), false);
+  });
 });
