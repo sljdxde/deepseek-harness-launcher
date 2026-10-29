@@ -67,9 +67,12 @@ final class UpdateDownloadWindowController: NSWindowController, NSWindowDelegate
         icon.imageScaling = .scaleProportionallyUpOrDown
         effect.addSubview(icon)
 
+        // 版本号来自远端 manifest，长度没有本地约束；单行定宽标签默认 byClipping
+        // 会从字中间硬切（实测 40 字符版本号宽 668pt > 390pt），改成尾部省略号。
         versionLabel.frame = NSRect(x: 126, y: 145, width: 390, height: 30)
         versionLabel.font = .systemFont(ofSize: 21, weight: .semibold)
         versionLabel.textColor = .labelColor
+        versionLabel.lineBreakMode = .byTruncatingTail
         effect.addSubview(versionLabel)
 
         progress.frame = NSRect(x: 126, y: 103, width: 390, height: 18)
@@ -85,6 +88,7 @@ final class UpdateDownloadWindowController: NSWindowController, NSWindowDelegate
         detailLabel.frame = NSRect(x: 126, y: 66, width: 390, height: 24)
         detailLabel.font = .systemFont(ofSize: 15)
         detailLabel.textColor = .secondaryLabelColor
+        detailLabel.lineBreakMode = .byTruncatingTail
         effect.addSubview(detailLabel)
 
         window.delegate = self

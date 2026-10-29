@@ -12,6 +12,8 @@ import Foundation
 /// peer 随 dsh 版本演进，声明区间不满足即视为可能不兼容（旧插件会因 API
 /// 移除而加载失败）。启动器自带的内置插件**完全不参与扫描**（见
 /// `bundledPluginNames`）：它们的加载状态由就绪探针只写日志，不进兼容性告警。
+/// dsh 自带层（`@deepseek-ai/*`，即 profile bundles 里随 dsh 版本分发的包）同理
+/// 不参与扫描（见 `dshCoreBundlePrefix`）：用户既升不了也卸不掉，报警无法处置。
 ///
 /// 区间求值按 npm 的 semver 语义实现（`*`/`x`-range、`^`、`~`、`||`、空白分隔的比较子，
 /// 以及「预发布版本只在同 base 的比较子出现预发布时才满足」的门控），版本比较复用
@@ -42,7 +44,24 @@ enum PluginCompatibilitySupport {
         "dsh-session-notify",
     ]
 
-    /// 一个需要用户处理的兼容性问题。只会来自用户插件（见 `bundledPluginNames`）。
+    /// dsh 自带层的包名前缀。`profile` manifest 的 `dsh.profile.bundles` 里跟着
+    /// dsh 版本分发的包都发布在 `@deepseek-ai/` 下（base / web-app / headless，
+    /// 以及 `@deepseek-ai/dsh-experimental-*` 系列实验组件）。
+    ///
+    /// 为什么也排除：这些层随 dsh 一起分发，用户既升不了级、也卸不掉——把它们扫进
+    /// 兼容性告警，弹窗里全是用户没装过的名字（实测 dsh 升级后 `/installed` 把本机
+    /// 9 个 `@deepseek-ai/dsh-experimental-*` 标成了 `user`），唯二的操作入口
+    /// 「升级/卸载」还必然失败。`broken` 残留同理：那不是用户能清理/重装的东西。
+    /// 它们「有没有随当前 dsh 加载」另有就绪探针与 dsh 自身的日志，不该由启动器报警。
+    static let dshCoreBundlePrefix = "@deepseek-ai/"
+
+    /// 包名是否属于 dsh 自带层（见 `dshCoreBundlePrefix`）。
+    static func isDSHCoreBundle(_ name: String) -> Bool {
+        name.hasPrefix(dshCoreBundlePrefix)
+    }
+
+    /// 一个需要用户处理的兼容性问题。只会来自用户插件（见 `bundledPluginNames`
+    /// 与 `dshCoreBundlePrefix`）。
     struct Issue {
         let pluginName: String
         let version: String?
@@ -235,13 +254,14 @@ enum PluginCompatibilitySupport {
 
     /// 对已安装插件做静态兼容性扫描。broken 残留与 peer 区间不满足都算问题；
     /// peer 在 runtime 中不存在（API 被移除）也算问题。**启动器自带的内置插件
-    /// （归档管理 / 插件管理 / 会话完成通知）一律跳过**，见 `bundledPluginNames`。
+    /// （归档管理 / 插件管理 / 会话完成通知）与 dsh 自带层（`@deepseek-ai/*`）一律跳过**，
+    /// 见 `bundledPluginNames` 与 `dshCoreBundlePrefix`。
     ///
     /// **每个插件最多返回一条** Issue：一个插件常同时踩到两个 peer（实测
     /// `dsh-connect-workbuddy`：`@earendil-works/pi-ai` 版本超界 + `react` 在运行时里
     /// 不存在），一条问题一条 Issue 的写法会把同一插件在日志里列两遍、把「5 个插件
     /// 兼容性问题」这种本该报插件数的数字报大，用户在第一条弹窗里升级完还会为同一个
-    /// 插件再弹一次。多条原因合并进 reason（`；` 分隔），一次说清。
+    /// 插件再弹一次。多条原因合并进 reason（`；` 分隔，见 `summarizeReasons`），一次说清。
     /// - Parameters:
     ///   - plugins: 插件管理器 /installed 接口的清单。
     ///   - profileModules: ~/.dsh/profiles/web/node_modules。
@@ -253,9 +273,12 @@ enum PluginCompatibilitySupport {
     ) -> [Issue] {
         var collected: [Issue] = []
         for plugin in plugins {
-            // 内置插件不是用户能处置的对象：插件管理器通常标成 bundled；名字集合
-            // 兜住旧接口/软链判定失败时的误标（那会让它们以 user 或 broken 出现）。
-            guard plugin.source != "bundled", !bundledPluginNames.contains(plugin.name) else { continue }
+            // 内置插件与 dsh 自带层都不是用户能处置的对象：内置插件通常标成 bundled，
+            // 名字集合兜住旧接口/软链判定失败时的误标；dsh 自带层（@deepseek-ai/*）
+            // 在旧接口下会被标成 user/broken，按前缀兜住（实测 9 个 experimental bundle）。
+            guard plugin.source != "bundled",
+                  !bundledPluginNames.contains(plugin.name),
+                  !isDSHCoreBundle(plugin.name) else { continue }
             if plugin.broken == true {
                 collected.append(Issue(
                     pluginName: plugin.name, version: plugin.version,
@@ -293,59 +316,54 @@ enum PluginCompatibilitySupport {
         return mergeByPlugin(collected)
     }
 
-    /// 同一插件的多条问题合成一条：原因用 `；` 串起来，插件名只出现一次
-    /// （日志行与弹窗都按插件计数）。顺序沿用首个问题的出现顺序，提示稳定。
-    static func mergeByPlugin(_ issues: [Issue]) -> [Issue] {
-        var merged: [Issue] = []
-        var indexByName: [String: Int] = [:]
-        for issue in issues {
-            guard let index = indexByName[issue.pluginName] else {
-                indexByName[issue.pluginName] = merged.count
-                merged.append(issue)
-                continue
-            }
-            let previous = merged[index]
-            merged[index] = Issue(
-                pluginName: previous.pluginName,
-                version: previous.version ?? issue.version,
-                reason: "\(previous.reason)；\(issue.reason)"
-            )
+    /// 单个 Issue 的原因汇总上限。
+    ///
+    /// 真机证据：dsh 升级后一个 bundle 可能十几个 peer 全部失败，全拼进 reason 后
+    /// NSAlert 高度随正文行数线性增长（40 行实测 1449pt，超过 1080 屏幕的可视高度
+    /// 968pt），按钮被挤出屏幕，runModal 卡死只能强杀。这里做两级封顶：
+    /// 1. 每个插件最多列 `maxReasonsPerPlugin` 条原因，其余折叠成「…等 N 项」；
+    /// 2. 汇总后总长超过 `maxReasonLength` 字符再截断（以 … 结尾）。
+    /// 单条原因本身也过长时（超长包名）同样走第 2 级，保证弹窗正文恒可控。
+    static let maxReasonsPerPlugin = 3
+    static let maxReasonLength = 240
+
+    /// 把同一插件的多条原因压成一条弹窗/日志可用的短文本。纯函数（无磁盘/网络），
+    /// 单测直接锚定两个上限，避免以后有人去掉截断又把超大弹窗带回来。
+    /// 顺序沿用调用方给出的顺序（`mergeByPlugin` 里即首次出现问题顺序），提示稳定。
+    static func summarizeReasons(_ reasons: [String]) -> String {
+        let shown = Array(reasons.prefix(maxReasonsPerPlugin))
+        var text = shown.joined(separator: "；")
+        if reasons.count > shown.count {
+            text += "；…等 \(reasons.count - shown.count) 项"
         }
-        return merged
+        if text.count > maxReasonLength {
+            text = String(text.prefix(maxReasonLength - 1)) + "…"
+        }
+        return text
     }
 
-    /// 向插件管理器发一条同步 POST 命令（升级/卸载）。dsh plugin 走 pnpm，
-    /// 可能持续数分钟，超时由调用方给出；只允许 loopback 地址。
-    /// 必须在后台线程调用（内部用信号量等待）。
-    static func postPluginCommand(url: URL, name: String, timeout: TimeInterval) -> (ok: Bool, error: String) {
-        guard url.host == "127.0.0.1",
-              let body = try? JSONSerialization.data(withJSONObject: ["name": name]) else {
-            return (false, "无法构造请求")
+    /// 同一插件的多条问题合成一条：原因先用 `；` 串起，再按 `summarizeReasons` 封顶
+    /// （每插件最多 3 条、总长 240 字符）。插件名只出现一次（日志行与弹窗都按插件
+    /// 计数），顺序沿用首个问题的出现顺序，提示稳定。
+    static func mergeByPlugin(_ issues: [Issue]) -> [Issue] {
+        var order: [String] = []
+        var versions: [String: String] = [:]
+        var reasons: [String: [String]] = [:]
+        for issue in issues {
+            if reasons[issue.pluginName] == nil {
+                order.append(issue.pluginName)
+            }
+            if versions[issue.pluginName] == nil, let version = issue.version {
+                versions[issue.pluginName] = version
+            }
+            reasons[issue.pluginName, default: []].append(issue.reason)
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.httpBody = body
-        request.timeoutInterval = timeout
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let semaphore = DispatchSemaphore(value: 0)
-        var payload: (status: Int?, text: String)?
-        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
-            let status = (response as? HTTPURLResponse)?.statusCode
-            payload = (status, data.flatMap { String(data: $0, encoding: .utf8) } ?? "")
-            semaphore.signal()
+        return order.map { name in
+            Issue(
+                pluginName: name,
+                version: versions[name],
+                reason: summarizeReasons(reasons[name] ?? [])
+            )
         }
-        task.resume()
-        _ = semaphore.wait(timeout: .now() + timeout + 5)
-        task.cancel()
-        guard let result = payload else { return (false, "请求超时") }
-        // 接口约定：HTTP 200 且 JSON 里 ok 为真才算成功。
-        guard result.status == 200,
-              let data = result.text.data(using: .utf8),
-              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            return (false, "接口返回异常（HTTP \(result.status.map(String.init) ?? "无")）")
-        }
-        if let ok = object["ok"] as? Bool, ok { return (true, "") }
-        let message = (object["error"] as? String) ?? (object["note"] as? String) ?? "未知错误"
-        return (false, message)
     }
 }

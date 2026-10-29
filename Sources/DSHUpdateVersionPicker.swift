@@ -3,39 +3,14 @@ import Foundation
 
 /// dsh 更新弹窗里的说明面板：正文是 Markdown（GitHub Release 的正文被转成
 /// Markdown 后进来），只读、可滚动、可换内容——切换版本时要重新渲染。
+///
+/// 构造统一走 `AlertBoundary.textPane`，和提示框的详情面板共用一份实现：
+/// 「scroll 自持一条可修改的高度约束」是 `fitWithinScreen` 压缩窗口的前提，
+/// 两处各写一遍迟早有一份写成压不动的（NSScrollView 没有 intrinsic content size，
+/// 少了显式约束就会被 NSStackView 压成一条细线）。说明面板放在提示框的圆角卡片里，
+/// 因此不带自带边框（`textPane` 已是 `.noBorder` + 透明底）。
 func makeReleaseNotesText(width: CGFloat, height: CGFloat) -> (scroll: NSScrollView, textView: NSTextView) {
-    let textView = NSTextView()
-    textView.isEditable = false
-    textView.isSelectable = true
-    textView.isRichText = false
-    textView.drawsBackground = false
-    textView.textContainerInset = NSSize(width: 0, height: 2)
-    textView.textContainer?.lineFragmentPadding = 0
-    textView.frame = NSRect(x: 0, y: 0, width: width, height: height)
-    textView.minSize = NSSize(width: width, height: height)
-    textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-    textView.isVerticallyResizable = true
-    textView.isHorizontallyResizable = false
-    textView.autoresizingMask = [.width]
-    textView.textContainer?.widthTracksTextView = true
-
-    let scroll = NSScrollView()
-    scroll.documentView = textView
-    scroll.hasVerticalScroller = true
-    scroll.autohidesScrollers = true
-    // 说明面板放在提示框的圆角卡片里：自带边框会变成「盒中盒」，直接用卡片底色。
-    scroll.borderType = .noBorder
-    scroll.backgroundColor = .clear
-    scroll.drawsBackground = false
-    scroll.frame = NSRect(x: 0, y: 0, width: width, height: height)
-    // NSScrollView 没有 intrinsic content size：放进 NSStackView 时只靠 frame 会被
-    // 压成一条细线，必须给显式约束。
-    scroll.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-        scroll.widthAnchor.constraint(equalToConstant: width),
-        scroll.heightAnchor.constraint(equalToConstant: height)
-    ])
-    return (scroll, textView)
+    AlertBoundary.textPane(width: width, height: height)
 }
 
 func renderReleaseNotes(_ markdown: String?, into textView: NSTextView) {

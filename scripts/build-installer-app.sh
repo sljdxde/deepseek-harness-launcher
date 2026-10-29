@@ -9,8 +9,12 @@ SDK="$(xcrun --show-sdk-path 2>/dev/null || true)"
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 source "$ROOT/scripts/swift-slice.sh"
-build_swift_slice "$SDK" arm64-apple-macos12.0 "$ROOT/build/DHLInstaller-arm64" "$ROOT/Installer/main.swift"
-build_swift_slice "$SDK" x86_64-apple-macos12.0 "$ROOT/build/DHLInstaller-x86_64" "$ROOT/Installer/main.swift"
+# 安装器是独立编译目标，链不了 Sources/AlertDesign.swift（它依赖发布通道等 App 侧
+# 类型），但必须链 Sources/AlertBoundary.swift：失败弹窗的正文来自 shell 输出，
+# 没有那套「长正文转可滚动面板 + Esc + 屏幕预算」护栏时，它会撑成比屏幕还高的
+# 窗口，而安装器主窗口没有关闭按钮，用户只能强杀。
+build_swift_slice "$SDK" arm64-apple-macos12.0 "$ROOT/build/DHLInstaller-arm64" "$ROOT/Installer/main.swift" "$ROOT/Sources/AlertBoundary.swift"
+build_swift_slice "$SDK" x86_64-apple-macos12.0 "$ROOT/build/DHLInstaller-x86_64" "$ROOT/Installer/main.swift" "$ROOT/Sources/AlertBoundary.swift"
 lipo -create "$ROOT/build/DHLInstaller-arm64" "$ROOT/build/DHLInstaller-x86_64" -output "$OUT/Contents/MacOS/DHLInstaller"
 cp "$ROOT/Resources/InstallerInfo.plist" "$OUT/Contents/Info.plist"
 cp "$ROOT/scripts/install-from-app.sh" "$OUT/Contents/Resources/install-from-app.sh"

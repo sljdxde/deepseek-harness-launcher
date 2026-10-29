@@ -150,6 +150,61 @@ enum AlertDesign {
         case .other: return .systemGray
         }
     }
+
+    // MARK: - 边界：长文本与屏幕
+    //
+    // 实现统一在 `Sources/AlertBoundary.swift`：安装器（`Installer/main.swift`）是独立
+    // 编译目标，链不了还依赖发布通道等 App 侧类型的本文件，但它同样需要这套护栏。
+    // 这里保留 AlertDesign 的调用面，只做「加上卡片外观」的转发，避免两套封顶逻辑。
+
+    /// 正文超过这个字符数就折进可滚动面板（见 `AlertBoundary.detailCharacterThreshold`）。
+    static let detailCharacterThreshold = AlertBoundary.detailCharacterThreshold
+    /// 可滚动详情面板的高度上限。
+    static let maxDetailHeight = AlertBoundary.maxDetailHeight
+    /// Esc 的 keyEquivalent（断言用，别在调用点手写转义）。
+    static let escapeKeyEquivalent = AlertBoundary.escapeKeyEquivalent
+
+    /// 把一段可能很长的正文安全地放进提示框：短文本走正文；超过阈值时正文只留
+    /// `summary`，完整内容放进可滚动的 accessory。已有 accessory 的弹窗不覆盖
+    /// （结构卡片优先），改为截断正文，保证窗口高度可控。
+    static func setBoundedText(
+        _ text: String,
+        on alert: NSAlert,
+        summary: String = "内容较长，可在下方滚动查看；完整内容见日志。"
+    ) {
+        AlertBoundary.setBoundedText(text, on: alert, summary: summary, width: cardWidth - 28) {
+            accessory(card: card(rows: [$0]), footnote: nil)
+        }
+    }
+
+    /// 只读、可滚动的正文面板。高度按行数估并夹在屏幕预算内，因此无论调用方塞进来
+    /// 多少行，提示框的最大高度都是常数级。
+    static func scrollableText(_ text: String, width: CGFloat) -> NSScrollView {
+        AlertBoundary.scrollableText(text, width: width, height: AlertBoundary.detailHeight(for: text))
+    }
+
+    /// 弹窗前的统一收尾：挂 Esc、把窗口压回屏幕内、对齐可视区。护栏语义见
+    /// `AlertBoundary.configureForPresentation`。
+    static func configureForPresentation(_ alert: NSAlert, escapeButtonIndex: Int?) {
+        AlertBoundary.configureForPresentation(alert, escapeButtonIndex: escapeButtonIndex)
+    }
+
+    /// 当前是否已经有一个 modal 提示框在跑。后台定时器触发的提示用它避免在用户
+    /// 正在看的弹窗上再叠一层。
+    static var isModalPresented: Bool { AlertBoundary.isModalPresented }
+
+    /// 统一弹窗入口。所有提示框都应该走这里，而不是直接 `alert.runModal()`。
+    @discardableResult
+    static func run(_ alert: NSAlert, escapeButtonIndex: Int? = nil) -> NSApplication.ModalResponse {
+        AlertBoundary.run(alert, escapeButtonIndex: escapeButtonIndex)
+    }
+
+    /// 后台触发的提示用这个：已有弹窗时直接跳过（返回 nil），绝不往用户正在看的
+    /// modal 上叠第二层。
+    @discardableResult
+    static func runIfIdle(_ alert: NSAlert, escapeButtonIndex: Int? = nil) -> NSApplication.ModalResponse? {
+        AlertBoundary.runIfIdle(alert, escapeButtonIndex: escapeButtonIndex)
+    }
 }
 
 /// 圆角信息卡：layer 背景 + 一条分隔线质感的内描边，内部纵向堆叠。

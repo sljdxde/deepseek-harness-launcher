@@ -27,6 +27,14 @@ struct SettingsWindowChecks {
         ((view as? NSTextField).map { [$0] } ?? []) + view.subviews.flatMap { textFields(in: $0) }
     }
 
+    static func firstView<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+        if let hit = view as? T { return hit }
+        for sub in view.subviews {
+            if let hit = firstView(type, in: sub) { return hit }
+        }
+        return nil
+    }
+
     static func firstControl<T: NSControl>(_ type: T.Type, in view: NSView) -> T? {
         if let hit = view as? T { return hit }
         for sub in view.subviews {
@@ -86,11 +94,49 @@ struct SettingsWindowChecks {
         // 底部按钮就会被挤出可视区，而这对纯逻辑断言完全不可见。
         // 只遍历 root 的三张卡片本身是空转的——卡片自己当然在 root 里，溢出的是卡片
         // 里的子视图。定位不到卡片必须失败，否则层级一变断言就静默通过。
+        // 边界：设置窗口是自撑高度、不可缩放、没有滚动条。当前实测 538pt（含标题栏），
+        // 而 1280x800 / 1366x768 这类小屏的 NSScreen.visibleFrame 只有约 683-700pt；
+        // 窗口一旦长过它，底部「保存/取消」就被顶出屏幕，而且不可缩放、找不回来。
+        // 660pt 是给这两档小屏留出菜单栏/Dock 余量后的预算。
+        let window = controller.window
+        if let window {
+            check(window.frame.height <= 660,
+                  "设置窗口高度 \(Int(window.frame.height))pt 超出小屏预算 660pt：底部按钮会出屏")
+            check(window.styleMask.contains(.closable), "设置窗口必须可关闭")
+            check(window.styleMask.contains(.miniaturizable), "设置窗口必须可最小化")
+        }
         controller.window?.layoutIfNeeded()
-        guard let root = content.subviews.first?.subviews.first, !root.subviews.isEmpty else {
-            print("settings window check failed: 找不到设置窗口的根视图（版式断言会空转）")
+        // 内容整列放在滚动视图里（窗口高度受屏幕预算约束时靠它把「保存/取消」滚出来），
+        // 所以根视图是 documentView，不再是 visualEffect 的直接子视图。
+        guard let scroll = firstView(NSScrollView.self, in: content),
+              let root = scroll.documentView, !root.subviews.isEmpty else {
+            print("settings window check failed: 找不到设置窗口的滚动容器/根视图（版式断言会空转）")
             exit(1)
         }
+        // 宽度回归锚点：documentView 一旦改成跟随容器宽度，AppKit 会按内容收缩
+        // （实测 299pt），窗口右侧空出一条大空白，而这个问题在「高度由内容决定」
+        // 的写法下不会被任何其它断言抓到。
+        check(abs(root.frame.width - (520 - 48)) < 1,
+              "设置窗口内容宽度必须等于 windowWidth - 左右内缩：\(root.frame.width)")
+        check(abs(content.bounds.width - 520) < 1,
+              "设置窗口的 contentView 宽度必须是 520：\(content.bounds.width)")
+        check(scroll.contentView is TopLeftClipView,
+              "裁剪视图必须翻转坐标：默认不翻转时窗口一打开就停在内容底部")
+        check(scroll.scrollerStyle == .overlay, "滚动条必须用覆盖式：传统式会占掉内容宽度")
+
+        // 窗口高度预算（纯函数，屏幕大小在测试机器上不可控，所以直接喂可视高）。
+        let fits = SettingsWindowController.windowHeight(contentHeight: 538, visibleHeight: 968)
+        check(fits.height == 538 && !fits.scrolls, "屏幕够高时窗口按内容开、不需要滚动：\(fits)")
+        let small = SettingsWindowController.windowHeight(contentHeight: 538, visibleHeight: 500)
+        check(small.height == 476 && small.scrolls,
+              "500pt 可视高时窗口必须收到 476pt 并打开滚动：\(small)")
+        let tiny = SettingsWindowController.windowHeight(contentHeight: 538, visibleHeight: 200)
+        check(tiny.height == SettingsWindowController.minimumContentHeight,
+              "极矮屏幕也要守住下限：\(tiny)")
+        let headless = SettingsWindowController.windowHeight(contentHeight: 538, visibleHeight: nil)
+        check(headless.height == 538 && !headless.scrolls, "没有窗口服务器时按内容开：\(headless)")
+        check(window?.frame.height == fits.height || (window?.frame.height ?? 0) <= 660,
+              "实际窗口高度应等于预算：\(window?.frame.height ?? -1)")
         for subview in root.subviews {
             // 标签列刻意左移 2pt 做视觉对齐（makeLabel 的历史行为），所以只卡
             // 「别越出可视区」这一条，并给 2pt 容差。

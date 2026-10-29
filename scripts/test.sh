@@ -212,6 +212,56 @@ if rg -Fq 'reason: "会话完成通知插件未随当前 dsh 加载"' "$ROOT/Sou
   echo "内置插件不许进兼容性告警（用户不需要为启动器自带插件重启 dsh）" >&2
   exit 1
 fi
+# 兼容性告警必须聚合成单个弹窗、走统一弹窗入口。历史事故：一个 issue 一个 NSAlert
+# 串行 runModal，多插件时用户被锁在 modal 循环里；单条 reason 又是多行，NSAlert 不
+# 自动收进屏幕，40 行正文 = 1449pt，按钮整排出屏后 Esc 也无效 → 软件卡死。
+rg -Fq 'presentPluginIssues' "$ROOT/Sources/main.swift"
+rg -Fq 'AlertDesign.runIfIdle' "$ROOT/Sources/main.swift"
+rg -Fq 'AlertDesign.setBoundedText' "$ROOT/Sources/main.swift"
+rg -Fq 'detailCharacterThreshold' "$ROOT/Sources/AlertBoundary.swift" "$ROOT/scripts/test-alert-design.swift"
+rg -Fq 'escapeKeyEquivalent' "$ROOT/Sources/AlertBoundary.swift" "$ROOT/scripts/test-alert-design.swift"
+rg -Fq 'maxDetailHeight' "$ROOT/Sources/AlertBoundary.swift" "$ROOT/scripts/test-alert-design.swift"
+# 压缩流程的两条前提：找到**压得动**的面板（不是第一个滚动视图，NSPopUpButton 内部
+# 那个没有高度约束），以及改完约束后把按 frame 定高的卡片容器一起收缩——少任何一条，
+# 更新弹窗在低分辨率屏上都会「压了等于没压」。
+rg -Fq 'shrinkablePanes' "$ROOT/Sources/AlertBoundary.swift"
+rg -Fq 'refitFrames' "$ROOT/Sources/AlertBoundary.swift"
+# 只读滚动面板只允许一份构造实现：说明面板自己 new NSScrollView 的话，
+# 「scroll 自持一条可修改的高度约束」这条不变量就会在其中一处静默失效。
+rg -Fq 'AlertBoundary.textPane' "$ROOT/Sources/DSHUpdateVersionPicker.swift"
+if rg -q 'let scroll = NSScrollView\(\)' "$ROOT/Sources/DSHUpdateVersionPicker.swift"; then
+  echo "说明面板必须复用 AlertBoundary.textPane（小屏压缩依赖它的可改高度约束）" >&2
+  exit 1
+fi
+if rg -Fq 'upgradePluginIssue' "$ROOT/Sources/main.swift"; then
+  echo "兼容性告警不许再串「升级插件 → 重启 → 下一个弹窗」的 modal 链（会卡死）" >&2
+  exit 1
+fi
+# 所有提示框必须走统一入口（AlertDesign.run → AlertBoundary.run：挂 Esc、正文封顶、
+# 窗口压回屏幕内）；直接 runModal 绕过了护栏。安装器是独立编译目标，链
+# Sources/AlertBoundary.swift 用同一套护栏，不许自己 runModal。
+for guarded in "$ROOT/Sources/main.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Installer/main.swift"; do
+  if rg -Fq 'alert.runModal()' "$guarded"; then
+    echo "提示框必须走 AlertDesign.run / AlertBoundary.run（$guarded 里不许直接 alert.runModal()）" >&2
+    exit 1
+  fi
+done
+rg -Fq 'AlertBoundary.setBoundedText' "$ROOT/Installer/main.swift"
+rg -Fq 'installTimeoutExitCode' "$ROOT/Installer/main.swift"
+# 子进程输出必须写文件：写管道的话，安装器超时退出后读端关闭，还在跑的 ditto/cp
+# 会吃到 SIGPIPE，把半份安装留在磁盘上。
+rg -Fq 'installerLogTail' "$ROOT/Installer/main.swift"
+if rg -qF 'task.standardOutput = pipe' "$ROOT/Installer/main.swift"; then
+  echo "安装器不许把子进程输出接到自己持有的管道（超时退出会打断安装）" >&2
+  exit 1
+fi
+# 安装器链的是 AlertBoundary（AlertDesign 依赖 App 侧类型，拖不进独立目标）。
+rg -Fq 'Sources/AlertBoundary.swift' "$ROOT/scripts/build-installer-app.sh"
+# 菜单行文案的唯一出口：版本号与包名来自远端，长度不可控，行视图宽度固定 360pt。
+rg -Fq 'AlertBoundary.singleLine' "$ROOT/Sources/main.swift"
+# 设置窗口高度受屏幕预算约束（不可缩放又不滚动时，「保存/取消」会被顶出屏幕）。
+rg -Fq 'Self.windowHeight' "$ROOT/Sources/SettingsWindowController.swift"
+rg -Fq 'TopLeftClipView' "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/scripts/test-settings-window.swift"
 # 内置插件的就绪探测只认确定性证据：
 # - 探针走零成本的 /health（重接口 /archives 要读会话日志，本机热启 2.3s、冷启 >4s，
 #   拿它当就绪探针就是误报来源）；
@@ -336,6 +386,17 @@ rg -q "runtime.installing-" "$ROOT/scripts/uninstall.sh"
 rg -q "prune_backups" "$ROOT/scripts/install-from-app.sh"
 rg -q "xattr -dr com.apple.quarantine" "$ROOT/scripts/install-from-app.sh"
 zsh -n "$ROOT/scripts/Install DHL.command"
+# 提权安装分支必须和「双击完成安装或更新.app」传同一套参数、用同一套转义：
+# - 少 DHL_USER_HOME → root 的 $HOME=/var/root，脚本里按用户目录的清理全打错目标；
+# - 少 --no-open → 以 root 身份 open 用户的 App，把 ~/Library 写成 root 属主；
+# - 手动给 printf %q 的结果再包一层 \"…\" → DMG 卷名（/Volumes/Deepseek Harness Launcher）
+#   里的空格变成 \ ，root 的 /bin/sh 在双引号内不认，提权安装必然「找不到文件」。
+rg -Fq 'DHL_USER_HOME=' "$ROOT/scripts/Install DHL.command"
+rg -Fq -- '--no-open' "$ROOT/scripts/Install DHL.command"
+if rg -q '\\\"\$SCRIPT_DIR' "$ROOT/scripts/Install DHL.command"; then
+  echo "Install DHL.command 不许手动给 printf %q 的结果包引号（会把空格变成 sh 不认的 \\ ）" >&2
+  exit 1
+fi
 zsh -n "$ROOT/scripts/build-installer-app.sh"
 zsh -n "$ROOT/scripts/swift-slice.sh"
 zsh -n "$ROOT/scripts/build-dmg.sh"
@@ -668,7 +729,7 @@ swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupp
 swiftc "$ROOT/scripts/test-session-jump.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/BrowserAutomationSupport.swift" -o "$ROOT/build/test-session-jump" -framework AppKit
 "$ROOT/build/test-session-jump"
 # 提示框外观与版本选择器：纯 AppKit 视图，直接构造/量尺寸/触发动作来断言。
-swiftc "$ROOT/scripts/test-alert-design.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/DSHUpdateVersionPicker.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-alert-design" -framework AppKit
+swiftc "$ROOT/scripts/test-alert-design.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/AlertBoundary.swift" "$ROOT/Sources/DSHUpdateVersionPicker.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-alert-design" -framework AppKit
 "$ROOT/build/test-alert-design"
 swiftc "$ROOT/scripts/test-launcher-support.swift" "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/Sources/LogSupport.swift" -o "$ROOT/build/test-launcher-support"
 "$ROOT/build/test-launcher-support"
@@ -677,7 +738,7 @@ swiftc "$ROOT/scripts/test-status-badge.swift" "$ROOT/Sources/StatusBadgeSupport
 "$ROOT/build/test-status-badge"
 # 设置窗口是复用的：取消后再打开必须回到已保存的设置（否则界面显示的是被取消掉的
 # 勾选与间隔，用户以为生效了）。
-swiftc "$ROOT/scripts/test-settings-window.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-settings-window" -framework AppKit
+swiftc "$ROOT/scripts/test-settings-window.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/AlertBoundary.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-settings-window" -framework AppKit
 "$ROOT/build/test-settings-window"
 swiftc "$ROOT/scripts/test-global-hotkey.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-global-hotkey"
 "$ROOT/build/test-global-hotkey"

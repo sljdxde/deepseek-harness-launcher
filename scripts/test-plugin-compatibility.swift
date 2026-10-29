@@ -122,6 +122,52 @@ struct PluginCompatibilityTests {
         check(!issues.contains { PluginCompatibilitySupport.bundledPluginNames.contains($0.pluginName) },
               "内置插件永不参与兼容性扫描（bundled/user/broken 三种标记都一样）：\(issues.map(\.pluginName))")
 
+        // dsh 自带层（@deepseek-ai/*）：实测 dsh 升级后插件管理器会把这些随 dsh 版本
+        // 分发的 profile bundle（本机 9 个 @deepseek-ai/dsh-experimental-*）标成 user，
+        // 旧实现照单全扫，弹窗里全是用户没装过的名字，且「升级/卸载」必然失败。
+        // 这里故意给它们塞必然失败的 peer，证明不是「碰巧没触发」。
+        writeManifest(profileModules.appendingPathComponent("@deepseek-ai/dsh-experimental-agent-team-profile"), [
+            "name": "@deepseek-ai/dsh-experimental-agent-team-profile", "version": "0.1.0-rc.1",
+            "peerDependencies": ["@deepseek-ai/nonexistent-core-api": "^9.0.0"]
+        ] as [String: Any])
+        let coreBundleIssues = PluginCompatibilitySupport.scan(
+            plugins: [
+                .init(name: "@deepseek-ai/dsh-experimental-agent-team-profile", version: "0.1.0-rc.1", source: "user", broken: nil),
+                // 自带层的「损坏残留」同理不报：那不是用户能清理/重装的东西。
+                .init(name: "@deepseek-ai/dsh-experimental-voice-input-bundle", version: nil, source: "broken", broken: true),
+            ],
+            profileModules: profileModules, runtimeModules: runtimeModules
+        )
+        check(coreBundleIssues.isEmpty, "dsh 自带层（@deepseek-ai/*）不参与兼容性扫描：\(coreBundleIssues.map { "\($0.pluginName): \($0.reason)" })")
+        check(PluginCompatibilitySupport.isDSHCoreBundle("@deepseek-ai/dsh-base"), "@deepseek-ai/ 前缀判为 dsh 自带层")
+        check(!PluginCompatibilitySupport.isDSHCoreBundle("dsh-community-tool"), "普通用户插件不是 dsh 自带层")
+
+        // 原因封顶（纯函数）：一个 bundle 可能十几个 peer 全部失败，全拼进 reason 会让
+        // NSAlert 随行数线性长高（实测 40 行 1449pt > 屏幕可视高度），按钮被挤出屏幕后
+        // runModal 卡死。每插件最多 3 条原因，超出折叠成「…等 N 项」；总长封顶 240。
+        check(PluginCompatibilitySupport.summarizeReasons(["一", "二", "三", "四", "五"]) == "一；二；三；…等 2 项",
+              "超过 3 条原因应折叠成「…等 N 项」：\(PluginCompatibilitySupport.summarizeReasons(["一", "二", "三", "四", "五"]))")
+        check(PluginCompatibilitySupport.summarizeReasons(["只有一个原因"]) == "只有一个原因", "单条原因原样保留")
+        let longReason = PluginCompatibilitySupport.summarizeReasons([String(repeating: "长", count: 300)])
+        check(longReason.count == PluginCompatibilitySupport.maxReasonLength, "超长原因应截断到上限：\(longReason.count) 字符")
+        check(longReason.hasSuffix("…"), "截断后应以 … 结尾")
+
+        // 扫描层同样要受控：6 个 peer 全失败仍只报一条，原因长度不超过上限。
+        var manyPeers: [String: Any] = [:]
+        for index in 0..<6 { manyPeers["@deepseek-ai/dsh-removed-api-\(index)"] = "^0.1.0" }
+        writeManifest(profileModules.appendingPathComponent("many-broken-peers"), [
+            "name": "many-broken-peers", "version": "1.0.0", "peerDependencies": manyPeers
+        ] as [String: Any])
+        let capped = PluginCompatibilitySupport.scan(
+            plugins: [.init(name: "many-broken-peers", version: "1.0.0", source: "user", broken: nil)],
+            profileModules: profileModules, runtimeModules: runtimeModules
+        )
+        check(capped.count == 1, "多个 peer 失败仍只报一条，实际 \(capped.count)")
+        check(capped.first?.reason.contains("…等 3 项") == true,
+              "扫描出的原因也要折叠多余项：\(capped.first?.reason ?? "")")
+        check((capped.first?.reason.count ?? 0) <= PluginCompatibilitySupport.maxReasonLength,
+              "扫描出的原因长度必须封顶：\(capped.first?.reason.count ?? 0) 字符")
+
         // 一个插件同时踩两个 peer（实测 dsh-connect-workbuddy：pi-ai 超界 + react 缺失）
         // 只能报**一条**：日志行按插件计数、弹窗按插件逐个呈现，一条一条报会让同一插件
         // 在日志里出现两遍，用户处理完第一条还会再弹一次。

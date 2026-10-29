@@ -25,6 +25,7 @@ struct StatusBadgeChecks {
         checkUnreadOnly()
         checkUpdateOnly()
         checkBoth()
+        checkBadgeWidthBound()
         writePreviewIfRequested()
         if !failures.isEmpty {
             for failure in failures { print("status badge checks failed: \(failure)") }
@@ -140,6 +141,23 @@ struct StatusBadgeChecks {
         check(image.size.width <= 36, "合成图过宽：\(image.size.width)")
         check(abs(image.size.height - StatusBadgeSupport.compositeHeight) < 0.01,
               "两枚角标同时出现时高度不该变：\(image.size.height)")
+    }
+
+    // MARK: - 宽度边界
+
+    /// 菜单栏宽度边界：未读胶囊宽度跟数字走（`7` 比 `99+` 窄），但必须有上界——
+    /// 主调用方 `SessionNotifyStore.badgeText` 在 99 之后封顶为 "99+"，所以合法
+    /// 输入最多 3 个字符。实测（本机 2x Retina，菜单栏图标合成图）：一位数 28pt、
+    /// 两位数 34pt、"99+" 40pt；这里把「上界 44pt」钉住，防止将来改成不限长文本后
+    /// 把菜单栏撑成一条。
+    static func checkBadgeWidthBound() {
+        let single = StatusBadgeSupport.image(base: solidBase(), plan: plan("7", true), isDark: true)
+        let maxed = StatusBadgeSupport.image(base: solidBase(), plan: plan("99+", true), isDark: true)
+        check(maxed.size.width <= 44, "未读上限 \"99+\" 的合成图宽度应有上界 44pt，实际 \(maxed.size.width)")
+        check(maxed.size.width > single.size.width,
+              "三位数角标应比一位数宽（宽度跟数字走），实际 \(single.size.width) -> \(maxed.size.width)")
+        check(abs(maxed.size.height - StatusBadgeSupport.compositeHeight) < 0.01,
+              "数字变长时合成图高度不该变：\(maxed.size.height)")
     }
 
     // MARK: - helpers

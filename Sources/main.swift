@@ -108,10 +108,24 @@ private final class MenuRowView: NSView {
             .foregroundColor: foregroundColor
         ]
         let textSize = title.size(withAttributes: attributes)
-        title.draw(
-            at: NSPoint(x: 32, y: (bounds.height - textSize.height) / 2),
-            withAttributes: attributes
+        // 标题必须画进「行宽减去快捷键区」的矩形里并尾部省略：原来是 `draw(at:)`
+        // 从 x=32 一路画到底，超过 360pt 的行宽就被菜单裁掉（看不出还有内容），
+        // 而右侧快捷键仍按 bounds.width 定位，长包名/长版本号会直接压在快捷键上。
+        // 右侧要留出「快捷键列 + 一点间距」：快捷键从 bounds.width - w - 35 起画，
+        // 所以无快捷键时留 32pt，有快捷键时留 快捷键宽 + 52pt（两者之间留 17pt 余量）。
+        let shortcutWidth: CGFloat = shortcut.isEmpty ? 0 : shortcut.size(withAttributes: attributes).width + 12
+        let trailing: CGFloat = shortcut.isEmpty ? 32 : 52
+        let titleRect = NSRect(
+            x: 32,
+            y: (bounds.height - textSize.height) / 2,
+            width: max(24, bounds.width - 32 - shortcutWidth - trailing),
+            height: textSize.height
         )
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        var titleAttributes = attributes
+        titleAttributes[.paragraphStyle] = paragraph
+        title.draw(in: titleRect, withAttributes: titleAttributes)
         guard !shortcut.isEmpty else { return }
         let shortcutSize = shortcut.size(withAttributes: attributes)
         shortcut.draw(
@@ -163,6 +177,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var dshUpdateMenuItem: NSMenuItem?
     private var dshUpdateMenuRow: MenuRowView?
     private var portMenuRow: MenuRowView?
+    /// 「插件恢复」那一条的自定义行视图。这一行的文案会随隔离状态变（安全模式 /
+    /// 已隔离 N 个插件），而带 view 的菜单项画的是 view 里的 title：只改
+    /// `NSMenuItem.title` 的话用户永远看不到变化（一直显示建菜单时那句「插件恢复」）。
+    private var recoveryMenuRow: MenuRowView?
     private var dshInstallWindow: DSHInstallWindowController?
     private var dshInstallHandle: DSHRuntimeInstallHandle?
     private var dshInstallProgressTracker: DSHInstallProgressTracker?
@@ -285,6 +303,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 恢复入口平时不显示：只有隔离过插件或处在安全模式里才需要它。
         let recovery = menuRowItem(title: "插件恢复", action: #selector(togglePluginRecoveryMode))
         recovery.tag = 1004; recovery.isHidden = true
+        recoveryMenuRow = recovery.view as? MenuRowView
         // 运行环境入口同样按需出现：只有在「App 自带版本更新（用户暂不更新）」或
         // 「运行环境缺失/半份（用户暂不重建）」时才有内容，平时不占菜单空间。
         let runtime = menuRowItem(title: "运行环境", action: #selector(fixRuntimeFromMenu))
@@ -315,13 +334,21 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setUpdateMenuTitle(_ title: String) {
-        updateMenuItem?.title = title
-        updateMenuRow?.title = title
+        setMenuRow(updateMenuItem, row: updateMenuRow, title: title)
     }
 
     private func setDSHUpdateMenuTitle(_ title: String) {
-        dshUpdateMenuItem?.title = title
-        dshUpdateMenuRow?.title = title
+        setMenuRow(dshUpdateMenuItem, row: dshUpdateMenuRow, title: title)
+    }
+
+    /// 菜单行的唯一写法：`NSMenuItem.title` 与 `MenuRowView.title`（真正画出来的那份）
+    /// 必须一起改，只改一个就会出现「菜单里还显示上一次的文案」。同时在这里封顶：
+    /// 版本号与包名来自远端（npm / GitHub Release），长度不受本地控制，而行视图宽度固定
+    /// 360pt——不封顶时超长标题会被裁掉，还会压在右侧快捷键上。
+    private func setMenuRow(_ item: NSMenuItem?, row: MenuRowView?, title: String) {
+        let capped = AlertBoundary.singleLine(title)
+        item?.title = capped
+        row?.title = capped
     }
 
     // MARK: - dsh 更新检查
@@ -494,7 +521,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             applyDefaultButton(candidate.channel)
         }
 
-        switch alert.runModal() {
+        switch AlertDesign.run(alert, escapeButtonIndex: 1) {
         case .alertFirstButtonReturn:
             updateDSHNow(to: selected().version)
         case .alertThirdButtonReturn:
@@ -1166,7 +1193,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             skipped: settings.skippedLauncherVersion
         )
         alert.addButton(withTitle: skipped ? "取消跳过此版本" : "跳过此版本")
-        switch alert.runModal() {
+        switch AlertDesign.run(alert, escapeButtonIndex: 1) {
         case .alertFirstButtonReturn:
             downloadUpdate(manifest)
         case .alertThirdButtonReturn:
@@ -1219,7 +1246,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 alert.informativeText = "是否立即安装 v\(manifest.version) 并重启 \(LauncherBrand.fullName)？当前后台进程会先关闭，安装完成后重新启动。"
                 alert.addButton(withTitle: "安装并重启")
                 alert.addButton(withTitle: "稍后安装")
-                if alert.runModal() == .alertFirstButtonReturn {
+                if AlertDesign.run(alert, escapeButtonIndex: 1) == .alertFirstButtonReturn {
                     self.installUpdateAndRestart(url)
                 } else {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -1291,9 +1318,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         AlertDesign.style(alert, tone: tone)
         alert.messageText = title
-        alert.informativeText = message
+        // 长正文（网络错误、npm 输出片段）绝不能直接进 informativeText：
+        // 见 AlertDesign.setBoundedText 的注释，超长正文会把按钮顶出屏幕。
+        AlertDesign.setBoundedText(message, on: alert)
         alert.addButton(withTitle: "好")
-        alert.runModal()
+        AlertDesign.run(alert, escapeButtonIndex: 0)
     }
 
     @objc private func quit() {
@@ -1447,7 +1476,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             alert.alertStyle = .informational
             alert.addButton(withTitle: "开始安装")
             alert.addButton(withTitle: "取消")
-            guard alert.runModal() == .alertFirstButtonReturn else {
+            guard AlertDesign.run(alert, escapeButtonIndex: 1) == .alertFirstButtonReturn else {
                 setState(.stopped)
                 return
             }
@@ -1470,7 +1499,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ]),
             footnote: "选择「稍后」不会打断启动：继续用 v\(upgrade.installed) 跑，菜单里可以随时更新。"
         )
-        return alert.runModal() == .alertFirstButtonReturn
+        return AlertDesign.run(alert, escapeButtonIndex: 1) == .alertFirstButtonReturn
     }
 
     /// 运行环境缺失（或只剩半份）时的重建确认。返回 true 表示现在重建。
@@ -1482,7 +1511,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "重新安装")
         alert.addButton(withTitle: "稍后")
-        return alert.runModal() == .alertFirstButtonReturn
+        return AlertDesign.run(alert, escapeButtonIndex: 1) == .alertFirstButtonReturn
     }
 
     /// 用户拒绝重建：把「别再问」记到本次运行结束，并给出菜单入口与状态提示。
@@ -1711,7 +1740,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: "回退并重启")
         alert.addButton(withTitle: "查看日志")
         alert.addButton(withTitle: "保持新版本")
-        switch alert.runModal() {
+        switch AlertDesign.run(alert, escapeButtonIndex: 2) {
         case .alertFirstButtonReturn:
             guard DSHRuntimeSupport.performRollback() else {
                 appendLogString("dsh 回退失败（快照换入异常），按常规失败处理\n")
@@ -2084,12 +2113,16 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let item = statusItem.menu?.item(withTag: 1004)
         if safeModeActive {
             item?.isHidden = false
-            item?.title = "退出安全模式并重启（当前第三方插件未加载）"
+            setMenuRow(item, row: recoveryMenuRow, title: "退出安全模式并重启（第三方插件未加载）")
         } else if isolated.isEmpty {
             item?.isHidden = true
+            setMenuRow(item, row: recoveryMenuRow, title: "插件恢复")
         } else {
             item?.isHidden = false
-            item?.title = "已隔离 \(isolated.count) 个插件：\(isolated.map { $0.bundle }.prefix(2).joined(separator: "、"))（点按恢复）"
+            // 只列前两个包名：这一行要说清「有插件被隔离了、点一下能恢复」，
+            // 完整清单在日志里。包名可能是 `@scope/很长-的名字`，交给 setMenuRow 封顶。
+            let names = isolated.map { $0.bundle }.prefix(2).joined(separator: "、")
+            setMenuRow(item, row: recoveryMenuRow, title: "已隔离 \(isolated.count) 个插件：\(names)（点按恢复）")
         }
     }
 
@@ -2106,7 +2139,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         item.isHidden = false
-        runtimeMenuRow?.title = title
+        setMenuRow(item, row: runtimeMenuRow, title: title)
     }
 
     private func runtimeMenuTitle() -> String? {
@@ -2144,7 +2177,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.informativeText = "会按 App 自带的锁文件重新安装运行环境（npm ci，锁定版本），你的会话、归档与插件数据不受影响。"
         alert.addButton(withTitle: "开始重建")
         alert.addButton(withTitle: "取消")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard AlertDesign.run(alert, escapeButtonIndex: 1) == .alertFirstButtonReturn else { return }
         runRuntimeInstall(mode: .repair)
     }
 
@@ -2310,7 +2343,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// 把一批兼容性问题交给弹窗流程（日志 + 逐个弹窗）。
+    /// 把一批兼容性问题交给弹窗流程（日志 + 单个聚合弹窗）。
     private func presentCompatibilityIssues(_ issues: [PluginCompatibilitySupport.Issue], port: Int) {
         guard !issues.isEmpty else { return }
         DispatchQueue.main.async { [weak self] in
@@ -2320,92 +2353,48 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// 逐个呈现兼容性问题（只来自用户插件）；「忽略」只对本次启动器运行生效。
+    /// 兼容性问题一次性呈现（只来自用户插件；「已提示」只对本次启动器运行生效）。
+    ///
+    /// 这里刻意**不是**「一个 issue 一个 NSAlert 串行 runModal」：
+    /// - 插件多时要连点十几次，每次都是一次模态阻塞，用户以为软件卡死；
+    /// - 单条 reason 可能把同一个 bundle 的多个 peer 失败拼成十几行，而 NSAlert
+    ///   会随行数线性长高（实测 40 行 = 1449pt），按钮被顶出屏幕后关不掉；
+    /// - 升级/卸载按钮会在弹窗里串起「pnpm → 重启 dsh → 下一个弹窗」的长模态链，
+    ///   任何一步慢/失败都把用户锁在模态循环里。
+    /// 现在统一成一个弹窗：标题给数量，正文给处置建议，逐条原因放进可滚动面板；
+    /// 具体升级/卸载交给 Harness 侧边栏的「插件管理」，启动器只负责如实提示。
     private func presentPluginIssues(_ issues: [PluginCompatibilitySupport.Issue]) {
-        guard !issues.isEmpty else { return }
-        var remaining = issues
-        let issue = remaining.removeFirst()
-        if pluginCompatAlerted.contains(issue.pluginName) {
-            presentPluginIssues(remaining)
-            return
-        }
+        let pending = issues.filter { !pluginCompatAlerted.contains($0.pluginName) }
+        guard !pending.isEmpty else { return }
+        for issue in pending { pluginCompatAlerted.insert(issue.pluginName) }
+
+        let details = pending.map { issue -> String in
+            let versionSuffix = issue.version.map { "（v\($0)）" } ?? ""
+            return "• \(issue.pluginName)\(versionSuffix)：\(issue.reason)"
+        }.joined(separator: "\n")
+        appendLogString("插件兼容性提示详情：\n\(details)\n")
+
         let alert = NSAlert()
         AlertDesign.style(alert, tone: .warning)
-        alert.messageText = "插件可能与当前 dsh 版本不兼容"
-        let versionSuffix = issue.version.map { "（v\($0)）" } ?? ""
-        alert.informativeText = "\(issue.pluginName)\(versionSuffix)：\(issue.reason)。\n\n可尝试升级到适配版本，或卸载该插件；操作后需重启 dsh 生效。"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "升级插件")
-        alert.addButton(withTitle: "卸载插件")
-        alert.addButton(withTitle: "忽略")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn: upgradePluginIssue(issue, remaining: remaining)
-        case .alertSecondButtonReturn: uninstallPluginIssue(issue, remaining: remaining)
-        default:
-            pluginCompatAlerted.insert(issue.pluginName)
-            presentPluginIssues(remaining)
-        }
-    }
-
-    /// 调插件管理器的升级接口（dsh plugin update，pnpm 可能跑几分钟）。
-    private func upgradePluginIssue(_ issue: PluginCompatibilitySupport.Issue, remaining: [PluginCompatibilitySupport.Issue]) {
-        guard let port = selectedPort,
-              let url = URL(string: "http://127.0.0.1:\(port)/dsh-plugin-manager/update") else {
-            presentPluginIssues(remaining)
-            return
-        }
-        appendLogString("正在升级插件 \(issue.pluginName)…\n")
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = PluginCompatibilitySupport.postPluginCommand(url: url, name: issue.pluginName, timeout: 300)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if result.ok {
-                    self.appendLogString("插件 \(issue.pluginName) 升级流程完成\n")
-                    self.askRestartAfterPluginChange(plugin: issue.pluginName, remaining: remaining)
-                } else {
-                    self.appendLogString("插件 \(issue.pluginName) 升级失败：\(result.error)\n")
-                    self.showInfo(title: "插件升级失败", message: "\(issue.pluginName)：\(result.error)")
-                    self.presentPluginIssues(remaining)
-                }
-            }
-        }
-    }
-
-    private func uninstallPluginIssue(_ issue: PluginCompatibilitySupport.Issue, remaining: [PluginCompatibilitySupport.Issue]) {
-        guard let port = selectedPort,
-              let url = URL(string: "http://127.0.0.1:\(port)/dsh-plugin-manager/uninstall") else {
-            presentPluginIssues(remaining)
-            return
-        }
-        appendLogString("正在卸载插件 \(issue.pluginName)…\n")
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = PluginCompatibilitySupport.postPluginCommand(url: url, name: issue.pluginName, timeout: 300)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if result.ok {
-                    self.pluginCompatAlerted.remove(issue.pluginName)
-                    self.appendLogString("插件 \(issue.pluginName) 已卸载\n")
-                    self.askRestartAfterPluginChange(plugin: issue.pluginName, remaining: remaining)
-                } else {
-                    self.appendLogString("插件 \(issue.pluginName) 卸载失败：\(result.error)\n")
-                    self.showInfo(title: "插件卸载失败", message: "\(issue.pluginName)：\(result.error)")
-                    self.presentPluginIssues(remaining)
-                }
-            }
-        }
-    }
-
-    private func askRestartAfterPluginChange(plugin: String, remaining: [PluginCompatibilitySupport.Issue]) {
-        let alert = NSAlert()
-        AlertDesign.style(alert, tone: .question)
-        alert.messageText = "重启 dsh 使变更生效"
-        alert.informativeText = "\(plugin) 的变更需要重启 dsh 后生效。现在重启吗？"
-        alert.addButton(withTitle: "立即重启")
-        alert.addButton(withTitle: "稍后")
-        if alert.runModal() == .alertFirstButtonReturn {
-            restartDSH()
+        alert.messageText = pending.count == 1
+            ? "插件可能与当前 dsh 版本不兼容"
+            : "检测到 \(pending.count) 个插件可能与当前 dsh 版本不兼容"
+        alert.informativeText = "这是对用户插件 peer 依赖的静态检查，不影响本次启动。"
+            + "可在 Harness 侧边栏「插件管理」升级或卸载对应插件，重启 dsh 后生效。"
+        alert.addButton(withTitle: "知道了")
+        alert.addButton(withTitle: "打开日志")
+        if details.count > AlertDesign.detailCharacterThreshold {
+            alert.accessoryView = AlertDesign.accessory(
+                card: AlertDesign.card(rows: [AlertDesign.scrollableText(details, width: AlertDesign.cardWidth - 28)]),
+                footnote: nil
+            )
         } else {
-            presentPluginIssues(remaining)
+            alert.informativeText += "\n\n" + details
+        }
+        // 默认按钮是「知道了」：回车/Esc 都只关提示，绝不顺手升级或卸载。
+        alert.buttons[0].keyEquivalent = "\r"
+        if AlertDesign.runIfIdle(alert, escapeButtonIndex: 0) == nil {
+            appendLogString("已有提示框在显示，兼容性提示本次并入日志（不叠加弹窗）\n")
         }
     }
 
@@ -2436,8 +2425,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setPortMenuTitle(_ title: String) {
-        statusItem.menu?.item(withTag: 1001)?.title = title
-        portMenuRow?.title = title
+        setMenuRow(statusItem.menu?.item(withTag: 1001), row: portMenuRow, title: title)
     }
 
     private func fail(_ message: String) {
@@ -2447,10 +2435,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         AlertDesign.style(alert, tone: .error)
         alert.messageText = "\(LauncherBrand.fullName) 启动失败"
-        alert.informativeText = message
+        AlertDesign.setBoundedText(message, on: alert)
         alert.addButton(withTitle: "打开日志")
         alert.addButton(withTitle: "关闭")
-        if alert.runModal() == .alertFirstButtonReturn { openLogs() }
+        if AlertDesign.run(alert, escapeButtonIndex: 1) == .alertFirstButtonReturn { openLogs() }
     }
 
     private func showDSHInstallFailure(_ error: Error) {
@@ -2460,12 +2448,18 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         AlertDesign.style(alert, tone: .error)
         alert.messageText = "Deepseek Harness 安装失败"
-        alert.informativeText = "\(Self.summarizedInstallError(error.localizedDescription))\n\n如果 npm 持续下载失败，请在终端手动执行下面的官方命令，完成后重新打开 Deepseek Harness Launcher：\n\n\(command)"
+        // npm 失败输出即使截过尾巴也可能上千字符；统一转成可滚动面板，
+        // 否则窗口会随行数长高、按钮掉到屏幕外（真机事故）。
+        AlertDesign.setBoundedText(
+            "\(Self.summarizedInstallError(error.localizedDescription))\n\n"
+                + "如果 npm 持续下载失败，请在终端手动执行下面的官方命令，完成后重新打开 Deepseek Harness Launcher：\n\n\(command)",
+            on: alert
+        )
         alert.alertStyle = .warning
         alert.addButton(withTitle: "复制命令")
         alert.addButton(withTitle: "打开日志")
         alert.addButton(withTitle: "关闭")
-        switch alert.runModal() {
+        switch AlertDesign.run(alert, escapeButtonIndex: 2) {
         case .alertFirstButtonReturn:
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(command, forType: .string)
@@ -2527,7 +2521,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 期间若被新的状态文案替换，旧定时器不会误清。
     private func showStatusTitle(_ title: String?, autoDismissAfter dismissAfter: TimeInterval? = nil) {
         statusTitleOverride = title
-        statusItem.button?.title = title ?? ""
+        // 菜单栏那几厘米是最贵的空间：包名/版本号进来的文案必须封顶，否则窄屏
+        // （13" 带刘海的机型）上别的菜单栏项目会被挤掉。
+        statusItem.button?.title = title.map { AlertBoundary.singleLine($0, limit: 20) } ?? ""
         statusItem.button?.image = makeStatusImage()
         guard let dismissAfter else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + dismissAfter) { [weak self] in

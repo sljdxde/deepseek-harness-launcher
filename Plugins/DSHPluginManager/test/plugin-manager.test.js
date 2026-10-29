@@ -3,7 +3,7 @@ import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink, utimes
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parsePluginYml, installCandidates, listInstalledPlugins, compareInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin, fetchOfficialMarketPlugins, mergeMarketPlugins, readMarketplace } from '../lib/index.js';
+import { parsePluginYml, installCandidates, listInstalledPlugins, compareInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin, fetchOfficialMarketPlugins, mergeMarketPlugins, readMarketplace, isCoreBundle } from '../lib/index.js';
 
 test('parsePluginYml 解析 awesome-dsh-plugin 的插件条目格式', () => {
   const text = `url: https://github.com/1624318455/dsh-plugin-tavily
@@ -80,7 +80,7 @@ test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依�
     await writeFile(join(profileDir, 'package.json'), JSON.stringify({
       name: 'dsh-profile-web', private: true,
       dependencies: { 'dsh-community-tool': 'file:/x', 'lodash-es': '1.0.0' },
-      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-community-tool'] } }
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-community-tool', '@deepseek-ai/dsh-experimental-agent-team-profile'] } }
     }));
     // bundled plugin: symlink whose target names a launcher bundle marker.
     // The fixture target must exist on every machine (CI has no installed
@@ -104,6 +104,18 @@ test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依�
     // broken leftover: dangling symlink pointing at a nonexistent target
     await symlink('../@volcengine/openviking#examples/dsh-memory-plugin', join(modules, 'dsh-memory-plugin'));
 
+    // dsh 自带层（@deepseek-ai/*）跟着 dsh 版本分发：即使出现在 dsh.profile.bundles 里、
+    // node_modules 里也有实体目录，也不是用户插件（实测升级后 9 个
+    // @deepseek-ai/dsh-experimental-* 被 /installed 标成 user，启动器据此误报兼容性问题）。
+    const coreDir = join(modules, '@deepseek-ai', 'dsh-experimental-agent-team-profile');
+    await mkdir(coreDir, { recursive: true });
+    await writeFile(join(coreDir, 'package.json'), JSON.stringify({
+      name: '@deepseek-ai/dsh-experimental-agent-team-profile', version: '0.1.0-rc.1', description: 'dsh 自带实验层',
+      peerDependencies: { '@deepseek-ai/dsh-llm': '>=99.0.0' }
+    }));
+    // 自带层的悬空软链（旧接口/软链判定失败）也不得列为 broken：用户既升不了也卸不掉。
+    await symlink('../../nonexistent-core-layer', join(modules, '@deepseek-ai', 'dsh-experimental-voice-input-bundle'));
+
     const items = await listInstalledPlugins();
     const bundledItem = items.find(item => item.name === 'dsh-archive-manager');
     const userItem = items.find(item => item.name === 'dsh-community-tool');
@@ -113,6 +125,14 @@ test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依�
     assert.equal(items.some(item => item.name === 'junk-dir'), false);
     // lodash-es is a dependency, not a plugin — it must never appear
     assert.equal(items.some(item => item.name === 'lodash-es'), false);
+    // dsh 自带层不是用户插件，也不能是 broken 残留
+    assert.equal(items.some(item => item.name === '@deepseek-ai/dsh-experimental-agent-team-profile'), false,
+      'dsh 自带层不列为用户插件');
+    assert.equal(items.some(item => item.name === '@deepseek-ai/dsh-experimental-voice-input-bundle'), false,
+      'dsh 自带层的断链残留不列为 broken');
+    assert.equal(isCoreBundle('@deepseek-ai/dsh-experimental-anything'), true, '前缀即 dsh 自带层');
+    assert.equal(isCoreBundle('@deepseek-ai/dsh-base'), true);
+    assert.equal(isCoreBundle('dsh-community-tool'), false, '普通用户插件不是 dsh 自带层');
     const brokenItem = items.find(item => item.name === 'dsh-memory-plugin');
     assert.equal(brokenItem.broken, true);
     assert.equal(brokenItem.source, 'broken');

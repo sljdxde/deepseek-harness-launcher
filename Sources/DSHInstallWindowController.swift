@@ -177,20 +177,29 @@ final class DSHInstallWindowController: NSWindowController {
         icon.imageScaling = .scaleProportionallyUpOrDown
         effect.addSubview(icon)
 
+        // 这三行是单行定宽标签：文案里带版本号时实测会超出 350pt（例如
+        // 「检测到已有 Deepseek Harness 数据，正在重建运行环境」451pt、
+        // 「…到 v0.3.10-1.4-SNAPSHOT」458pt），labelWithString 默认 byClipping 会
+        // 从字中间硬切、看不出被截断。改成尾部省略号，至少让「还有内容被藏掉」可见。
         statusLabel.frame = NSRect(x: 108, y: 218, width: 350, height: 24)
         statusLabel.font = .systemFont(ofSize: 18, weight: .semibold)
         statusLabel.textColor = .labelColor
+        statusLabel.lineBreakMode = .byTruncatingTail
         effect.addSubview(statusLabel)
 
         commandLabel.frame = NSRect(x: 108, y: 193, width: 350, height: 18)
         commandLabel.font = .systemFont(ofSize: 12, weight: .medium)
         commandLabel.textColor = .secondaryLabelColor
+        commandLabel.lineBreakMode = .byTruncatingTail
         effect.addSubview(commandLabel)
 
         detailLabel.frame = NSRect(x: 108, y: 130, width: 350, height: 54)
         detailLabel.font = .systemFont(ofSize: 13)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.maximumNumberOfLines = 3
+        // 详情行 = 调用方文案 + 「已等待 N 分 N 秒」，行数不可控。只限行数不限省略号时，
+        // 第 4 行起会被静默裁掉（看不出还有内容被藏起来）。
+        detailLabel.lineBreakMode = .byTruncatingTail
         effect.addSubview(detailLabel)
 
         progress.frame = NSRect(x: 108, y: 90, width: 230, height: 20)
@@ -206,6 +215,7 @@ final class DSHInstallWindowController: NSWindowController {
         progressLabel.frame = NSRect(x: 108, y: 62, width: 350, height: 18)
         progressLabel.font = .systemFont(ofSize: 12)
         progressLabel.textColor = .secondaryLabelColor
+        progressLabel.lineBreakMode = .byTruncatingTail
         effect.addSubview(progressLabel)
 
         cancelButton.frame = NSRect(x: 350, y: 83, width: 110, height: 28)
@@ -218,6 +228,7 @@ final class DSHInstallWindowController: NSWindowController {
         note.frame = NSRect(x: 108, y: 18, width: 350, height: 20)
         note.font = .systemFont(ofSize: 12)
         note.textColor = .tertiaryLabelColor
+        note.lineBreakMode = .byTruncatingTail
         effect.addSubview(note)
 
         window.delegate = self

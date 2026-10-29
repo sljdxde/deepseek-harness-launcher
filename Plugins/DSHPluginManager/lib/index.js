@@ -94,6 +94,24 @@ async function listScopedModules(modulesDir) {
 
 /** Official core profile layers that ship with dsh and are not user plugins. */
 const CORE_BUNDLES = new Set(['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-headless']);
+/** dsh 自带层的包名前缀：base/web-app/headless 与 @deepseek-ai/dsh-experimental-* 系列。 */
+const CORE_BUNDLE_PREFIX = '@deepseek-ai/';
+
+/**
+ * 是不是 dsh 自带层（随 dsh 版本分发的 profile bundle，而不是用户插件）。
+ *
+ * 实测：dsh 升级后 /installed 会把 profile manifest `dsh.profile.bundles` 里的
+ * 9 个 `@deepseek-ai/dsh-experimental-*` 标成 `user`，启动器据此弹「插件可能与
+ * 当前 dsh 版本不兼容」，用户看到一堆自己没装过的名字，点「升级/卸载」还必然失败
+ * ——这些层用户既升不了级、也卸不掉。判据按前缀，避免 dsh 以后再加实验 bundle
+ * 时又漏掉；CORE_BUNDLES 保留为显式清单（也是测试与文档的锚点）。
+ * @param {string} name - 包名（`name` 或 `@scope/name`）。
+ * @returns {boolean}
+ */
+export function isCoreBundle(name) {
+  const value = String(name ?? '');
+  return CORE_BUNDLES.has(value) || value.startsWith(CORE_BUNDLE_PREFIX);
+}
 
 /**
  * 启动器随包自带的内置插件。它们不是"用户插件"，但会出现在已安装列表里；
@@ -250,8 +268,9 @@ async function resolveModule(modulesDir, packageName) {
  * List the plugins a user can manage. A plugin is either a user bundle listed
  * in the profile manifest's `dsh.profile.bundles` (dsh's own notion of a
  * plugin layer), one of the launcher's bundled plugins, or a broken leftover
- * of a failed install. Ordinary npm dependencies (d3, lodash, …) that happen
- * to sit in node_modules are NOT plugins and must never be listed.
+ * of a failed install. dsh's own layers (`@deepseek-ai/*`, see isCoreBundle)
+ * and ordinary npm dependencies (d3, lodash, …) that happen to sit in
+ * node_modules are NOT user plugins and must never be listed.
  * @returns {Promise<Array<{name:string,version:string|null,description:string,source:'bundled'|'user'|'broken',installedAt:string|null,broken?:boolean}>>}
  */
 export async function listInstalledPlugins() {
@@ -268,7 +287,7 @@ export async function listInstalledPlugins() {
   const seen = new Set();
   const seenBundles = new Set();
   for (const bundleName of bundles) {
-    if (CORE_BUNDLES.has(bundleName)) continue;
+    if (isCoreBundle(bundleName)) continue;
     seenBundles.add(bundleName);
     const entry = await resolveModule(modulesDir, bundleName);
     if (!entry) continue;
@@ -297,6 +316,9 @@ export async function listInstalledPlugins() {
   // 3) Broken leftovers: dangling symlinks that do not back a real bundle.
   for (const entry of entries) {
     if (!entry.isLink || seen.has(entry.package)) continue;
+    // dsh 自带层的断链残留不列为 broken：用户既升不了也卸不掉，清理只会拆坏 dsh
+    // 自身的层（实测 @deepseek-ai/dsh-experimental-* 在旧接口下会被看成悬空软链）。
+    if (isCoreBundle(entry.package)) continue;
     const meta = await readPackageMeta(entry.path);
     if (!meta?.name) {
       seen.add(entry.package);
@@ -1703,9 +1725,10 @@ export async function cleanupBrokenPlugin(name) {
   if (typeof name !== 'string' || !/^[@a-zA-Z0-9._/-]+$/.test(name) || name.includes('..')) {
     throw new Error('非法的插件名');
   }
-  // 清理坏安装的手段本身不能用来拆掉必需组件：内置插件与 core bundle 一旦被删，
-  // dsh 会直接缺服务，而 UI 的 gating 挡不住直接打接口的调用。
-  if (PROTECTED_PLUGINS.has(name) || CORE_BUNDLES.has(name)) {
+  // 清理坏安装的手段本身不能用来拆掉必需组件：内置插件与 dsh 自带层（@deepseek-ai/*，
+  // 含 base/web-app/headless 与 experimental bundles）一旦被删，dsh 会直接缺服务，
+  // 而 UI 的 gating 挡不住直接打接口的调用。
+  if (PROTECTED_PLUGINS.has(name) || isCoreBundle(name)) {
     throw new Error(`${name} 是启动器/dsh 的必需组件，不能清理`);
   }
   const target = join(profilesWebModules(), name);

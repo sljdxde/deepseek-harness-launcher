@@ -31,6 +31,32 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     private let windowWidth: CGFloat = 520
     private let cardInset: CGFloat = 16
+    /// 内容区与窗口边缘的距离：滚动视图按它定位，窗口高度按它的上下两项补齐。
+    private let contentInsets = NSEdgeInsets(top: 20, left: 24, bottom: 18, right: 24)
+
+    /// 窗口高度预算：内容多高就开多高，但绝不超过屏幕可视区。
+    ///
+    /// 返回 `scrolls == true` 表示内容比预算高、要靠滚动才能看全。这一档以前是
+    /// 「窗口 = 内容高度、不可缩放、没有滚动条」：在小屏（老 Intel Mac 接
+    /// 1024x768，或系统开了「更大字体」）上窗口比屏幕还高，底部的「保存 / 取消」
+    /// 被顶出屏幕外，而窗口又拖不回来——和提示框撑出屏幕是同一类边界问题
+    /// （复盘见 `docs/ui-boundary-audit.md`）。
+    /// - Parameters:
+    ///   - contentHeight: 内容自然高度（含上下内缩）。
+    ///   - visibleHeight: 当前屏幕可视区高度；没有窗口服务器时传 nil（按内容开）。
+    ///   - margin: 给菜单栏/Dock 之外再留的余量，避免窗口贴着屏幕边缘。
+    static func windowHeight(
+        contentHeight: CGFloat,
+        visibleHeight: CGFloat?,
+        margin: CGFloat = 24
+    ) -> (height: CGFloat, scrolls: Bool) {
+        guard let visibleHeight else { return (contentHeight, false) }
+        let budget = max(minimumContentHeight, visibleHeight - margin)
+        return contentHeight <= budget ? (contentHeight, false) : (budget, true)
+    }
+
+    /// 预算下限：再矮的屏幕也要留出「一张卡片 + 按钮」的高度，剩下靠滚动。
+    static let minimumContentHeight: CGFloat = 320
     /// 标签列宽：卡片左内缩 16 + 这一列，就是控件列的起点，三张卡片共用。
     private let labelColumn: CGFloat = 80
 
@@ -125,24 +151,48 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let root = NSView()
         root.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(column)
-        visualEffect.addSubview(root)
         NSLayoutConstraint.activate([
-            root.leadingAnchor.constraint(equalTo: visualEffect.leadingAnchor, constant: 24),
-            root.trailingAnchor.constraint(equalTo: visualEffect.trailingAnchor, constant: -24),
-            root.topAnchor.constraint(equalTo: visualEffect.topAnchor, constant: 20),
-            root.bottomAnchor.constraint(equalTo: visualEffect.bottomAnchor, constant: -18),
             column.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             column.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             column.topAnchor.constraint(equalTo: root.topAnchor),
             column.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            root.widthAnchor.constraint(equalToConstant: windowWidth - 48)
+        ])
+
+        // 整列内容放进滚动视图：窗口高度受屏幕预算约束（见 `windowHeight`），
+        // 内容比屏幕高时用户还能把「保存 / 取消」滚出来。
+        // 覆盖式滚动条 + 透明背景 + 无边框：正常尺寸屏幕上观感与直接铺内容一致。
+        let scroll = NSScrollView()
+        scroll.contentView = TopLeftClipView()
+        scroll.documentView = root
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.borderType = .noBorder
+        scroll.drawsBackground = false
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        visualEffect.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: visualEffect.leadingAnchor, constant: contentInsets.left),
+            scroll.trailingAnchor.constraint(equalTo: visualEffect.trailingAnchor, constant: -contentInsets.right),
+            scroll.topAnchor.constraint(equalTo: visualEffect.topAnchor, constant: contentInsets.top),
+            scroll.bottomAnchor.constraint(equalTo: visualEffect.bottomAnchor, constant: -contentInsets.bottom),
+            // 宽度必须给**绝对值**：以前 root 直接钉在 visualEffect 的四条边上，宽度由
+            // 窗口决定；放进滚动视图后 documentView 与容器只剩纵向关系，若这里改成
+            // `== scroll.widthAnchor` 就是循环引用，AppKit 会按内容收缩出 299pt 宽
+            // （实测），窗口右侧空出一条大空白。
+            root.widthAnchor.constraint(equalToConstant: windowWidth - contentInsets.left - contentInsets.right),
         ])
 
         // 高度由内容决定：窗口不写死高度，卡片也不写死高度，避免「底部一片空白」
         // 和「控件被挤出卡片」两种相反的毛病。
         contentView.layoutSubtreeIfNeeded()
-        let height = ceil(contentView.fittingSize.height)
-        window.setContentSize(NSSize(width: windowWidth, height: height))
+        let naturalHeight = ceil(root.fittingSize.height) + contentInsets.top + contentInsets.bottom
+        let budget = Self.windowHeight(
+            contentHeight: naturalHeight,
+            visibleHeight: AlertBoundary.visibleScreenHeight
+        )
+        window.setContentSize(NSSize(width: windowWidth, height: budget.height))
 
         window.standardWindowButton(.closeButton)?.toolTip = "关闭设置"
         window.standardWindowButton(.miniaturizeButton)?.isEnabled = true
@@ -469,15 +519,28 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         do {
             try LoginItemManager.setEnabled(settings.launchAtLogin)
         } catch {
+            // 系统错误串里会带完整 plist 路径，长度不可控；统一入口负责「长正文转可
+            // 滚动面板 + 挂 Esc」，避免在小屏上把唯一按钮顶出可见区（NSAlert 本身
+            // 不含任何高度上限，详见 docs/ui-boundary-audit.md）。
             let alert = NSAlert()
-            alert.alertStyle = .warning
+            AlertDesign.style(alert, tone: .warning)
             alert.messageText = "开机启动设置失败"
-            alert.informativeText = error.localizedDescription
+            AlertDesign.setBoundedText(error.localizedDescription, on: alert)
             alert.addButton(withTitle: "好")
-            alert.runModal()
+            AlertDesign.run(alert, escapeButtonIndex: 0)
             return
         }
 
         window?.close()
     }
+}
+
+/// 从顶部开始显示的裁剪视图。
+///
+/// `NSClipView` 默认**不**翻转坐标，直接把内容塞进 `NSScrollView` 时初始可视区是
+/// 文档的**底部**（实测 900pt 文档在 200pt 窗口里 `documentVisibleRect` 落在
+/// y=700…900）——设置窗口一打开就停在最下面那张卡片上。翻转后原点在左上，
+/// 和 AppKit 其它滚动内容（NSTextView 等）一致。
+final class TopLeftClipView: NSClipView {
+    override var isFlipped: Bool { true }
 }

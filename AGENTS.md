@@ -78,6 +78,11 @@
   安装的 launcher/dsh**：安装器测试通过 `DHL_STOP_SCOPE=target` 把进程停止
   限定在临时目标目录内，禁止移除该作用域限制（否则每次跑测试都会杀掉用户
   正在使用的菜单栏应用，表现为"自动退出"）。
+- 提示框与窗口边界：所有 `NSAlert` 必须走统一入口——App 侧 `AlertDesign.run` / `runIfIdle`，
+  安装器 `AlertBoundary.run`（两者是同一实现，安装器是独立编译目标链不了 `AlertDesign`）。
+  动态长正文（shell 输出、插件清单、远端版本号）必须过 `setBoundedText`，`scripts/test.sh`
+  会直接拒绝任何 `alert.runModal()`。事故复盘、四层护栏与改 UI 前的自检清单见
+  `docs/ui-boundary-audit.md`。
 - 代码导航：`Sources/main.swift` 是唯一的 App 主类（约 2700 行），按 `// MARK:` 分区
   （生命周期 / 菜单 / dsh 更新 / 启动器自更新 / 运行环境安装 / 会话提醒与角标）。
   定位先 `rg -n '^// MARK' Sources/main.swift`，别从头翻。评审规则见
