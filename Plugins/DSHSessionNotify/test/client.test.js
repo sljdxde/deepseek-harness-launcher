@@ -90,7 +90,11 @@ test('前台页面领取命令后通过 uiWorkspace 打开目标会话并确认'
 
   assert.deepEqual(opened, ['target-session']);
   // commands 轮询携带 clientId：服务端以此维护页面存活心跳。
+  const commandsPoll = requests.find(([url]) => String(url).includes('/commands?'));
   assert.equal(requests.filter(([url]) => String(url).includes('clientId=')).length >= 1, true);
+  // 同时上报标签页可见性：多实例不可达时启动器据此决定「前置浏览器」还是
+  // 「在正确实例里新开标签」（看不见的页面只前置 = 点了没反应）。
+  assert.match(String(commandsPoll[0]), /visible=1/);
   const claim = requests.find(([url]) => String(url).split('?')[0].endsWith('/commands/claim'));
   assert.equal(JSON.parse(claim[1].body).visible, true);
   assert.equal(requests.filter(([url]) => url.endsWith('/commands/ack')).length, 1);
@@ -113,6 +117,9 @@ test('后台 Harness 页面也会打开会话并尝试聚焦自身', async () =>
 
   assert.deepEqual(opened, ['background-session']);
   assert.ok(window.focusCalls >= 1);
+  // 后台标签页必须上报 visible=0，否则启动器会误以为「前置浏览器就够」。
+  const backgroundPoll = requests.find(([url]) => String(url).includes('/commands?'));
+  assert.match(String(backgroundPoll[0]), /visible=0/);
   const claim = requests.find(([url]) => url.endsWith('/commands/claim'));
   assert.equal(JSON.parse(claim[1].body).visible, false);
   ctx.cleanup?.();

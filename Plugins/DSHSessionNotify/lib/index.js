@@ -7,14 +7,17 @@
  *   GET /dsh-session-notify/events?after=<seq>
  *     → { bootId, seq, items: [{ seq, sessionId, title, reason, at, kind }] }
  *       kind: completion（回合收尾）| resumed（用户又发了消息）| viewed（用户正在看）
- *   GET /dsh-session-notify/commands?clientId=<id>&viewing=<sessionId>
+ *   GET /dsh-session-notify/commands?clientId=<id>&viewing=<sessionId>&visible=<0|1>
  *     → the queued open-session commands; the page also reports which session the
  *       user is looking at, which retracts that session's completion reminder
- *       (`viewed`) the moment the view changes
+ *       (`viewed`) the moment the view changes, plus whether its tab is visible
+ *       (the launcher needs that to decide between activating the browser and
+ *       opening a new tab when AppleScript cannot address the right instance)
  *   POST /dsh-session-notify/open { sessionId }
  *     → queues a short-lived browser navigation command
  *   GET /dsh-session-notify/presence
- *     → { active, clients }: does an injected Harness page poll right now?
+ *     → { active, clients, visible }: is an injected Harness page polling right
+ *       now, and is any of its tabs visible?
  *   POST /dsh-session-notify/presence/bye { clientId }
  *     → the page went away (pagehide); drops the client from presence
  *
@@ -65,24 +68,33 @@ export function createPresenceTracker(ttlMs = PRESENCE_TTL_MS) {
   const lastSeen = new Map();
   /** clientId → 用户此刻正在看的会话（没有则不存在这条记录）。 */
   const viewing = new Map();
+  /** 当前标签页可见（`document.visibilityState` 不是 hidden）的页面。 */
+  const visible = new Set();
   function prune(now) {
     for (const [clientId, seen] of [...lastSeen]) {
       if (now - seen > ttlMs) {
         lastSeen.delete(clientId);
         // 页面没了就不再算「正在看」：不然一个关掉/超时的标签页会把它当年看过的
-        // 会话永久钉成已读。
+        // 会话永久钉成已读。可见性同理，过期心跳不能继续冒充「标签页在看」。
         viewing.delete(clientId);
+        visible.delete(clientId);
       }
     }
   }
   return {
-    touch(clientId, now = Date.now()) {
-      if (clientId) lastSeen.set(clientId, now);
+    touch(clientId, now = Date.now(), pageVisible = false) {
+      if (!clientId) return;
+      lastSeen.set(clientId, now);
+      // 每次轮询都刷新可见性：页面切走时会立刻补一次心跳（visibilitychange），
+      // 所以这里的值足够新，启动器据此决定「前置浏览器就够」还是「必须新开标签」。
+      if (pageVisible) visible.add(clientId);
+      else visible.delete(clientId);
     },
     bye(clientId) {
       if (!clientId) return;
       lastSeen.delete(clientId);
       viewing.delete(clientId);
+      visible.delete(clientId);
     },
     /**
      * 记录这个页面当前正在看的会话；空值表示「没有在看任何会话」（页面转后台、
@@ -101,6 +113,11 @@ export function createPresenceTracker(ttlMs = PRESENCE_TTL_MS) {
     viewingNow(now = Date.now()) {
       prune(now);
       return new Set(viewing.values());
+    },
+    /** 是否有任意存活页面的标签页可见（决定不可达时要不要新开标签）。 */
+    anyVisible(now = Date.now()) {
+      prune(now);
+      return visible.size > 0;
     },
     active(now = Date.now()) {
       prune(now);
@@ -375,7 +392,9 @@ export function apply(ctx) {
           try {
             const params = new URL(req.url, 'http://127.0.0.1').searchParams;
             const clientId = params.get('clientId');
-            if (clientId) presence.touch(clientId);
+            // `visible=1`：该标签页此刻可见（启动器在 AppleScript 跨实例选不中
+            // 标签时，据此决定「前置浏览器就够」还是「必须新开一个标签」）。
+            if (clientId) presence.touch(clientId, Date.now(), params.get('visible') === '1');
             // 顺手回报「用户正在看哪个会话」（页面可见且有焦点时才报，空值＝没在看）。
             // 只在**观看目标变化**时记一条 viewed：轮询是 750ms 一次，每次都记会把
             // 缓冲区冲爆，真正完成提醒就被挤出去了。
@@ -435,7 +454,7 @@ export function apply(ctx) {
         path: '/dsh-session-notify/presence',
         handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
-          json(res, { active: presence.active(), clients: presence.clients() });
+          json(res, { active: presence.active(), clients: presence.clients(), visible: presence.anyVisible() });
         },
       });
       const byeDispose = host.webServer.register({

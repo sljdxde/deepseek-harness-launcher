@@ -682,7 +682,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             let clientPIDs = Set(self.lsofConnections(toPort: port).map(\.pid))
             let table = self.processTable()
-            let pagePresence = self.pagePresence(port: port)
+            let presenceBody = self.presenceBody(port: port)
+            let pagePresence = BrowserConnectionSupport.presenceActive(presenceBody)
+            let pageVisible = BrowserConnectionSupport.presenceVisible(presenceBody)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 guard self.state == .running, self.selectedPort == port else {
@@ -717,7 +719,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     } else {
                         self.deliverPageWithoutTabAutomation(
                             url, to: browser, port: port,
-                            restartTakeover: plan.closesOldTab, completion: completion
+                            restartTakeover: plan.closesOldTab,
+                            pageVisible: pageVisible,
+                            completion: completion
                         )
                     }
                     return
@@ -769,12 +773,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appendLogString("捕获 Web 认证入口 URL\n")
     }
 
-    /// 查询注入客户端的页面心跳。nil = 接口不存在（外部 Harness / 旧插件），
-    /// 此时保留「有连接就前置浏览器」的降级行为。
-    private func pagePresence(port: Int) -> Bool? {
+    /// 查询注入客户端的页面心跳原始响应。nil = 接口不存在（外部 Harness /
+    /// 旧插件），此时保留「有连接就前置浏览器」的降级行为。响应同时携带
+    /// `active`（有没有页面在轮询）与 `visible`（页面是不是当前可见标签）。
+    private func presenceBody(port: Int) -> String? {
         guard let url = URL(string: "http://127.0.0.1:\(port)/dsh-session-notify/presence") else { return nil }
-        guard let body = ServiceProbe.body(at: url, timeout: 1) else { return nil }
-        return BrowserConnectionSupport.presenceActive(body)
+        return ServiceProbe.body(at: url, timeout: 1)
     }
 
     /// 检测到已有 Harness 页面时，先用 Apple Events 选中匹配的标签页，
@@ -839,32 +843,62 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// 多实例且 AppleScript 只会落到**别的**实例时的打开路径。
     ///
-    /// 两个事实决定这里不能复用 `deliverPage`：焦点脚本会在那个实例里选中
-    /// 它自己的 Harness 标签页（旧进程的 401 页/自动化浏览器恢复出来的页面），
-    /// 把用户带到错误窗口；关闭旧标签同样会作用到错误实例上。所以这次完全不碰
-    /// 标签页，只做两件真正需要的事：前置**连着 Harness 的那个**浏览器实例，
-    /// 并把打开会话的命令投递给页面（由 completion 完成）。
-    /// 重启接管时旧标签无法确认关闭，直接开新页面（多一张标签，但至少可见）。
+    /// 事实决定这里不能复用 `deliverPage`：焦点脚本会在那个实例里选中它自己的
+    /// Harness 标签页（旧进程的 401 页/自动化浏览器恢复出来的页面），把用户带到
+    /// 错误窗口；关闭旧标签同样会作用到错误实例上。所以这次完全不碰标签页，改为
+    /// **按 pid** 把 URL 交给真正连着 Harness 的那个实例（`BrowserAutomationSupport.openURL`）：
+    /// - Harness 页就是可见标签 → 只前置浏览器，会话命令由 completion 投递；
+    /// - 用户切到了别的标签（Harness 页看不见）→ 前置什么也不会发生，必须在该
+    ///   实例里新开一个 Harness 标签，才能把会话送到用户眼前（代价是多一张标签）；
+    /// - 重启接管时旧标签无法确认关闭，直接新开页面（同样按 pid 定向，不再靠
+    ///   「默认实例」碰运气）。
     private func deliverPageWithoutTabAutomation(
         _ url: URL,
         to browser: NSRunningApplication,
         port: Int,
         restartTakeover: Bool = false,
+        pageVisible: Bool? = nil,
         completion: @escaping () -> Void = {}
     ) {
         let info = browserInfo(for: browser)
         if restartTakeover {
-            appendLogString(SessionJumpSupport.unreachableCloseLog(browser: info) + "\n")
-            openURLInBrowserApp(url, browser: browser, port: port, completion: completion)
+            let opened = BrowserAutomationSupport.openURL(url, inProcess: browser.processIdentifier)
+            appendLogString(SessionJumpSupport.unreachableCloseLog(browser: info, newTabOpened: opened) + "\n")
+            if opened {
+                _ = browser.activate(options: [.activateIgnoringOtherApps])
+                finishBrowserOpen(port: port, error: nil, completion: completion)
+            } else {
+                openURLInBrowserApp(url, browser: browser, port: port, completion: completion)
+            }
             return
         }
-        // 先解释结果（可单测），再落地：前置真正连接 Harness 的实例。
-        let plan = SessionJumpSupport.unreachableInstancePlan(browser: info)
-        if plan.activateBrowser {
-            _ = browser.activate(options: [.activateIgnoringOtherApps])
+        switch SessionJumpSupport.unreachablePresentation(pageVisible: pageVisible) {
+        case .activateOnly:
+            let plan = SessionJumpSupport.unreachableInstancePlan(browser: info)
+            if plan.activateBrowser {
+                _ = browser.activate(options: [.activateIgnoringOtherApps])
+            }
+            appendLogString(SessionJumpSupport.focusLog(plan, browser: info, port: port) + "\n")
+        case .openNewTabInConnectedInstance:
+            // 入口 URL 是进程生命周期内有效的认证入口（token → cookie 兑换），
+            // 任何时刻交给浏览器都能完成登录，重启接管后 cookie 失效也适用。
+            let opened = BrowserAutomationSupport.openURL(url, inProcess: browser.processIdentifier)
+            let plan = opened
+                ? SessionJumpSupport.unreachableNewTabPlan(browser: info)
+                : SessionJumpSupport.unreachableNewTabFailedPlan(browser: info)
+            if plan.activateBrowser {
+                _ = browser.activate(options: [.activateIgnoringOtherApps])
+            }
+            appendLogString(SessionJumpSupport.focusLog(plan, browser: info, port: port) + "\n")
+            guard opened else { break }
+            // 新标签要几百毫秒才加载完、开始领命令。等它起来再投递「打开会话」，
+            // 否则命令可能被原来那个**隐藏的** Harness 标签先领走（会话切在看不见的
+            // 标签里，用户还是什么都没看到）；可见标签领取有 2 秒优先窗口。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                self?.finishBrowserOpen(port: port, error: nil, completion: completion)
+            }
+            return
         }
-        let line = SessionJumpSupport.focusLog(plan, browser: info, port: port)
-        if !line.isEmpty { appendLogString(line + "\n") }
         finishBrowserOpen(port: port, error: nil, completion: completion)
     }
 

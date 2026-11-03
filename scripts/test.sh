@@ -518,6 +518,13 @@ rg -Fq 'requestSessionOpen' "$ROOT/Sources/main.swift"
 rg -Fq 'appleScriptReachesConnectedInstance' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
 rg -Fq 'unreachableInstancePlan' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
 rg -Fq 'runningInstances' "$ROOT/Sources/BrowserAutomationSupport.swift" "$ROOT/Sources/main.swift"
+# 不可达时「只前置 vs 新开标签」由页面可见性决定，且必须按 pid 定向新开：
+# 只前置对「用户切到了别的标签」无效（点了没反应），NSWorkspace/open 又可能
+# 落到最近启动的另一个实例。判定在 SessionJumpSupport，执行在 BrowserAutomationSupport。
+rg -Fq 'unreachablePresentation' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
+rg -Fq 'presenceVisible' "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/main.swift"
+rg -Fq 'openURL' "$ROOT/Sources/BrowserAutomationSupport.swift" "$ROOT/Sources/main.swift"
+rg -Fq 'newTabOpened' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
 # 反例守卫：标签定位失败的文案与分支只许在 SessionJumpSupport 里定义，回退到
 # main.swift 的 switch 就是把可测逻辑又塞回不可测的地方。
 if rg -q '未找到匹配标签页' "$ROOT/Sources/main.swift"; then

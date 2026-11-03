@@ -44,6 +44,19 @@ enum BrowserConnectionSupport {
         return active
     }
 
+    /// Harness 标签页本身是否可见（注入客户端上报 `document.visibilityState`）。
+    ///
+    /// 多实例且 AppleScript 寻址不到真正连接的实例时，启动器只能「前置浏览器」
+    /// 或「在连接的实例里开一个新标签」二选一。页面可见（它就是当前标签）时
+    /// 前置即可；用户切到了别的标签时，前置什么也不会发生——必须新开一个标签
+    /// 才能把会话送到他眼前。旧插件不返回该字段 → nil（调用方按未知保守处理）。
+    static func presenceVisible(_ body: String?) -> Bool? {
+        guard let body, let data = body.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let visible = object["visible"] as? Bool else { return nil }
+        return visible
+    }
+
     /// Drop duplicate opens only. An in-flight open is skipped for every intent;
     /// the 2s cool-down applies to the automatic open alone so that repeated
     /// menu clicks are never swallowed.

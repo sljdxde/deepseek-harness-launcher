@@ -52,6 +52,15 @@ struct BrowserConnectionTests {
         precondition(BrowserConnectionSupport.presenceActive("{}") == nil)
         precondition(BrowserConnectionSupport.presenceActive("not json") == nil)
         precondition(BrowserConnectionSupport.presenceActive(nil) == nil)
+        // 标签页可见性：不可达时「前置浏览器 vs 新开标签」由它决定，未知必须
+        // 返回 nil（调用方保守按不可见处理），不能把缺失字段当成 true。
+        precondition(BrowserConnectionSupport.presenceVisible(
+            #"{"active":true,"clients":2,"visible":true}"#) == true)
+        precondition(BrowserConnectionSupport.presenceVisible(
+            #"{"active":true,"clients":2,"visible":false}"#) == false)
+        precondition(BrowserConnectionSupport.presenceVisible(#"{"active":true,"clients":2}"#) == nil)
+        precondition(BrowserConnectionSupport.presenceVisible("not json") == nil)
+        precondition(BrowserConnectionSupport.presenceVisible(nil) == nil)
         // 标签匹配必须按 origin（scheme://host:port）判定，而不是整串 URL：
         // 入口 URL 带 `?token=…`、客户端可能留 `#` 片段或尾斜杠，整串比较会
         // 一个标签都匹配不上（实测日志里 9 次点击 9 次「未找到匹配标签页」）。

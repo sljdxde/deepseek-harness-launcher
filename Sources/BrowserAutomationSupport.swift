@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Darwin
 import Foundation
 
@@ -60,6 +61,37 @@ enum BrowserAutomationSupport {
         let size = MemoryLayout<proc_bsdinfo>.size
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(size)) == size else { return nil }
         return TimeInterval(info.pbi_start_tvsec) + TimeInterval(info.pbi_start_tvusec) / 1_000_000
+    }
+
+    /// 把 URL 作为新标签页交给**指定 pid** 的浏览器实例。
+    ///
+    /// 用 `GURL`（`kInternetEventClass` + `kAEGetURL`）事件并显式指定目标进程
+    /// 地址，绕开 macOS「同 bundle 的 AppleScript 只发给最近启动实例」的限制：
+    /// 自动化浏览器（`chrome-devtools-mcp` / `agent-browser`）常驻时，用户面前
+    /// 的那个实例收不到 AppleScript，但它能收到按 pid 寻址的打开事件（实测
+    /// 2026-11-03：事件只落在目标实例，新标签被前置）。
+    ///
+    /// 代价是只能**新开标签**、不能复用/选中已有标签——所以调用方要先用
+    /// `SessionJumpSupport.unreachablePresentation` 判断是否真的需要新开。
+    /// 仍走与 AppleScript 相同的「自动化」TCC 授权（启动器已有）。
+    /// - Returns: 事件是否成功投递（浏览器拒绝/权限被收回时为 false）。
+    static func openURL(_ url: URL, inProcess pid: pid_t) -> Bool {
+        guard pid > 0 else { return false }
+        let target = NSAppleEventDescriptor(processIdentifier: pid)
+        let event = NSAppleEventDescriptor(
+            eventClass: AEEventClass(kInternetEventClass),
+            eventID: AEEventID(kAEGetURL),
+            targetDescriptor: target,
+            returnID: AEReturnID(kAutoGenerateReturnID),
+            transactionID: AETransactionID(kAnyTransactionID)
+        )
+        event.setParam(NSAppleEventDescriptor(string: url.absoluteString), forKeyword: AEKeyword(keyDirectObject))
+        do {
+            try event.sendEvent(options: [.noReply], timeout: 5)
+            return true
+        } catch {
+            return false
+        }
     }
 
     static func focusHarnessTab(bundleIdentifier: String?, targetURL: URL) -> BrowserTabFocusResult {

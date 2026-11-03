@@ -292,6 +292,29 @@ test('presence 追踪器：touch 生效、bye 即时离场、超时自动过期'
   assert.ok(PRESENCE_TTL_MS > 60_000);
 });
 
+test('presence 追踪器记录标签页可见性：切走立刻更新、离场/超时清掉', () => {
+  // 可见性只在「明确上报 visible=1」时为真：这是启动器「前置浏览器 vs 新开
+  // 标签」二选一的依据，宁可不新开也不能把「看不见」误判成「看得见」。
+  const tracker = createPresenceTracker(90_000);
+  assert.equal(tracker.anyVisible(0), false);
+
+  tracker.touch('page-a', 0, true);
+  assert.equal(tracker.anyVisible(0), true);
+  // 同一个页面切到别的标签（或新一次轮询没带 visible）：立即转为不可见。
+  tracker.touch('page-a', 1, false);
+  assert.equal(tracker.anyVisible(1), false);
+  // 两个页面只要有一个可见就算可见。
+  tracker.touch('page-a', 2, true);
+  tracker.touch('page-b', 2, false);
+  assert.equal(tracker.anyVisible(2), true);
+
+  // 离场与心跳超时都不能留下「可见」残留。
+  tracker.bye('page-a');
+  assert.equal(tracker.anyVisible(2), false);
+  tracker.touch('page-b', 2, true);
+  assert.equal(tracker.anyVisible(91_000), false);
+});
+
 test('commands 轮询即心跳，presence/bye 即离场（启动器判定依赖）', async () => {
   const harness = makeHarness();
   const { call } = harness;
@@ -301,12 +324,18 @@ test('commands 轮询即心跳，presence/bye 即离场（启动器判定依赖�
 
   assert.deepEqual((await presence()).active, false);
 
-  // 页面轮询 commands 时带上 clientId → 服务端记为在线。
+  // 页面轮询 commands 时带上 clientId → 服务端记为在线；不带 visible 时按不可见。
   await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1' });
-  assert.deepEqual(await presence(), { active: true, clients: 1 });
+  assert.deepEqual(await presence(), { active: true, clients: 1, visible: false });
+
+  // visible=1 才让启动器知道「Harness 标签就在眼前」。
+  await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-1&visible=1' });
+  assert.deepEqual((await presence()).visible, true);
 
   await call('/dsh-session-notify/commands', { url: '/dsh-session-notify/commands?clientId=page-2' });
   assert.deepEqual((await presence()).clients, 2);
+  // page-1 仍可见（它的心跳还在 TTL 内）。
+  assert.deepEqual((await presence()).visible, true);
 
   // 页面关闭触发 pagehide → sendBeacon bye → 立即离场。
   const bye = await call('/dsh-session-notify/presence/bye', {
@@ -315,6 +344,8 @@ test('commands 轮询即心跳，presence/bye 即离场（启动器判定依赖�
   });
   assert.deepEqual(bye.json(), { ok: true });
   assert.deepEqual((await presence()).clients, 1);
+  // 唯一可见页面离场后不能再报「可见」。
+  assert.deepEqual((await presence()).visible, false);
 
   await call('/dsh-session-notify/presence/bye', { method: 'POST', body: JSON.stringify({ clientId: 'page-2' }) });
   assert.deepEqual((await presence()).active, false);

@@ -125,8 +125,14 @@ enum SessionJumpSupport {
         case noHarnessTab(tabs: [String])
         case wrongBrowserInstance(tabs: [String])
         /// 多实例且 AppleScript 只会落到别的实例：标签自动化被跳过，只前置了
-        /// 真正连着 Harness 的浏览器（连标签页内容都没读，避免误选错误窗口）。
+        /// 真正连着 Harness 的浏览器（Harness 页本来就是可见标签，前置即可）。
         case unreachableInstance(instanceCount: Int)
+        /// 同上，但 Harness 页不在眼前（用户切到了别的标签）：已在真正连接的
+        /// 实例里新开一个 Harness 标签，把会话送到他面前（旧标签保留）。
+        case unreachableInstanceNewTab(instanceCount: Int)
+        /// 同上，但「新开标签」的 Apple Event 没投递成功：退回只前置浏览器，
+        /// 日志必须说清楚，否则又会变成「点了没反应还不留痕」。
+        case unreachableInstanceNewTabFailed(instanceCount: Int)
         case unsupported
         case failed(String)
     }
@@ -176,6 +182,39 @@ enum SessionJumpSupport {
         )
     }
 
+    /// 不可达 + Harness 页不在眼前：在真正连接的实例里新开标签（由 main 执行
+    /// Apple Event 投递），置位后会话命令照常交给页面。
+    static func unreachableNewTabPlan(browser: BrowserInfo) -> FocusPlan {
+        FocusPlan(
+            diagnosis: .unreachableInstanceNewTab(instanceCount: browser.instanceCount),
+            activateBrowser: true
+        )
+    }
+
+    /// 不可达 + 新开标签的 Apple Event 投递失败：退回只前置浏览器。
+    static func unreachableNewTabFailedPlan(browser: BrowserInfo) -> FocusPlan {
+        FocusPlan(
+            diagnosis: .unreachableInstanceNewTabFailed(instanceCount: browser.instanceCount),
+            activateBrowser: true
+        )
+    }
+
+    /// 不可达时，这一下点击怎么把页面送到用户眼前。
+    enum UnreachablePresentation: Equatable {
+        /// Harness 页就是当前可见标签：前置浏览器即可，不需要新开标签。
+        case activateOnly
+        /// Harness 页在别的标签/窗口里：AppleScript 选不中它，只能在这个实例里
+        /// 新开一个 Harness 标签（同一 profile 的认证 cookie 有效）。
+        case openNewTabInConnectedInstance
+    }
+
+    /// 只有**明确看到**「Harness 页可见」时才认为前置就够；不可见或未知
+    /// （旧插件不上报 `visible`）都新开标签——用户点完成提醒的诉求是「看到
+    /// 那个会话」，宁肯多开一张标签，也不要不响应。
+    static func unreachablePresentation(pageVisible: Bool?) -> UnreachablePresentation {
+        pageVisible == true ? .activateOnly : .openNewTabInConnectedInstance
+    }
+
     // MARK: - 日志文案
 
     /// 选中流程的结果日志（含成功路径与全部降级路径）；main.swift 只 append。
@@ -207,16 +246,30 @@ enum SessionJumpSupport {
                 + "AppleScript 只会发给最近启动的那个（不是连着 Harness 的这个）；"
                 + "未改动另一个实例的标签页，已前置真正连接 Harness 的浏览器并投递会话。"
                 + "退出那个后台/自动化浏览器实例后即可恢复精确选中标签页"
+        case .unreachableInstanceNewTab(let instanceCount):
+            return "检测到 \(browser.name) 已连接 Harness 端口 \(port)，但同 bundle 有 \(instanceCount) 个实例在运行，"
+                + "AppleScript 只会发给最近启动的那个（不是连着 Harness 的这个），选中不了你正在看的 Harness 标签；"
+                + "已在真正连接 Harness 的浏览器里新开一个 Harness 标签并切到目标会话（原标签保留）。"
+                + "退出那个后台/自动化浏览器实例后即可恢复在原标签里直接切换"
+        case .unreachableInstanceNewTabFailed(let instanceCount):
+            return "检测到 \(browser.name) 已连接 Harness 端口 \(port)，但同 bundle 有 \(instanceCount) 个实例在运行，"
+                + "AppleScript 只会发给最近启动的那个（不是连着 Harness 的这个）；"
+                + "新开 Harness 标签的事件投递失败（浏览器拒绝或自动化权限被收回），已前置浏览器并照常切换会话"
         case .failed(let message):
             return "定位 \(browser.name) Harness 标签页失败（\(message)）；已前置浏览器"
         }
     }
 
     /// 「AppleScript 寻址不到已连接实例」时重启接管的收尾日志：旧标签无法
-    /// 确认关闭（那条 AppleScript 只会落到另一个实例上），直接打开新页面。
-    static func unreachableCloseLog(browser: BrowserInfo) -> String {
-        "dsh 已重启，但同 bundle 有 \(browser.instanceCount) 个实例在运行，"
-            + "AppleScript 只会发给最近启动的那个（不是连着 Harness 的这个），无法确认关闭旧标签；直接打开新页面（旧标签可手动关闭）"
+    /// 确认关闭（那条 AppleScript 只会落到另一个实例上），改为在真正连接的
+    /// 实例里新开页面；`newTabOpened` 记录 Apple Event 是否投递成功。
+    static func unreachableCloseLog(browser: BrowserInfo, newTabOpened: Bool) -> String {
+        let facts = "dsh 已重启，但同 bundle 有 \(browser.instanceCount) 个实例在运行，"
+            + "AppleScript 只会发给最近启动的那个（不是连着 Harness 的这个），无法确认关闭旧标签；"
+        guard newTabOpened else {
+            return facts + "新页事件投递失败，改用系统默认方式打开（可能落到另一个实例），旧标签可手动关闭"
+        }
+        return facts + "已在真正连接 Harness 的浏览器里新开页面（旧标签可手动关闭）"
     }
 
     /// 重启接管的「关旧标签页」结果日志；不需要记日志时返回空串。
