@@ -9,8 +9,11 @@ import Foundation
 // 这里逐条锁死：
 //   1. 点击处置：直接跳 / 先启动再跳 / 等运行环境装完再跳；
 //   2. 页面阶段：重开页面、重启接管先关旧标签、还是精确选中已有标签；
-//   3. 标签选中失败：单实例 vs 多实例的诊断不同、降级动作不同、日志必须留证据；
-//   4. 不变式：任何分支都必须投递「打开会话」命令 + 必须收尾（否则后续点击被吞）。
+//   3. 多实例寻址判定：AppleScript 只发给最近启动的实例，只有连着 Harness 的
+//      实例恰好是最新启动的才允许发标签页脚本（另一个实例里也可能有 Harness
+//      标签页，选中它＝把用户带去错误窗口）；
+//   4. 标签选中失败：单实例 vs 多实例的诊断不同、降级动作不同、日志必须留证据；
+//   5. 不变式：任何分支都必须投递「打开会话」命令 + 必须收尾（否则后续点击被吞）。
 //
 // 编译：swiftc scripts/test-session-jump.swift Sources/SessionJumpSupport.swift \
 //        Sources/BrowserConnectionSupport.swift Sources/BrowserAutomationSupport.swift \
@@ -94,7 +97,11 @@ struct SessionJumpChecks {
 
         // 多实例：AppleScript 只发给最近启动的实例，页面在真正连接的那个里。
         // 这是本机实测的「点了没反应」——诊断必须区分开，别让用户以为插件坏了。
-        let multiMissing = SessionJumpSupport.focusPlan(result: .missing(tabs: evidenceTabs), browser: chromeMulti)
+        // 只有「已确认脚本寻址不到连着 Harness 的实例」时才允许把未命中解释成
+        // 「页面在另一个实例里」；可达时的未命中就是真的没有 Harness 标签页。
+        let multiMissing = SessionJumpSupport.focusPlan(
+            result: .missing(tabs: evidenceTabs), browser: chromeMulti, addressedConnectedInstance: false
+        )
         checkEqual(multiMissing.diagnosis, .wrongBrowserInstance(tabs: evidenceTabs), "多实例未命中诊断")
         check(multiMissing.activateBrowser, "多实例未命中时仍要前置已连接实例")
         let multiLog = SessionJumpSupport.focusLog(multiMissing, browser: chromeMulti, port: 3080)
@@ -103,6 +110,16 @@ struct SessionJumpChecks {
         check(multiLog.contains("已前置浏览器"), "多实例日志应说明已前置浏览器：\(multiLog)")
         check(multiLog.contains("退出"), "多实例日志应给出可执行建议（退出后台/自动化浏览器）：\(multiLog)")
         check(multiLog.contains("play.html"), "多实例日志同样要带标签证据：\(multiLog)")
+
+        // 已确认寻址到连着 Harness 的实例：多实例下未命中就是「页面真的没开」，
+        // 不能再甩锅给另一个实例（那会让用户去关一个无关的浏览器）。
+        let multiReachableMissing = SessionJumpSupport.focusPlan(
+            result: .missing(tabs: evidenceTabs), browser: chromeMulti, addressedConnectedInstance: true
+        )
+        checkEqual(multiReachableMissing.diagnosis, .noHarnessTab(tabs: evidenceTabs),
+                   "寻址可达时多实例未命中应诊断为没有标签页")
+        let multiReachableLog = SessionJumpSupport.focusLog(multiReachableMissing, browser: chromeMulti, port: 3080)
+        check(!multiReachableLog.contains("另一个"), "寻址可达时不该甩锅给另一个实例：\(multiReachableLog)")
 
         let unsupported = SessionJumpSupport.focusPlan(result: .unsupported, browser: safari)
         checkEqual(unsupported.diagnosis, .unsupported, "不支持自动化的诊断")
@@ -120,9 +137,64 @@ struct SessionJumpChecks {
         checkEqual(closed.diagnosis, .closed, "已关闭标签的诊断")
         check(!closed.activateBrowser, "已关闭标签不需要再前置")
 
+        // MARK: - 3b. 多实例寻址判定（什么时候能安全地发 AppleScript）
+        // 内核启动时刻：数字越大＝启动越晚＝越可能收到 AppleScript。
+        func instance(_ pid: Int32, _ startedAt: TimeInterval?) -> SessionJumpSupport.BrowserInstance {
+            SessionJumpSupport.BrowserInstance(pid: pid, startedAt: startedAt)
+        }
+        // 单实例永远是可达的（macOS 别无选择）。
+        check(SessionJumpSupport.appleScriptReachesConnectedInstance(
+            connectedPID: 100, instances: [instance(100, 10)]
+        ), "单实例必须判可达")
+        // 连着 Harness 的恰好是最新启动的实例：AppleScript 会落在它身上。
+        check(SessionJumpSupport.appleScriptReachesConnectedInstance(
+            connectedPID: 200, instances: [instance(100, 10), instance(200, 20)]
+        ), "已连接实例最新启动时应判可达")
+        // 另一个实例后启动（自动化浏览器常驻/恢复出旧页面）：脚本会落到它身上，
+        // 选中它自己的 Harness 标签页＝把用户带去错误窗口。
+        check(!SessionJumpSupport.appleScriptReachesConnectedInstance(
+            connectedPID: 100, instances: [instance(100, 10), instance(200, 20)]
+        ), "别的实例更新时应判不可达")
+        check(!SessionJumpSupport.appleScriptReachesConnectedInstance(
+            connectedPID: 100, instances: [instance(100, 10), instance(200, 20), instance(300, 30)]
+        ), "三实例中已连接的不是最新时也应判不可达")
+        // 同秒启动：先后不确定，保守判不可达（宁可只前置浏览器，也不跳错窗口）。
+        check(!SessionJumpSupport.appleScriptReachesConnectedInstance(
+            connectedPID: 100, instances: [instance(100, 10), instance(200, 10)]
+        ), "启动时刻相同应判不可达（无法确定寻址目标）")
+        // 启动时刻读不到：无法证明会落到正确实例，同样按不可达处理。
+        check(!SessionJumpSupport.appleScriptReachesConnectedInstance(
+            connectedPID: 100, instances: [instance(100, nil), instance(200, 20)]
+        ), "已连接实例启动时刻未知应判不可达")
+        check(!SessionJumpSupport.appleScriptReachesConnectedInstance(
+            connectedPID: 100, instances: [instance(100, 10), instance(200, nil)]
+        ), "别的实例启动时刻未知应判不可达")
+        // 连着 Harness 的实例不在列表里（列表陈旧 / 进程刚退出）：不能冒险。
+        check(!SessionJumpSupport.appleScriptReachesConnectedInstance(
+            connectedPID: 999, instances: [instance(100, 10), instance(200, 20)]
+        ), "找不到已连接实例时应判不可达")
+
+        // 不可达时的计划：只前置已连接浏览器，不选中/关闭任何标签页，但会话命令
+        // 仍必须投递（切会话不能因为「看不见标签」一起丢掉）。
+        let unreachable = SessionJumpSupport.unreachableInstancePlan(browser: chromeMulti)
+        checkEqual(unreachable.diagnosis, .unreachableInstance(instanceCount: 2), "不可达实例诊断")
+        check(unreachable.activateBrowser, "不可达时应前置真正连着 Harness 的浏览器")
+        check(unreachable.sendsSessionOpen, "不可达时仍必须投递打开会话命令")
+        check(unreachable.completes, "不可达时也必须收尾，否则下一次点击被吞")
+        let unreachableLog = SessionJumpSupport.focusLog(unreachable, browser: chromeMulti, port: 3080)
+        check(unreachableLog.contains("2 个实例"), "不可达日志应写明实例数：\(unreachableLog)")
+        check(unreachableLog.contains("未改动另一个实例的标签页"), "不可达日志应说明没有碰另一个实例：\(unreachableLog)")
+        check(unreachableLog.contains("已前置真正连接 Harness 的浏览器"), "不可达日志应说明前置了正确实例：\(unreachableLog)")
+        check(unreachableLog.contains("退出"), "不可达日志应给出恢复精确选中的建议：\(unreachableLog)")
+        check(!unreachableLog.contains("已定位并前置 Harness 标签页"), "不可达时绝不能谎报标签已选中：\(unreachableLog)")
+        let unreachableClose = SessionJumpSupport.unreachableCloseLog(browser: chromeMulti)
+        check(unreachableClose.contains("2 个实例"), "不可达的关旧标签日志应写明实例数：\(unreachableClose)")
+        check(unreachableClose.contains("无法确认关闭旧标签") && unreachableClose.contains("直接打开新页面"),
+              "不可达时重启接管应如实说明跳过关闭并直接开新页：\(unreachableClose)")
+
         // 不变式：**任何**结果都必须投递「打开会话」并收尾流程。
         // 否则就会出现「浏览器起来了但还是旧会话」或下一次点击被 inFlight 吞掉。
-        let allPlans = [focused, singleMissing, multiMissing, unsupported, failed, closed]
+        let allPlans = [focused, singleMissing, multiMissing, unsupported, failed, closed, unreachable]
         for (index, plan) in allPlans.enumerated() {
             check(plan.sendsSessionOpen, "焦点计划[\(index)]：任何分支都必须投递打开会话命令")
             check(plan.completes, "焦点计划[\(index)]：任何分支都必须收尾（清 inFlight / 跑 completion）")
@@ -152,7 +224,8 @@ struct SessionJumpChecks {
             browser: SessionJumpSupport.BrowserInfo?,
             restartTakeover: Bool,
             focusResult: BrowserTabFocusResult,
-            sessionId: String?
+            sessionId: String?,
+            reachable: Bool = true
         ) -> [String] {
             var steps: [String] = []
             switch disposition {
@@ -161,14 +234,31 @@ struct SessionJumpChecks {
             case .waitForInstall: steps.append("waitInstall"); steps.append("page")
             }
             let plan = SessionJumpSupport.pagePlan(presenceActive: presence, browser: browser, restartTakeover: restartTakeover)
-            if plan.closesOldTab { steps.append("closeTab") }
+            if plan.closesOldTab {
+                // 多实例不可达时关旧标签的 AppleScript 会作用到别的实例：跳过。
+                if reachable {
+                    steps.append("closeTab")
+                } else {
+                    steps.append("closeSkipped")
+                    steps.append("log")
+                }
+            }
             if plan.reopensPage {
                 steps.append("openPage")
             } else if plan.focusesTab {
-                steps.append("focusTab")
-                let focusPlan = SessionJumpSupport.focusPlan(result: focusResult, browser: browser!)
-                if focusPlan.activateBrowser { steps.append("activateBrowser") }
-                steps.append("log")
+                if reachable {
+                    steps.append("focusTab")
+                    let focusPlan = SessionJumpSupport.focusPlan(
+                        result: focusResult, browser: browser!, addressedConnectedInstance: true
+                    )
+                    if focusPlan.activateBrowser { steps.append("activateBrowser") }
+                    steps.append("log")
+                } else {
+                    // 不可达：一次标签页脚本都不发，只前置真正连着 Harness 的实例。
+                    let focusPlan = SessionJumpSupport.unreachableInstancePlan(browser: browser!)
+                    if focusPlan.activateBrowser { steps.append("activateBrowser") }
+                    steps.append("log")
+                }
             }
             if sessionId != nil { steps.append("sendSessionOpen") }
             return steps
@@ -183,16 +273,34 @@ struct SessionJumpChecks {
         check(!happy.contains("openPage"), "已打开页面时不能再开新标签")
         check(!happy.contains("activateBrowser"), "选中成功不需要降级前置")
 
-        // 本机现状：多实例 + 页面在另一个实例里 → 选中失败，降级前置，但会话必须照切。
+        // 本机现状：多实例且 AppleScript 只会落到另一个实例 → 一次标签页脚本都
+        // 不发，只前置真正连着 Harness 的实例，但会话必须照切。
         let multi = simulate(
             disposition: .jumpInPlace, presence: nil, browser: chromeMulti, restartTakeover: false,
-            focusResult: .missing(tabs: evidenceTabs), sessionId: "session-2"
+            focusResult: .missing(tabs: evidenceTabs), sessionId: "session-2", reachable: false
         )
-        checkEqual(multi, ["page", "focusTab", "activateBrowser", "log", "sendSessionOpen"], "多实例未命中的顺序")
+        checkEqual(multi, ["page", "activateBrowser", "log", "sendSessionOpen"], "多实例不可达时的顺序")
+        check(!multi.contains("focusTab"), "多实例不可达时必须跳过标签选中（那会跳到错误窗口）")
         let activateIndex = multi.firstIndex(of: "activateBrowser")!
         let logIndex = multi.firstIndex(of: "log")!
         let openIndex = multi.firstIndex(of: "sendSessionOpen")!
-        check(activateIndex < logIndex && logIndex < openIndex, "未命中时：先前置、再记日志、最后也必须投递会话")
+        check(activateIndex < logIndex && logIndex < openIndex, "不可达时：先前置、再记日志、最后也必须投递会话")
+
+        // 多实例但连着 Harness 的实例就是最新启动的：AppleScript 安全，仍走精确选中。
+        let multiReachable = simulate(
+            disposition: .jumpInPlace, presence: true, browser: chromeMulti, restartTakeover: false,
+            focusResult: .focused, sessionId: "session-2b", reachable: true
+        )
+        checkEqual(multiReachable, ["page", "focusTab", "log", "sendSessionOpen"],
+                   "寻址可达的多实例仍应精确选中标签")
+
+        // 多实例不可达 + 重启接管：旧标签关不掉（关的是另一个实例），直接开新页面。
+        let unreachableTakeover = simulate(
+            disposition: .jumpInPlace, presence: true, browser: chromeMulti, restartTakeover: true,
+            focusResult: .focused, sessionId: "session-2c", reachable: false
+        )
+        checkEqual(unreachableTakeover, ["page", "closeSkipped", "log", "openPage", "sendSessionOpen"],
+                   "不可达的重启接管应跳过关旧标签并直接开新页")
 
         // 页面全关（keep-alive 还在）：重开页面，而不是对着空标签跑自动化。
         let reopen = simulate(
@@ -249,6 +357,7 @@ struct SessionJumpChecks {
             exit(1)
         }
         print("PASS: click disposition, page plan, focus diagnosis (single/multi instance), "
-              + "fallback order, close-then-open takeover, session-open invariant, origin-based jump")
+              + "multi-instance addressing guard, fallback order, close-then-open takeover, "
+              + "session-open invariant, origin-based jump")
     }
 }

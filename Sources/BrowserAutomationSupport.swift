@@ -1,3 +1,5 @@
+import AppKit
+import Darwin
 import Foundation
 
 /// Result of trying to select an already-open Harness browser tab. Every
@@ -33,6 +35,32 @@ enum BrowserAutomationSupport {
 
     /// How many of the browser's own tab URLs the script reports back on a miss.
     static let missingTabReportLimit = 4
+
+    /// 同 bundle 正在运行的浏览器实例（pid + 内核记录的启动时刻）。
+    ///
+    /// 只用于判定「AppleScript 会不会寻址到真正连着 Harness 的那个实例」：
+    /// 多实例时 macOS 只把事件发给最近启动的实例。启动时刻取自 `proc_pidinfo`
+    /// （`NSRunningApplication.launchDate` 对非 LaunchServices 启动的实例会是 nil，
+    /// 不能用于排序）。读不到启动时刻的实例保留 `startedAt == nil`，由调用方
+    /// 按「无法证明可达」保守处理。返回元组而不是引入 SessionJumpSupport 的类型，
+    /// 保持「执行层不反向依赖决策层」（test-browser-connection 只编这两个文件）。
+    static func runningInstances(
+        bundleIdentifier: String?
+    ) -> [(pid: Int32, startedAt: TimeInterval?)] {
+        guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return [] }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).map { app in
+            (pid: app.processIdentifier, startedAt: processStartTime(app.processIdentifier))
+        }
+    }
+
+    /// 进程启动时刻（epoch 秒）。`proc_pidinfo` 失败时返回 nil。
+    static func processStartTime(_ pid: Int32) -> TimeInterval? {
+        guard pid > 0 else { return nil }
+        var info = proc_bsdinfo()
+        let size = MemoryLayout<proc_bsdinfo>.size
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(size)) == size else { return nil }
+        return TimeInterval(info.pbi_start_tvsec) + TimeInterval(info.pbi_start_tvusec) / 1_000_000
+    }
 
     static func focusHarnessTab(bundleIdentifier: String?, targetURL: URL) -> BrowserTabFocusResult {
         guard let bundleIdentifier,

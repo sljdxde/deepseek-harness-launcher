@@ -141,6 +141,51 @@ Chrome 后启动，AppleScript 按「最近启动」寻址于是永远落在它�
 - 这套判断全部在 `Sources/SessionJumpSupport.swift`，`main.swift` 只执行，行为由
   `scripts/test-session-jump.swift` 锁住（见第六节）。
 
+### 四之四、2026-11-03 复现：被寻址的实例里也有一个 Harness 标签页
+
+同一条链路又被报「已完成任务点击，定位会出现问题」。这次的现象与以往相反：
+日志写的是**成功**，`found` 也确实发生了，但用户看到的是**另一个窗口**里的页面。
+
+```console
+$ grep "用户查看会话完成提醒" -A1 dhl.log | tail -2
+[10:28:59] 用户查看会话完成提醒：session-2faab170-…
+[10:28:59] 检测到 Google Chrome 已连接 Harness 端口 3080，已定位并前置 Harness 标签页
+
+$ lsof -nP -a -iTCP:3080 -sTCP:ESTABLISHED | grep Google
+Google 4376    # ppid=4366，用户自己的 Chrome（Harness 页面真正在这里）
+
+$ ps -p 4366,87662 -o pid,lstart,command
+  4366  Tue Nov  2 17:53:44 2026  .../Google Chrome                                   # 用户 Chrome
+ 87662  Tue Nov  3 10:01:37 2026  .../Google Chrome --user-data-dir=…/chrome-devtools-mcp/…  # 自动化浏览器，后启动
+```
+
+`87662` 是自动化工具（`chrome-devtools-mcp`）拉起的第二个 Chrome；它的标签页里有
+一张 `http://127.0.0.1:3080/?token=jpMi55W…`——上一次运行留下的**过期 token 页面**
+（打开即 401）。AppleScript 按「最近启动」只寻址 `87662`，脚本在它的标签里按 origin
+匹配成功 → 选中那张 401 页并 `activate` → 用户被带到错误的浏览器窗口。
+
+也就是说，**多实例下的 `found` 也可能是假的**：真正连着 Harness 的实例（`4366`）
+根本没被寻址，被选中的是另一个实例里的同名 origin 页面。
+
+这次的可测改进：
+
+- 发标签页脚本**之前**先判可达性：`SessionJumpSupport.appleScriptReachesConnectedInstance`，
+  用内核启动时刻（`proc_pidinfo`，不用 `NSRunningApplication.launchDate`——它对
+  非 LaunchServices 启动的实例是 nil）判断「真正连着 Harness 的实例是不是最新启动的」；
+  启动时刻读不到或同秒启动都按不可达保守处理；
+- 不可达时**一次标签页脚本都不发**（不选中、也不关闭）：那只会作用在错误实例上。
+  改为前置真正连着 Harness 的实例，并通过插件把「打开会话」命令投递给页面；重启接管
+  则跳过关旧标签、直接开新页面；
+- 日志不再谎报成功：「…但同 bundle 有 N 个实例在运行，AppleScript 只会发给最近启动的
+  那个（不是连着 Harness 的这个）；未改动另一个实例的标签页，已前置真正连接 Harness
+  的浏览器并投递会话。退出那个后台/自动化浏览器实例后即可恢复精确选中标签页」；
+- 判定与文案全部在 `Sources/SessionJumpSupport.swift`，`main.swift` 只落地，行为由
+  `scripts/test-session-jump.swift` 锁住（可达/不可达/同秒/时刻未知/实例缺失、端到端
+  步骤顺序「不选中标签页也必须投递会话」）。
+
+根治仍是环境层面的：退出那个自动化/后台浏览器实例，别让它在 `127.0.0.1:<port>` 上
+留下 Harness 标签页。平台限制没有变化（见下节）。
+
 ### 已知的平台限制
 
 - 按 PID 定向的 Apple Event **可行**（实测 `GURL` 事件能精确投递到指定实例），
@@ -162,6 +207,10 @@ Chrome 后启动，AppleScript 按「最近启动」寻址于是永远落在它�
   focus result: focused
   ```
 
+- 启动器侧已做「不可达就不碰标签页」的保守处置（见四之四）：不会再被带到错误窗口，
+  但**在正确实例里精确选中标签页仍做不到**——那需要平台能力（按实例寻址 AppleScript 的
+  AEOM 未跑通，Accessibility 需要额外权限）。
+
 
 ## 五、回归验证清单
 
@@ -173,9 +222,12 @@ Chrome 后启动，AppleScript 按「最近启动」寻址于是永远落在它�
 4. 有重复 Harness 标签时只选中最前面那一个（`windowIndex is not 1` 时把窗口提到最前）；
 5. 关闭标签页后点提醒 → 走 presence 心跳路径重新开页面（原有行为不变）；
 6. 重启接管（更新 dsh 后）→ 旧标签被关闭、新页面打开（close 走同一 origin 匹配）；
-7. 多实例环境（agent-browser 常驻）→ 日志出现「AppleScript 寻址到了另一个实例」
-   + 实例数 + 「退出那个后台/自动化浏览器实例」建议，且会话本身仍被切到；
-8. 退出后台实例后再点提醒 → 日志回到「已定位并前置 Harness 标签页」。
+7. 多实例环境（agent-browser / chrome-devtools-mcp 常驻）→ 日志出现「AppleScript 只会
+   发给最近启动的那个（不是连着 Harness 的这个）；未改动另一个实例的标签页…」+ 实例数 +
+   「退出那个后台/自动化浏览器实例」建议，且**不会被带到另一个实例的窗口**、会话本身仍被切到；
+8. 多实例环境里另一个实例也开着 Harness origin 的标签页（过期 token / 401 页）→ 点提醒
+   不得跳到那个窗口（这是 2026-11-03 的假 `found`），日志必须写明「未改动另一个实例的标签页」；
+9. 退出后台实例后再点提醒 → 日志回到「已定位并前置 Harness 标签页」。
 
 ## 六、测试覆盖（防「改 A 坏 B」）
 
@@ -194,7 +246,11 @@ AppleScript / NSWorkspace / HTTP），单测入口：
   重启接管 → 先关旧标签再开新页面；页面还在 → 只选中标签，绝不把 URL 再交给浏览器
   （否则会开出重复标签）；
 - **失败诊断**：单实例未命中 vs 多实例未命中必须区分，日志必须带浏览器实际标签作为证据，
-  多实例日志必须给「退出后台/自动化浏览器」的可执行建议；
+  多实例日志必须给「退出后台/自动化浏览器」的可执行建议；已确认寻址到连着 Harness 的
+  实例时，多实例未命中不得再甩锅给「另一个实例」；
+- **多实例寻址守卫**：只有连着 Harness 的实例是最新启动的才允许发标签页脚本；
+  另一个实例更新/同秒启动/启动时刻未知/已连接实例不在列表里 → 判不可达，一次脚本都不发，
+  只前置真正连接的实例，日志不得谎报「已定位并前置 Harness 标签页」；
 - **降级顺序**：未命中时「先前置浏览器 → 再记日志 → 最后仍投递打开会话」；
 - **不变式**：任何分支都必须投递「打开会话」命令（标签没选中只影响看得见看不见），
   且必须收尾（清 inFlight / 跑 completion），否则下一次点击会被吞掉；

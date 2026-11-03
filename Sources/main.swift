@@ -699,10 +699,27 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     restartTakeover: restartTakeover
                 )
                 if plan.usesConnectedBrowser, let browser {
-                    self.deliverPage(
-                        url, to: browser, port: port,
-                        restartTakeover: plan.closesOldTab, completion: completion
+                    // 多实例时先判「AppleScript 会不会寻址到真正连着 Harness 的
+                    // 这个实例」：另一个实例里可能也有一个 Harness 标签页（旧进程
+                    // 的 401 页 / 自动化浏览器恢复出来的页面），焦点脚本会在那里
+                    // 报告 "found"，把用户带到错误的窗口。不可达时完全不碰标签页。
+                    let reaches = SessionJumpSupport.appleScriptReachesConnectedInstance(
+                        connectedPID: browser.processIdentifier,
+                        instances: BrowserAutomationSupport.runningInstances(
+                            bundleIdentifier: browser.bundleIdentifier
+                        ).map { SessionJumpSupport.BrowserInstance(pid: $0.pid, startedAt: $0.startedAt) }
                     )
+                    if reaches {
+                        self.deliverPage(
+                            url, to: browser, port: port,
+                            restartTakeover: plan.closesOldTab, completion: completion
+                        )
+                    } else {
+                        self.deliverPageWithoutTabAutomation(
+                            url, to: browser, port: port,
+                            restartTakeover: plan.closesOldTab, completion: completion
+                        )
+                    }
                     return
                 }
                 if pagePresence == false {
@@ -774,25 +791,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         restartTakeover: Bool = false,
         completion: @escaping () -> Void = {}
     ) {
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        configuration.createsNewApplicationInstance = false
         let openInBrowser = { [weak self] in
-            guard let self else { return }
-            if let bundleID = browser?.bundleIdentifier,
-               let browserURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                NSWorkspace.shared.open([url], withApplicationAt: browserURL, configuration: configuration) { [weak self] _, error in
-                    DispatchQueue.main.async {
-                        self?.finishBrowserOpen(port: port, error: error, completion: completion)
-                    }
-                }
-                return
-            }
-            NSWorkspace.shared.open(url, configuration: configuration) { [weak self] _, error in
-                DispatchQueue.main.async {
-                    self?.finishBrowserOpen(port: port, error: error, completion: completion)
-                }
-            }
+            self?.openURLInBrowserApp(url, browser: browser, port: port, completion: completion)
         }
 
         if let browser {
@@ -817,7 +817,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 )
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
-                    let plan = SessionJumpSupport.focusPlan(result: result, browser: info)
+                    // 走到这里之前 openWebPage 已确认 AppleScript 会寻址到真正
+                    // 连着 Harness 的实例，所以「找不到标签页」是真的没有页面。
+                    let plan = SessionJumpSupport.focusPlan(
+                        result: result, browser: info, addressedConnectedInstance: true
+                    )
                     if plan.activateBrowser {
                         _ = browser.activate(options: [.activateIgnoringOtherApps])
                     }
@@ -831,6 +835,64 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         appendLogString("未检测到已连接 Harness 的浏览器，用默认浏览器打开 \(url.absoluteString)\n")
         openInBrowser()
+    }
+
+    /// 多实例且 AppleScript 只会落到**别的**实例时的打开路径。
+    ///
+    /// 两个事实决定这里不能复用 `deliverPage`：焦点脚本会在那个实例里选中
+    /// 它自己的 Harness 标签页（旧进程的 401 页/自动化浏览器恢复出来的页面），
+    /// 把用户带到错误窗口；关闭旧标签同样会作用到错误实例上。所以这次完全不碰
+    /// 标签页，只做两件真正需要的事：前置**连着 Harness 的那个**浏览器实例，
+    /// 并把打开会话的命令投递给页面（由 completion 完成）。
+    /// 重启接管时旧标签无法确认关闭，直接开新页面（多一张标签，但至少可见）。
+    private func deliverPageWithoutTabAutomation(
+        _ url: URL,
+        to browser: NSRunningApplication,
+        port: Int,
+        restartTakeover: Bool = false,
+        completion: @escaping () -> Void = {}
+    ) {
+        let info = browserInfo(for: browser)
+        if restartTakeover {
+            appendLogString(SessionJumpSupport.unreachableCloseLog(browser: info) + "\n")
+            openURLInBrowserApp(url, browser: browser, port: port, completion: completion)
+            return
+        }
+        // 先解释结果（可单测），再落地：前置真正连接 Harness 的实例。
+        let plan = SessionJumpSupport.unreachableInstancePlan(browser: info)
+        if plan.activateBrowser {
+            _ = browser.activate(options: [.activateIgnoringOtherApps])
+        }
+        let line = SessionJumpSupport.focusLog(plan, browser: info, port: port)
+        if !line.isEmpty { appendLogString(line + "\n") }
+        finishBrowserOpen(port: port, error: nil, completion: completion)
+    }
+
+    /// 把 URL 交给指定浏览器（没有指定时用系统默认浏览器）。`completion` 在
+    /// 浏览器回报打开结果后执行，`finishBrowserOpen` 负责清 in-flight 并收尾。
+    private func openURLInBrowserApp(
+        _ url: URL,
+        browser: NSRunningApplication?,
+        port: Int,
+        completion: @escaping () -> Void
+    ) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = false
+        if let bundleID = browser?.bundleIdentifier,
+           let browserURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            NSWorkspace.shared.open([url], withApplicationAt: browserURL, configuration: configuration) { [weak self] _, error in
+                DispatchQueue.main.async {
+                    self?.finishBrowserOpen(port: port, error: error, completion: completion)
+                }
+            }
+            return
+        }
+        NSWorkspace.shared.open(url, configuration: configuration) { [weak self] _, error in
+            DispatchQueue.main.async {
+                self?.finishBrowserOpen(port: port, error: error, completion: completion)
+            }
+        }
     }
 
     private func finishBrowserOpen(

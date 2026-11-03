@@ -26,6 +26,43 @@ enum SessionJumpSupport {
         let instanceCount: Int
     }
 
+    /// 同 bundle 的一个浏览器实例。`startedAt` 是内核记录的进程启动时刻：
+    /// macOS 只把同 bundle 的 AppleScript 事件发给**最近启动**的实例，只有
+    /// 「真正连着 Harness 的实例恰好是最新启动的」时，标签选中/关闭才作用在
+    /// 用户面前那个窗口上。读不到启动时刻时传 nil——那意味着无法证明事件会
+    /// 落到正确实例，按不可达处理。
+    struct BrowserInstance: Equatable {
+        let pid: Int32
+        let startedAt: TimeInterval?
+    }
+
+    // MARK: - 多实例寻址
+
+    /// 这一次标签自动化会不会作用到真正连着 Harness 的实例上。
+    ///
+    /// 多实例时 macOS 把 AppleScript 事件发给**最近启动**的那个实例。被寻址的
+    /// 别的实例里**也可能开着一个 Harness 标签页**（自动化浏览器 `chrome-devtools-mcp`
+    /// 恢复出来的旧页面、上一次进程留下的 401 页），此时焦点脚本会报告 "found"——
+    /// 它确实选中了，只是选中了错误窗口里的那一页。2026-11-03 实测：点完成提醒后
+    /// 日志写着「已定位并前置 Harness 标签页」，用户看到的却是另一个 Chrome 里的
+    /// 空白/401 页面。所以必须在发脚本**之前**判定可达性：不可达就完全不碰任何
+    /// 标签页，改为只前置真正连着的那个实例。
+    ///
+    /// 保守规则：启动时刻读不到，或与已连接实例同秒启动（先后不确定），都判不可达。
+    static func appleScriptReachesConnectedInstance(
+        connectedPID: Int32,
+        instances: [BrowserInstance]
+    ) -> Bool {
+        guard instances.count > 1 else { return true }
+        guard let connected = instances.first(where: { $0.pid == connectedPID }),
+              let connectedStartedAt = connected.startedAt else { return false }
+        for other in instances where other.pid != connectedPID {
+            guard let startedAt = other.startedAt else { return false }
+            if startedAt >= connectedStartedAt { return false }
+        }
+        return true
+    }
+
     // MARK: - 点击处置
 
     /// 点击一条完成提醒时该走哪条路。
@@ -87,6 +124,9 @@ enum SessionJumpSupport {
         case closed
         case noHarnessTab(tabs: [String])
         case wrongBrowserInstance(tabs: [String])
+        /// 多实例且 AppleScript 只会落到别的实例：标签自动化被跳过，只前置了
+        /// 真正连着 Harness 的浏览器（连标签页内容都没读，避免误选错误窗口）。
+        case unreachableInstance(instanceCount: Int)
         case unsupported
         case failed(String)
     }
@@ -101,14 +141,22 @@ enum SessionJumpSupport {
         let completes: Bool = true
     }
 
-    static func focusPlan(result: BrowserTabFocusResult, browser: BrowserInfo) -> FocusPlan {
+    /// - Parameter addressedConnectedInstance: 这次 AppleScript 是否真的寻址到了
+    ///   连着 Harness 的实例（由 `appleScriptReachesConnectedInstance` 事先判定）。
+    ///   只有不可达时，「找不到标签页」才该解释成「页面在另一个实例里」；可达时
+    ///   多实例下找不到就是真的没有 Harness 标签页。
+    static func focusPlan(
+        result: BrowserTabFocusResult,
+        browser: BrowserInfo,
+        addressedConnectedInstance: Bool = true
+    ) -> FocusPlan {
         switch result {
         case .focused:
             return FocusPlan(diagnosis: .focused, activateBrowser: false)
         case .closed:
             return FocusPlan(diagnosis: .closed, activateBrowser: false)
         case .missing(let tabs):
-            let diagnosis: FocusDiagnosis = browser.instanceCount > 1
+            let diagnosis: FocusDiagnosis = (browser.instanceCount > 1 && !addressedConnectedInstance)
                 ? .wrongBrowserInstance(tabs: tabs)
                 : .noHarnessTab(tabs: tabs)
             return FocusPlan(diagnosis: diagnosis, activateBrowser: true)
@@ -117,6 +165,15 @@ enum SessionJumpSupport {
         case .failed(let message):
             return FocusPlan(diagnosis: .failed(message), activateBrowser: true)
         }
+    }
+
+    /// 多实例且 AppleScript 只会落到别的实例：这一次**不做**标签选中/关闭
+    /// （那会把用户带到另一个窗口里的旧页面），只前置真正连着 Harness 的实例。
+    static func unreachableInstancePlan(browser: BrowserInfo) -> FocusPlan {
+        FocusPlan(
+            diagnosis: .unreachableInstance(instanceCount: browser.instanceCount),
+            activateBrowser: true
+        )
     }
 
     // MARK: - 日志文案
@@ -144,9 +201,22 @@ enum SessionJumpSupport {
                 + "\(detail)；已前置浏览器。退出那个后台/自动化浏览器实例后即可恢复精确选中标签页"
         case .unsupported:
             return "检测到 \(browser.name) 已连接 Harness 端口 \(port)，该浏览器不支持标签定位；已前置浏览器"
+        case .unreachableInstance(let instanceCount):
+            // 事实三件事：连着的是哪个、为什么不能精确选中、这次实际做了什么。
+            return "检测到 \(browser.name) 已连接 Harness 端口 \(port)，但同 bundle 有 \(instanceCount) 个实例在运行，"
+                + "AppleScript 只会发给最近启动的那个（不是连着 Harness 的这个）；"
+                + "未改动另一个实例的标签页，已前置真正连接 Harness 的浏览器并投递会话。"
+                + "退出那个后台/自动化浏览器实例后即可恢复精确选中标签页"
         case .failed(let message):
             return "定位 \(browser.name) Harness 标签页失败（\(message)）；已前置浏览器"
         }
+    }
+
+    /// 「AppleScript 寻址不到已连接实例」时重启接管的收尾日志：旧标签无法
+    /// 确认关闭（那条 AppleScript 只会落到另一个实例上），直接打开新页面。
+    static func unreachableCloseLog(browser: BrowserInfo) -> String {
+        "dsh 已重启，但同 bundle 有 \(browser.instanceCount) 个实例在运行，"
+            + "AppleScript 只会发给最近启动的那个（不是连着 Harness 的这个），无法确认关闭旧标签；直接打开新页面（旧标签可手动关闭）"
     }
 
     /// 重启接管的「关旧标签页」结果日志；不需要记日志时返回空串。

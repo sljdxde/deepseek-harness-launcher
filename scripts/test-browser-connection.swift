@@ -138,6 +138,23 @@ struct BrowserConnectionTests {
         )
         precondition(safariClose?.contains("close browserTab") == true)
         precondition(NSAppleScript(source: chromeClose!) != nil)
-        print("PASS: connection direction, exact port, IPv6, deduplication, malformed records, helper ancestry, cycles, non-browser exclusion, existing-browser reuse, intent throttle, page URL, origin-based tab matching, missing-tab report, restart tab close")
+        // 多实例寻址判定用的进程启动时刻必须来自内核：`NSRunningApplication.launchDate`
+        // 对非 LaunchServices 启动的实例是 nil（实测 chrome-devtools-mcp 拉起的 Chrome），
+        // 用它排序会把「AppleScript 会发给谁」判错。这里只验 syscall 可用与边界；
+        // 排序/可达性语义在 test-session-jump。
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        if let started = BrowserAutomationSupport.processStartTime(ownPID) {
+            precondition(started > 0 && started <= Date().timeIntervalSince1970 + 60)
+        } else {
+            preconditionFailure("processStartTime 应能读到当前进程的启动时刻")
+        }
+        precondition(BrowserAutomationSupport.processStartTime(0) == nil)
+        precondition(BrowserAutomationSupport.processStartTime(-1) == nil)
+        precondition(BrowserAutomationSupport.runningInstances(bundleIdentifier: nil).isEmpty)
+        precondition(BrowserAutomationSupport.runningInstances(bundleIdentifier: "").isEmpty)
+        for item in BrowserAutomationSupport.runningInstances(bundleIdentifier: "com.google.Chrome") {
+            precondition(item.pid > 0)
+        }
+        print("PASS: connection direction, exact port, IPv6, deduplication, malformed records, helper ancestry, cycles, non-browser exclusion, existing-browser reuse, intent throttle, page URL, origin-based tab matching, missing-tab report, restart tab close, process start time")
     }
 }

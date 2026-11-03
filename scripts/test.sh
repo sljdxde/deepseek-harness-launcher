@@ -512,6 +512,12 @@ rg -Fq 'focusPlan' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.
 # 任何分支都要投递「打开会话」命令：标签没选中只影响看得见看不见，不能连会话一起不切。
 rg -Fq 'sendsSessionOpen' "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
 rg -Fq 'requestSessionOpen' "$ROOT/Sources/main.swift"
+# 多实例寻址：只有 AppleScript 确实会发给「连着 Harness 的那个实例」时才允许
+# 选中/关闭标签页；否则会在另一个实例（自动化浏览器恢复出来的旧页面）里选中
+# 一个 Harness 标签页，把用户带去错误窗口。判定必须留在可单测的 SessionJumpSupport。
+rg -Fq 'appleScriptReachesConnectedInstance' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
+rg -Fq 'unreachableInstancePlan' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
+rg -Fq 'runningInstances' "$ROOT/Sources/BrowserAutomationSupport.swift" "$ROOT/Sources/main.swift"
 # 反例守卫：标签定位失败的文案与分支只许在 SessionJumpSupport 里定义，回退到
 # main.swift 的 switch 就是把可测逻辑又塞回不可测的地方。
 if rg -q '未找到匹配标签页' "$ROOT/Sources/main.swift"; then
