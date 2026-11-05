@@ -12,9 +12,9 @@ import {
   satisfiesPluginRange
 } from '../lib/index.js';
 
-// 插件升级前的兼容性门禁（见 lib/index.js 的 satisfiesPluginRange / findPeerIncompatibilities）。
-// 口径与 Swift 侧 Sources/PluginCompatibilitySupport.swift 一致：dsh 更新很频繁，装上一个
-// peer 不满足的插件版本会让整个 Harness 起不来，所以这里必须「宁可挡住，不可放行」。
+// 兼容性门禁已移除：更新、安装、启动都不再判插件 peer 区间。这里保留两类用例：
+// 1) npm 区间语义（satisfiesPluginRange / findPeerIncompatibilities）仍锁住规则；
+// 2) applyPluginUpdate 在注入 peerProbe 时也不调用它、不阻断、不夹带兼容性文案。
 
 const RANGE_CASES = [
   // 真实声明：@openviking/dsh-memory-plugin 0.5.0 就是这么写 peer 的
@@ -81,21 +81,21 @@ const npmSource = {
   remote: { type: 'npm', package: 'dsh-foo' }
 };
 
-test('目标版本 peer 不满足当前 dsh：直接阻断，一条 pnpm 命令都不执行', async () => {
+test('兼容性门禁已移除：目标版本 peer 不满足也照常安装，不再探测 registry', async () => {
   await withRuntime({ '@deepseek-ai/dsh-llm': '0.1.5-rc.2' }, async () => {
     const commands = [];
+    let probed = false;
     const result = await applyPluginUpdate(npmSource, {
       check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
       command: async args => { commands.push(args); },
       verifyApplied: async () => true,
-      peerProbe: async () => ({ '@deepseek-ai/dsh-llm': '>=0.2.0' })
+      peerProbe: async () => { probed = true; return { '@deepseek-ai/dsh-llm': '>=0.2.0' }; }
     });
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 'peer-incompatible');
-    assert.match(result.error, /@deepseek-ai\/dsh-llm >=0\.2\.0（当前 0\.1\.5-rc\.2）/);
-    assert.match(result.error, /已阻止升级/);
-    assert.match(result.error, /检查 Deepseek Harness 更新/);
-    assert.deepEqual(commands, [], '被挡住的升级不能碰 profile');
+    assert.equal(result.ok, true, '不再因为 peer 区间不满足而挡住升级');
+    assert.notEqual(result.status, 'peer-incompatible');
+    assert.deepEqual(commands, [['add', 'dsh-foo@2.0.0']]);
+    assert.equal(probed, false, '不该再联网拉目标版本的 peerDependencies');
+    assert.doesNotMatch(result.error ?? '', /已阻止升级/);
   });
 });
 
@@ -113,26 +113,26 @@ test('目标版本 peer 满足：照常执行更新（真实 openviking 多分�
   });
 });
 
-test('探测不到 peer 声明时不阻断（门禁不能变成新的故障源）', async () => {
+test('兼容性探测整体停用：注入的 peerProbe 不会被调用，也不产生告警文案', async () => {
   await withRuntime({ '@deepseek-ai/dsh-llm': '0.1.5-rc.2' }, async () => {
     const commands = [];
+    let probed = false;
     const result = await applyPluginUpdate(npmSource, {
       check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
       command: async args => { commands.push(args); },
       verifyApplied: async () => true,
-      peerProbe: async () => { throw new Error('registry 不可达'); }
+      peerProbe: async () => { probed = true; throw new Error('registry 不可达'); }
     });
     assert.equal(result.ok, true);
     assert.deepEqual(commands, [['add', 'dsh-foo@2.0.0']]);
-    assert.match(result.note ?? '', /没能确认 v2\.0\.0 的 dsh 版本要求/);
-    assert.match(result.note ?? '', /registry 不可达/);
+    assert.equal(probed, false, '连探测都不该发起');
+    assert.doesNotMatch(result.note ?? '', /没能确认|兼容性|不兼容/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 门禁判的是「这次升级有没有让环境更差」：已装版本同样不满足的 peer 只提示、不阻止。
-// 线上实例：运行时 @earendil-works/pi-ai 是 1.1.0，而 dsh-connect-workbuddy 从 4.3.1
-// 到 4.4.2 都声明 `>=0.85.0 <0.88.0`——挡住它只会让用户卡在一个再也升不动的版本上。
+// 回归保护：确保兼容性门禁不会悄悄回来 —— 即使调用方仍注入 peerProbe，更新也
+// 不探测、不阻断、不夹带任何兼容性文案。
 // ---------------------------------------------------------------------------
 
 /** 临时 DSH_HOME 里除了 runtime 版本，再铺一个"已装版本"的 peer 声明。 */
@@ -157,7 +157,7 @@ async function withRuntimeAndInstalled(peers, installed, fn) {
   }
 }
 
-test('已装版本同样不满足的 peer：放过升级，只带一句提示', async () => {
+test('兼容性提示已移除：升级结果里不再夹带 peer 区间说明', async () => {
   const runtimeHasNewerPiAi = { '@earendil-works/pi-ai': '1.1.0' };
   await withRuntimeAndInstalled(runtimeHasNewerPiAi, { '@earendil-works/pi-ai': '>=0.85.0 <0.88.0' }, async () => {
     const commands = [];
@@ -167,14 +167,13 @@ test('已装版本同样不满足的 peer：放过升级，只带一句提示', 
       verifyApplied: async () => true,
       peerProbe: async () => ({ '@earendil-works/pi-ai': '>=0.85.0 <0.88.0' })
     });
-    assert.equal(result.ok, true, '升级前的版本本来就不满足，挡住它只会把用户卡死');
+    assert.equal(result.ok, true);
     assert.deepEqual(commands, [['add', 'dsh-foo@2.0.0']]);
-    assert.match(result.note ?? '', /升级前的版本也是这么声明的/);
+    assert.doesNotMatch(result.note ?? '', /升级前的版本也是这么声明的|兼容性|不兼容/);
   });
 });
 
-test('目标版本新增的不兼容 peer：仍然阻断，一条 pnpm 命令都不执行', async () => {
-  // 已装版本要求宽松（运行时满足），目标版本收紧到装不下的区间 → 这是这次升级新引入的问题
+test('兼容性门禁已移除：目标版本新引入的不满足 peer 也照常放行', async () => {
   await withRuntimeAndInstalled({ '@deepseek-ai/dsh-llm': '0.1.5-rc.2' }, { '@deepseek-ai/dsh-llm': '>=0.1.0' }, async () => {
     const commands = [];
     const result = await applyPluginUpdate(npmSource, {
@@ -183,13 +182,13 @@ test('目标版本新增的不兼容 peer：仍然阻断，一条 pnpm 命令都
       verifyApplied: async () => true,
       peerProbe: async () => ({ '@deepseek-ai/dsh-llm': '>=0.2.0' })
     });
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 'peer-incompatible');
-    assert.deepEqual(commands, [], '被挡住的升级不能碰 profile');
+    assert.equal(result.ok, true, '不再因为「新引入的不兼容」挡住升级');
+    assert.notEqual(result.status, 'peer-incompatible');
+    assert.deepEqual(commands, [['add', 'dsh-foo@2.0.0']]);
   });
 });
 
-test('已装版本没声明这个 peer 时，目标版本的不兼容照样挡住', async () => {
+test('兼容性门禁已移除：已装版本没声明的 peer 也不再参与判定', async () => {
   await withRuntimeAndInstalled({ '@deepseek-ai/dsh-llm': '0.1.5-rc.2' }, { '@deepseek-ai/other': '^1.0.0' }, async () => {
     const commands = [];
     const result = await applyPluginUpdate(npmSource, {
@@ -198,9 +197,9 @@ test('已装版本没声明这个 peer 时，目标版本的不兼容照样挡�
       verifyApplied: async () => true,
       peerProbe: async () => ({ '@deepseek-ai/dsh-llm': '>=0.2.0' })
     });
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 'peer-incompatible');
-    assert.deepEqual(commands, []);
+    assert.equal(result.ok, true);
+    assert.notEqual(result.status, 'peer-incompatible');
+    assert.deepEqual(commands, [['add', 'dsh-foo@2.0.0']]);
   });
 });
 
@@ -259,7 +258,14 @@ test('plugin-sources 内的克隆目录照常走重克隆更新（守卫不误�
     }, {
       check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
       command: async args => { commands.push(args); },
-      clone: async () => { cloned = true; return { ok: true, dest: dir }; },
+      clone: async () => {
+        cloned = true;
+        // 真 cloneToSources 一定会把 package.json 落进目标目录；假 clone 也一样，
+        // 否则「入口校验/构建」这道门会（正确地）拒绝一个不存在的源码包。
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'package.json'), JSON.stringify({ name: '@a/b', version: '2.0.0' }), 'utf8');
+        return { ok: true, dest: dir, packageName: '@a/b' };
+      },
       peerProbe: async () => ({})
     });
     assert.notEqual(result.status, 'dev-linked', 'plugin-sources 内的目录不触发守卫');

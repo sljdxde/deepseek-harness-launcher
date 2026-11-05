@@ -994,6 +994,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const updateAll = () => startBatch(updatableNames(updates), 0, '全部更新')
     const updateSelected = () => startBatch(selectedUpdatableNames(updates, selected), 0, '更新选中')
     const requestUninstall = (item) => { setError(''); setConfirmUninstall(item) }
+    /// 卸载成功后立刻重读一次检测结果：服务端会把已卸载插件的条目裁掉，侧边栏角标与
+    /// 「全部更新 (n)」不必等下一轮 60 秒轮询才归一。
+    const reloadUpdatesAfterUninstall = () => loadUpdates().then(value => { if (value) applyUpdates(value) })
     const confirmUninstallGo = () => {
       if (!confirmUninstall) return
       const name = confirmUninstall.name
@@ -1004,7 +1007,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           if (!v.ok) throw Error(v.error || '卸载失败')
           if (v.needsRestart) setRestartPrompt(name)
           else toast('success', `已卸载 ${name}`)
-          return loadInstalled()
+          return loadInstalled().then(reloadUpdatesAfterUninstall)
         })
         .catch(e => toast('error', `卸载失败：${String(e.message || e)}`)).finally(() => setBusy(''))
     }
@@ -1161,7 +1164,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             }
           }
           setSelected(new Set())
-          return loadInstalled()
+          return loadInstalled().then(reloadUpdatesAfterUninstall)
         })
         .catch(e => toast('error', `批量卸载失败：${String(e.message || e)}`)).finally(() => setBusy(''))
     }

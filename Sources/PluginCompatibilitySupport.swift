@@ -1,6 +1,12 @@
 import Foundation
 
-/// 插件与当前 dsh 运行时的兼容性检查。
+/// 插件与当前 dsh 运行时的区间求值 —— **已停用**。
+///
+/// 启动器已不再做插件兼容性检测：启动时不扫、更新时不挡、安装时不判。
+/// 静态扫描要请求 /installed 并遍历 node_modules 逐个读 package.json，拖慢就绪且
+/// 只会给出用户无法自行处置的告警；插件真把 dsh 弄崩时由 PluginIsolationSupport
+/// 的启动预检与逐个排除兜底。本文件与 scripts/test-plugin-compatibility.swift
+/// 保留下来只是为了锁住 npm 区间语义（将来若要恢复检测可直接复用），主流程不再调用。
 ///
 /// 数据全部取自本机文件与 loopback 接口，不依赖插件生态预先注册元数据：
 /// - 插件清单：GET /dsh-plugin-manager/installed（插件管理器已区分

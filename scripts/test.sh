@@ -63,7 +63,7 @@ node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-source-imports.test.js"
 # 插件写操作的安全网：装坏要撤销、回滚不许吞错、必需组件不许被拆。
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-mutation-safety.test.js"
-# 升级前的 dsh 版本兼容门禁（区间语义与 Sources/PluginCompatibilitySupport.swift 同口径）。
+# 插件 peer 区间语义，以及「兼容性门禁已移除」的回归保护。
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-peer-compat.test.js"
 if rg -q 'npx |git clone|github.com' "$ROOT/Plugins/DSHPluginManager/lib/index.js" >/dev/null && ! rg -q 'installCandidates|git\+' "$ROOT/Plugins/DSHPluginManager/lib/index.js"; then
   echo "plugin manager must expose npm-first / git-fallback install candidates" >&2
@@ -92,7 +92,7 @@ rg -Fq 'isUpdateIgnored' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Pl
 rg -Fq '/dsh-plugin-manager/ignore' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq '/dsh-plugin-manager/unignore' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'ignorableEntries' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
-# 门禁判「这次升级有没有让环境更差」：已装版本同样不满足的 peer 只提示、不阻止。
+# peer 区间工具仍保留（仅供语义单测复用），但主流程不再拿它们做兼容性判定。
 rg -Fq 'readInstalledPeerDependencies' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-peer-compat.test.js"
 # 客户端更新 UI 的纯函数（多选/框选/角标/进度/批量 toast）必须有单测。
 rg -Fq 'bandSelection' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
@@ -192,11 +192,10 @@ rg -Fq 'pendingCompletion' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 rg -Fq 'deferWhileMenuOpen' "$ROOT/Sources/main.swift"
 rg -Fq 'sessionNotifyMenuRebuildPending' "$ROOT/Sources/main.swift"
 rg -Fq 'func menuDidClose' "$ROOT/Sources/main.swift"
-# 插件兼容性告警按插件计数：一个插件踩多个 peer 只报一条（日志行/弹窗都按插件走）；
-# peer 按 Node 顺序解析（插件自带、profile 提升的都要算）；浏览器侧的 react/react-dom
-# 由外壳注入，不能当成「运行时里不存在」劝用户卸载。
-# 内置插件（归档管理 / 插件管理 / 会话完成通知）永不参与兼容性扫描：用户升不了也
-# 卸不掉，报警只会把人引去白重启。名字集合是兜底（旧接口可能把它们标成 user/broken）。
+# 插件 peer 区间语义单测（兼容性扫描已停用，纯函数与用例保留以防语义回归）：
+# 一个插件踩多个 peer 只合并成一条、peer 按 Node 顺序解析（插件自带、profile 提升的
+# 都要算）；浏览器侧的 react/react-dom 由外壳注入，不能当成「运行时里不存在」。
+# 内置插件（归档管理 / 插件管理 / 会话完成通知）永不参与扫描：用户升不了也卸不掉。
 rg -Fq 'mergeByPlugin' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
 rg -Fq 'resolvePeerVersion' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
 rg -Fq 'shellProvidedClientPeers' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
@@ -212,11 +211,17 @@ if rg -Fq 'reason: "会话完成通知插件未随当前 dsh 加载"' "$ROOT/Sou
   echo "内置插件不许进兼容性告警（用户不需要为启动器自带插件重启 dsh）" >&2
   exit 1
 fi
-# 兼容性告警必须聚合成单个弹窗、走统一弹窗入口。历史事故：一个 issue 一个 NSAlert
-# 串行 runModal，多插件时用户被锁在 modal 循环里；单条 reason 又是多行，NSAlert 不
-# 自动收进屏幕，40 行正文 = 1449pt，按钮整排出屏后 Esc 也无效 → 软件卡死。
-rg -Fq 'presentPluginIssues' "$ROOT/Sources/main.swift"
-rg -Fq 'AlertDesign.runIfIdle' "$ROOT/Sources/main.swift"
+# 插件兼容性检测已整体移除：启动不调度静态扫描、更新不跑 peer 门禁、安装不判 engines。
+# 这两条字符串是老路径的指纹，出现即代表「又开始检测插件兼容性了」。
+if rg -Fq 'schedulePluginCompatibilityCheck' "$ROOT/Sources/main.swift"; then
+  echo "启动流程不许再调度插件兼容性扫描" >&2
+  exit 1
+fi
+if rg -Fq 'peer-incompatible' "$ROOT/Plugins/DSHPluginManager/lib/index.js"; then
+  echo "插件更新不许再被 peer 兼容性门禁阻断" >&2
+  exit 1
+fi
+# 通用弹窗护栏仍在（长正文要封顶、压回屏幕内），与兼容性告警无关。
 rg -Fq 'AlertDesign.setBoundedText' "$ROOT/Sources/main.swift"
 rg -Fq 'detailCharacterThreshold' "$ROOT/Sources/AlertBoundary.swift" "$ROOT/scripts/test-alert-design.swift"
 rg -Fq 'escapeKeyEquivalent' "$ROOT/Sources/AlertBoundary.swift" "$ROOT/scripts/test-alert-design.swift"

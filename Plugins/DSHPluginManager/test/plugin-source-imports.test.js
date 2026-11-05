@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { applyPluginUpdate, findUnresolvableLocalImports } from '../lib/index.js';
+import { applyPluginUpdate, findUnresolvableLocalImports, missingPackageEntries, prepareClonedSource } from '../lib/index.js';
 
 // 「装之前先校验插件源码自己的 import 能不能落地」的离线单测。
 // 起因：上游 OpenViking 把 dsh-memory-plugin 的 shared/ 改成 pack 时生成（不在 git 里），
@@ -123,7 +123,7 @@ const BROKEN_SOURCE = {
 };
 
 /** 铺一个 file: 克隆来源的更新现场（旧版本已装在 dir），在临时目录被清掉之前跑 body。 */
-async function withFileSourceUpdate(fixtureFiles, body) {
+async function withFileSourceUpdate(fixtureFiles, body, applyOptions = {}) {
   const home = await mkdtemp(join(tmpdir(), 'dsh-pm-apply-'));
   const previousHome = process.env.DSH_HOME;
   // DSH_HOME 也指到临时目录：收尾的版本复核会读 node_modules，不能碰真实 profile。
@@ -162,7 +162,8 @@ async function withFileSourceUpdate(fixtureFiles, body) {
             await writeFile(abs, content, 'utf8');
           }
           return { ok: true, dest: dir, packageName: 'repo' };
-        }
+        },
+        ...applyOptions
       })
     });
   } finally {
@@ -199,5 +200,117 @@ test('applyPluginUpdate：克隆出的源码完整 → 照常同步 profile', as
     const result = await apply();
     assert.equal(result.ok, true);
     assert.deepEqual(commands, [['add', `file:${dir}`]]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 入口文件（main / exports['./client']）校验与「缺构建产物先构建」：
+// 用户实测 dsh-genui 从 git 源码装进来缺 lib/index.js，dsh 启动时整条 entry
+// 加载失败，dsh-ui 围栏退化成普通代码块，而插件管理里还显示「已安装」。
+// ---------------------------------------------------------------------------
+
+test('missingPackageEntries：main / exports["./client"] 指向的文件缺了就报，出界入口不报', async () => {
+  await withFixture({
+    'package.json': JSON.stringify({
+      name: 'demo',
+      main: 'lib/index.js',
+      exports: { './client': { types: './lib/client.d.ts', default: './lib/client.js' } }
+    })
+  }, async root => {
+    assert.deepEqual(await missingPackageEntries(root), ['lib/index.js', './lib/client.js']);
+    await mkdir(join(root, 'lib'), { recursive: true });
+    await writeFile(join(root, 'lib', 'index.js'), 'export default 1\n', 'utf8');
+    // client 用 .mjs 也应按 node 解析规则认（不误报）
+    await writeFile(join(root, 'lib', 'client.mjs'), 'export default 1\n', 'utf8');
+    assert.deepEqual(await missingPackageEntries(root), ['./lib/client.js'],
+      '声明的路径不存在就报，哪怕同目录另有 .mjs');
+    // 出界入口不是包自己的文件，不归这里管
+    await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'demo', main: '../outside/index.js' }), 'utf8');
+    assert.deepEqual(await missingPackageEntries(root), []);
+  });
+});
+
+test('prepareClonedSource：入口缺失先构建；构建后仍缺就拒绝（绝不装进 profile）', async () => {
+  await withFixture({
+    'package.json': JSON.stringify({ name: 'demo', main: 'lib/index.js', exports: { './client': { default: './lib/client.js' } } }),
+    'src/index.ts': 'export const a = 1;\n'
+  }, async root => {
+    // 构建没产出入口 → 拒绝，错误要点名缺失文件
+    const refused = await prepareClonedSource(root, { runBuild: async () => ({ ok: true }) });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /仍缺入口文件/);
+    assert.match(refused.error, /lib\/index\.js/);
+
+    // 构建失败 → 如实上报失败原因
+    const failed = await prepareClonedSource(root, { runBuild: async () => ({ ok: false, error: 'tsc 报错' }) });
+    assert.equal(failed.ok, false);
+    assert.match(failed.error, /构建失败/);
+    assert.match(failed.error, /tsc 报错/);
+
+    // 构建产出入口 → 放行并标记 built
+    const accepted = await prepareClonedSource(root, {
+      runBuild: async () => {
+        await mkdir(join(root, 'lib'), { recursive: true });
+        await writeFile(join(root, 'lib', 'index.js'), 'export default 1\n', 'utf8');
+        await writeFile(join(root, 'lib', 'client.js'), 'export default 1\n', 'utf8');
+        return { ok: true };
+      }
+    });
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.built, true);
+
+    // 入口已经齐了就不再构建（避免每次都装一遍 devDependencies）
+    let builds = 0;
+    const skipped = await prepareClonedSource(root, { runBuild: async () => { builds += 1; return { ok: true }; } });
+    assert.equal(skipped.ok, true);
+    assert.equal(skipped.built, false);
+    assert.equal(builds, 0);
+  });
+});
+
+test('applyPluginUpdate：克隆源码声明了 main 但缺构建产物 → 先构建再 pnpm add file:', async () => {
+  await withFileSourceUpdate({
+    'package.json': JSON.stringify({ name: 'repo', version: '1.1.0', main: 'lib/index.js' })
+  }, async ({ dir, commands, apply }) => {
+    const result = await apply();
+    assert.equal(result.ok, true);
+    assert.deepEqual(commands, [['add', `file:${dir}`]]);
+  }, {
+    prepare: async preparedDir => {
+      await mkdir(join(preparedDir, 'lib'), { recursive: true });
+      await writeFile(join(preparedDir, 'lib', 'index.js'), 'export default 1\n', 'utf8');
+      return { ok: true, built: true };
+    }
+  });
+});
+
+test('applyPluginUpdate：构建后仍缺入口 → 不 pnpm add、回滚旧源码、错误说明', async () => {
+  await withFileSourceUpdate({
+    'package.json': JSON.stringify({ name: 'repo', version: '1.1.0', main: 'lib/index.js' })
+  }, async ({ dir, sourcesDir, commands, apply }) => {
+    let error = null;
+    try { await apply(); } catch (thrown) { error = thrown; }
+    assert.ok(error, '缺入口的包不能装进 profile');
+    assert.match(error.message, /缺入口文件/);
+    // profile 一行都没动：没跑 pnpm add，旧源码原样回来，没有 .bak 残留
+    assert.deepEqual(commands, []);
+    assert.equal(await readFile(join(dir, 'index.js'), 'utf8'), '// 旧版本');
+    assert.deepEqual((await readdir(sourcesDir)).filter(name => name.includes('.bak-')), []);
+  }, {
+    prepare: async () => ({ ok: false, error: '插件构建后仍缺入口文件 lib/index.js，已拒绝安装' })
+  });
+});
+
+test('missingPackageEntries：只声明 exports（无 main）的包也要校验，嵌套 condition 能取到目标', async () => {
+  await withFixture({
+    'package.json': JSON.stringify({ name: 'demo', exports: { '.': { types: './lib/index.d.ts', node: { import: './lib/index.js' } } } })
+  }, async root => {
+    assert.deepEqual(await missingPackageEntries(root), ['./lib/index.js'], 'exports["."] 缺入口同样要报');
+    await mkdir(join(root, 'lib'), { recursive: true });
+    await writeFile(join(root, 'lib', 'index.js'), 'export default 1\n', 'utf8');
+    assert.deepEqual(await missingPackageEntries(root), []);
+    // 顶层字符串 exports 等价于 exports["."]
+    await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'demo', exports: './main.js' }), 'utf8');
+    assert.deepEqual(await missingPackageEntries(root), ['./main.js']);
   });
 });

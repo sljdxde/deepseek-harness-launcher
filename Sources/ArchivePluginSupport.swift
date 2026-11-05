@@ -24,9 +24,8 @@ struct BundledPlugin {
 /// 「没加载」：既让归档插件永远判不就绪（连带回退快照都从不清理），又弹出去重启了
 /// 也白搭的告警。窗口要按最坏耗时给，不能按空闲时的响应给。
 ///
-/// 注意：就绪探测**只写日志，不再进兼容性告警**——内置插件是启动器自己带的，
-/// 用户升不了也卸不掉，弹窗只能把人引去「重启 dsh」白折腾（见
-/// `PluginCompatibilitySupport.bundledPluginNames`）。
+/// 注意：就绪探测**只写日志，不弹窗**——内置插件是启动器自己带的，用户升不了也
+/// 卸不掉，弹窗只能把人引去「重启 dsh」白折腾。插件兼容性扫描已整体移除。
 struct BuiltinPluginProbePolicy: Equatable {
     /// 单次请求的等待上限。
     let timeout: TimeInterval

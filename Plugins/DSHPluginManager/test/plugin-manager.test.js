@@ -3,7 +3,7 @@ import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink, utimes
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parsePluginYml, installCandidates, listInstalledPlugins, compareInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin, fetchOfficialMarketPlugins, mergeMarketPlugins, readMarketplace, isCoreBundle } from '../lib/index.js';
+import { parsePluginYml, installCandidates, listInstalledPlugins, compareInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin, fetchOfficialMarketPlugins, mergeMarketPlugins, readMarketplace, isCoreBundle, repoMatchesEntry } from '../lib/index.js';
 
 test('parsePluginYml 解析 awesome-dsh-plugin 的插件条目格式', () => {
   const text = `url: https://github.com/1624318455/dsh-plugin-tavily
@@ -520,4 +520,163 @@ test('readMarketplace：旧版索引（没有官方来源）标记为 stale，�
     else process.env.DSH_HOME = previousHome;
     await rm(dshHome, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// git 回退安装：克隆包名与市场条目名 scope 不一致时按克隆包自己的 npm 名装发行版；
+// 只能装源码时先构建并校验入口，缺入口的包绝不进 profile。
+// 起因：市场条目 omdsh-dev/dsh-genui 的候选名都不存在，npm 上真正的包叫
+// @changfenhuang/dsh-genui；旧路径 git clone → pnpm add file: 不构建，装出来的包
+// 缺 lib/index.js，dsh 启动时 genui 整条 entry 加载失败（dsh-ui 围栏退化成代码块）。
+// ---------------------------------------------------------------------------
+
+/** 铺一个临时的 profile：返回 { dshHome, modules }，在 fn 结束后清理。 */
+async function withEmptyProfile(prefix, fn) {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), prefix));
+  process.env.DSH_HOME = dshHome;
+  try {
+    const modules = join(dshHome, 'profiles', 'web', 'node_modules');
+    await mkdir(modules, { recursive: true });
+    return await fn({ dshHome, modules });
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+}
+
+test('installPlugin git 回退：按克隆包自己的 npm 名装发行版（市场名与 npm 名 scope 不一致）', async () => {
+  await withEmptyProfile('dsh-pm-clone-npm-', async ({ dshHome }) => {
+    const cloneDir = join(dshHome, 'clone-src');
+    await mkdir(cloneDir, { recursive: true });
+    await writeFile(join(cloneDir, 'package.json'), JSON.stringify({ name: '@acme/dsh-demo', version: '2.0.0', main: 'lib/index.js' }));
+    const commands = [];
+    let prepared = false;
+    const result = await installPlugin(
+      { name: 'omdsh-dev/dsh-demo', url: 'https://github.com/omdsh-dev/dsh-demo' },
+      async args => { commands.push(args); },
+      {
+        clone: async () => ({ ok: true, dest: cloneDir, packageName: '@acme/dsh-demo' }),
+        // 候选名 @omdsh-dev/dsh-demo、dsh-demo 都不存在；克隆包名才是真正的 npm 包
+        npmProbe: async name => name === '@acme/dsh-demo',
+        verifyPresent: async () => true,
+        prepare: async () => { prepared = true; return { ok: true, built: false, missing: [] }; }
+      }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.installedAs, '@acme/dsh-demo');
+    assert.equal(result.fromNpm, true);
+    assert.deepEqual(commands, [['add', '@acme/dsh-demo']]);
+    assert.equal(prepared, false, '有发行版就不该构建源码');
+  });
+});
+
+test('installPlugin git 回退：npm 上没有发行版 → 构建出入口后再装 file:', async () => {
+  await withEmptyProfile('dsh-pm-clone-build-', async ({ dshHome }) => {
+    const cloneDir = join(dshHome, 'clone-src');
+    await mkdir(cloneDir, { recursive: true });
+    await writeFile(join(cloneDir, 'package.json'), JSON.stringify({ name: 'dsh-demo', version: '1.0.0', main: 'lib/index.js' }));
+    const commands = [];
+    const result = await installPlugin(
+      { name: 'acme/dsh-demo', url: 'https://github.com/acme/dsh-demo' },
+      async args => { commands.push(args); },
+      {
+        clone: async () => ({ ok: true, dest: cloneDir, packageName: 'dsh-demo' }),
+        npmProbe: async () => false,
+        verifyPresent: async () => true,
+        prepare: async dir => {
+          await mkdir(join(dir, 'lib'), { recursive: true });
+          await writeFile(join(dir, 'lib', 'index.js'), 'export default 1\n', 'utf8');
+          return { ok: true, built: true, missing: [] };
+        }
+      }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.installedAs, `file:${cloneDir}`);
+    assert.match(String(result.note), /源码已构建/);
+    assert.deepEqual(commands, [['add', `file:${cloneDir}`]]);
+  });
+});
+
+test('installPlugin git 回退：构建后仍缺入口 → 拒绝安装、不执行 pnpm add', async () => {
+  await withEmptyProfile('dsh-pm-clone-refuse-', async ({ dshHome }) => {
+    const cloneDir = join(dshHome, 'clone-src');
+    await mkdir(cloneDir, { recursive: true });
+    await writeFile(join(cloneDir, 'package.json'), JSON.stringify({ name: 'dsh-demo', version: '1.0.0', main: 'lib/index.js' }));
+    const commands = [];
+    const result = await installPlugin(
+      { name: 'acme/dsh-demo', url: 'https://github.com/acme/dsh-demo' },
+      async args => { commands.push(args); },
+      {
+        clone: async () => ({ ok: true, dest: cloneDir, packageName: 'dsh-demo' }),
+        npmProbe: async () => false,
+        verifyPresent: async () => true,
+        prepare: async () => ({ ok: false, error: '插件构建后仍缺入口文件 lib/index.js，已拒绝安装' })
+      }
+    );
+    assert.equal(result.ok, false, '缺入口的包不能装进 profile');
+    assert.match(String(result.error), /缺入口/);
+    assert.deepEqual(commands, [], '拒绝时不能在 profile 里跑任何 pnpm 命令');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 无 scope 候选名撞上别人的同名包：repository 对不上就跳过，不能把插件装成
+// 另一个作者的包（实测 npm 上的 `dsh-genui` 是 lhuans/dsh-genui，而市场条目
+// omdsh-dev/dsh-genui 的发行版叫 @changfenhuang/dsh-genui）。
+// ---------------------------------------------------------------------------
+
+test('repoMatchesEntry：git+ / git@ / .git / 大小写都能对上，别的仓库不算', () => {
+  const ref = { author: 'omdsh-dev', repo: 'dsh-genui' };
+  assert.equal(repoMatchesEntry({ url: 'git+https://github.com/omdsh-dev/dsh-genui.git' }, ref), true);
+  assert.equal(repoMatchesEntry({ url: 'https://github.com/OMDSH-DEV/DSH-GENUI' }, ref), true);
+  assert.equal(repoMatchesEntry('git@github.com:omdsh-dev/dsh-genui.git', ref), true);
+  assert.equal(repoMatchesEntry({ url: 'git+https://github.com/lhuans/dsh-genui.git' }, ref), false, '同名但不同作者');
+  assert.equal(repoMatchesEntry({ url: 'https://github.com/omdsh-dev/dsh-genui-extra.git' }, ref), false);
+  assert.equal(repoMatchesEntry(null, ref), false);
+  assert.equal(repoMatchesEntry({ url: 'https://github.com/omdsh-dev/dsh-genui.git' }, null), false);
+});
+
+test('installPlugin：无 scope 候选名是别人的包 → 跳过它，走 git 回退安装', async () => {
+  await withEmptyProfile('dsh-pm-wrong-name-', async ({ dshHome }) => {
+    const cloneDir = join(dshHome, 'clone-src');
+    await mkdir(cloneDir, { recursive: true });
+    await writeFile(join(cloneDir, 'package.json'), JSON.stringify({ name: 'dsh-demo', version: '1.0.0', main: 'index.js' }));
+    await writeFile(join(cloneDir, 'index.js'), 'export default 1\n', 'utf8');
+    const commands = [];
+    const result = await installPlugin(
+      { name: 'acme/dsh-demo', url: 'https://github.com/acme/dsh-demo' },
+      async args => { commands.push(args); },
+      {
+        // 候选 @acme/dsh-demo 不存在；无 scope 的 dsh-demo 存在但属于别人
+        npmProbe: async name => name === 'dsh-demo',
+        npmRepository: async () => ({ url: 'git+https://github.com/someone-else/dsh-demo.git' }),
+        clone: async () => ({ ok: true, dest: cloneDir, packageName: 'dsh-demo' }),
+        verifyPresent: async () => true,
+        prepare: async () => ({ ok: true, built: false, missing: [] })
+      }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.installedAs, `file:${cloneDir}`, '不能装别人的同名包，走源码安装');
+    assert.deepEqual(commands, [['add', `file:${cloneDir}`]]);
+  });
+});
+
+test('installPlugin：无 scope 候选名 repository 对得上 → 照常装 npm 包', async () => {
+  await withEmptyProfile('dsh-pm-right-name-', async () => {
+    const commands = [];
+    const result = await installPlugin(
+      { name: 'acme/dsh-demo', url: 'https://github.com/acme/dsh-demo' },
+      async args => { commands.push(args); },
+      {
+        npmProbe: async name => name === 'dsh-demo',
+        npmRepository: async () => ({ url: 'git+https://github.com/acme/dsh-demo.git' }),
+        verifyPresent: async () => true
+      }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.installedAs, 'dsh-demo');
+    assert.deepEqual(commands, [['add', 'dsh-demo']]);
+  });
 });

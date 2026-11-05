@@ -1,5 +1,11 @@
 import Foundation
 
+/// 【已停用】插件隔离、启动前静态预检、逐个排除与安全模式已从启动器主流程整体移除：
+/// 启动器不再主动禁用、跳过或回退任何插件，dsh 启动失败时只如实记日志并报错。
+/// 本文件与 Sources/PluginSourceCheck.swift 的纯函数及对应单测保留，仅为复用与语义
+/// 回归；主流程现在只还用到 bootArguments(port:basePatch:isolationPatch:)，且恒传
+/// isolationPatch: nil。下方是原设计说明（历史口径，主流程已不执行）。
+///
 /// 插件隔离：dsh 因为某个插件起不来时，把它从下一次启动里禁用掉，保证服务能拉起来。
 ///
 /// 为什么需要这一层：插件是 dsh 启动时按 `package.json` 的 `dsh.profile.bundles` 逐个

@@ -36,7 +36,7 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 11 | **后台定时检测更新（dsh + 启动器）** | 后台定时检查 npm 上 `@deepseek-ai/dsh` 与启动器自身的新版本（常开，默认每 6 小时一轮，启动后 8 秒先来一次），不阻塞启动；有新版本时菜单项标题写明，菜单栏图标同时亮一枚蓝色向上箭头角标（不打开菜单也看得见）。 |
 | 12 | **内置插件管理（DSHPluginManager）** | 侧边栏新增「插件管理」入口，含「已安装」与「插件市场」两个页面：已安装插件可查看/卸载/**更新到最新版本**，也可**忽略某个版本**（忽略后角标不再提示，远端出更高版本时会重新提醒）；市场数据来自两个来源：社区清单 `awesome-dsh-plugin`，以及 **DeepSeek 官方插件**（直接查 npm 上 `@deepseek-ai` scope 里声明了 `dsh.bundle` 的官方插件，分类里固定排第一；官方不维护第三方清单仓库，也不内置索引源），都支持分类、搜索、按星级/下载排序、一键安装。更新前可在行内点「更新内容」，查看该版本的 GitHub Release 正文或仓库 CHANGELOG 里对应版本的段落；更新成功后只修补检测缓存里那一条，其它插件的更新标记与侧边栏角标不会一起消失。安装/卸载/更新通过 `dsh plugin --profile web` 执行，缺 pnpm 时自动用 corepack 自举，变更后提示重启 dsh 生效。可更新插件在侧边栏入口与面板里都有标记。 |
 | 13 | **会话完成通知（DSHSessionNotify）** | 内置服务端插件监听主会话 `turn/end`（方案同社区 dsh-notify 插件，但不弹系统通知）。会话回合结束时，菜单栏图标显示 Foxmail 式红色未读角标（**按会话计数**：同一会话连跑多轮仍只算一个），菜单顶部列出最近的完成/出错/中止会话（时间 · 标题 · 结果），点击条目打开 Harness 页面并清除角标，也可一键「清除完成提醒」。**看过即已读**：把该会话开在当前可见且有焦点的标签页也算已读，角标在一个轮询周期内消失；会话在用户眼前收尾时角标根本不亮。未读会落盘，启动器重启（更新 / 崩溃 / 手动重开）后角标与列表都还在。 |
-| 14 | **启动失败自动恢复** | 某个插件把 dsh 弄崩时（插件 import 失败会让整个进程以退出码 1 结束），启动器从 stderr 里认出是哪个插件，用自带的 `--patch` overlay 把它的行 `disabled: true` 再自动重启；认不出或隔离到上限就转入只加载 dsh 自带插件的安全模式。全过程不改动 profile 的依赖与 bundle 列表，菜单里可一键恢复。详见「启动失败自动恢复」。 |
+| 14 | **启动失败自动恢复（已移除）** | 启动器不再因插件导致 dsh 起不来而自动禁用插件、逐个排除或转入安全模式；dsh 启动失败时只如实报错，不改动 profile 的依赖与 bundle 列表。 |
 **边界与取舍**：
 
 - 仅支持 macOS（无 Windows / Linux）；
@@ -159,43 +159,30 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 
 - **检测口径（按来源分派）**：npm 包走 registry 的 `dist-tags`（只跟 `latest` 比，不把 rc/beta/alpha 推给装正式版的用户）；`github:` 依赖与 `plugin-sources` 里的克隆走 `git ls-remote` + 远端 `package.json`，**以"远端版本号变高"为判定**，只有 commit 变了而版本号没变时附注「远端有新提交」；`version` 相同时判定为已是最新。
 - **跨大版本**会照常提示，但标注为「跨大版本 vX」，更新按钮直接安装最新版（无视 profile 里记录的版本范围）。
-- **升级前的 dsh 版本门禁**：执行更新前先取目标版本声明的 `peerDependencies`（npm 走 registry、git 来源走远端 `package.json`），与本机 `~/.dsh/runtime` 里各 `@deepseek-ai/*` 组件的实际版本比对；不满足就**直接阻止这次升级**并说明「目标版本要求 X，当前 dsh 是 Y，请先更新 dsh 本体」。探测本身失败（registry 不通、仓库改名）时放行——判不了不等于不兼容，后面还有装后验收与启动隔离两层兜底。
-- **门禁判的是「这次升级会不会让环境更差」**：比对时会一并读**已装版本**自己声明的 peer（本地 `package.json`，不联网）。目标版本不满足的那个 peer，如果已装版本本来就不满足，就只提示、不阻止——挡住它并不能让环境更兼容，只会让用户卡在一个再也升不动的旧版本上。实测案例：运行时 `@earendil-works/pi-ai` 已经是 1.1.0，而 `dsh-connect-workbuddy` 从 4.3.1 到 4.4.2 都声明 `>=0.85.0 <0.88.0`（它自己还专门写了 1.x 的适配分支），旧口径下每次点「更新」都被门禁挡回来。只有目标版本**新引入**的不兼容（已装版本满足、目标版本不满足）才继续阻止。
+- **不再做插件兼容性检测**：启动、更新、安装三条路径都不再比对 `peerDependencies` 与 dsh 运行时版本，也不再联网探测目标版本的 peer 声明。插件市场的 `latest` 常面向比本机更新的 dsh，旧门禁会把用户卡在一个升不动的旧版本上（例如 v0.30.0 要求 `^0.2.2-rc.1` 而本机是 0.2.1-rc.2），还多一次 `pnpm view` 往返；启动时的静态扫描则要请求 `/installed` 并遍历 `node_modules` 逐个读 `package.json`。装不完整的版本仍由安装验收（`installedImportGaps`）撤销；能装上但加载失败时，启动器只如实报错，不再自动隔离或禁用插件。
 - **忽略某个版本**：行内「忽略」与工具栏「忽略选中」把不想看到的更新收起来。忽略只针对**那一个版本**（记录在 profile 的 `.plugin-updates-ignored.json`，`name` + 版本精确匹配），远端出了更高的版本会重新提醒，所以忽略不会把插件永远钉在旧版本上；被忽略的条目不再计入侧边栏角标、启动器菜单行与「全部更新」，行内仍保留「更新」与「取消忽略」（想装随时能装回来）。检测缓存 `.plugin-updates.json` 里存的始终是原始检测结论，忽略是读时叠加的，因此取消忽略立刻恢复显示、不需要重新联网。
-- **区间语义与启动器自身的版本比较是两套**：插件与 dsh 的兼容性按 npm 语义判（`rc.1 < rc.6`、`^0.0.3` 上界是 `0.0.4`、支持 `0.1.x`/`>= 0.1.0`/`||`）；但**不**采纳 npm 默认的预发布门控——dsh 生态常态就是装 rc runtime，套上去会把所有只写正式区间的插件一律报成不兼容，警告变成噪音。同一套规则在 Swift（`Sources/PluginCompatibilitySupport.swift`）与 JS（`satisfiesPluginRange`）各实现一份，两边用同一批表驱动用例锁住。
-- **远端 `package.json` 的读取顺序**：先 `raw.githubusercontent.com`（不需要 token，常规路径不碰 API）；失败（超时/断流/404）时改用 `api.github.com/repos/.../contents` 取同一路径并 base64 还原。国内网络对 raw 限速严重（实测一次 GET 要 14～60 秒、且会中途断流），只走 raw 会让 `github:` 来源的插件**永远显示「失败」**、点更新还会被回一句「没有检测到可更新的版本」，升级前的 peer 门禁也会静默拿不到目标版本声明的 peer（等于门禁不生效）。检测与门禁两条路共用同一个回退实现，超时的文案也换成人能看懂的「拉取远端 package.json 超时（N 秒）」。
+- **区间语义仍保留为库代码**：npm 语义（`rc.1 < rc.6`、`^0.0.3` 上界是 `0.0.4`、支持 `0.1.x`/`>= 0.1.0`/`||`）在 Swift（`Sources/PluginCompatibilitySupport.swift`）与 JS（`satisfiesPluginRange`）各实现一份，两边用同一批表驱动用例锁住；但主流程已不再调用它们做兼容性判定。
+- **远端 `package.json` 的读取顺序**：先 `raw.githubusercontent.com`（不需要 token，常规路径不碰 API）；失败（超时/断流/404）时改用 `api.github.com/repos/.../contents` 取同一路径并 base64 还原。国内网络对 raw 限速严重（实测一次 GET 要 14～60 秒、且会中途断流），只走 raw 会让 `github:` 来源的插件**永远显示「失败」**、点更新还会被回一句「没有检测到可更新的版本」. 超时的文案也换成人能看懂的「拉取远端 package.json 超时（N 秒）」。
 - **来源识别**：克隆到 `plugin-sources` 时写入 `.dsh-source.json`（作者 / 仓库 / 子目录 / commit）。此前装的旧克隆没有这个标记，检测时会按 `package.json` 的 `repository.url` + `repository.directory` → 市场索引 → 目录名候选的顺序逐个 `git ls-remote` 确认，命中后把标记写回目录（所以"大仓库子目录"型插件也能正确检测）。都确认不了（本地插件或私有仓库）才标记为「未识别到可检测的远端来源」。
 - **更新动作**：npm → `pnpm add <name>@<latest>`；`github:` → 按原 spec 重新解析；`plugin-sources` 克隆 → 先把旧目录改名成 `.bak-<时间戳>` 再重新 clone 覆盖，失败自动回滚（只保留最近一个备份）。服务端插件代码要**重启 dsh** 才生效。
 - **后台自动检测**：默认开启（设置窗口「自动检测插件更新」可关）。开启时启动器在服务就绪后约 15 秒触发一次刷新，之后跟随「检查频率」（默认每 6 小时）；结果缓存在 profile 下的 `.plugin-updates.json`，默认 6 小时内不重复联网。关闭只影响后台检测，面板里的「检查更新」仍可用。
 - **呈现**：插件管理面板「已安装」列表每行显示当前版本与「可更新到 vX」（可单条更新／忽略，也可「全部更新」「忽略选中」），并有「上次检测」时间；侧边栏「插件管理」入口和启动器菜单行也会显示可更新数量（已忽略的不计入，所以忽略之后那个角标就消失了）。旧的外部 Harness 实例没有这些接口时静默降级。
 
-### 插件兼容性告警
+### 插件兼容性检测（已移除）
 
-dsh 就绪后启动器会做一次静态兼容性扫描（`Sources/PluginCompatibilitySupport.swift`），把"装上了但可能起不来"的插件一次性告诉用户，而不是等重启 dsh 才发现整个 Harness 起不来：
+启动器**不再**做插件兼容性检测：启动时不扫描、更新插件时不比对 peer、安装时不判版本要求。这类判定既拖慢就绪与更新（要联网 `pnpm view`、请求 `/installed`、遍历 `node_modules`），又经常因为「插件市场的 `latest` 面向比本机更新的 dsh」而把用户卡在一个升不动的旧版本上，只会弹出用户无法自行处置的告警。
 
-- **判据**：插件管理器报告为「损坏/安装不完整」的条目；用户插件声明的 `peerDependencies` 与本机实际版本比对（运行时不存在的 peer 也算问题）。**启动器自带的三个内置插件（归档管理 / 插件管理 / 会话完成通知）完全不参与扫描**：它们随 App 分发、用户升不了也卸不掉，弹「可能与当前 dsh 版本不兼容」只能把人引去白重启一次（下次启动同样的判定再来一遍）；它们"有没有随当前 dsh 加载"只由就绪探针写日志（`monitorArchivePlugin` / `monitorSessionNotify`），不再弹窗。名字集合（`PluginCompatibilitySupport.bundledPluginNames`）兜住旧接口把内置插件误标成 `user`/`broken` 的情况。
-- **peer 的位置按 Node 的顺序找**：插件自带的 `node_modules` → profile 的 `node_modules` → profile 根的 `node_modules`（pnpm 把公共依赖提升到这里）→ dsh runtime 的 `node_modules`。只看 runtime 一处会把提升的、或插件自带的依赖误报成「不存在」——实测 `@eghrhegpe/dsh-connect-qoder` 自带 `@earendil-works/pi-ai@0.87.1`（满足它声明的区间）却仍被报警。
-- **浏览器侧的 `react`/`react-dom` 不判缺失**：客户端插件包里的 `require('react')` 由 Harness 外壳（客户端模块系统的 seed 模块）注入，和任何 `node_modules` 都无关——内置插件自己就是 `require('react')`。把这两个 peer 算成"运行时里不存在"，会把明明能用的 UI 插件劝去卸载。
-- **每个插件最多一条告警**：一个插件同时踩两个 peer 时，两条原因用「；」合并成一条（日志里按插件计数，形如「检测到 2 个插件兼容性问题：…」），弹窗也按插件逐个呈现，处理完不会为同一个插件再弹一次。
-- **处置**：问题插件可「升级插件」或「卸载插件」；「忽略」只对本次启动器运行生效（下次启动会重新扫）。所有问题同时写进日志。
+- 插件真把 dsh 弄崩时，启动器只如实报错，不再自动禁用、隔离或回退任何插件（见下节）。
+- npm 区间语义的纯函数与单测保留在 `Sources/PluginCompatibilitySupport.swift`、`Plugins/DSHPluginManager/lib/index.js` 及对应的 `scripts/test-plugin-compatibility.swift`、`plugin-peer-compat.test.js`，仅供将来需要时复用，主流程不调用。
+- dsh 官方插件市场自身按 `engines.dsh` 筛选可用版本，那是 dsh 运行时的行为，不在本启动器仓库内。
 
-### 启动失败自动恢复（插件隔离与安全模式）
+### 启动失败自动恢复（已移除）
 
-设计目标：**点「重启」一定要能把 Harness 拉起来**。插件是 dsh 启动时逐个 import 的，任何一个抛错整个进程就以退出码 1 结束，而插件管理器的 HTTP 接口随 dsh 一起死——所以恢复逻辑必须放在启动器里，不依赖 dsh 活着。
+启动器**不再**替用户决定哪个插件该被禁用。以下机制已整体移除：启动前静态预检（扫相对 import 并预隔离）、启动失败后的 stderr 归因与逐个排除（bisect）、隔离 overlay（`--patch` + `disabled: true`）、安全模式（`--profile rescue`）、dsh 更新失败的一键回退弹窗，以及菜单里的「已隔离 N 个插件」恢复入口。
 
-- **只在「启动过程中」退出才触发**：运行期崩溃的原因五花八门，那时候禁插件大概率无效，还会静默削弱用户环境。
-- **归因**：从这次启动的 stderr 里认 `failed to import loader entry <行> (<包>)`、`Cannot find package '<包>'`、`ERR_MODULE_NOT_FOUND` 的 `node_modules` 路径。括号里是 `@deepseek-ai/*` 这类公共层时改用**行 id 反查**（`--dump-config` 的 `# == <包名>` 段能查出那一行属于哪个 bundle）——dsh 升级后最常见的破坏是「模块 import 得动、插件 init 才炸」，那种报错里既没有包名也没有路径。
-- **拉起前的静态预检**：第一次启动 dsh 之前先把 profile 里的第三方 bundle 扫一遍相对 import，缺文件的**预隔离**掉（原因记「启动前预检」），让「上游只在打包时生成公共模块」这类问题不需要先失败一次才自愈。只在真查出问题时才付一次 `--dump-config` 的开销。
-- **逐个排除（bisect）**：什么都没点名时，按 `dsh.profile.bundles` 的第三方列表一个一个禁、一个一个试。失败退出只要几秒，代价是几次快速重试，换来的是**只禁掉真正坏的那一个**，而不是一把全砍。第三方全禁完仍起不来才转安全模式（此时先提出 dsh 版本一键回退，回退不成才进安全模式）。
-- **隔离**：跑一次 `dsh web --dump-config`（只 compose、不启服务，坏 profile 上照样出结果）取该包**自己贡献**的顶层行 id，取不到再退回包内 `cordis.patch.yml` 的 `insert:` 块；然后写两个文件到 `~/Library/Application Support/Deepseek Harness Launcher/`：`plugin-isolation.json`（状态）与 `plugin-isolation.yml`（overlay）。下次启动以最高优先级的 `--patch` 传入 `- id: <行>` + `disabled: true`，并自动重新拉起。
-  - 不碰 profile 的 `dependencies` 与 `dsh.profile.bundles`（那两处 `dsh plugin` 每次都会 reconcile 回来），不删插件文件，不跑 pnpm。
-  - 内置插件（`@deepseek-ai/dsh-base`、`dsh-web-app` 与启动器自带的三个插件）永不被隔离。
-  - 一次启动会话最多连续隔离 3 个插件，避免把插件挨个禁光。
-- **安全模式**：认不出嫌疑插件、或隔离额度用尽时，改用 `dsh --profile rescue --from-default-profile web` 启动——只含 dsh 自带的 base + web-app（新建约 16K，不需要网络），第三方插件一个都不加载。此时不跑归档/通知/插件更新等探针，免得对着一堆「插件不可用」弹窗。
-- **恢复**：菜单会出现「已隔离 N 个插件…（点按恢复）」或「退出安全模式并重启」。手动复位删掉 `plugin-isolation.json` 即可。
-- **已知代价**：被隔离的插件如果给别的 bundle 注入服务，那些行会以 `pending (waiting for services: …)` 再失败一次，此时阶梯会继续隔离下一个嫌疑插件或转入安全模式。
-- **dsh 版本回退快照的释放时机**：不是「首页有响应」就算成功——那会出现「dsh 升到 X 之后所有插件加载失败、但界面显示成功、也已经一键回不去」。快照要等内置插件探测成功（插件树真的加载完）才清理。
-- **还在观察的缺口**：dsh 本体升级后启动器会跑一次 `dsh plugin update --latest` 同步插件，那条路走的是 dsh 自带 CLI，**没有**上面这套 peer 门禁与装后验收；它的兜底是启动预检 + 逐个排除 + 兼容性扫描提示。
+- dsh 若在启动过程中退出，启动器只如实记日志并报错，不再自动重启或禁用任何插件。
+- 常规启动参数不再带隔离 overlay，`dsh.profile.bundles` 里的插件全部照常加载。
+- `Sources/PluginIsolationSupport.swift` 与 `Sources/PluginSourceCheck.swift` 的纯函数及单测保留，仅为可复用与语义回归，主流程不调用。
 
 ### 卸载
 
@@ -274,7 +261,7 @@ dsh 就绪后启动器会做一次静态兼容性扫描（`Sources/PluginCompati
 - 日志文件：`~/Library/Logs/Deepseek Harness Launcher/dhl.log`。菜单栏中的「打开日志」会直接打开它。
 - 日志时间使用本机时区，格式为 `yyyy-MM-dd HH:mm:ss Z`；已有的历史 UTC 日志不会被重写。
 - 遇到启动失败，优先检查日志中的「启动命令」以及紧随其后的 npm/dsh stderr。常见原因是 Node/npm 不在可发现路径、registry 网络失败、端口已被非 Harness 程序占用，或归档插件链接指向了已删除的旧 App。
-- 因插件导致的启动失败会先自动隔离并重试（日志里搜「已隔离插件」），隔离记录在 `~/Library/Application Support/Deepseek Harness Launcher/plugin-isolation.json`；某次更新后功能消失，先看这个文件是不是把插件禁掉了。
+- 启动器不再自动隔离插件、也没有隔离状态文件；若怀疑某个插件导致启动失败，按日志里的启动命令与 stderr 定位，到 Harness 侧边栏「插件管理」里自行卸载或降级该插件。
 
 ---
 

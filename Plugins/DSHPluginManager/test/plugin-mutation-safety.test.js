@@ -199,7 +199,12 @@ test('node_modules 重装失败时用更新前的源码副本兜底，并上报�
         commands.push(args);
         if (String(args[1]).startsWith('file:') && addToFile === 2) throw new Error('pnpm 被中断');
       },
-      clone: async () => ({ ok: true, dest: dir, packageName: 'repo' })
+      // 假 clone：真实 cloneToSources 会把新源码落回 dir（旧目录已被改名成 .bak）。
+      clone: async () => {
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'repo', version: '1.1.0' }), 'utf8');
+        return { ok: true, dest: dir, packageName: 'repo' };
+      }
     });
     assert.equal(result.ok, false, '包没装上不能报成功');
     assert.match(String(result.error ?? ''), /pnpm 被中断/);

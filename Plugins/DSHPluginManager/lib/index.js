@@ -69,6 +69,11 @@ async function readPackageMeta(directory) {
   } catch { return null; }
 }
 
+/** 完整 package.json（main/exports/scripts 都要用；readPackageMeta 只挑展示字段）。 */
+async function readPackageManifest(directory) {
+  try { return JSON.parse(await fs.readFile(join(directory, 'package.json'), 'utf8')); } catch { return null; }
+}
+
 async function linkTarget(path) {
   try { return await fs.readlink(path); } catch { return null; }
 }
@@ -181,6 +186,19 @@ async function installedImportGaps(name) {
   return findUnresolvableLocalImports(resolved.path);
 }
 
+/**
+ * 已装进 node_modules 的那份的入口文件是否落地（main / exports['./client']）。
+ *
+ * 与 installedImportGaps 互补：那个查「源码里的相对 import」，这个查「dsh 启动时
+ * 真正 import 的入口」。git 源码仓库不提交构建产物时，import 全都能落地、入口却
+ * 不存在——只有这一层能抓到。包目录不存在时返回空（无从校验，不因此判失败）。
+ */
+async function installedPackageEntryGaps(name) {
+  const resolved = await resolveModule(profilesWebModules(), String(name));
+  if (!resolved) return [];
+  return missingPackageEntries(resolved.path);
+}
+
 async function restoreSourceBackup(backup, dir) {
   try {
     await fs.rm(dir, { recursive: true, force: true });
@@ -251,6 +269,11 @@ export async function acceptInstalledPackage(name, note, command = pluginCommand
     }
     const rollback = await rollbackFailedInstall(name, command);
     return { ok: false, error: `安装命令已执行，但 ${name} 没有出现在 node_modules 里（未生效）；${rollback}` };
+  }
+  const missingEntries = await installedPackageEntryGaps(name);
+  if (missingEntries.length > 0) {
+    const rollback = await rollbackFailedInstall(name, command);
+    return { ok: false, error: `装进来的 ${name} 缺入口文件 ${missingEntries.join('、')}（dsh 重启后会整条 entry 加载失败）；${rollback}` };
   }
   const gaps = await installedImportGaps(name);
   if (!gaps.length) return { ok: true, note };
@@ -561,6 +584,38 @@ async function npmViewExists(name, timeoutMs = 8000) {
   }
 }
 
+/**
+ * npm 包的 repository 是否指向市场条目的 github `author/repo`。
+ *
+ * 市场条目只记 github 仓库，代码却会按 `author/repo` 拼出 npm 候选名。无 scope 的
+ * 候选名很容易撞上**别人的同名包**（实测 `dsh-genui` 是 lhuans/dsh-genui，而市场条目
+ * `omdsh-dev/dsh-genui` 的发行版叫 `@changfenhuang/dsh-genui`）——不校验 repository
+ * 就会把插件装成另一个人的包。scoped 候选（@author/repo）不做这层校验：scope 已经
+ * 绑定了作者，再查一次只是多一次网络往返。
+ * @param {string|{url?:string}} repository - npm 的 repository 字段。
+ * @param {{author?:string,repo?:string}} ref - 市场条目的 github 引用。
+ */
+export function repoMatchesEntry(repository, ref) {
+  const raw = typeof repository === 'string' ? repository : repository?.url;
+  if (!raw || !ref?.author || !ref?.repo) return false;
+  const normalized = String(raw).toLowerCase()
+    .replace(/^git\+/, '')
+    .replace(/^git@github\.com:/, 'https://github.com/')
+    .replace(/\.git$/, '')
+    .replace(/\/+$/, '');
+  return normalized === `https://github.com/${String(ref.author).toLowerCase()}/${String(ref.repo).toLowerCase()}`;
+}
+
+/** 读 npm 包的 repository 字段（探不到/网络失败返回 null，由调用方保守处理）。 */
+async function npmRepositoryOf(name, timeoutMs = 8000) {
+  try {
+    await ensurePnpmPath();
+    const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
+    const { stdout } = await run(cli, ['view', name, 'repository', '--json'], { timeout: timeoutMs });
+    return JSON.parse(String(stdout).trim() || 'null');
+  } catch { return null; }
+}
+
 /** 一条 import 语句里的模块说明符，覆盖静态、动态与副作用三种写法。 */
 const LOCAL_IMPORT_RES = [
   /(?:^|[\s;(=])(?:import|export)\b[^;'"]*?from\s*["']([^"']+)["']/g,
@@ -720,19 +775,188 @@ async function cloneToSources(ref, subdir) {
 }
 
 /**
+ * package.json 声明了、但目录里不存在的入口文件。
+ *
+ * dsh 启动时 import 的正是 `main` 与 `exports['./client']`；git 仓库常常不提交构建
+ * 产物（dsh-genui 的 lib/ 就是这样），只 clone 不构建就会装出一个「文件都在、入口
+ * 不在」的包：dsh 启动时整条 entry 加载失败，用户侧表现为插件静默失效（例如 dsh-ui
+ * 围栏退化成普通代码块），插件管理里却还显示「已安装」。
+ * @param {string} dir - 包目录。
+ * @param {object} [meta] - 已读到的 package.json（省一次读盘）。
+ * @returns {Promise<string[]>} 缺失的入口相对路径。
+ */
+/**
+ * 从 exports 的条件对象里取一个代表性的文件目标（default > import > require >
+ * node > browser，再退到任意字符串分支）。只用来回答「入口文件在不在」：
+ * 拿到一个存在的目标就算过，不追求穷举每种条件。
+ */
+function firstExportTarget(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    for (const item of value) { const target = firstExportTarget(item); if (target) return target; }
+    return null;
+  }
+  if (value && typeof value === 'object') {
+    for (const key of ['default', 'import', 'require', 'node', 'browser', 'development', 'production']) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        const target = firstExportTarget(value[key]);
+        if (target) return target;
+      }
+    }
+    for (const item of Object.values(value)) {
+      const target = firstExportTarget(item);
+      if (target) return target;
+    }
+  }
+  return null;
+}
+
+export async function missingPackageEntries(dir, meta) {
+  const root = resolve(dir);
+  const declaration = meta ?? await readPackageManifest(dir);
+  if (!declaration) return [];
+  const targets = [];
+  if (typeof declaration.main === 'string' && declaration.main) targets.push(declaration.main);
+  // 只声明 exports（没有 main）的包同样要校验：不少新包这么写，dsh 按它解析入口。
+  // 顶层字符串 exports 等价于 exports["."]；对象则取 "." 条件里第一个可用目标。
+  const rootExport = typeof declaration.exports === 'string'
+    ? declaration.exports
+    : firstExportTarget(declaration.exports?.['.']);
+  if (rootExport) targets.push(rootExport);
+  const clientExport = firstExportTarget(declaration.exports?.['./client']);
+  if (clientExport) targets.push(clientExport);
+  const missing = [];
+  for (const target of [...new Set(targets)]) {
+    const file = resolve(root, target);
+    // 出界的 entry（../x）不是这个包自己的文件，不归这里管。
+    if (!file.startsWith(root + sep)) continue;
+    // 按 node 的解析规则判断（省略扩展名 / 目录 index 都算存在），避免误报。
+    if (!(await resolvesAsLocalModule(file))) missing.push(target);
+  }
+  return missing;
+}
+
+/** 在插件源码目录里跑一条 pnpm 命令（装依赖 / 构建），走与安装链路同一个 pnpm shim。 */
+async function runPnpmInSource(dir, args, timeoutMs = 300000) {
+  const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
+  const [pathWithPnpm] = await ensurePnpmPath();
+  return run(cli, args, { cwd: dir, timeout: timeoutMs, env: { ...process.env, PATH: pathWithPnpm } });
+}
+
+/**
+ * 默认构建实现：装依赖 → 跑 `build`（没有则 `prepare`）。
+ * 与 pullLocalUpdate（dev-linked 插件就地更新）同一口径——很多插件只在构建时
+ * 生成 lib/ 入口与 client 产物。
+ */
+async function buildSourcePackage(dir, meta) {
+  const script = meta?.scripts?.build ? 'build' : (meta?.scripts?.prepare ? 'prepare' : null);
+  if (!script) return { ok: false, error: 'package.json 没有 build/prepare 脚本，无法生成入口文件' };
+  try {
+    await runPnpmInSource(dir, ['install']);
+    await runPnpmInSource(dir, ['run', script]);
+    return { ok: true, script };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error), script };
+  }
+}
+
+/**
+ * 让克隆出来的源码包「可安装」：入口缺失时先装依赖、跑构建，构建后仍缺就**拒绝安装**。
+ *
+ * 绝不能把缺入口的包 `pnpm add file:` 进 profile——dsh 重启后会整条 entry 加载失败，
+ * 而插件管理里还显示「已安装」；用户只会看到功能静默消失（dsh-genui 就是这样让
+ * dsh-ui 围栏退化成代码块的）。
+ * @param {string} dir - cloneToSources 产出的源码目录。
+ * @param {{runBuild?: (dir:string, meta:object) => Promise<{ok:boolean,error?:string,script?:string}>}} [options]
+ *   单测注入构建实现，避免真跑 pnpm。
+ * @returns {Promise<{ok:boolean,built?:boolean,missing?:string[],error?:string}>}
+ */
+export async function prepareClonedSource(dir, options = {}) {
+  const meta = await readPackageManifest(dir);
+  if (!meta?.name) return { ok: false, error: `插件源码目录没有可用的 package.json：${dir}` };
+  const missing = await missingPackageEntries(dir, meta);
+  if (missing.length === 0) return { ok: true, built: false, missing: [] };
+  const runBuild = options.runBuild ?? buildSourcePackage;
+  const built = await runBuild(dir, meta);
+  // 构建装出来的 devDependencies 不进包：pnpm add file: 会把整个目录带进 profile。
+  await fs.rm(join(dir, 'node_modules'), { recursive: true, force: true }).catch(() => {});
+  if (!built.ok) {
+    return { ok: false, error: `插件需要先构建才能安装（缺入口 ${missing.join('、')}），但构建失败：${built.error}` };
+  }
+  const still = await missingPackageEntries(dir, meta);
+  if (still.length > 0) {
+    return { ok: false, error: `插件构建后仍缺入口文件 ${still.join('、')}，已拒绝安装（否则重启 dsh 后该插件会加载失败）` };
+  }
+  return { ok: true, built: true, missing: [] };
+}
+
+/**
+ * 把克隆出来的插件真正装进 profile。
+ *
+ * 先按**克隆包自己的 package.json name** 探测 npm：市场条目名与 npm 包名经常不是
+ * 一回事（dsh-genui 的市场名是 `omdsh-dev/dsh-genui`，npm 名却是
+ * `@changfenhuang/dsh-genui`），死按条目名探测永远落空、只能退回 git 源码。发行版
+ * 自带构建产物，是更省事也更稳的路。
+ *
+ * 走 file: 之前必须先 prepareClonedSource：构建出入口、校验通过才允许 add。
+ * @param {{ok:boolean,dest:string,packageName:string}} src - cloneToSources 的结果。
+ * @param {{command:Function,verifyPresent?:Function,npmProbe?:Function,prepare?:Function}} options
+ */
+async function materializeClonedPlugin(src, options) {
+  const { command, verifyPresent } = options;
+  const npmProbe = options.npmProbe ?? npmViewExists;
+  const prepare = options.prepare ?? prepareClonedSource;
+  const repositoryOf = options.repositoryOf ?? npmRepositoryOf;
+
+  let published = false;
+  try { published = (await npmProbe(src.packageName)) === true; } catch { published = false; }
+  // 无 scope 的包名仍可能撞上别人的同名包：按仓库验证一次 identity（scoped 名已绑定作者）。
+  if (published && options.sourceRef && !String(src.packageName).startsWith('@')) {
+    try {
+      published = repoMatchesEntry(await repositoryOf(src.packageName), options.sourceRef);
+    } catch { published = false; }
+  }
+  if (published) {
+    try {
+      const result = (await command(['add', src.packageName])) ?? {};
+      const accepted = await acceptInstalledPackage(src.packageName, result.note, command, verifyPresent, src.packageName);
+      if (accepted.ok) {
+        return { ok: true, installedAs: src.packageName, packageName: src.packageName, note: accepted.note, fromNpm: true };
+      }
+    } catch { /* npm 装不上就回退到源码构建这条路 */ }
+  }
+
+  const prepared = await prepare(src.dest);
+  if (!prepared.ok) return { ok: false, error: prepared.error };
+  // 构建后重新扫一遍相对 import：构建产物里也可能有落不了地的本地引用。
+  const gaps = await findUnresolvableLocalImports(src.dest);
+  if (gaps.length) return { ok: false, error: describeUnresolvableImports(gaps) };
+  try {
+    const result = (await command(['add', `file:${src.dest}`])) ?? {};
+    const accepted = await acceptInstalledPackage(src.packageName, result.note, command, verifyPresent, `file:${src.dest}`);
+    if (!accepted.ok) return accepted;
+    const note = prepared.built && accepted.note ? `${accepted.note}（源码已构建）` : (accepted.note ?? (prepared.built ? '源码已构建' : undefined));
+    return { ok: true, installedAs: `file:${src.dest}`, packageName: src.packageName, note };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+
+/**
  * Install a plugin that lives in a git repo subdirectory (`author/repo#subdir`).
  * Such plugins are not npm packages, so they cannot go through `pnpm add <pkg>`.
  * We sparse-clone the repo, copy the subdirectory into a persistent source
  * folder under the profile, and add it as a `file:` dependency so pnpm records
  * it in the profile manifest and node_modules (and dsh reconciles its bundle).
  * A clone whose own relative imports don't land is refused here rather than
- * linked into the profile (see findUnresolvableLocalImports).
+ * linked into the profile (see findUnresolvableLocalImports), and a clone that
+ * needs a build before its entry files exist is built first (materializeClonedPlugin).
  * @param {{author:string,repo:string,subdir:string,full:string}} ref
  * @param {Set<string>} installedNames - lower-cased names already present.
  * @returns {Promise<{ok:boolean,alreadyInstalled?:boolean,installedAs?:string,packageName?:string,note?:string,error?:string}>}
  */
 async function installSubdirPlugin(ref, installedNames, command = pluginCommand, options = {}) {
-  const verifyPresent = options.verifyPresent;
   const src = await cloneToSources(ref, ref.subdir);
   if (!src.ok) return src;
   const missing = await findUnresolvableLocalImports(src.dest);
@@ -740,14 +964,14 @@ async function installSubdirPlugin(ref, installedNames, command = pluginCommand,
   if (installedNames.has(src.packageName.toLowerCase())) {
     return { ok: true, alreadyInstalled: true, installedAs: src.packageName, packageName: src.packageName };
   }
-  try {
-    const result = await command(['add', `file:${src.dest}`]);
-    const accepted = await acceptInstalledPackage(src.packageName, result.note, command, verifyPresent, `file:${src.dest}`);
-    if (!accepted.ok) return accepted;
-    return { ok: true, installedAs: `file:${src.dest}`, packageName: src.packageName, note: accepted.note };
-  } catch (error) {
-    return { ok: false, error: String(error?.message || error) };
-  }
+  return materializeClonedPlugin(src, {
+    command,
+    verifyPresent: options.verifyPresent,
+    npmProbe: options.npmProbe,
+    repositoryOf: options.npmRepository,
+    sourceRef: ref,
+    prepare: options.prepare
+  });
 }
 
 /**
@@ -762,6 +986,9 @@ async function installSubdirPlugin(ref, installedNames, command = pluginCommand,
  */
 export async function installPlugin(entry, command = pluginCommand, options = {}) {
   const verifyPresent = options.verifyPresent;
+  const npmProbe = options.npmProbe ?? npmViewExists;
+  const clone = options.clone ?? cloneToSources;
+  const repositoryOf = options.npmRepository ?? npmRepositoryOf;
   const { candidates, repoRef } = installCandidates(entry);
   const installed = await listInstalledPlugins();
   const installedNames = new Set(installed.filter(item => !item.broken).map(item => item.name.toLowerCase()));
@@ -786,12 +1013,21 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
   let lastError = '';
   // Probe candidates in parallel first: only `pnpm add` a name that really
   // exists, so a missing name never makes pnpm wait on a network failure.
-  const probes = await Promise.all(candidates.map(name => npmViewExists(name)));
+  const probes = await Promise.all(candidates.map(name => npmProbe(name)));
   for (let i = 0; i < candidates.length; i++) {
     if (probes[i] === 'unreachable') { lastError = `npm registry 暂时不可达，无法确认 ${candidates[i]}（网络恢复后会自动重试 git 源）`; continue; }
     if (!probes[i]) { lastError = `npm 上没有 ${candidates[i]}`; continue; }
+    // 无 scope 的候选名容易撞上别人的同名包（实测 dsh-genui 是另一个作者的包）：
+    // repository 对不上就跳过，宁可变慢走 git 源码，也不能把插件装成别人的包。
+    if (repoRef && !candidates[i].startsWith('@')) {
+      const repository = await repositoryOf(candidates[i]);
+      if (!repoMatchesEntry(repository, repoRef)) {
+        lastError = `npm 上的 ${candidates[i]} 不是 ${repoRef.author}/${repoRef.repo} 发布的（repository 对不上），已跳过以免装错插件`;
+        continue;
+      }
+    }
     try {
-      const result = await command(['add', candidates[i]]);
+      const result = (await command(['add', candidates[i]])) ?? {};
       const accepted = await acceptInstalledPackage(candidates[i], result.note, command, verifyPresent, candidates[i]);
       if (!accepted.ok) return accepted;
       return { ok: true, installedAs: candidates[i], packageName: candidates[i], note: accepted.note };
@@ -799,20 +1035,23 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
       lastError = String(error?.message || error);
     }
   }
-  // Git fallback: shallow-clone into a persistent source folder and add as a
-  // file: dependency — faster and more predictable than `pnpm add git+…`,
-  // which clones the whole repo without a depth limit.
+  // Git fallback: shallow-clone into a persistent source folder, then either
+  // install the clone's own npm release (market entry names often differ from
+  // the npm package name) or build the source and add it as a `file:`
+  // dependency. A clone without entry files is refused instead of installed.
   if (repoRef && !repoRef.subdir) {
-    const src = await cloneToSources(repoRef, null);
+    const src = await clone(repoRef, null);
     if (src.ok) {
-      try {
-        const result = await command(['add', `file:${src.dest}`]);
-        const accepted = await acceptInstalledPackage(src.packageName, result.note, command, verifyPresent, `file:${src.dest}`);
-        if (!accepted.ok) return accepted;
-        return { ok: true, installedAs: `file:${src.dest}`, packageName: src.packageName, note: accepted.note };
-      } catch (error) {
-        lastError = String(error?.message || error);
-      }
+      const materialized = await materializeClonedPlugin(src, {
+        command,
+        verifyPresent,
+        npmProbe,
+        repositoryOf,
+        sourceRef: repoRef,
+        prepare: options.prepare
+      });
+      if (materialized.ok) return materialized;
+      lastError = materialized.error || lastError;
     } else {
       lastError = src.error || lastError;
     }
@@ -978,11 +1217,8 @@ export async function updatePlugin(name, options = {}) {
     const cached = options.check ? null : await cachedDecisionFor(name, options.cacheFile);
     const checkOverride = cached ? { check: async () => [cached] } : {};
     if (cached) stepUpdateProgress(name, `正在更新到 v${cached.latestVersion}…`);
-    // 门禁探测只在真实入口（菜单/面板/批量）里跑；单测直接调 applyPluginUpdate 时默认不做，
-    // 免得离线测试去连 registry。
-    const result = await applyPluginUpdate(source, {
-      peerProbe: fetchTargetPeerDependencies, ...checkOverride, ...options
-    });
+    // 不再注入 peerProbe：更新前不做任何兼容性探测，少一次 registry 往返。
+    const result = await applyPluginUpdate(source, { ...checkOverride, ...options });
     return finish(result);
   } catch (error) {
     return finish({ ok: false, error: String(error?.message || error) });
@@ -1010,6 +1246,11 @@ async function verifyUpdateApplied(name, target) {
 }
 
 /**
+ * 【已停用】下面这组 peer 区间工具（satisfiesPluginRange / findPeerIncompatibilities /
+ * fetchTargetPeerDependencies / readRuntimePeerVersions / readInstalledPeerDependencies）
+ * 不再被更新、安装或启动流程调用：插件兼容性检测已整体移除。保留实现仅供区间语义
+ * 单测锁住 npm 规则，将来若要恢复检测可以直接复用；不要在主流程里重新接上。
+ *
  * 区间求值：与 `Sources/PluginCompatibilitySupport.swift` 共用同一套规则，两边各自解释。
  *
  * 支持 `*`/`x`-range、`^`、`~`、`>= 0.1.0`（操作符后有空格）、`||` 分支，比较用
@@ -1147,32 +1388,13 @@ export async function readRuntimePeerVersions(peers) {
   return out;
 }
 
-/**
- * **升级前**装着的那份插件声明的 peer（本地读 package.json，不联网）。
- *
- * 门禁要靠它回答"这次升级有没有让兼容性变差"：目标版本与已装版本都不满足同一个
- * peer 时，挡住升级并不能让环境更兼容（那个版本本来就跑着），只会把用户永远卡在
- * 一个升不动的版本上。读不到就是空表，门禁退回"只看目标版本"的老口径。
- */
+/** 【已停用】读已装插件声明的 peer（本地 package.json，不联网）。仅供区间语义单测使用。 */
 export async function readInstalledPeerDependencies(name) {
   const safe = String(name ?? '');
   if (!safe || safe.includes('..')) return {};
   const meta = await readJsonQuiet(join(profilesWebModules(), ...safe.split('/'), 'package.json'));
   const peers = meta?.peerDependencies;
   return peers && typeof peers === 'object' ? peers : {};
-}
-
-/** 升级前的兼容门禁说明（写进界面错误里，用户要能看懂该干什么）。 */
-function describePeerProblems(problems, target) {
-  const detail = problems.map(item => `${item.peer} ${item.range}（当前 ${item.installed}）`).join('；');
-  return `目标版本 v${target} 要求 ${detail}，与当前 dsh 运行时不兼容，已阻止升级：先更新 dsh 本体（菜单栏「检查 Deepseek Harness 更新」）再升这个插件`;
-}
-
-/** 「这次升级新引入的 peer 问题」之外的既有问题：如实写进成功提示，不静默吞掉。 */
-function describePeerCarryOver(problems) {
-  if (!problems.length) return null;
-  const detail = problems.map(item => `${item.peer} ${item.range}（当前 ${item.installed}）`).join('；');
-  return `注意：${detail} 与当前运行时不符，但升级前的版本也是这么声明的，本次升级没有让兼容性变差`;
 }
 
 /**
@@ -1352,37 +1574,11 @@ export async function applyPluginUpdate(source, options = {}) {
   const remote = source.remote;
   stepUpdateProgress(source.name, `正在解析最新版本 v${target}…`);
 
-  // 升级前的兼容门禁：目标版本声明的 peer 与当前 dsh 运行时不满足就当场挡住。
-  // 插件升级失败最多是插件不生效，但装上不兼容的版本会让 dsh 起不来。
-  // 探测本身失败（registry 不通、仓库改名）时放行：判不了不等于不兼容，而装坏还有
-  // 装后验收 + 自动退回 + 启动隔离三层兜着。门禁只负责"知道不兼容时别装"。
-  let declaredPeers = {};
-  let peerProbeWarning = null;
-  try {
-    declaredPeers = await (options.peerProbe ?? (async () => ({})))(source, target) ?? {};
-  } catch (error) {
-    peerProbeWarning = `没能确认 v${target} 的 dsh 版本要求（${String(error?.message || error)}）`;
-  }
-  // 门禁判的是"这次升级会不会让环境更糟"，所以要把**已装版本**的 peer 声明一起摆上桌。
-  // 实测的卡死案例：运行时 @earendil-works/pi-ai 已经是 1.1.0，而插件从 4.3.1 到 4.4.2
-  // 都声明 `>=0.85.0 <0.88.0`——目标版本"不满足"的正是**装着的那个版本**也一直不满足的
-  // 同一个 peer，挡住它只会让用户卡在一个再也升不动的版本上（插件自己还专门写了 1.x 的
-  // 适配分支）。这类"继承而来的"问题因此只提示、不阻止；只有目标版本**新引入**的不兼容
-  // （已装版本满足、目标版本不满足）才继续挡。
-  const installedPeers = await (options.installedPeers ?? readInstalledPeerDependencies)(source.name);
-  const runtimeVersions = await readRuntimePeerVersions(
-    [...new Set([...Object.keys(declaredPeers), ...Object.keys(installedPeers)])]
-  );
-  const peerProblems = findPeerIncompatibilities(declaredPeers, runtimeVersions);
-  const inheritedPeers = new Set(findPeerIncompatibilities(installedPeers, runtimeVersions).map(item => item.peer));
-  const blockingProblems = peerProblems.filter(item => !inheritedPeers.has(item.peer));
-  if (blockingProblems.length) {
-    return { ok: false, status: 'peer-incompatible', error: describePeerProblems(blockingProblems, target) };
-  }
-  const peerCarryOver = describePeerCarryOver(peerProblems);
-  const withCarryOver = result => peerCarryOver
-    ? { ...result, note: [result.note, peerCarryOver].filter(Boolean).join('；') }
-    : result;
+  // 兼容性门禁已移除：不再联网探测目标版本的 peerDependencies、不再与 dsh 运行时
+  // 逐项比对，也不再因为「目标版本要求了更新的 dsh」而挡住升级。插件市场与 dsh
+  // 本体的版本线经常错开，门禁只会把用户卡在一个升不动的旧版本上，还多一次
+  // pnpm view 的往返。装坏的版本仍由下面的安装验收（installedImportGaps）与
+  // 启动器侧的启动隔离兜底。
 
   if (source.kind === 'npm') {
     stepUpdateProgress(source.name, `正在下载并安装 v${target}…`);
@@ -1407,14 +1603,13 @@ export async function applyPluginUpdate(source, options = {}) {
       await command(['add', `${source.name}@${target}`]);
       applied = await verify(source.name, target);
     }
-    return withCarryOver({
+    return {
       ok: true,
       updatedTo: target,
       restartRequired: true,
       verified: applied,
-      note: [applied ? `已更新到 v${target}` : `已安装 v${target}，但 node_modules 版本未变，重启 dsh 后确认`, peerProbeWarning]
-        .filter(Boolean).join('；')
-    });
+      note: applied ? `已更新到 v${target}` : `已安装 v${target}，但 node_modules 版本未变，重启 dsh 后确认`
+    };
   }
 
   if (source.kind === 'git' && remote) {
@@ -1466,6 +1661,13 @@ export async function applyPluginUpdate(source, options = {}) {
         stepUpdateProgress(source.name, '正在校验插件源码…');
         const missing = await findUnresolvableLocalImports(clonedDest ?? remote.dir);
         if (missing.length) throw new Error(describeUnresolvableImports(missing));
+        // 入口缺失（git 仓库不提交构建产物）时先构建：装一个缺 lib/ 的包进去，
+        // dsh 下次启动就会整条 entry 加载失败，用户只看到功能静默消失。
+        stepUpdateProgress(source.name, '正在校验构建产物…');
+        const prepared = await (options.prepare ?? prepareClonedSource)(clonedDest ?? remote.dir);
+        if (!prepared.ok) throw new Error(prepared.error);
+        const builtGaps = await findUnresolvableLocalImports(clonedDest ?? remote.dir);
+        if (builtGaps.length) throw new Error(describeUnresolvableImports(builtGaps));
         stepUpdateProgress(source.name, '正在同步 profile…');
         await command(['add', `file:${cloned.dest}`]);
       } catch (error) {
@@ -1480,9 +1682,9 @@ export async function applyPluginUpdate(source, options = {}) {
         ok: true,
         updatedTo: target,
         restartRequired: true,
-        ...(withCarryOver(await finalizeFileSourceUpdate(
+        ...(await finalizeFileSourceUpdate(
           source.name, target, clonedDest ?? remote.dir, command, backup, remote.dir
-        )))
+        ))
       };
     }
     stepUpdateProgress(source.name, `正在重新解析 ${source.spec ?? `github:${remote.author}/${remote.repo}`}…`);
@@ -1497,13 +1699,13 @@ export async function applyPluginUpdate(source, options = {}) {
       };
     }
     const parsed = await verifyUpdateApplied(source.name, target);
-    return withCarryOver({
+    return {
       ok: true,
       updatedTo: target,
       restartRequired: true,
       verified: parsed,
       note: parsed ? `已更新到 v${target}` : `已重新解析依赖，但 node_modules 版本未变，重启 dsh 后确认`
-    });
+    };
   }
 
   return { ok: false, error: '该插件来源无法自动更新' };
@@ -2364,6 +2566,46 @@ export async function writeUpdateCache(value, cacheFile) {
   await writeTextAtomic(target, JSON.stringify({ ...value, inventory }, null, 2));
 }
 
+/**
+ * 丢掉缓存里属于**已卸载插件**的条目。
+ *
+ * 缓存是「检测那一刻」的已装插件快照，卸载不会回头改它；而 checkPluginUpdates 在
+ * 缓存新鲜时原样返回，幽灵条目就会继续被 summarizeUpdateInventory 计入
+ * 「可更新」——侧边栏角标和「全部更新 (n)」比实际多（用户实测：卸载旧插件后仍显示
+ * 2，实际只剩 1 个需要更新）。只有用户安装且未损坏的插件才可能被检测（bundled /
+ * broken 不参与，见 collectPluginSources），所以按这个口径裁剪。
+ *
+ * installed 传 null（已装列表读取失败）时**保守放行**：宁可多显示一条幽灵，也不能
+ * 因为一次读盘失败把真实的更新提醒抹掉。
+ * @param {Array<object>} inventory - 缓存里的原始检测结论。
+ * @param {Array<object>|null} installed - listInstalledPlugins() 的结果；null 表示读失败。
+ * @returns {{inventory:Array<object>, changed:boolean}} 裁剪后的条目与是否发生变化。
+ */
+export function pruneUninstalledUpdateEntries(inventory, installed) {
+  const entries = Array.isArray(inventory) ? inventory : [];
+  if (!Array.isArray(installed)) return { inventory: entries, changed: false };
+  const detectable = new Set(installed
+    .filter(item => item && item.name && !item.broken && item.source !== 'bundled')
+    .map(item => item.name));
+  const pruned = entries.filter(entry => entry && entry.name && detectable.has(entry.name));
+  return { inventory: pruned, changed: pruned.length !== entries.length };
+}
+
+/**
+ * 把裁剪幽灵条目后的检测结果写回缓存（原子写）。
+ *
+ * 只在缓存还是我们刚才读到的那一刻才写：后台刷新可能已经写入了更新的结论，旧数据
+ * 不许覆盖它（否则刚装上的插件的检测结果会被悄悄回滚）。
+ * @returns {Promise<boolean>} 是否真的写回。
+ */
+async function savePrunedUpdateCache(previous, inventory, cacheFile) {
+  const target = cacheFile ?? UPDATES_CACHE_FILE();
+  const latest = await readJsonQuiet(target);
+  if (!latest || (latest.checkedAt ?? null) !== (previous.checkedAt ?? null)) return false;
+  await writeUpdateCache({ ...previous, inventory }, target);
+  return true;
+}
+
 /** npm 包的 dist-tags（走 pnpm shim，和安装链路同一个 registry/网络栈）。 */
 export async function probeNpmDistTags(packageName, timeoutMs = PROBE_TIMEOUT_MS) {
   try {
@@ -2628,9 +2870,20 @@ export function readUpdateProgress() {
  * - 否则返回当前缓存（可能为空）并**在后台**刷新，`refreshing: true` 表示还在跑。
  * 返回的 inventory 已经按「已忽略」打过标：缓存文件存的是原始检测结论，忽略是读时
  * 叠加的，所以取消忽略不需要联网重测。
+ *
+ * 读缓存时先裁掉已卸载插件的幽灵条目（见 pruneUninstalledUpdateEntries），并把裁剪
+ * 结果写回缓存——否则卸载插件后角标会一直多算一条，直到下一轮联网检测（最多 6 小时）。
  */
 export async function checkPluginUpdates({ force = false, probe = {}, cacheFile, ignoredFile } = {}) {
-  const cached = await readUpdateCache({ cacheFile });
+  let cached = await readUpdateCache({ cacheFile });
+  if (cached && cached.inventory.length > 0) {
+    const installed = await listInstalledPlugins().catch(() => null);
+    const pruned = pruneUninstalledUpdateEntries(cached.inventory, installed);
+    if (pruned.changed) {
+      await savePrunedUpdateCache(cached, pruned.inventory, cacheFile).catch(() => {});
+      cached = { ...cached, inventory: pruned.inventory };
+    }
+  }
   const fresh = cached && Date.now() - Date.parse(cached.checkedAt ?? 0) < UPDATES_TTL_MS;
   const needsRefresh = force || !fresh;
 

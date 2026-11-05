@@ -639,9 +639,10 @@ test('用例7 applyPluginUpdate：file: 克隆来源先备份、clone 重建、�
       command: async args => { commands.push(args); },
       clone: async (ref, subdir) => {
         cloneCalls.push({ ref, subdir });
-        // 模拟 clone 成功：把目标目录重建出来并写入新内容
+        // 模拟 clone 成功：把目标目录重建出来并写入新内容（真 clone 一定带 package.json）
         await mkdir(dir, { recursive: true });
         await writeFile(join(dir, 'index.js'), '// 新版本', 'utf8');
+        await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'repo', version: '1.1.0' }), 'utf8');
         return { ok: true, dest: dir, packageName: 'repo' };
       }
     });
@@ -899,6 +900,51 @@ test('用例9 checkPluginUpdates：缓存新鲜不联网、force 才重新探测
     // 等后台把新缓存写完，再还原 DSH_HOME，避免后台写进真实的 ~/.dsh
     assert.ok(await waitFor(async () => (await readUpdateCache())?.checkedAt !== firstCache.checkedAt), '后台应写入新的 checkedAt');
     assert.equal(probeCalls, 2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 回归：已卸载插件的「幽灵更新条目」
+//
+// 用户实测：卸载旧插件后，侧边栏角标与「全部更新 (n)」还是 2，可实际只剩 1 个
+// 已安装插件可更新。缓存是「检测那一刻」的快照，卸载不会清理它；而
+// checkPluginUpdates 在缓存新鲜时原样返回，幽灵条目就继续计入 summary。
+// ---------------------------------------------------------------------------
+
+test('回归：已卸载插件的幽灵更新条目不再计入角标与「全部更新」', async () => {
+  await withTempDshHome('dsh-pm-ghost-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    // 面板里现在只剩 dsh-keep 还装着；dsh-gone 已经被卸载（manifest 与 node_modules 都没有）
+    await mkdir(join(profile, 'node_modules', 'dsh-keep'), { recursive: true });
+    await writeFile(join(profile, 'node_modules', 'dsh-keep', 'package.json'), JSON.stringify({ name: 'dsh-keep', version: '1.0.0' }));
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { 'dsh-keep': '^1.0.0' },
+      dsh: { profile: { bundles: ['dsh-keep'] } }
+    }));
+    // 缓存是卸载前那一轮检测的结论：两个条目都是 update-available
+    const checkedAt = new Date().toISOString();
+    await writeUpdateCache({
+      checkedAt,
+      inventory: [
+        { name: 'dsh-gone', kind: 'npm', status: 'update-available', installedVersion: '0.5.0', latestVersion: '0.7.6' },
+        { name: 'dsh-keep', kind: 'npm', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' }
+      ]
+    });
+    // 缓存是新鲜的（checkedAt 刚刚），整轮都不该联网——探针抛错兜住这点。
+    const probe = { npm: async () => { throw new Error('不该联网'); }, git: async () => { throw new Error('不该联网'); } };
+
+    const snapshot = await checkPluginUpdates({ probe });
+
+    assert.deepEqual(snapshot.inventory.map(entry => entry.name), ['dsh-keep'], '已卸载插件的条目不能出现在检测结果里');
+    assert.deepEqual(snapshot.summary, { total: 1, updateAvailable: 1, ignored: 0, failed: 0, unknown: 0 },
+      '角标与「全部更新 (n)」只能按已安装插件计数');
+    assert.equal(snapshot.refreshing, false, '裁剪幽灵条目不算重新检测');
+
+    // 顺手把缓存修好：下次读取（含启动器轮询）不用再裁，重新安装同名插件也不会读到旧结论
+    const disk = JSON.parse(await readFile(join(profile, '.plugin-updates.json'), 'utf8'));
+    assert.deepEqual(disk.inventory.map(entry => entry.name), ['dsh-keep'], '缓存文件里的幽灵条目也要清掉');
+    assert.equal(disk.checkedAt, checkedAt, '裁剪不能改检测时间：其它条目还是同一轮结论');
   });
 });
 
@@ -1235,7 +1281,12 @@ test('回归 8b：强制重装后仍未生效则如实标记 verified=false（�
       check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
       peerProbe: async () => ({}),
       command: async () => {},          // pnpm 假装置之不理
-      clone: async () => ({ ok: true, dest: sourcesDir, packageName: 'demo' })
+      clone: async () => {
+        // 真 clone 会把新源码（含 package.json）落回目录；这里只重建最小形态。
+        await mkdir(sourcesDir, { recursive: true });
+        await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '2.0.0' }), 'utf8');
+        return { ok: true, dest: sourcesDir, packageName: 'demo' };
+      }
     });
     assert.equal(result.ok, true, '源码已更新，仍算成功');
     assert.equal(result.verified, false);
@@ -1327,6 +1378,16 @@ test('忽略：checkPluginUpdates 读时打标（角标归零），取消忽略�
   await withTempDshHome('dsh-pm-ignore-check-', async home => {
     const profileDir = join(home, 'profiles', 'web');
     await mkdir(profileDir, { recursive: true });
+    // 两个插件都还装着：缓存里的条目只对已安装插件有效（已卸载插件的条目会被裁掉）
+    for (const name of ['dsh-notify', 'dsh-other']) {
+      await mkdir(join(profileDir, 'node_modules', name), { recursive: true });
+      await writeFile(join(profileDir, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '1.0.0' }));
+    }
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { 'dsh-notify': '^1.2.3', 'dsh-other': '^1.0.0' },
+      dsh: { profile: { bundles: ['dsh-notify', 'dsh-other'] } }
+    }));
     await writeUpdateCache({
       checkedAt: new Date().toISOString(),
       inventory: [

@@ -5,8 +5,8 @@ import Foundation
 // dsh 与插件的版本号是标准 npm 语义（`0.1.7-alpha.1`、`0.1.5-rc.3`）。启动器自己的
 // `compareVersions`（UpdateSupport.swift）面向 `x.y.z-a.b[-SNAPSHOT]` 的发布周期号，
 // 会把 `rc.1` 与 `rc.6` 判成同一个版本——用来判更新提示可以，用来判兼容性会出错。
-// 这两套语义各管各的：需要 npm 语义的地方（dsh 更新判断、插件 peer 区间）都用这里。
-// 本文件从 DSHUpdateSupport.swift 拆出，好让兼容性单测不必链进网络与安装代码。
+// 这两套语义各管各的：dsh 更新判断用这里；插件 peer 区间已停用，仅区间语义单测复用。
+// 本文件从 DSHUpdateSupport.swift 拆出，好让相关单测不必链进网络与安装代码。
 
 func normalizedDSHVersion(_ raw: String) -> String {
     var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)

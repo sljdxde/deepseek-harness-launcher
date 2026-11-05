@@ -152,20 +152,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 点击菜单项后菜单即关闭，反馈必须出现在菜单栏本身才能被看见；
     /// makeStatusImage 重建图标时按此保持 variableLength 不裁剪文案。
     private var statusTitleOverride: String?
-    // 插件兼容性检查：代际号随停止/重启递增，让旧调度自灭（与轮询链同理）；
-    // 已提示过的插件记入集合，避免同一次运行为同一插件反复弹窗。
-    private var pluginCompatGeneration = 0
-    private var pluginCompatAlerted = Set<String>()
-    // 插件隔离（见 Sources/PluginIsolationSupport.swift）：某个插件把 dsh 弄崩时，
-    // 启动器把它的行写进自己私有的 --patch overlay 里禁用，再自动重试，保证「点重启
-    // 一定能起来」。隔离状态只存在启动器目录，绝不改用户 profile 的 dependencies／
-    // dsh.profile.bundles（那两处 dsh 每次 `dsh plugin` 都会 reconcile 回来）。
-    // 本次启动失败的 stderr 尾巴（归因用；有界，长时间运行不会吃掉内存）。
-    private let bootStderr = CapturedOutputBuffer()
-    /// 本次启动会话里已经隔离了几个插件（超预算就不再逐个试，直接转安全模式）。
-    private var isolationsThisBoot = 0
-    /// 当前这次启动是不是安全模式（只加载 dsh 自带插件）。
-    private var safeModeActive = false
+    // 插件隔离 / 启动前预检 / 安全模式 / 启动失败自动恢复已整体移除：启动器不再
+    // 主动禁用、跳过或回退任何插件，dsh 起不来时如实报错即可。
     private var autoUpdateTimer: Timer?
     private var settingsWindow: SettingsWindowController?
     private var pendingUpdate: UpdateManifest?
@@ -177,10 +165,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var dshUpdateMenuItem: NSMenuItem?
     private var dshUpdateMenuRow: MenuRowView?
     private var portMenuRow: MenuRowView?
-    /// 「插件恢复」那一条的自定义行视图。这一行的文案会随隔离状态变（安全模式 /
-    /// 已隔离 N 个插件），而带 view 的菜单项画的是 view 里的 title：只改
-    /// `NSMenuItem.title` 的话用户永远看不到变化（一直显示建菜单时那句「插件恢复」）。
-    private var recoveryMenuRow: MenuRowView?
     private var dshInstallWindow: DSHInstallWindowController?
     private var dshInstallHandle: DSHRuntimeInstallHandle?
     private var dshInstallProgressTracker: DSHInstallProgressTracker?
@@ -274,6 +258,27 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory); configureStatusItem(); applyGlobalHotKey(showAlert: false); start(); scheduleAutoUpdateChecks(initialCheck: true); scheduleDSHUpdateCheck()
+        removeStaleInstallerRelaunchJobs()
+    }
+
+    /// 清掉 `com.local.dhl-install-*` 的 launchd keepalive 任务（外部 launchctl submit
+    /// 的遗留物：命令一退出 launchd 就重跑它，表现为安装器被反复拉起、DHL 反复重装
+    /// 重启——2026-11-03 事故的根源）。正常流程不会产生这个前缀的任务，启动时异步
+    /// 清一次，残余循环最多再走一轮就被掐断。与 Installer/main.swift 的同名逻辑保持
+    /// 一致（安装器是独立编译目标，无法共享代码）。
+    private func removeStaleInstallerRelaunchJobs() {
+        let script = """
+        launchctl list 2>/dev/null | awk '$3 ~ /^com\\.local\\.dhl-install-/ {print $3}' | while IFS= read -r label; do
+          launchctl bootout "gui/\(getuid())/$label" >/dev/null 2>&1 || true
+        done
+        """
+        DispatchQueue.global(qos: .utility).async {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/sh")
+            task.arguments = ["-c", script]
+            do { try task.run() } catch { return }
+            task.waitUntilExit()
+        }
     }
 
     // MARK: - 状态栏与菜单
@@ -300,16 +305,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let settingsItem = makeSettingsMenuItem()
         let logs = menuRowItem(title: "打开日志", action: #selector(openLogs), keyEquivalent: "l")
         let quit = menuRowItem(title: "退出 Deepseek Harness", action: #selector(quit), keyEquivalent: "q")
-        // 恢复入口平时不显示：只有隔离过插件或处在安全模式里才需要它。
-        let recovery = menuRowItem(title: "插件恢复", action: #selector(togglePluginRecoveryMode))
-        recovery.tag = 1004; recovery.isHidden = true
-        recoveryMenuRow = recovery.view as? MenuRowView
         // 运行环境入口同样按需出现：只有在「App 自带版本更新（用户暂不更新）」或
         // 「运行环境缺失/半份（用户暂不重建）」时才有内容，平时不占菜单空间。
         let runtime = menuRowItem(title: "运行环境", action: #selector(fixRuntimeFromMenu))
         runtime.tag = 1005; runtime.isHidden = true
         runtimeMenuItem = runtime; runtimeMenuRow = runtime.view as? MenuRowView
-        [open, port, recovery, runtime, restart, NSMenuItem.separator(), update, dshUpdate, settingsItem, logs, quit].forEach(menu.addItem)
+        [open, port, runtime, restart, NSMenuItem.separator(), update, dshUpdate, settingsItem, logs, quit].forEach(menu.addItem)
         return menu
     }
 
@@ -1027,7 +1028,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cancelDSHInstall()
         let trackedPID = process?.processIdentifier ?? 0
         process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false; pendingSessionId = nil
-        pluginCompatGeneration += 1
         // 旧进程的 token 随进程失效，重开后必须用新进程打印的入口 URL。
         webURLLock.lock(); authenticatedWebURL = nil; webURLLock.unlock()
         setState(.stopped)
@@ -1438,10 +1438,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if state == .running { openDHL(); return }
         setState(.checking)
         DispatchQueue.global(qos: .userInitiated).async {
-            // 静态预检排在拉起来之前：坏插件不该让用户先看到一次「启动失败」。
-            if !self.safeModeActive {
-                self.runPluginSourcePreflight(environment: LauncherEnvironment.nodeEnvironment(preferOffline: true))
-            }
             let choice = self.findPort()
             DispatchQueue.main.async {
                 guard let choice else { self.fail("3080–3099 均不可用"); return }
@@ -1449,7 +1445,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 case .reuse(let port):
                     self.selectedPort = port
                     self.setState(.running)
-                    self.refreshRecoveryMenuItem()
                     self.startHealthMonitors(port: port)
                 case .launch(let port):
                     self.launch(port: port)
@@ -1821,54 +1816,14 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if state == .checking { setState(.stopped) }
     }
 
-    /// 版本定向更新后的启动失败兜底：保留了回退快照时，询问用户是否回退
-    /// 到更新前版本并重启。返回 true 表示已接管（回退并重启），调用方应
-    /// 跳过常规失败流程。典型场景：新 dsh 移除了插件依赖的 API，插件加载
-    /// 失败导致进程起不来——回退旧版本立即恢复可用。
-    private func offerUpdateRollbackIfNeeded(reason: String) -> Bool {
-        guard DSHRuntimeSupport.hasRollback() else { return false }
-        let previous = DSHRuntimeSupport.rollbackVersion() ?? "未知版本"
-        let alert = NSAlert()
-        AlertDesign.style(alert, tone: .error)
-        alert.messageText = "Deepseek Harness 新版本启动失败"
-        alert.informativeText = "\(reason)。\n可能是已安装的插件与新版本不兼容（具体原因见日志）。\n是否回退到更新前的 v\(previous) 并重新启动？"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "回退并重启")
-        alert.addButton(withTitle: "查看日志")
-        alert.addButton(withTitle: "保持新版本")
-        switch AlertDesign.run(alert, escapeButtonIndex: 2) {
-        case .alertFirstButtonReturn:
-            guard DSHRuntimeSupport.performRollback() else {
-                appendLogString("dsh 回退失败（快照换入异常），按常规失败处理\n")
-                return false
-            }
-            appendLogString("dsh 新版本启动失败，已回退到 v\(previous)，正在重新启动…\n")
-            process = nil
-            selectedPort = nil
-            setState(.stopped)
-            start()
-            return true
-        case .alertSecondButtonReturn:
-            openLogs()
-            return false
-        default:
-            return false
-        }
-    }
-
     private func launchInstalledDSH(port: Int, executableURL: URL, environment: [String: String]) {
         let task = Process(); task.executableURL = executableURL
-        // 安全模式用独立 profile（从随包模板新建，不碰用户的 web profile），且不带任何
-        // --patch：内置插件的 overlay 在那个 profile 里未必可解析，带上就可能连兜底都起不来。
-        let arguments = safeModeActive
-            ? PluginIsolationSupport.safeModeArguments(port: port)
-            : PluginIsolationSupport.bootArguments(
-                port: port,
-                basePatch: FileManager.default.isReadableFile(atPath: patchPath) ? patchPath : nil,
-                isolationPatch: stagedIsolationPatchPath()
-            )
+        let arguments = PluginIsolationSupport.bootArguments(
+            port: port,
+            basePatch: FileManager.default.isReadableFile(atPath: patchPath) ? patchPath : nil,
+            isolationPatch: nil
+        )
         task.arguments = arguments
-        _ = bootStderr.takeText()
         task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         task.environment = environment
 
@@ -1889,13 +1844,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let data = handle.availableData
             if data.isEmpty { handle.readabilityHandler = nil } else {
                 self?.appendLog(data, prefix: "stderr")
-                // 留一份尾巴给失败归因：插件导致的启动失败，答案全在 stderr 里。
-                self?.bootStderr.append(data)
             }
         }
 
         let command = ([executableURL.path] + arguments).joined(separator: " ")
-        appendLogString("\(safeModeActive ? "启动命令（安全模式）：" : "启动命令：")\(command)\n")
+        appendLogString("启动命令：\(command)\n")
         task.terminationHandler = { [weak self] terminatedProcess in
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
@@ -1930,13 +1883,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.start()
                     return
                 }
-                // 版本更新后的首次启动失败优先提供回退，而非直接报错
-                let exitReason = "\(LauncherBrand.fullName) 进程已退出（code=\(terminatedProcess.terminationStatus)）"
-                // 只在「启动过程中」退出才做插件隔离：运行期崩溃的原因五花八门，
-                // 此时禁插件既大概率无效，又会静默削弱用户的环境。
-                // 顺序是「先按插件自救」——保住新版 dsh 和尽可能多的插件；阶梯走完仍起不来
-                // 才在安全模式入口提出 dsh 版本回退（见 attemptBootRecoveryAfterFailure）。
-                if self.state == .checking, self.attemptBootRecoveryAfterFailure(exitReason: exitReason) { return }
                 self.fail("\(LauncherBrand.fullName) 进程已退出，请查看日志")
             }
         }
@@ -1948,279 +1894,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    // MARK: - 启动失败恢复：插件隔离与安全模式
-
-    /// 隔离状态与 overlay 只放在启动器自己的目录里：profile 的 dependencies 与
-    /// dsh.profile.bundles 归 dsh 的 `dsh plugin` 管，写进去迟早会被 reconcile 掉。
-    private var isolationDirectory: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent(LauncherBrand.fullName, isDirectory: true)
-    }
-
-    private var isolationStateURL: URL {
-        isolationDirectory.appendingPathComponent(PluginIsolationSupport.stateFileName)
-    }
-
-    /// 渲染并落盘隔离 overlay，返回要交给 dsh 的 `--patch` 路径；没有隔离项或写不成的
-    /// 时候返回 nil——dsh 对「不存在或为空的 patch 文件」是致命错误，宁可不隔离。
-    private func stagedIsolationPatchPath() -> String? {
-        PluginIsolationSupport.stagedPatchFile(
-            entries: PluginIsolationSupport.readState(url: isolationStateURL),
-            directory: isolationDirectory
-        )?.path
-    }
-
-    /// dsh 在启动过程中退出时的自动恢复。返回 true 表示这次失败已被接管。
-    ///
-    /// 保证的是用户要的那件事：**插件可以加载失败，DSH 必须能打开**。阶梯是「点名谁就只禁谁
-    /// → 只点名行就按行反查 bundle → 什么都没点名就逐个排除 → 第三方全禁完仍不行才安全模式」，
-    /// 每一级都只多禁一个，尽可能保住能用的插件。
-    private func attemptBootRecoveryAfterFailure(exitReason: String) -> Bool {
-        if safeModeActive {
-            appendLogString("安全模式也启动失败，停止自动恢复\n")
-            return false
-        }
-        let stderr = bootStderr.takeText()
-        showStatusTitle("正在诊断启动失败…")
-        let environment = LauncherEnvironment.nodeEnvironment(preferOffline: true)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let plan = self.resolveRecoveryPlan(stderr: stderr, environment: environment)
-            DispatchQueue.main.async {
-                switch plan.decision {
-                case .isolate(let bundle, let source):
-                    self.applyIsolation(bundle: bundle, source: source, plan: plan, stderr: stderr)
-                case .safeMode(let reason):
-                    // 第三方全禁完还是起不来，更像 dsh 本体（多半刚升级过）的问题：
-                    // 先给一键回退，回退不成再进安全模式。
-                    if self.offerUpdateRollbackIfNeeded(reason: "\(LauncherBrand.fullName) 隔离全部插件后仍启动失败") { return }
-                    self.enterSafeMode(reason: reason)
-                case .giveUp(let reason):
-                    self.appendLogString("不再自动恢复：\(reason)\n")
-                    self.fail("\(LauncherBrand.fullName) 启动失败：\(reason)")
-                }
-            }
-        }
-        return true
-    }
-
-    /// 一次 dump-config 拿到「bundle → 自己贡献的行」映射 + profile 的可隔离插件清单。
-    /// 两者都要读盘/跑进程，所以整个恢复判定放在后台阶段做完。
-    private struct RecoveryPlan {
-        var rowsByBundle: [String: [String]]
-        var candidates: [String]
-        var decision: PluginIsolationSupport.RecoveryDecision
-    }
-
-    private func resolveRecoveryPlan(stderr: String, environment: [String: String]) -> RecoveryPlan {
-        let rowsByBundle = PluginIsolationSupport.bundleRowIds(
-            fromDumpConfig: captureDshDumpConfig(environment: environment) ?? ""
-        )
-        let candidates = isolatableBundles()
-        let isolated = Set(PluginIsolationSupport.readState(url: isolationStateURL).map { $0.bundle })
-        let rowIds = PluginIsolationSupport.attributedRowIds(stderr: stderr)
-        let decision = PluginIsolationSupport.decideRecovery(PluginIsolationSupport.RecoveryInput(
-            attributedBundle: PluginIsolationSupport.attributedBundle(stderr: stderr),
-            attributedRowIds: rowIds,
-            rowIdOwners: rowIds.compactMap { PluginIsolationSupport.bundleOwning(rowId: $0, in: rowsByBundle) },
-            candidateBundles: candidates,
-            isolatedBundles: isolated,
-            isolationsThisBoot: isolationsThisBoot
-        ))
-        return RecoveryPlan(rowsByBundle: rowsByBundle, candidates: candidates, decision: decision)
-    }
-
-    /// profile 的 `dsh.profile.bundles` 里用户可以隔离的那部分。读不到就返回空（那就只能
-    /// 走安全模式，不去猜有哪些插件）。
-    private func isolatableBundles() -> [String] {
-        guard let text = try? String(contentsOf: profileManifestURL, encoding: .utf8) else { return [] }
-        return PluginIsolationSupport.isolatableBundles(fromProfileManifest: text)
-    }
-
-    private var profileManifestURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".dsh/profiles/web/package.json")
-    }
-
-    private var profileModulesURL: URL {
-        DSHRuntimeSupport.profileModulesURL
-    }
-
-    /// 把某个 bundle 写进隔离状态（不重启，重启由调用方决定时机）。
-    /// 拿不到可禁的行就返回 false——写一条"禁了个寂寞"的记录只会让用户以为处理过了。
-    @discardableResult
-    private func writeIsolation(
-        bundle: String,
-        source: PluginIsolationSupport.IsolationSource,
-        rowsByBundle: [String: [String]],
-        reason: String
-    ) -> Bool {
-        var rowIds = rowsByBundle[bundle] ?? []
-        if rowIds.isEmpty {
-            let patchURL = profileModulesURL.appendingPathComponent(bundle, isDirectory: true)
-                .appendingPathComponent("cordis.patch.yml")
-            rowIds = (try? String(contentsOf: patchURL, encoding: .utf8))
-                .map { PluginIsolationSupport.insertedRowIds(fromPatchYAML: $0) } ?? []
-        }
-        guard let entry = PluginIsolationSupport.isolationEntry(
-            bundle: bundle, rowIds: rowIds,
-            reason: "\(source.rawValue)：\(reason)",
-            isolatedAt: ISO8601DateFormatter().string(from: Date())
-        ) else {
-            appendLogString("想隔离 \(bundle)，但解析不出它自己贡献的插件行\n")
-            return false
-        }
-        var next = PluginIsolationSupport.readState(url: isolationStateURL)
-        next.removeAll { $0.bundle == entry.bundle }
-        next.append(entry)
-        guard PluginIsolationSupport.writeState(next, url: isolationStateURL) else {
-            appendLogString("写入插件隔离状态失败\n")
-            return false
-        }
-        isolationsThisBoot += 1
-        appendLogString(
-            "插件 \(entry.bundle) 未能加载，已隔离（\(source.rawValue)，禁用行 \(entry.rowIds.joined(separator: ", "))；"
-                + "插件文件与 profile 均未改动，菜单「已隔离插件」可恢复）\n"
-        )
-        refreshRecoveryMenuItem()
-        return true
-    }
-
-    /// 恢复阶梯的落地动作：按决策隔离一个 bundle，然后重新拉起。
-    private func applyIsolation(
-        bundle: String,
-        source: PluginIsolationSupport.IsolationSource,
-        plan: RecoveryPlan,
-        stderr: String
-    ) {
-        guard writeIsolation(bundle: bundle, source: source, rowsByBundle: plan.rowsByBundle,
-                             reason: Self.firstFailureLine(stderr)) else {
-            enterSafeMode(reason: "无法隔离 \(bundle)")
-            return
-        }
-        showStatusTitle("已隔离 \(bundle)，正在重新拉起…")
-        setState(.stopped)
-        start()
-    }
-
-    /// 拉起之前的静态预检：把「相对 import 落不了地」的第三方插件先禁掉，让用户第一次点
-    /// 「启动」就成功——上游只在打包时生成公共模块、git 目录安装缺文件这一类问题，
-    /// 百分之百能在磁盘上查出来，没必要先失败一次再自愈。
-    /// 只在真查出问题时才付一次 dump-config 的开销；任何异常都按「不动」处理。
-    private func runPluginSourcePreflight(environment: [String: String]) {
-        let suspects = isolatableBundles().filter {
-            !PluginSourceCheck.unresolvableLocalImports(
-                in: profileModulesURL.appendingPathComponent($0, isDirectory: true)
-            ).isEmpty
-        }
-        guard !suspects.isEmpty else { return }
-        let rowsByBundle = PluginIsolationSupport.bundleRowIds(
-            fromDumpConfig: captureDshDumpConfig(environment: environment) ?? ""
-        )
-        for bundle in suspects {
-            let gaps = PluginSourceCheck.unresolvableLocalImports(
-                in: profileModulesURL.appendingPathComponent(bundle, isDirectory: true)
-            )
-            writeIsolation(
-                bundle: bundle,
-                source: .preflight,
-                rowsByBundle: rowsByBundle,
-                reason: "缺失模块 " + gaps.prefix(3).map { "\($0.specifier)（\($0.importer)）" }.joined(separator: "、")
-            )
-        }
-    }
-
-    /// 安全模式：只加载 dsh 自带的 base + web-app，第三方插件与内置 overlay 一个都不带。
-    /// 要的是「一定起得来」，让用户永远有个能进去的环境，而不是对着弹窗看日志。
-    private func enterSafeMode(reason: String) {
-        guard !safeModeActive else { return }
-        safeModeActive = true
-        appendLogString("转入安全模式启动：\(reason)\n")
-        showStatusTitle("安全模式启动中…")
-        refreshRecoveryMenuItem()
-        setState(.stopped)
-        start()
-    }
-
-    /// 跑 `dsh web --dump-config` 取装配树。坏 profile 上它照样出结果（真机验证过），
-    /// 所以能在 dsh 起不来时把包名映射成可禁用的行 id。超时或失败返回 nil。
-    private func captureDshDumpConfig(environment: [String: String]) -> String? {
-        guard DSHRuntimeSupport.isInstalled() else { return nil }
-        let task = Process()
-        task.executableURL = DSHRuntimeSupport.executableURL
-        task.arguments = ["web", "--dump-config"]
-        task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
-        task.environment = environment
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
-        let buffer = CapturedOutputBuffer()
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if data.isEmpty { handle.readabilityHandler = nil; return }
-            buffer.append(data)
-        }
-        do { try task.run() } catch { return nil }
-        // dump-config 正常是秒级；卡住就别把恢复流程搭进去，退回包内 patch 的解析结果。
-        let finished = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async { task.waitUntilExit(); finished.signal() }
-        if finished.wait(timeout: .now() + 60) == .timedOut {
-            task.terminationHandler = nil
-            if task.isRunning { task.terminate() }
-            appendLogString("dsh 装配树解析超时，改用插件包内的 patch 定义\n")
-            return nil
-        }
-        pipe.fileHandleForReading.readabilityHandler = nil
-        guard task.terminationStatus == 0 else { return nil }
-        return buffer.text
-    }
-
-    /// 失败原因只留一行，进状态文件给人看。
-    private static func firstFailureLine(_ stderr: String) -> String {
-        let line = stderr.split(separator: "\n").first { $0.contains("loader entry") || $0.contains("Cannot find") }
-            ?? stderr.split(separator: "\n").last ?? ""
-        return String(line.prefix(200))
-    }
-
-    /// 菜单里那一条恢复入口：安全模式 → 退出安全模式；有隔离记录 → 全部恢复；都没有 → 隐藏。
-    @objc private func togglePluginRecoveryMode() {
-        if safeModeActive {
-            appendLogString("用户退出安全模式，按常规方式重新启动\n")
-            safeModeActive = false
-            refreshRecoveryMenuItem()
-            setState(.stopped)
-            start()
-            return
-        }
-        let isolated = PluginIsolationSupport.readState(url: isolationStateURL)
-        guard !isolated.isEmpty else { return }
-        guard PluginIsolationSupport.writeState([], url: isolationStateURL) else {
-            showInfo(title: "恢复插件失败", message: "无法写入隔离状态文件，请查看日志。")
-            return
-        }
-        appendLogString("已解除 \(isolated.count) 个插件的隔离：\(isolated.map { $0.bundle }.joined(separator: ", "))\n")
-        refreshRecoveryMenuItem()
-        if state == .running { restartDSH() } else { setState(.stopped); start() }
-    }
-
-    private func refreshRecoveryMenuItem() {
-        let isolated = PluginIsolationSupport.readState(url: isolationStateURL)
-        let item = statusItem.menu?.item(withTag: 1004)
-        if safeModeActive {
-            item?.isHidden = false
-            setMenuRow(item, row: recoveryMenuRow, title: "退出安全模式并重启（第三方插件未加载）")
-        } else if isolated.isEmpty {
-            item?.isHidden = true
-            setMenuRow(item, row: recoveryMenuRow, title: "插件恢复")
-        } else {
-            item?.isHidden = false
-            // 只列前两个包名：这一行要说清「有插件被隔离了、点一下能恢复」，
-            // 完整清单在日志里。包名可能是 `@scope/很长-的名字`，交给 setMenuRow 封顶。
-            let names = isolated.map { $0.bundle }.prefix(2).joined(separator: "、")
-            setMenuRow(item, row: recoveryMenuRow, title: "已隔离 \(isolated.count) 个插件：\(names)（点按恢复）")
-        }
-    }
+    // 插件隔离 / 启动前静态预检 / 逐个排除 / 安全模式 / 一键回退已整体移除：
+    // 启动器不再替用户决定「哪个插件该被禁用」，dsh 起不来时只如实记日志并报错。
 
     // MARK: - 运行环境入口（按需出现的菜单项）
 
@@ -2295,7 +1970,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // mistake that startup phase for a dead Harness process.
         guard elapsed < 10 * 60 else {
             terminateProcessGroup(pid: process?.processIdentifier ?? 0)
-            if offerUpdateRollbackIfNeeded(reason: "\(LauncherBrand.fullName) 启动超过 10 分钟") { return }
             fail("\(LauncherBrand.fullName) 启动超过 10 分钟，请检查网络和日志")
             return
         }
@@ -2310,12 +1984,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // 判据不降级：首页一响应就删回退快照，会出现「dsh 升到 X 之后所有插件
                 // 加载失败，但界面显示成功、也一键回不去」。快照留到内置插件真的加载
                 // 出来（monitorArchivePlugin 探测成功）才释放。
-                // 起来了：本次启动的隔离预算清零（下次崩了还能再逐个隔离）。
-                if self.isolationsThisBoot > 0 { self.isolationsThisBoot = 0 }
-                if self.safeModeActive {
-                    self.appendLogString("安全模式已启动：第三方插件未加载，菜单可退出安全模式\n")
-                }
-                self.refreshRecoveryMenuItem()
                 self.startHealthMonitors(port: port)
             } else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
@@ -2325,15 +1993,15 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// 就绪后要跑的探针/轮询。安全模式下第三方插件与内置插件都没加载，这些探针只会
-    /// 一条条超时然后弹「插件不可用」——用户此刻需要的是一个能进去的环境，不是噪音。
+    /// 就绪后要跑的探针/轮询。
+    ///
+    /// 插件兼容性扫描、启动前预检、插件隔离与安全模式已整体移除：启动器不再主动
+    /// 禁用或跳过任何插件，也不再为「可能起不来」提前做任何判定。
     private func startHealthMonitors(port: Int) {
         openBrowserWhenReadyIfNeeded()
-        guard !safeModeActive else { return }
         monitorArchivePlugin(port: port)
         monitorSessionNotify(port: port)
         monitorPluginUpdates(port: port)
-        schedulePluginCompatibilityCheck(port: port)
     }
 
     /// 内置插件探针用的同步 HTTP 探测（区分状态码；超时/连接失败返回 nil）。
@@ -2391,108 +2059,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    // MARK: - 插件兼容性检查
-
-    private struct PluginInstalledList: Decodable {
-        let items: [PluginCompatibilitySupport.InstalledPlugin]
-    }
-
-    /// 启动/重启进入 running 后调度一次兼容性检查。dsh 加载插件需要几秒，
-    /// 这里只是「先等一会儿再开始复核」。代际号随停止/重启递增，旧调度自动失效。
-    ///
-    /// 只扫用户插件：启动器自带的内置插件（归档管理 / 插件管理 / 会话完成通知）
-    /// 不参与兼容性告警——用户升不了也卸不掉，弹窗只会把人引去白重启一次。
-    /// 它们的加载状态由就绪探针只写日志（monitorArchivePlugin / monitorSessionNotify）。
-    private func schedulePluginCompatibilityCheck(port: Int) {
-        pluginCompatGeneration += 1
-        let generation = pluginCompatGeneration
-        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
-            guard let self,
-                  self.state == .running, self.selectedPort == port,
-                  generation == self.pluginCompatGeneration else { return }
-            self.runPluginCompatibilityCheck(port: port)
-        }
-    }
-
-    private func runPluginCompatibilityCheck(port: Int) {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self else { return }
-            let home = FileManager.default.homeDirectoryForCurrentUser
-            // 插件管理器可用才说明这是启动器管理的实例（内置插件已链接）；
-            // 外部/旧实例没有这些路由，静默跳过，避免把正常降级误报成问题。
-            guard let body = ServiceProbe.body(
-                at: URL(string: "http://127.0.0.1:\(port)/dsh-plugin-manager/installed") ?? URL(fileURLWithPath: "/"),
-                timeout: 3
-            ), let data = body.data(using: .utf8),
-               let list = try? JSONDecoder().decode(PluginInstalledList.self, from: data) else { return }
-
-            // 扫描只覆盖用户插件（内置插件由 PluginCompatibilitySupport 跳过）；
-            // peer 判定是纯静态的，扫完直接呈现。
-            self.presentCompatibilityIssues(
-                PluginCompatibilitySupport.scan(
-                    plugins: list.items,
-                    profileModules: home.appendingPathComponent(".dsh/profiles/web/node_modules"),
-                    runtimeModules: home.appendingPathComponent(".dsh/runtime/node_modules")
-                ),
-                port: port
-            )
-        }
-    }
-
-    /// 把一批兼容性问题交给弹窗流程（日志 + 单个聚合弹窗）。
-    private func presentCompatibilityIssues(_ issues: [PluginCompatibilitySupport.Issue], port: Int) {
-        guard !issues.isEmpty else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.state == .running, self.selectedPort == port else { return }
-            self.appendLogString("检测到 \(issues.count) 个插件兼容性问题：\(issues.map(\.pluginName).joined(separator: "、"))\n")
-            self.presentPluginIssues(issues)
-        }
-    }
-
-    /// 兼容性问题一次性呈现（只来自用户插件；「已提示」只对本次启动器运行生效）。
-    ///
-    /// 这里刻意**不是**「一个 issue 一个 NSAlert 串行 runModal」：
-    /// - 插件多时要连点十几次，每次都是一次模态阻塞，用户以为软件卡死；
-    /// - 单条 reason 可能把同一个 bundle 的多个 peer 失败拼成十几行，而 NSAlert
-    ///   会随行数线性长高（实测 40 行 = 1449pt），按钮被顶出屏幕后关不掉；
-    /// - 升级/卸载按钮会在弹窗里串起「pnpm → 重启 dsh → 下一个弹窗」的长模态链，
-    ///   任何一步慢/失败都把用户锁在模态循环里。
-    /// 现在统一成一个弹窗：标题给数量，正文给处置建议，逐条原因放进可滚动面板；
-    /// 具体升级/卸载交给 Harness 侧边栏的「插件管理」，启动器只负责如实提示。
-    private func presentPluginIssues(_ issues: [PluginCompatibilitySupport.Issue]) {
-        let pending = issues.filter { !pluginCompatAlerted.contains($0.pluginName) }
-        guard !pending.isEmpty else { return }
-        for issue in pending { pluginCompatAlerted.insert(issue.pluginName) }
-
-        let details = pending.map { issue -> String in
-            let versionSuffix = issue.version.map { "（v\($0)）" } ?? ""
-            return "• \(issue.pluginName)\(versionSuffix)：\(issue.reason)"
-        }.joined(separator: "\n")
-        appendLogString("插件兼容性提示详情：\n\(details)\n")
-
-        let alert = NSAlert()
-        AlertDesign.style(alert, tone: .warning)
-        alert.messageText = pending.count == 1
-            ? "插件可能与当前 dsh 版本不兼容"
-            : "检测到 \(pending.count) 个插件可能与当前 dsh 版本不兼容"
-        alert.informativeText = "这是对用户插件 peer 依赖的静态检查，不影响本次启动。"
-            + "可在 Harness 侧边栏「插件管理」升级或卸载对应插件，重启 dsh 后生效。"
-        alert.addButton(withTitle: "知道了")
-        alert.addButton(withTitle: "打开日志")
-        if details.count > AlertDesign.detailCharacterThreshold {
-            alert.accessoryView = AlertDesign.accessory(
-                card: AlertDesign.card(rows: [AlertDesign.scrollableText(details, width: AlertDesign.cardWidth - 28)]),
-                footnote: nil
-            )
-        } else {
-            alert.informativeText += "\n\n" + details
-        }
-        // 默认按钮是「知道了」：回车/Esc 都只关提示，绝不顺手升级或卸载。
-        alert.buttons[0].keyEquivalent = "\r"
-        if AlertDesign.runIfIdle(alert, escapeButtonIndex: 0) == nil {
-            appendLogString("已有提示框在显示，兼容性提示本次并入日志（不叠加弹窗）\n")
-        }
-    }
+    // 插件兼容性扫描已移除：不再在启动后请求 /installed、不再遍历 node_modules
+    // 逐个判 peer 区间（见 startHealthMonitors 的注释）。启动前预检、插件隔离与
+    // 安全模式也一并移除；dsh 起不来时只如实报错，不再自动禁用任何插件。
 
     private func appendLog(_ data: Data, prefix: String? = nil) {
         if let prefix { appendLogString("[\(formatLogTimestamp())] [\(prefix)] ", includeTimestamp: false) }
@@ -2865,7 +2434,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         // 菜单即将显示：内容必须是最新的，所以这一路不受「追踪中」限制。
         rebuildSessionNotifyMenuSection(deferWhileMenuOpen: false)
-        refreshRecoveryMenuItem()
         refreshRuntimeMenuRow()
     }
 

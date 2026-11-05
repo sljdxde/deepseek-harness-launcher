@@ -76,6 +76,12 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func install() {
+        // 安装器是「打开即安装」的：任何把安装器反复拉起的外部机制都会卷成无限重装
+        // 循环（2026-11-03 事故：一个外部 launchctl submit 的 com.local.dhl-install-<时间戳>
+        // keepalive 任务每 20 秒 open 一次安装器，装一遍、重启一遍 DHL，循环不止）。
+        // keepalive 任务必须 bootout 才能除根，普通 kill 无效。每次被打开先清一轮，
+        // 即使外部任务再次提交，本轮也只装最后这一次。
+        terminateStaleRelaunchJobs()
         let volumeURL = Bundle.main.bundleURL.deletingLastPathComponent()
         let bundledSource = Bundle.main.resourceURL?.appendingPathComponent("Deepseek Harness Launcher.app")
         let siblingSource = volumeURL.appendingPathComponent(".Deepseek Harness Launcher-payload.app")
@@ -89,6 +95,25 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
         guard let sourceApp,
               let script, FileManager.default.isExecutableFile(atPath: script.path) else {
             finishFailure("未找到安装包内容。请重新下载完整的 Deepseek Harness Launcher.dmg 后打开安装器。")
+            return
+        }
+
+        let target = destination.appendingPathComponent("Deepseek Harness Launcher.app")
+        // 同版本不重装：DMG payload 与已装 App 同版本时，重装只会白白替换文件并重启
+        // DHL。重复打开安装器（用户手滑双击、或上层事故里那种外部任务）最多把已运行
+        // 的 DHL 前置一次，不再有「装完又重启」的循环。版本读不到（plist 损坏）视为
+        // 不同版本，走正常重装。
+        if FileManager.default.fileExists(atPath: target.path),
+           bundleVersion(at: target) == bundleVersion(at: sourceApp) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.spinner.stopAnimation(nil)
+                self.statusLabel.stringValue = "已是相同版本，无需重装，正在启动 DHL…"
+                NSWorkspace.shared.open(target)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+                    NSApp.terminate(nil)
+                }
+            }
             return
         }
 
@@ -116,7 +141,6 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let target = destination.appendingPathComponent("Deepseek Harness Launcher.app")
         guard FileManager.default.fileExists(atPath: target.path) else {
             finishFailure("安装完成后未找到 Deepseek Harness Launcher.app。")
             return
@@ -131,6 +155,30 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
             }
         }
+    }
+
+    /// 清掉 `com.local.dhl-install-*` 的 launchd 任务。这个前缀只有外部 `launchctl submit`
+    /// 的遗留任务在用（带 keepalive：命令一退出 launchd 就重跑它），正常安装流程不会
+    /// 产生；发现即 bootout。与 Sources/main.swift 的同名逻辑保持一致（安装器是独立
+    /// 编译目标，无法共享代码）。
+    private func terminateStaleRelaunchJobs() {
+        let script = """
+        launchctl list 2>/dev/null | awk '$3 ~ /^com\\.local\\.dhl-install-/ {print $3}' | while IFS= read -r label; do
+          launchctl bootout "gui/\(getuid())/$label" >/dev/null 2>&1 || true
+        done
+        """
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", script]
+        do { try task.run() } catch { return }
+        task.waitUntilExit()
+    }
+
+    /// 读取 App 的 CFBundleShortVersionString；读不到（缺失/损坏）返回 nil，视为不同版本。
+    private func bundleVersion(at appURL: URL) -> String? {
+        let plistURL = appURL.appendingPathComponent("Contents/Info.plist")
+        guard let plist = NSDictionary(contentsOf: plistURL) as? [String: Any] else { return nil }
+        return plist["CFBundleShortVersionString"] as? String
     }
 
     private func preferredInstallDirectory() -> URL {
