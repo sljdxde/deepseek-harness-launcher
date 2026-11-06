@@ -1392,9 +1392,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const checking = busy === 'check-updates'
     const selectedUpdatable = selectedUpdatableNames(updates, selected)
     const selectedIgnorable = ignorableEntries(updates, selected)
-    // 检测/批量更新都在后台跑，面板要能关掉（批量更新可能几分钟）；安装/卸载仍锁住。
-    // 忽略只是写一次本地记录，不该把「关闭」也锁上。
-    const closable = !busy || checking || updatingAll || busy === 'ignore'
+    // 检测/批量更新/刷新市场都在后台跑，面板要能关掉（批量更新、刷新市场都可能几分钟）；
+    // 安装/卸载仍锁住。忽略只是写一次本地记录，不该把「关闭」也锁上。
+    // 刷新市场此前后台进行时被误锁住：× / 返回 / 点背景全部静默失效（用户实测点关闭关不上）。
+    const closable = !busy || checking || updatingAll || busy === 'ignore' || busy === 'refresh'
     // 批量进度条：进度独立于按钮展示（magpie 式——按钮只表达「下一步动作」，
     // 进行中的事由一条状态条说明）。来源 + 进度 + 当前插件一起给出，
     // 杜绝「选中 2 个却更新 3 个」的来源歧义。

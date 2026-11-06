@@ -834,3 +834,45 @@ console.log('== 冒烟全部通过 ==');
   assert.equal(cards().length, marketPlugins.length, '再点一次已选中的 chip 回到全部');
   console.log('场景10（分类筛选可退回「全部」）通过');
 }
+
+/** 场景 11：刷新市场进行中也能关闭面板（用户报告：刷新时点关闭关不上） */
+{
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
+    }
+    // 刷新请求一直挂起：模拟「正在联网刷新市场」，busy 停在 'refresh' 不回落。
+    if (url === '/dsh-plugin-manager/refresh') return new Promise(() => {});
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      // 首屏索引过期 → 客户端自动触发 refreshMarket()，正是用户点开市场时的路径。
+      return respond({
+        count: 2, official: 0, categories: [], indexedAt: null, stale: true,
+        plugins: [
+          { id: 'a', name: 'a-plugin', repo: 'o/a', author: 'o', category: 'x', descriptionEn: 'a', stars: 1, downloads: 0, addedDate: '2026-01-01' },
+          { id: 'b', name: 'b-plugin', repo: 'o/b', author: 'o', category: 'x', descriptionEn: 'b', stars: 1, downloads: 0, addedDate: '2026-01-01' },
+        ],
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '插件市场')[0].props.onClick();
+  await settle(runtime, 10);
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/refresh'), '过期市场索引自动触发刷新');
+  assert.ok(findByText(runtime.tree, 'button', '刷新中…'), '刷新进行中，刷新按钮显示「刷新中…」');
+  // 关闭按钮必须可用：此前 closable 漏了 refresh 分支，刷新时 × / 返回 / 背景点击全部静默失效。
+  const closeButton = findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-close( |$)/.test(String(node.props.className || '')))[0];
+  assert.ok(closeButton, '面板有关闭按钮');
+  closeButton.props.onClick();
+  await settle(runtime);
+  assert.equal(findByText(runtime.tree, 'button', '插件市场'), undefined, '刷新市场进行中点关闭能关掉面板');
+  console.log('场景11（刷新市场期间可关闭）通过');
+}
