@@ -55,6 +55,16 @@ const COMMAND_CLAIM_TTL_MS = 15 * 1000;
 // claim the command first and navigate out of sight.
 const VISIBLE_CLIENT_GRACE_MS = 2 * 1000;
 /**
+ * 点「会话完成」提醒后，启动器会先把**真正连着 Harness** 的浏览器前置（或
+ * 选中它的标签），那个浏览器里当前标签随即拥有焦点。多实例环境里另一个
+ * 自动化浏览器的 Harness 页面也在轮询，它可能先把命令领走：会话切在看不见
+ * 的窗口里，用户看到的是「浏览器已经前置，却还是旧会话」（2026-11-09 实测：
+ * 命令被 chrome-devtools-mcp 那个 Chrome 的页面领走）。所以命令入队后的
+ * 一小段窗口里只允许**有焦点**的页面领取；窗口过后回落到原来的「可见优先、
+ * 再后台」规则，宁晚一点也不能抢错窗口。
+ */
+export const FOCUSED_CLIENT_GRACE_MS = 2500;
+/**
  * A Harness page counts as open while its injected client polls, and stops
  * counting the moment it reports a pagehide (tab/window closed). Chrome
  * keep-alive keeps sockets ESTABLISHED long after every tab closed, so the
@@ -230,7 +240,7 @@ function commandView(command) {
   };
 }
 
-function createCommandQueue() {
+export function createCommandQueue() {
   const commands = [];
 
   function prune(now = Date.now()) {
@@ -255,6 +265,7 @@ function createCommandQueue() {
         createdAt: now,
         expiresAt: now + COMMAND_TTL_MS,
         visibleUntil: now + VISIBLE_CLIENT_GRACE_MS,
+        focusedUntil: now + FOCUSED_CLIENT_GRACE_MS,
         claimedBy: null,
         claimedUntil: 0,
       };
@@ -266,11 +277,18 @@ function createCommandQueue() {
       prune(now);
       return commands.filter(command => !command.claimedBy).map(commandView);
     },
-    claim(commandId, clientId, visible, now = Date.now()) {
+    /**
+     * 领取一条打开会话命令。
+     * @param focused - 该页面此刻是否拥有焦点（`document.hasFocus()`）。
+     *   入队后的 `FOCUSED_CLIENT_GRACE_MS` 内只有焦点页面能领：另一个浏览器
+     *   实例里的 Harness 页面虽然「可见」（窗口在后面）但没有焦点，不许抢。
+     */
+    claim(commandId, clientId, visible, focused = false, now = Date.now()) {
       prune(now);
       const command = commands.find(item => item.commandId === commandId);
       if (!command) return { kind: 'missing' };
       if (command.claimedBy && command.claimedBy !== clientId) return { kind: 'busy' };
+      if (!focused && command.focusedUntil > now) return { kind: 'deferred-focused' };
       if (!visible && command.visibleUntil > now) return { kind: 'deferred' };
       command.claimedBy = clientId;
       command.claimedUntil = now + COMMAND_CLAIM_TTL_MS;
@@ -420,9 +438,13 @@ export function apply(ctx) {
             const commandId = typeof value.commandId === 'string' ? value.commandId.trim() : '';
             const clientId = typeof value.clientId === 'string' ? value.clientId.trim() : '';
             if (!commandId || !clientId) { jsonStatus(res, 400, { error: 'commandId and clientId are required' }); return; }
-            const result = commands.claim(commandId, clientId, value.visible === true);
+            const result = commands.claim(commandId, clientId, value.visible === true, value.focused === true);
             if (result.kind === 'missing') { jsonStatus(res, 404, { error: 'command not found' }); return; }
             if (result.kind === 'busy') { jsonStatus(res, 409, { error: 'command already claimed' }); return; }
+            if (result.kind === 'deferred-focused') {
+              jsonStatus(res, 409, { error: 'waiting for focused Harness tab' });
+              return;
+            }
             if (result.kind === 'deferred') { jsonStatus(res, 409, { error: 'waiting for visible Harness tab' }); return; }
             json(res, { command: result.command });
           } catch (error) {

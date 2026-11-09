@@ -224,6 +224,53 @@ $ ps -p 4366,87662 -o pid,lstart,command
 Chrome）里确实多出目标页面，说明跨实例寻址可行；这正是四之四「已知的平台限制」
 里那条「只能新开标签页」能力的落地用法。
 
+### 四之六、2026-11-09 复现：命令被另一个浏览器实例里的 Harness 页面领走
+
+四之五的处置（不可达时只前置 / 定向新开标签）挡住了「选中错误窗口」和「切了看不见
+的标签」，但还剩一层：**「打开会话」命令走的是插件队列，哪个页面先轮询到就谁领**。
+这台机器上同时有两个 Chrome 连着 Harness：
+
+```console
+$ lsappinfo list | grep -A3 '"Google Chrome".*com.google.Chrome'
+pid = 4366   # 用户自己的 Chrome（11-02 启动，Harness 页面真正在这里）
+pid = 54819  # chrome-devtools-mcp 拉起的自动化 Chrome（11-09 17:56 启动，也有 Harness 页）
+
+$ lsof -nP -a -iTCP:3080 -sTCP:ESTABLISHED | grep Google
+Google 4376   … ->127.0.0.1:3080   # 用户 Chrome 的 Helper
+Google 54826  … ->127.0.0.1:3080   # 自动化 Chrome 的 Helper
+```
+
+两者都「连着 Harness」，`lsof` 找到的是用户 Chrome（保留低 pid 的命中），但命令是
+广播给**所有轮询页面**的。2026-11-09 18:11:55 的点击现场：
+
+```console
+[18:11:55] 用户查看会话完成提醒：session-5209bab2-…（就是本会话）
+[18:11:55] 检测到 Google Chrome 已连接 Harness 端口 3080，但同 bundle 有 2 个实例在运行，
+           AppleScript 只会发给最近启动的那个（不是连着 Harness 的这个）；
+           未改动另一个实例的标签页，已前置真正连接 Harness 的浏览器并投递会话。
+```
+
+日志看起来「按设计降级」了，但用户什么都没看到。对照浏览器实况：用户 Chrome 仍停在
+旧会话，**自动化 Chrome 里的那个 Harness 页面却切到了 `session-5209bab2`**——命令被
+它领走了。原因是 `document.visibilityState` 对「窗口在后面」的标签页仍然是 `visible`
+（`chrome-devtools-mcp` 启动时还带了 `--disable-backgrounding-occluded-windows`），
+两边都满足「可见优先」的领取条件，谁先轮询到谁先 2 秒窗口内领走，与用户眼前那个
+浏览器无关。
+
+这次的可测修复（不动 launcher 的 AppleScript 策略，只改命令领取规则）：
+
+- 注入客户端在 claim 里补报 `focused: document.hasFocus()`；
+- 命令入队后的 `FOCUSED_CLIENT_GRACE_MS`（2.5s）内**只有焦点页面**能领：启动器点了
+  提醒会先把真正连着 Harness 的浏览器前置/选中标签，那个页面随即有焦点；另一个实例
+  里的页面没有焦点，不许抢；
+- 窗口过后回落到原来的「可见优先、再后台」规则——用户没把浏览器切到前台时，命令
+  不会因为没人有焦点而永远无人领取（宁晚 2.5 秒，也不能抢错窗口）；
+- 回归：`test-client` 锁「claim 带 focused」与「没焦点被拒就不 ack」；`session-notify`
+  单测锁「入队窗口只让焦点页面领、窗口过后可见页面可领」；`test.sh` 加源码不变量。
+
+注意：这是**领取优先级**的修复，不是平台能力修复——多实例下 AppleScript 仍然只能
+寻址最近启动的实例；根治依旧是退出那个后台/自动化浏览器实例（见「已知的平台限制」）。
+
 ### 已知的平台限制
 
 - 按 PID 定向的 Apple Event **可行**（实测 `GURL` 事件能精确投递到指定实例），
@@ -271,6 +318,9 @@ Chrome）里确实多出目标页面，说明跨实例寻址可行；这正是�
 10. 多实例环境里另一个实例也开着 Harness origin 的标签页（过期 token / 401 页）→ 点提醒
     不得跳到那个窗口（这是 2026-11-03 的假 `found`），日志必须写明「未改动另一个实例的标签页」；
 11. 退出后台实例后再点提醒 → 日志回到「已定位并前置 Harness 标签页」。
+12. 两个 Chrome 都连着 Harness（用户 Chrome + chrome-devtools-mcp/agent-browser）→ 点提醒
+    → **用户正在看的那个浏览器**切到目标会话，自动化浏览器里的 Harness 页面**不得**先把
+    命令领走（2026-11-09 复现：会话切在自动化窗口里，用户 Chrome 停在旧会话）。
 
 ## 六、测试覆盖（防「改 A 坏 B」）
 
@@ -300,6 +350,9 @@ AppleScript / NSWorkspace / HTTP），单测入口：
 - **页面可见性上报**：commands 轮询携带 `visible=0/1`、`visibilitychange` 立即补心跳
   （`test-client`）；`/presence` 的 `visible` 字段解析：缺失返回 nil，绝不把缺失当 true
   （`test-browser-connection`）；
+- **命令领取的焦点优先**：命令入队后的 `FOCUSED_CLIENT_GRACE_MS` 内只有焦点页面能领，
+  另一个浏览器实例里「可见但没焦点」的 Harness 页面抢不走（`test-client` 的 claim
+  `focused` 上报 + `session-notify` 的 `createCommandQueue` 单测），窗口过后回落可见规则；
 - **降级顺序**：未命中时「先前置浏览器 → 再记日志 → 最后仍投递打开会话」；
 - **不变式**：任何分支都必须投递「打开会话」命令（标签没选中只影响看得见看不见），
   且必须收尾（清 inFlight / 跑 completion），否则下一次点击会被吞掉；

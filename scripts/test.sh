@@ -172,6 +172,13 @@ rg -q '/dsh-session-notify/presence' "$ROOT/Plugins/DSHSessionNotify/lib/index.j
 rg -q 'presenceActive' "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/main.swift"
 rg -q '/dsh-session-notify/open' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Sources/main.swift"
 rg -q '/dsh-session-notify/commands/claim' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+# 打开会话命令：入队后的一小段窗口只让**有焦点**的页面领取。多实例环境里另一个
+# 自动化浏览器中的 Harness 页面也「可见」（窗口在后面），若让它先领走，会话会切在
+# 用户看不见的窗口里——表现成「浏览器前置了却还是旧会话」（2026-11-09 实测：命令被
+# chrome-devtools-mcp 拉起的 Chrome 里的页面领走，用户的 Chrome 停在旧会话）。
+rg -Fq 'focused: pageHasFocus()' "$ROOT/Plugins/DSHSessionNotify/client/client.js"
+rg -Fq 'FOCUSED_CLIENT_GRACE_MS' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Plugins/DSHSessionNotify/test/session-notify.test.js"
+rg -Fq 'deferred-focused' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 # 会话跳转入口：dsh 客户端的 Session controller（ctx.sessions）没有 open，
 # 跳转动作在 Workspace controller 服务 uiWorkspace.openSession 上（未声明的
 # 服务只能经 ctx.get 取）。曾经这里锁的是 `ctx.sessions.open`——那个调用从来

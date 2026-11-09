@@ -122,7 +122,11 @@ window.__ModuleLoader__.load({ id: "dsh-session-notify", factory: () => {
             const claimed = await readJSON(CLAIM_URL, {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ commandId: item.commandId, clientId: id, visible: pageIsVisible() }),
+              // `focused`：命令刚入队的一小段窗口里只允许焦点页面领取。另一个
+              // 浏览器实例里的 Harness 页面可能也「可见」（窗口在后面），但它
+              // 没有焦点——让它先领走，会话就会切在用户看不见的窗口里，表现
+              // 成「浏览器前置了却还是旧会话」。
+              body: JSON.stringify({ commandId: item.commandId, clientId: id, visible: pageIsVisible(), focused: pageHasFocus() }),
             })
             const command = claimed?.command
             if (!command || disposed) continue
