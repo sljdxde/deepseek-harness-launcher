@@ -835,7 +835,8 @@ console.log('== 冒烟全部通过 ==');
   console.log('场景10（分类筛选可退回「全部」）通过');
 }
 
-/** 场景 11：刷新市场进行中也能关闭面板（用户报告：刷新时点关闭关不上） */
+/** 场景 11：市场刷新是后台任务 —— 刷新中面板能关，安装/切 tab 照常可用。
+ *  用户报告：点开插件市场（索引过期会自动刷新），刷新期间点关闭关不上。 */
 {
   const calls = [];
   const fetchImpl = (url, options = {}) => {
@@ -845,10 +846,11 @@ console.log('== 冒烟全部通过 ==');
     if (url.startsWith('/dsh-plugin-manager/updates')) {
       return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
     }
-    // 刷新请求一直挂起：模拟「正在联网刷新市场」，busy 停在 'refresh' 不回落。
+    // 刷新请求一直挂起：模拟「正在联网刷新市场」，后台任务不结束。
     if (url === '/dsh-plugin-manager/refresh') return new Promise(() => {});
+    if (url === '/dsh-plugin-manager/install') return respond({ ok: true, alreadyInstalled: false });
     if (url.startsWith('/dsh-plugin-manager/marketplace')) {
-      // 首屏索引过期 → 客户端自动触发 refreshMarket()，正是用户点开市场时的路径。
+      // 首屏索引过期 → 客户端自动触发后台刷新，正是用户点开市场时的路径。
       return respond({
         count: 2, official: 0, categories: [], indexedAt: null, stale: true,
         plugins: [
@@ -866,13 +868,23 @@ console.log('== 冒烟全部通过 ==');
   await settle(runtime);
   findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '插件市场')[0].props.onClick();
   await settle(runtime, 10);
-  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/refresh'), '过期市场索引自动触发刷新');
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/refresh'), '过期市场索引自动触发后台刷新');
   assert.ok(findByText(runtime.tree, 'button', '刷新中…'), '刷新进行中，刷新按钮显示「刷新中…」');
-  // 关闭按钮必须可用：此前 closable 漏了 refresh 分支，刷新时 × / 返回 / 背景点击全部静默失效。
+  // 后台刷新不得阻塞用户操作：缓存的市场列表照常渲染，安装按钮可用、点了真的发请求
+  //（此前刷新占 busy，install() 直接 return，按钮点了没反应＝静默失效）。
+  const cards = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  assert.equal(cards.length, 2, '刷新期间仍显示缓存的市场列表');
+  const installButton = findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-install( |$)/.test(String(node.props.className || '')))[0];
+  assert.ok(installButton, '市场卡片有安装按钮');
+  assert.equal(installButton.props.disabled, false, '刷新期间安装按钮可用');
+  installButton.props.onClick({ stopPropagation() {} });
+  await settle(runtime, 10);
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/install'), '刷新期间点安装真的发请求，不再静默失效');
+  // 关闭按钮必须可用：此前刷新时 × / 返回 / 背景点击全部静默失效（用户实测点关闭关不上）。
   const closeButton = findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-close( |$)/.test(String(node.props.className || '')))[0];
   assert.ok(closeButton, '面板有关闭按钮');
   closeButton.props.onClick();
   await settle(runtime);
   assert.equal(findByText(runtime.tree, 'button', '插件市场'), undefined, '刷新市场进行中点关闭能关掉面板');
-  console.log('场景11（刷新市场期间可关闭）通过');
+  console.log('场景11（刷新市场是后台任务：可关闭、不阻塞操作）通过');
 }

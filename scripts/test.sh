@@ -125,6 +125,17 @@ rg -Fq "wide === false ? 'dsh-archive-trigger dsh-archive-trigger-rail' : 'dsh-a
 rg -Fq "h('option', { value: 'all' }, '全部分类')" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq "setCategory(category === cat ? 'all' : cat)" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq "全部分类" "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 市场刷新必须是**后台任务**：不得占用 busy（占 busy 会连关闭按钮一起锁住——用户
+# 实测「刷新时点关闭关不上」），并且在途请求要单飞，避免关掉再开/多标签页并发
+# 重建市场仓库（服务端会先 rm 再 clone，并发必然互相踩）。
+rg -Fq "const closable = !busy || checking || updatingAll || busy === 'ignore'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+if rg -q "setBusy\\('refresh'\\)|busy === 'refresh'" "$ROOT/Plugins/DSHPluginManager/client/client.js"; then
+  echo "market refresh must be a background task, not a busy state (panel must stay closable mid-refresh)" >&2
+  exit 1
+fi
+rg -Fq 'startMarketRefresh' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'createSingleFlight' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'createSingleFlight' "$ROOT/Plugins/DSHPluginManager/test/plugin-manager.test.js"
 rg -q '/dsh-plugin-manager/installed' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q '/dsh-plugin-manager/marketplace' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q '/dsh-plugin-manager/install' "$ROOT/Plugins/DSHPluginManager/lib/index.js"

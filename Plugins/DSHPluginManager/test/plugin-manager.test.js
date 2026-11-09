@@ -3,7 +3,7 @@ import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink, utimes
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parsePluginYml, installCandidates, listInstalledPlugins, compareInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin, fetchOfficialMarketPlugins, mergeMarketPlugins, readMarketplace, isCoreBundle, repoMatchesEntry } from '../lib/index.js';
+import { parsePluginYml, installCandidates, listInstalledPlugins, compareInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin, fetchOfficialMarketPlugins, mergeMarketPlugins, readMarketplace, isCoreBundle, repoMatchesEntry, createSingleFlight } from '../lib/index.js';
 
 test('parsePluginYml 解析 awesome-dsh-plugin 的插件条目格式', () => {
   const text = `url: https://github.com/1624318455/dsh-plugin-tavily
@@ -520,6 +520,34 @@ test('readMarketplace：旧版索引（没有官方来源）标记为 stale，�
     else process.env.DSH_HOME = previousHome;
     await rm(dshHome, { recursive: true, force: true });
   }
+});
+
+test('createSingleFlight：并发刷新共享同一次重建，结束后（含失败）才能重新执行', async () => {
+  let runs = 0;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const single = createSingleFlight(async () => {
+    runs += 1;
+    await gate;
+    return runs;
+  });
+  const first = single();
+  const second = single();
+  assert.equal(first, second, '并发调用拿到同一个 promise');
+  await Promise.resolve();
+  assert.equal(runs, 1, '并发调用只执行一次（市场仓库的 rm+clone 不能被打架）');
+  release();
+  assert.equal(await first, 1);
+  assert.equal(await second, 1);
+  assert.equal(await single(), 2, '上一轮结束后下一次调用重新执行');
+  assert.equal(runs, 2);
+
+  // 失败也必须释放标记：否则一次网络失败会让「刷新市场」永久卡死在「刷新中…」。
+  let failedRuns = 0;
+  const failing = createSingleFlight(async () => { failedRuns += 1; throw new Error('boom'); });
+  await assert.rejects(failing(), /boom/);
+  await assert.rejects(failing(), /boom/);
+  assert.equal(failedRuns, 2, '失败后单飞标记释放，下一次调用真的重新执行');
 });
 
 // ---------------------------------------------------------------------------
