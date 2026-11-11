@@ -32,9 +32,6 @@ var Plugins = []Plugin{
 	{"dsh-archive-manager", "DSHArchiveManager"},
 	{"dsh-plugin-manager", "DSHPluginManager"},
 	{"dsh-session-notify", "DSHSessionNotify"},
-	{"dsh-ui-enhance", "DSHUiEnhance"},
-	{"dsh-launcher-settings", "DSHLauncherSettings"},
-	{"dsh-more-menu", "DSHMoreMenu"},
 }
 
 // PatchPath is where cordis.patch.yml lands after extraction — the path

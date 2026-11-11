@@ -78,7 +78,7 @@ Push-Location $winDir
 # repo's shared Plugins/ so both platforms ship the same code
 $pluginsOut = Join-Path $winDir "internal\assets\plugins"
 New-Item $pluginsOut -ItemType Directory -Force | Out-Null
-foreach ($name in @("DSHArchiveManager", "DSHPluginManager", "DSHSessionNotify", "DSHUiEnhance", "DSHLauncherSettings", "DSHMoreMenu")) {
+foreach ($name in @("DSHArchiveManager", "DSHPluginManager", "DSHSessionNotify")) {
     Remove-Item (Join-Path $pluginsOut $name) -Recurse -Force -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $repoRoot "Plugins\$name") $pluginsOut -Recurse -Force
 }

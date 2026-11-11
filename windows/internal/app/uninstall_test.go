@@ -9,8 +9,8 @@ import "testing"
 func TestIsOurPluginTarget(t *testing.T) {
 	ours := []string{
 		`C:\Users\u\AppData\Local\DHL\plugins\DSHArchiveManager`,
-		`C:\Users\U\AppData\LOCAL\DHL\PLUGINS\DSHUiEnhance`,
-		`C:\Users\u\AppData\Local/DHL\plugins\DSHMoreMenu`,
+		`C:\Users\U\AppData\LOCAL\DHL\PLUGINS\DSHSessionNotify`,
+		`C:\Users\u\AppData\Local/DHL\plugins\DSHPluginManager`,
 	}
 	for _, target := range ours {
 		if !isOurPluginTarget(target) {

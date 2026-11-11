@@ -244,18 +244,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pluginManagerURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHPluginManager") ?? rootURL.appendingPathComponent("Plugins/DSHPluginManager") }
     private var sessionNotifyPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSessionNotify") ?? rootURL.appendingPathComponent("Plugins/DSHSessionNotify") }
     private var sidebarDeckPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSidebarDeck") ?? rootURL.appendingPathComponent("Plugins/DSHSidebarDeck") }
-    private var moreMenuPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHMoreMenu") ?? rootURL.appendingPathComponent("Plugins/DSHMoreMenu") }
-    private var uiEnhancePluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHUiEnhance") ?? rootURL.appendingPathComponent("Plugins/DSHUiEnhance") }
-    private var launcherSettingsPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHLauncherSettings") ?? rootURL.appendingPathComponent("Plugins/DSHLauncherSettings") }
     private var bundledPlugins: [BundledPlugin] {
         [
             BundledPlugin(linkName: "dsh-archive-manager", bundleMarker: "DSHArchiveManager", url: pluginURL),
             BundledPlugin(linkName: "dsh-plugin-manager", bundleMarker: "DSHPluginManager", url: pluginManagerURL),
             BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL),
-            BundledPlugin(linkName: "dsh-sidebar-deck", bundleMarker: "DSHSidebarDeck", url: sidebarDeckPluginURL),
-            BundledPlugin(linkName: "dsh-more-menu", bundleMarker: "DSHMoreMenu", url: moreMenuPluginURL),
-            BundledPlugin(linkName: "dsh-ui-enhance", bundleMarker: "DSHUiEnhance", url: uiEnhancePluginURL),
-            BundledPlugin(linkName: "dsh-launcher-settings", bundleMarker: "DSHLauncherSettings", url: launcherSettingsPluginURL)
+            BundledPlugin(linkName: "dsh-sidebar-deck", bundleMarker: "DSHSidebarDeck", url: sidebarDeckPluginURL)
         ]
     }
     private var patchPath: String { pluginURL.appendingPathComponent("cordis.patch.yml").path }
