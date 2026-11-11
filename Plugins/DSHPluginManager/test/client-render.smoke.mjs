@@ -939,11 +939,23 @@ console.log('== 冒烟全部通过 ==');
   await settle(runtime);
 
   const switches = () => findAll(runtime.tree, node => node.type === 'input' && node.props.role === 'switch');
+  // 开关语义：ON = 插件启用（正在生效），OFF = 已停用。这是开关的通行约定，
+  // 曾经反着做（ON = 停用）导致「启用/停用按钮搞反」——下面每条断言都同时锁
+  // checked 与旁边的状态文字，方向一旦再反立刻失败。
+  const switchTextAt = index => {
+    const labels = findAll(runtime.tree, node => node.type === 'label' && String(node.props.className || '').includes('dsh-pm-switch'));
+    return textOf(labels[index]);
+  };
   let all = switches();
   assert.equal(all.length, 3, '每个可管理插件行一个开关（内置插件同一套开关）');
-  assert.equal(all[0].props.checked, false, '默认是启用状态');
+  assert.equal(all[0].props.checked, true, '默认启用时开关应为 ON');
+  assert.match(switchTextAt(0), /已启用/, '启用中的插件旁边写「已启用」');
+  assert.equal(all[0].props['aria-label'], '停用 dsh-context', '启用状态下点击是「停用」');
   assert.equal(all[0].props.disabled, false);
   assert.equal(all[1].props.disabled, true, '插件管理器自身的开关禁用');
+  // 不可停用的插件仍在生效，所以开关是 ON 但置灰、旁边写「不可停用」。
+  assert.equal(all[1].props.checked, true, '仍在生效的不可停用插件，开关应显示 ON');
+  assert.match(switchTextAt(1), /不可停用/);
   const switchesWithTitle = () => findAll(runtime.tree, node => node.type === 'label' && String(node.props.className || '').includes('dsh-pm-switch'));
   assert.match(switchesWithTitle()[1].props.title, /无法从界面恢复/, '禁用原因写在开关的 title 里');
   assert.ok(textOf(runtime.tree).includes('不可停用'), '禁用开关旁有文字说明');
@@ -953,7 +965,9 @@ console.log('== 冒烟全部通过 ==');
   await settle(runtime);
   const disableCall = calls.find(call => call.url === '/dsh-plugin-manager/set-disabled');
   assert.deepEqual(JSON.parse(disableCall.options.body), { bundle: 'dsh-context', disabled: true });
-  assert.equal(switches()[0].props.checked, true, '停用后开关处于已停用状态');
+  assert.equal(switches()[0].props.checked, false, '停用后开关应为 OFF');
+  assert.match(switchTextAt(0), /已停用/, '停用后旁边写「已停用」');
+  assert.equal(switches()[0].props['aria-label'], '启用 dsh-context', '停用状态下点击是「启用」');
   assert.ok(toasts(runtime.tree).some(item => item.kind === 'info' && item.text === '已停用 dsh-context，重启 dsh 后生效'), '提示重启后生效');
   assert.ok(textOf(runtime.tree).includes('已停用 dsh-context'), '出现重启确认框');
   assert.ok(textOf(runtime.tree).includes('重启 dsh 后生效。是否立即重启？'), '重启确认文案说明生效时机');
@@ -961,14 +975,15 @@ console.log('== 冒烟全部通过 ==');
   // 启用：再切回来
   switches()[0].props.onChange();
   await settle(runtime);
-  assert.equal(switches()[0].props.checked, false, '启用后开关回到启用状态');
+  assert.equal(switches()[0].props.checked, true, '启用后开关回到 ON');
+  assert.match(switchTextAt(0), /已启用/);
   assert.ok(toasts(runtime.tree).some(item => item.kind === 'info' && item.text === '已启用 dsh-context，重启 dsh 后生效'));
   assert.ok(textOf(runtime.tree).includes('已启用 dsh-context'));
 
   // 失败回滚：服务端报错时 toast + 恢复原状态
   switches()[2].props.onChange();
   await settle(runtime);
-  assert.equal(switches()[2].props.checked, false, '失败后开关回到原状态');
+  assert.equal(switches()[2].props.checked, true, '失败后开关回到原状态（启用 = ON）');
   assert.ok(toasts(runtime.tree).some(item => item.kind === 'error' && /停用 dsh-flaky 失败/.test(item.text)), '失败要 toast 报错');
   assert.ok(!textOf(runtime.tree).includes('已停用 dsh-flaky'), '失败不弹重启确认');
   console.log('场景12（插件停用/启用开关 + 失败回滚 + 重启确认）通过');
