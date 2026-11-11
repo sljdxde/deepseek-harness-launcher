@@ -74,9 +74,64 @@ jobs:
       - name: Measure first-install peak RSS
         run: ./scripts/memory-bench.sh 1024
 
+  windows:
+    name: Windows build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: windows/go.mod
+          cache-dependency-path: windows/go.sum
+
+      - name: Vet and test
+        working-directory: windows
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build the launcher
+        working-directory: windows
+        shell: pwsh
+        run: ./build.ps1 -Out build/DHL.exe
+
+      - name: Fetch the bundled Node runtime
+        working-directory: windows
+        shell: pwsh
+        run: ./fetch-node.ps1 -Out build
+
+      - name: Package the portable ZIP
+        working-directory: windows
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path ..\Resources\Info.plist -Pattern 'CFBundleShortVersionString</key>\s*<string>([^<]+)</string>').Matches[0].Groups[1].Value
+          $stage = "build\portable"
+          New-Item $stage -ItemType Directory -Force | Out-Null
+          Copy-Item build\DHL.exe $stage
+          Copy-Item build\node $stage -Recurse
+          Copy-Item ..\README.md $stage
+          Compress-Archive -Path "$stage\*" -DestinationPath "build\DHL-windows-$ver.zip" -Force
+          Copy-Item build\DHL.exe build\DHL-windows-amd64.exe
+          Write-Host "packaged $ver"
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Release-Windows
+          path: |
+            windows/build/DHL-windows-amd64.exe
+            windows/build/DHL-windows-*.zip
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub Release
-    needs: [regression, memory-gate]
+    needs: [regression, memory-gate, windows]
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     steps:
@@ -90,6 +145,12 @@ jobs:
         with:
           name: Release-DMG
           path: dist/
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Release-Windows
+          path: windows-dist/
 
       - name: Resolve tag
         id: version
@@ -121,7 +182,7 @@ jobs:
           NOTES=$(printf '## Deepseek Harness Launcher v%s\n\n已通过 GitHub Actions 回归测试后自动发布。\n' "${TAG#v}")
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "Deepseek Harness Launcher v${TAG#v}" --notes "$NOTES" --target "${GITHUB_SHA}"
-            gh release upload "$TAG" "$DMG" --clobber
+            gh release upload "$TAG" "$DMG" "$WINEXE" "$WINZIP" --clobber
           else
-            gh release create "$TAG" "$DMG" --title "Deepseek Harness Launcher v${TAG#v}" --notes "$NOTES" --target "${GITHUB_SHA}"
+            gh release create "$TAG" "$DMG" "$WINEXE" "$WINZIP" --title "Deepseek Harness Launcher v${TAG#v}" --notes "$NOTES" --target "${GITHUB_SHA}"
           fi

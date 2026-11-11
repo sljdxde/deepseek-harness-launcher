@@ -1,4 +1,7 @@
 - insert:
+    - id: dsh-more-menu
+      name: 'dsh-more-menu'
+- insert:
     - id: dsh-archive-manager
       name: 'dsh-archive-manager'
 - insert:
@@ -7,3 +10,9 @@
 - insert:
     - id: dsh-session-notify
       name: 'dsh-session-notify'
+- insert:
+    - id: dsh-ui-enhance
+      name: 'dsh-ui-enhance'
+- insert:
+    - id: dsh-launcher-settings
+      name: 'dsh-launcher-settings'

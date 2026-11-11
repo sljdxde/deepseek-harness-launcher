@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>DHL Windows 任务栏：角标 + 左键 原型</title>
+<style>
+:root{
+  --tb:#202020; --ink:#e8e8ea; --dim:#9a9aa0;
+  --accent:#4cc2ff; --red:#e5342e; --line:#3a3a3e;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#141416; color:var(--ink);
+  font:14px/1.6 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  padding:28px 32px 80px; letter-spacing:-.05px;
+}
+h1{font-size:20px;font-weight:650;margin-bottom:6px}
+h2{font-size:15px;font-weight:650;margin:34px 0 12px;color:#fff}
+p.lead{color:var(--dim);margin-bottom:8px;max-width:780px}
+code{font-family:"Cascadia Code",Consolas,monospace;font-size:12.5px;
+  background:#26262a;padding:1px 5px;border-radius:4px;color:#9fd0ff}
+.note{background:#1e2a1e;border-left:3px solid #4a8f4a;padding:10px 14px;
+  border-radius:0 6px 6px 0;margin:12px 0;font-size:13px;color:#b8d8b8}
+.warn{background:#2d2318;border-left:3px solid #b8862d;padding:10px 14px;
+  border-radius:0 6px 6px 0;margin:12px 0;font-size:13px;color:#e0c088}
+.bad{background:#2d1a1a;border-left:3px solid #b04040;padding:10px 14px;
+  border-radius:0 6px 6px 0;margin:12px 0;font-size:13px;color:#e8a8a8}
+
+.tbwrap{margin:16px 0 8px}
+.tblabel{font-size:12px;color:var(--dim);margin-bottom:6px}
+.taskbar{
+  display:flex;align-items:center;gap:2px;
+  background:var(--tb);border-radius:8px;padding:4px 8px;height:56px;
+  border:1px solid #333;max-width:980px;
+}
+.tbtn{
+  width:48px;height:48px;border-radius:5px;display:grid;place-items:center;
+  position:relative;cursor:pointer;transition:background .12s;background:transparent;
+}
+.tbtn:hover{background:#ffffff14}
+.tbtn img{width:30px;height:30px;display:block}
+.tbtn.active{background:#ffffff1f}
+.tbtn.active::after{
+  content:"";position:absolute;bottom:2px;left:50%;transform:translateX(-50%);
+  width:16px;height:3px;border-radius:2px;background:var(--accent);
+}
+.tbtn.idle::after{
+  content:"";position:absolute;bottom:2px;left:50%;transform:translateX(-50%);
+  width:6px;height:3px;border-radius:2px;background:#8a8a90;
+}
+.tbspace{flex:1}
+.tbsys{display:flex;align-items:center;gap:14px;color:#ddd;font-size:12px;padding:0 8px;text-align:right}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:14px 0}
+.card{background:#1c1c20;border:1px solid var(--line);border-radius:10px;padding:14px}
+.card h3{font-size:13px;font-weight:650;margin-bottom:8px;color:#fff}
+.card .row{display:flex;align-items:center;gap:12px;margin:10px 0}
+.card small{color:var(--dim);font-size:12px;display:block;margin-top:6px}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;
+  background:#2a2a30;color:#aaa;margin-left:6px}
+.tag.ok{background:#1e3a1e;color:#7ec87e}
+
+table{border-collapse:collapse;width:100%;max-width:980px;font-size:13px;margin:10px 0}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:#fff;font-weight:600;background:#1c1c20}
+td code{font-size:12px}
+
+.flow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0;font-size:12.5px}
+.step{background:#1c1c20;border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+.step b{color:#fff;font-weight:600}
+.arrow{color:#555}
+.flow .step.hl{border-color:#4a7ab0;background:#1a2430}
+</style></head>
+<body>
+
+<h1>DHL Windows 任务栏：两个功能的真实根因 + 原型</h1>
+<p class="lead">这一版不是重新设计 UI，而是先修掉三个已经确认的断裂点。每一节都写明「实测证据 → 根因 → 修法」。</p>
+
+<h2>一、先说结论：为什么之前两版都没修好</h2>
+
+<div class="bad">
+<b>根因 1｜左键点击无效：固定的快捷方式指向旧路径，且没有参数。</b><br>
+实测你的固定按钮快捷方式是：<br>
+<code>target = D:\003代码目录\deepseek-harness-launcher\windows\build\DHL.exe</code><br>
+<code>args&nbsp;&nbsp; = （空）</code><br>
+而应用现在装在 <code>%LOCALAPPDATA%\Programs\DHL\</code>，<code>build\DHL.exe</code> 已被替换。<br>
+点它 = 启动一个旧副本，且没有 <code>--open</code>，即使启动也不会去开浏览器。
+</div>
+
+<div class="bad">
+<b>根因 2｜角标不显示：这台机器的 shell 明确拒绝 overlay 图标。</b><br>
+独立 COM 探测（裸 Win32，不是我的代码）：<br>
+<code>ITaskbarList&nbsp;&nbsp;: OK</code><br>
+<code>ITaskbarList2 : OK</code><br>
+<code>ITaskbarList3 : CoCreateInstance hr=0x80004002 (E_NOINTERFACE)</code><br>
+<code>ITaskbarList4 : OK</code><br>
+换 ITaskbarList4 再试：<code>HrInit OK / AddTab OK / SetOverlayIcon FAIL hr=0x80004005 (E_FAIL)</code><br>
+结论：这台机器拿不到 overlay。所有「用 SetOverlayIcon 画角标」的路都走不通，只能把数字画进图标本体。
+</div>
+
+<div class="bad">
+<b>根因 3｜画进图标的角标，被固定按钮忽略了。</b><br>
+<code>WM_SETICON</code> 只改窗口图标；任务栏上的<b>固定按钮</b>读的是快捷方式的 <code>IconLocation</code>。<br>
+之前虽然写了 <code>taskbar.ico</code>，但只更新了「开始菜单」和「桌面」两份快捷方式——固定按钮那份漏了。<br>
+现已补进 <code>shortcutPaths()</code>，但还缺一次强制刷新。
+</div>
+
+<h2>二、角标：唯一可行的做法</h2>
+<p class="lead">overlay 不可用，就把数字合成进图标位图，然后让<b>所有</b>快捷方式（含固定按钮那份）都指向这个 ico，再通知 shell 刷新。</p>
+
+<div class="tbwrap">
+  <div class="tblabel">真实任务栏尺寸预览（图标 30px）</div>
+  <div class="taskbar">
+    <div class="tbtn idle"><img src="data:image/png;base64,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" alt=""></div>
+    <div class="tbtn idle"><img src="data:image/png;base64,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" alt=""></div>
+    <div class="tbtn active"><img src="data:image/png;base64,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" alt=""></div>
+    <div class="tbtn idle"><img src="data:image/png;base64,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" alt=""></div>
+    <div class="tbtn idle"><img src="data:image/png;base64,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" alt=""></div>
+    <div class="tbtn idle"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAFtElEQVR4nK1Wb0hbVxQ/771kaYqJM64SR5046p/4wT+grsQtOkmzuaHTVdQv+1qq4Jd+GUiltd2XKGMUJwyHDTr3QTYkwz9RlMjmaJ2COAWnRhCU2UaN09la/yS541zffTxjEmPngct97557z+93zzn33MtBGFEoFAqv1+vF7+jo6Giz2Wy2WCyW7Ozs7NTU1FStVqtF3dHR0dHs7Ozs0tLSktPpdDocDsfKysoK6gRBEPx+v58QQiBS4TiO43mex++UlJQUq9VqXV5eXiYRisfj8dhsNltRUVERs8nsnSm8bGJDQ0PDzs7ODjOMO0GP+Hw+H9sVExxjOvk4EomNjY1lHo0IPCYmJmZwcHCQGUEXBwKGE5yLaxiZxcXFxdzc3NywJHgR3GAwGKampqZw4eHh4eF5gIMJ2sB+a2trq6ysrIzlxamYo6CrZmZmZuQLQ+yQeL1e9AztA3WBgqHBfm9vby8vLy/vVE4IgiDgwPDw8LAcHI0FggSEOKQEzkMSaMftdrv1er0e8SgJFpP6+vp6OXg4IJwyOjpKHjx4QFpaWiSPoNTV1RExgpQ82pH1Rzg+NDQ0JIWC4zguOTk5GbOdZTcDxwOAACUlJSQrK4ukp6cTk8lE0tLS8EzT1tfXR8EZkE6nIwUFBcTlcp0i3tPTgzYpiYqKigopBM3Nzc0iY8xcOvnp06fk2rVrElBgEwSBqFQq4nA4JJfv7++TxMREqo+KiiLj4+PkyZMnxGq1kps3bxKNRkN2d3e9uMnx8fE/aAiwmq2urq6KZ5xm0NzcHNFqtdSQUqmkYDzP08a+OY6TWlNTk5SAZrOZ6nFtXFwc1TPSpaWlLDT0mObn5+dDeXl5ubgDemyxGY1GulCtVhOFQiEZDNaYTkwhMjIycmKcNdwIehVJHhwc0IRpbW1thfb29nb8YYPMQDCgYESQKJLE78bGRkrCbrdLnsM+MzOTDAwMSKFitQXvDpicnJwUCdDg3759m7of3fro0SP6bzAYTsQ+mAdYq6mpIU6nUyKFZFhtCHaygNV6Fn90PyZf4LFDQ3gSGImLEPQER1kAgN/vx+oERqMRpqenwe12g1qtBlQrlUp6Wg4ODkClUkmnZy03EyKVtyf/DH4FgCjsutbr9fDq1StYWFjAQkFJoeCzgIEj8HnAw63h8TjICWRkZGBxgu7ubtqzcXaJnRc4GBEm6H1+fn5+XvzxY2+xWCiozWaDjY0NyQMXAR5oB6sw73K5XPiD2Yx5cP36dcALy+PxwJ07dyQCntpbcKWrG+J/n4C32h6D4mqCZFCV+15I3VkkeHx4MDa4cwS0Wq1U2dXVJS3QfdMCvmdrsP55CQhXE+DNxq/ouKCPD6mLRPj+/v5+PIri7YhnFQoLC+Hhw4fSpJ2vrcCpVLA30Ae+dTfs//YrvJGRBYqkd+FS4YchdZF4gV9bW1vr7e3txQGsxZj5SOLu3btw7969Y5ZRmuMVYkKSly9or0h4J6xOLmrLxxD38y+nPQAA0NbW1kaLAqb98T1NSdy/f59OOpyeOjZy4yPgdTq49EHB8WpBCKuLSBTi+ero6OgIfIqxR8bfORnk3+++Jb7tf4jPs0kO/5qj4+tfVJ+pe2nvCVoFn39yg+o5JjqdTjcxMTGRlJSUJIZCCHX8or+sh8uflsJzSyGQ/f2IdBgCza0aWK/47GQIiFhpNjc3NysrKyu3t7e3ERxJyMuo0pBOk01lfJ8CvPjxBwrAKZUhdWcJ2uXkocBXIz6dOzs7OzUajQb/WYh8z5+BcCUOfFtbsNfzE+w+/h4vEOAuX4a47p6gunMRkJPAp7PdbrfHx8fHy8NxUZVQfjnx8kEERzDMhZycnBwsUvJcCHWjvS44LcWBStwxViSsD8XFxcXV1dXVY2NjYyxX/i8JOTjtQ01kpwPrA/6bTCZTVVVVVW1tbS2b87rvAQaO3/8BEURjLp/9fWkAAAAASUVORK5CYII=" alt=""></div>
+    <div class="tbspace"></div>
+    <div class="tbsys">23:04<br>2026/11/9</div>
+  </div>
+  <div class="tblabel" style="margin-top:8px">↑ 从左到右：无未读 / 无未读 / 5 条（当前活动）/ 12 条 / 99 条 / 99+（128 条）</div>
+</div>
+
+<h2>三、角标的五种状态（放大看细节）</h2>
+<div class="grid">
+  <div class="card">
+    <h3>无未读 <span class="tag">基准</span></h3>
+    <div class="row"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAFuklEQVR4nJVXXUhTbxjfdtZGUhOdxDAkipxNL0zUYamLbOyqQkvxpouClLzoLhAEkcqb5UWECN2IiAh5YQVFU4wVQrU/gpCf4ERDzY/Az8BKp2/8Hs5z/mfHs7keeDnnvB/Px+/5eJ9jNMQhs9lsjkQiEbwnJycne71er8/n8+Xl5eVlZWVl2Ww2G9Z2d3d3R0dHR6enp6eDwWAwEAgE5ubm5rAmSZK0v7+/L4QQhkTJaDQaTSaTCe9Op9Pp9/v9s7OzsyJBWl1dXe3o6OgoKysrY57M71AyqTY2NjY2bm5ubjJjWAJE9vb29tgqJszxmnoeitjtdjsjmpDwlJSUlL6+vj5mAoi1AuMR9uIMKzM1NTVVWFhYGFcJkyzc5XK5hoeHh3FwZ2dn518E6xF44Lm2trZWXl5eznFxwOcgQDUyMjKiPhjDQhGJRIAMPbVrWoJr8Nze3t52u93uAzEhSZKEiYGBgQG1cDDTCtG4OCZp90EJ8FlZWVlxOBwOyCMl2CcNDQ0NauHxBGHLhw8fxKNHj0Rra6uCCOj+/ftC9iApDz6q5y7m+/v7+xVXGI1GY2ZmZiainaObhSMBIODatWvi/PnzIjs7W3g8HnHu3DnkNI23b9+ScBaUmpoqLl26JMLh8AHFX758CZ6kRGVlZaXigpaWlhZZY0Qubf7y5Ys4e/asIkg7JEkSVqtVBAIBBfLfv3+LU6dO0fqxY8dEKBQSnz9/Fn6/X9y8eVMcP35c/Pz5MwIjQ6HQf+QCVLP5+fl5OccpgiYmJoTNZiNGR44cIWEmk4kGvxuNRmU8efJECUCv10vrOHvixAlaZ6WvX7/OrqE0LS4uLjZUVFRUyBZQ2mJcvHiRDh49elSYzWaFod7gNTmExPv376PmecAQoAol//z5QwHT1tbWZmhvb2/HB08yAz1BeopAUSiJ94cPH5ISr1+/VpDDMzc3V7x7905xFdcW3B2GoaGhIVkBcv69e/cIfsD67Nkz+na5XFG+10OAR11dnQgGg4pSUIZrg15mGbjWs/8BP4JPm3ZghExgJTgOSkpKSGBVVZVuoH779k3hoSUgYdAWjgsXLpDvt7a2KK3UBxHltbW1ik+hBNB58OABrSP9MIc17MnIyED1IwRiVXQDv3AhQUziMDyjLjBQhpmg2LASSMXTp0/T/NLSkrBYLAQ/0Llx40YUb10FdmQT5SIlmpqa6DBbxfOMEn9fvnw5KgauXLki7ty5Q8I5Tl68eHGAxwEXjPx/+ZAPPn36RIftdrv48eMHCVUHD98P6E9QWDge1EEJA86cOSN+/foVF35CoLe3t1eGKcLC3G43Mbt165ZiAVuvjonnz59HFSt1zXjz5k1M+DkNcTEZampqalQdDW3ARcMWcW6DFhcXhdPpFE+fPlXmUGKxj6HHkCt7TN/DWCjR09PTY0hPT0/f2NjYYM340OPHjxUl7t69K5aXl2ne5/PR3NWrV8X3799pDu8MPy4jpGy86OdOCVWYLqOurq4uGWqKFlYCAclKOBwOEn7y5EklzRD9KKRALCcnJ6ru48ZEidEqwTcu2rSkpKQkUqC0tLSUm0oVTPR89eoVMY91F2DA6u7ubvH161d6dnZ2io8fP+q6gI2sr6+vJ+HckHTilKYVYwaIZqTU7du3KUBRfPLz8ynPUa4RG4kQGxgOh8MWi8VC1zEaErykpaWlzczMzKg3xgskHeZKpsToFfcZ/qKioqKo5tQkN4gFBQUF6+vr61oluCJisD/VjelhjTP/T+AdWafbGZtlV6B13sJFoPKXDsOEUGFDOO+bm5ub4/4bmOUFtM6LsmPlbjYxP6gIcLMBeLLlh/4dSTI0qA/4yYxlTQxkFD/z3Pj4+Di1XokIN8ik/mmorq6uHhwcHPzXP6SxsbExtPqIdl2fH0acHfzt8Xg86OEmJycntcrgG7SwsLCA8oqW22q1WvUM0tJfp3MyL5PRtMMAAAAASUVORK5CYII=" style="width:64px;height:64px"></div>
+    <small>图标原样，不加任何东西。固定按钮和运行中都一样。</small>
+  </div>
+  <div class="card">
+    <h3>1–9 条 <span class="tag ok">一位数</span></h3>
+    <div class="row"><img src="data:image/png;base64,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" style="width:64px;height:64px">
+      <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAGKElEQVR4nJ1XbUhbVxh+701s56ax6nDJYFOhai2dH6CuaLUqwc4NrVKr/tgc/mipPyzoT6mUWvYjdT+sRbaO2iAURjeQFKvRKVYQ2lRFmFLnFwqKFtGIEupXomc8ZzmXa0wy2xcO556P+z7Peb/OvRL5Ea1Wq3W5XC48h4SEhBiNRmNeXl5ecnJyclxcXJxOp9Nhzel0OsfHx8dnZ2dn+/v7+61Wq3VhYWEBaxqNRnNwcHDAGGN0XJEkSZJlWcZzbGxsrMlkMs3Pz8+zY4rdbrebzWZzbm5urtAp9P2vyKqN9fX19Zubm5tCMU4Ci+zv7++LUwnBnFhTz4NIeHh4uLDoscBDQ0NDu7u7u4USmNgT0J9gL94RZKanp6dTU1NT/ZKQ3eDx8fHxo6Ojo3hxb29v732AvQl0oF9fX18vKioqEnFxxOcQmGpsbGxM/aKPEzKXywXL8N5zzVPgGvRbW1tbaWlpaUdiQqPRaDDR29vbqwaHMk8QDxf7FM99IAE9KysrK3q9Xg88TkL4pK6urk4N7g8IW168eMEaGhrYgwcPFItAqqurmduDnDz0qHon5nt6enoUV0iSJMXExMQg2kV0C3AkAAAKCgpYUlISO3v2LMvKymJnzpxBTvP2/PlzDi6AwsLC2MWLF9nMzMwR4u3t7dDJSZSUlJQoLmhsbGx0M0bk8s2vXr1ip0+fVoA8m0ajYSdPnmRWq1Ux+c7ODouMjOTrQUFBzGazsZcvXzKTycSuXLnCgoODmcPhcOGQNpvtNXcBqtni4uKiO8d5BE1MTDCdTscVBQQEcDBZlnkTz5IkKe3evXtKABqNRr6OdyMiIvi6IF1YWChcw9M0IyMjg4qLi4vdJ+Bpi5aens5fDAwMZFqtVlHorYk1dwixvr6+Q/Oi4SCwKkju7u7ygGlpaWmh1tbWVgzEpFDgDcgbERAFSTzfuXOHk7BYLIrl0CcmJrKuri7FVaK24O6g4eHhYTcB7vwbN25w88Os9+/f5+P4+PhDvvdmAdGqqqpYf3+/QgpkRG3wllkkar3wP8yP4PNMOyhCJggSIg4uXLjAAa9evcrXllISvDZvAkvI4kpFOqIHqaWlJXI4HISb2Ol0UkBAAF2+fJlsNhtdv36d9vf3kcN4h+x2O3V1dVHT/BQtpST4vGeWUxN586zAshiI61qv19P29jZNTU1xEFExQebEiRP08OFDqq6u5sSwPjc3RzUDf/m95DyJHLqDnNCkIpCQkMBP9vTpU96LeRRMPINIc3Mz5eTkcBJzX8UdG9yTBNwgT05OTroHB+jz8vI4kNlsptXVVW6BgwO+xJ9xapB4/PixX5MfhwR3wczMzIxbOYKCzp8/T7iw4Nva2lqFABqA0WCNqKgon8o//c1Mnw//rbTw5l987pXx4YEHsMHJAWgymfjikydPqKGhgQNiHhY5d+4cNTU1HfHlIaWnTtF2b48SePabVT6tIHd2dnYiFd23I3KVsrOz6e7du3zT7du36dq1a7SyskIGg4GfvKamxq955ZBTxN6987tH2bu8vLzc0dHRgQFqMXwMErdu3eLgkEePHlFSUhJdunSJ3rx5w9PSp0gSySEh9HFhERkGX1P4r62k/TLS93YioszMzMyBgYEBRKX4XBK5brFYOBkAq8VfAMrBwcR29+ij7BwK/clEzsl/aPWHcu8EtO5v/7a2traKiooKpGWA+4iCxM7ODj179owQLhMTE7xI9X3ixwoqifjTQtqoaHqbne7VLZKQsLCwsKGhoaHo6OhotysOWcJT/AXhIQLtHaTRG+ht5tdQdmRd5hcCEa2tra2VlpaWbmxsbAAcJDAPcGzBEE0UJqSXN8Fpg77/kWSdjgK/+Za0X3xJ292dXsGhg9dZXApwxcjIyEhlZWWlw+FwgIT4LUNFBBFR//39ZbGtLQr8roA+s/aR7mYtvfvjd9r8+b+09hmEQkQ84NPZYrFYDAaDQWWJo354D1d4irCgrJ4EOIAQCykpKSkoUhir4oFf6N4UfQj4odtQCEBQkVAf8vPz88vLy8sHBwcHRYqKa/tDSajBee9ro8gOxAfGWVlZWWVlZWX448WvuZoIyImxL5eoSarf/RdnyDL7uQv9ZgAAAABJRU5ErkJggg==" style="width:64px;height:64px"></div>
+    <small>红色胶囊贴在右下角，白字。胶囊高度约图标的 52%，保证缩到 16px 还能认。</small>
+  </div>
+  <div class="card">
+    <h3>10–99 条 <span class="tag ok">两位数</span></h3>
+    <div class="row"><img src="data:image/png;base64,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" style="width:64px;height:64px">
+      <img src="data:image/png;base64,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" style="width:64px;height:64px"></div>
+    <small>胶囊自动变宽（不压扁文字），宽度按位数算。</small>
+  </div>
+  <div class="card">
+    <h3>100+ <span class="tag ok">封顶</span></h3>
+    <div class="row"><img src="data:image/png;base64,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" style="width:64px;height:64px"></div>
+    <small>显示 <code>99+</code>，与 macOS 版 <code>BadgeText</code> 规则一致；胶囊宽度有上限，不会盖住整个图标。</small>
+  </div>
+</div>
+
+<h2>四、左键点击：修好之后的行为</h2>
+<p class="lead">左键的目标只有一个：<b>把 dsh 界面送到你眼前</b>。不弹面板、不弹列表、不管有多少未读。</p>
+
+<div class="flow">
+  <div class="step"><b>你左键点任务栏图标</b></div>
+  <div class="arrow">→</div>
+  <div class="step">Windows 启动快捷方式<br><code>DHL.exe --open</code></div>
+  <div class="arrow">→</div>
+  <div class="step">单实例把 <code>--open</code><br>转发给已运行的进程</div>
+  <div class="arrow">→</div>
+  <div class="step hl"><b>激活已有浏览器窗口</b><br>（不新开标签）</div>
+</div>
+
+<div class="note">
+这条链路<b>已经实测通了</b>。手动执行 <code>DHL.exe --open</code>，日志立即出现：<br>
+<code>startup action: open</code> → <code>activated browser window (hwnd=198542)</code> → <code>browser already showing Harness (clients=4, visible=true); activated instead of reopening</code><br>
+所以左键要修的只有一件事：<b>把固定按钮的快捷方式重写对</b>。
+</div>
+
+<h2>五、要改的地方（三处）</h2>
+<table>
+<tr><th style="width:24%">改动</th><th style="width:36%">做什么</th><th>为什么必须这么改</th></tr>
+<tr>
+  <td><b>① 校验并重写固定快捷方式</b><br><code>taskbar.go</code></td>
+  <td>启动时把固定按钮那份 <code>.lnk</code> 也纳入校验：目标不是当前 exe、或参数不是 <code>--open</code>，就重写。</td>
+  <td>现在只在「目标不匹配」时重写，而固定那份压根不在检查范围。这是左键点了没反应的直接原因。</td>
+</tr>
+<tr>
+  <td><b>② 强制刷新 shell 图标</b><br><code>taskbaricon_windows.go</code></td>
+  <td>写完 <code>taskbar.ico</code> 后，除 <code>SHChangeNotify</code> 外，对固定快捷方式做一次 <code>IconLocation</code> 重写 + 图标缓存刷新。</td>
+  <td>Explorer 缓存固定按钮图标，光改文件不通知，界面上不变。这是角标「写了但看不见」的最后一环。</td>
+</tr>
+<tr>
+  <td><b>③ 图标合成为主路径</b><br><code>taskbarbadge_windows.go</code></td>
+  <td>保留 <code>SetOverlayIcon</code> 尝试（有则更清晰），失败时不再依赖它；图标合成从 fallback 升为主路径。</td>
+  <td>实测本机 <code>E_FAIL</code>，overlay 永远不会有结果。现在代码把 overlay 当主路径，时序也不对。</td>
+</tr>
+</table>
+
+<h2>六、需要你确认的三点</h2>
+<div class="warn">
+<b>① 角标位置</b>：现在放<b>右下角</b>（macOS 菜单栏是右上角）。Windows 任务栏惯例是右下角，且右下角不易被图标本身图形遮挡。要改右上角吗？<br><br>
+<b>② 点固定按钮时如果 dsh 没在跑</b>：应该 ①直接开浏览器（白屏等启动），还是 ②先启动 dsh、就绪后再开浏览器？现在是②。<br><br>
+<b>③ 未读数来源</b>：角标数字取自 <code>/dsh-session-notify/events</code> 的未读数。统计「已完成但没看的会话」，还是「所有未读事件」？现在按前者。
+</div>
+
+<div class="note" style="margin-top:22px">
+<b>请确认后我再改代码。</b>另外：你的固定按钮快捷方式目前指向 <code>build\DHL.exe</code>，代码改完后安装时会一并重写，你不需要手动重新固定。
+</div>
+
+</body></html>

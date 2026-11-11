@@ -9,6 +9,9 @@
 # 手改四处容易漏掉一处（历史上 v0.2.0 就出现过 tag/包内版本不一致），所以统一走
 # 本脚本；不要直接编辑上面四个文件里的版本号。
 #
+# Windows 版没有第五处：windows/build.ps1 每次构建都从 Resources/Info.plist
+# 读版本号，注入 exe 的 VERSIONINFO 与 -ldflags，所以这四处一致即两个平台一致。
+#
 # 用法：
 #   ./scripts/bump-version.sh 0.3.11-1.1-SNAPSHOT    # 开发中
 #   ./scripts/bump-version.sh 0.3.11-1.1             # 提测

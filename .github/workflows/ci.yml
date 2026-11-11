@@ -66,3 +66,45 @@ jobs:
 
       - name: Measure first-install peak RSS
         run: ./scripts/memory-bench.sh 1024
+
+  windows:
+    name: Windows build
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: windows/go.mod
+          cache-dependency-path: windows/go.sum
+
+      # fetch-node BEFORE vet: the exe embeds the Node zip
+      # (internal/selfinstall/assets/node.zip), and go:embed is a compile
+      # error when the file is missing
+      - name: Fetch bundled Node
+        working-directory: windows
+        shell: pwsh
+        run: ./fetch-node.ps1 -Out build
+
+      - name: Vet
+        working-directory: windows
+        run: go vet ./...
+
+      - name: Test
+        working-directory: windows
+        run: go test ./...
+
+      - name: Build
+        working-directory: windows
+        shell: pwsh
+        run: ./build.ps1 -Out build/DHL.exe
+
+      - name: Upload Windows exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: Deepseek-Harness-Launcher-windows
+          path: windows/build/DHL.exe
+          if-no-files-found: error

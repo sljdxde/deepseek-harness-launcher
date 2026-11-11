@@ -1555,10 +1555,65 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           notesModal)))
   }
 
+  // 插件管理面板常驻挂载在 body 上，由「更多」菜单打开；侧边栏 footer
+  // 不再为它留一行（三个入口并列时 footer 太挤）。
+  const OPEN_EVENT = 'dsh-plugin-manager:open'
+
+  function mountPanel(ctx) {
+    ensureStyles()
+    if (document.getElementById(NS + '-root')) return null
+    const host = document.createElement('div')
+    host.id = NS + '-root'
+    document.body.appendChild(host)
+
+    let setOpenRef = null
+    const store = createUpdatesStore()
+
+    function Root() {
+      const [open, setOpen] = React.useState(false)
+      setOpenRef = setOpen
+      React.useEffect(() => {
+        const onOpen = () => setOpen(true)
+        window.addEventListener(OPEN_EVENT, onOpen)
+        return () => window.removeEventListener(OPEN_EVENT, onOpen)
+      }, [])
+      if (!open) return null
+      return h(PluginManagerPage, {
+        wide: true,
+        t: (key, vars) => (vars && vars.name ? key + ' ' + vars.name : key),
+        onClose: () => setOpen(false),
+        store,
+      })
+    }
+
+    let ReactDOM = null
+    try { ReactDOM = require('react-dom/client') } catch { /* older host */ }
+    if (ReactDOM && typeof ReactDOM.createRoot === 'function') {
+      ReactDOM.createRoot(host).render(h(Root))
+    } else {
+      require('react-dom').render(h(Root), host)
+    }
+    return () => { if (setOpenRef) setOpenRef(true) }
+  }
+
+
   function apply(ctx) {
     ensureStyles()
-    ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({ name: 'sidebar.footer.action', id: NS, order: 60, label: '插件管理' }, PluginTrigger))
+    const openPanel = mountPanel(ctx)
+
+    // Registered in dsh's own sidebar panel list, so the entry shows up in
+    // the sidebar and in dsh's "更多" menu — no extra footer row, which is
+    // what was squeezing the workspace list.
+    ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+      name: 'sidebar.panellist', id: NS, order: 100, label: '插件管理',
+    }, function PluginManagerEntry(props) {
+      if (props && props.size) {
+        return h('span', { className: 'dsh-pm-trigger-icon', 'aria-hidden': true })
+      }
+      return h(PluginManagerPage, { wide: true, t: (k, v) => (v && v.name ? k + ' ' + v.name : k), onClose: () => { if (openPanel) openPanel() } })
+    }))
   }
+
   // createToastStore / createUpdatesStore 与更新检测的纯函数仅为单测导出（vm 加载后可取用），
   // 宿主只消费 inject/apply。
   return {

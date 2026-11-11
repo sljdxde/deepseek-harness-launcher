@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>任务栏未读浮层 · macOS 玻璃质感</title>
+<style>
+/* ══════════════════════════════════════════════════════════════
+   macOS Vibrancy 风格：高模糊 + 低不透明度 + 极细描边 + 大柔影
+   ══════════════════════════════════════════════════════════════ */
+:root{
+  --stage1:#7f9bb8; --stage2:#4a6b8a; --stage3:#2f4a63;
+
+  /* 玻璃本体：比之前透明得多，靠 blur 撑住可读性 */
+  --glass:rgba(248,248,250,.58);
+  --glass-deep:rgba(240,240,244,.66);
+  --hairline:rgba(255,255,255,.42);
+  --hairline-soft:rgba(0,0,0,.055);
+  --row-hover:rgba(120,120,128,.12);
+  --sunken:rgba(120,120,128,.075);
+
+  --label:#1c1c1e;
+  --label2:rgba(60,60,67,.62);
+  --label3:rgba(60,60,67,.40);
+  --accent:#0a68f5;
+  --red:#ff3b30;
+  --green:#34c759;
+
+  --shadow:0 26px 64px -14px rgba(0,0,0,.40), 0 8px 20px -8px rgba(0,0,0,.22);
+  --rim:inset 0 .5px 0 rgba(255,255,255,.62), inset 0 0 0 .5px rgba(255,255,255,.18);
+
+  --tb:rgba(246,246,248,.62);
+  --tb-hover:rgba(0,0,0,.05);
+  --tb-active:rgba(0,0,0,.085);
+}
+body.dark{
+  --stage1:#1d2a38; --stage2:#111a24; --stage3:#0a1017;
+
+  --glass:rgba(40,40,44,.56);
+  --glass-deep:rgba(48,48,54,.64);
+  --hairline:rgba(255,255,255,.11);
+  --hairline-soft:rgba(255,255,255,.055);
+  --row-hover:rgba(255,255,255,.085);
+  --sunken:rgba(255,255,255,.05);
+
+  --label:#f5f5f7;
+  --label2:rgba(235,235,245,.62);
+  --label3:rgba(235,235,245,.38);
+  --accent:#4d9bff;
+  --red:#ff6961;
+  --green:#32d74b;
+
+  --shadow:0 26px 64px -12px rgba(0,0,0,.72), 0 8px 20px -8px rgba(0,0,0,.5);
+  --rim:inset 0 .5px 0 rgba(255,255,255,.12), inset 0 0 0 .5px rgba(255,255,255,.05);
+
+  --tb:rgba(28,28,32,.62);
+  --tb-hover:rgba(255,255,255,.075);
+  --tb-active:rgba(255,255,255,.12);
+}
+*{box-sizing:border-box}
+body{margin:0;height:100vh;overflow:hidden;color:var(--label);
+  font:13px/1.4 -apple-system,"SF Pro Text","Segoe UI Variable","Segoe UI",
+       "PingFang SC","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased}
+
+/* 桌面：模拟一张有细节的壁纸，玻璃才透得出来 */
+.desk{position:fixed;inset:0;
+  background:
+    radial-gradient(900px 520px at 18% 22%,rgba(255,255,255,.30),transparent 58%),
+    radial-gradient(760px 460px at 82% 78%,rgba(140,200,255,.30),transparent 55%),
+    radial-gradient(600px 380px at 52% 48%,rgba(255,190,220,.16),transparent 62%),
+    linear-gradient(152deg,var(--stage1),var(--stage2) 52%,var(--stage3))}
+/* 壁纸上加一点"内容"让模糊有层次 */
+.desk::after{content:"";position:absolute;inset:0;
+  background-image:
+    repeating-linear-gradient(115deg,rgba(255,255,255,.05) 0 2px,transparent 2px 46px),
+    repeating-linear-gradient(-65deg,rgba(0,0,0,.035) 0 2px,transparent 2px 62px);
+  mix-blend-mode:overlay}
+
+/* 顶栏 */
+.top{position:fixed;top:0;left:0;right:0;z-index:40;display:flex;align-items:center;
+  gap:11px;padding:10px 18px;
+  background:var(--glass-deep);
+  backdrop-filter:blur(48px) saturate(200%);
+  -webkit-backdrop-filter:blur(48px) saturate(200%);
+  border-bottom:.5px solid var(--hairline);box-shadow:var(--rim)}
+.top h1{font-size:13px;margin:0;font-weight:600;letter-spacing:-.2px}
+.top .sub{font-size:11px;color:var(--label3);font-weight:400}
+.top .sp{flex:1}
+.tbtn{display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;
+  border:.5px solid var(--hairline);background:var(--sunken);color:var(--label);
+  font:inherit;font-size:11px;cursor:pointer;
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.tbtn:hover{background:var(--row-hover)}
+.tbtn .sw{width:10px;height:10px;border-radius:50%;border:.5px solid var(--hairline)}
+
+/* ══ 玻璃浮层 ══════════════════════════════════════════════════ */
+.fly{position:absolute;width:288px;
+  background:var(--glass);
+  backdrop-filter:blur(64px) saturate(210%);
+  -webkit-backdrop-filter:blur(64px) saturate(210%);
+  border:.5px solid var(--hairline);
+  border-radius:14px;
+  box-shadow:var(--shadow),var(--rim);
+  overflow:hidden;
+  animation:rise .18s cubic-bezier(.16,.84,.36,1)}
+@keyframes rise{from{opacity:0;transform:translateY(8px) scale(.965)}to{opacity:1;transform:none}}
+
+/* 头部 */
+.fh{display:flex;align-items:center;gap:6px;padding:8px 12px 7px}
+.fh .ttl{font-size:11px;font-weight:600;color:var(--label2);
+  letter-spacing:.35px;text-transform:uppercase}
+.fh .cnt{margin-left:auto;font-size:10px;font-weight:600;color:var(--red);
+  font-variant-numeric:tabular-nums;letter-spacing:.2px}
+
+/* 列表 */
+.fl{padding:0 5px 4px}
+.fi{display:flex;align-items:center;gap:7px;
+  height:25px;padding:0 7px;border-radius:6px;
+  cursor:pointer;position:relative;
+  transition:background .09s ease}
+.fi:hover{background:var(--row-hover)}
+.fi .dot{width:5px;height:5px;border-radius:50%;flex:none;background:var(--green);
+  box-shadow:0 0 5px rgba(52,199,89,.55)}
+.fi.err .dot{background:var(--red);box-shadow:0 0 5px rgba(255,59,48,.55)}
+.fi .nm{flex:1;min-width:0;font-size:12px;font-weight:400;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  letter-spacing:-.1px}
+.fi .tail{display:grid;place-items:end;flex:none;min-width:34px}
+.fi .tm{grid-area:1/1;font-size:10px;color:var(--label3);
+  font-variant-numeric:tabular-nums;transition:opacity .09s}
+.fi .go{grid-area:1/1;font-size:10px;color:var(--accent);opacity:0;
+  font-weight:500;transition:opacity .09s;white-space:nowrap}
+.fi:hover .go{opacity:1}
+.fi:hover .tm{opacity:0}
+
+/* 折叠：默认只显示前 5 条 —— 关键修复：全部条目都在 DOM 里，
+   折叠时用 nth-child 隐藏第 6 条以后，展开才真的能看到更多 */
+.fl:not(.expanded) .fi:nth-child(n+6){display:none}
+
+/* 展开后：固定高度滚动 */
+.fl.expanded{max-height:180px;overflow-y:auto;overscroll-behavior:contain;
+  padding-bottom:2px}
+.fl.expanded::-webkit-scrollbar{width:6px}
+.fl.expanded::-webkit-scrollbar-track{background:transparent}
+.fl.expanded::-webkit-scrollbar-thumb{background:rgba(128,128,128,.34);
+  border-radius:3px;border:1.5px solid transparent;background-clip:padding-box}
+.fl.expanded::-webkit-scrollbar-thumb:hover{background:rgba(128,128,128,.52);
+  background-clip:padding-box}
+
+/* 折叠行：mac 风格的分隔 + 居中文字 */
+.fold{display:flex;align-items:center;justify-content:center;gap:3px;
+  padding:5px 10px 6px;font-size:11px;color:var(--label2);cursor:pointer;
+  border-top:.5px solid var(--hairline-soft);
+  transition:color .09s,background .09s;user-select:none;font-weight:500}
+.fold:hover{color:var(--accent);background:var(--sunken)}
+.fold .arw{font-size:7px;line-height:1;display:inline-block;
+  transition:transform .2s cubic-bezier(.2,.9,.3,1);opacity:.65}
+.fold.expanded .arw{transform:rotate(180deg)}
+
+/* 底部 */
+.ff{display:flex;align-items:center;gap:3px;padding:5px 6px 6px;
+  border-top:.5px solid var(--hairline-soft)}
+.ff button{flex:1;padding:5px 6px;border-radius:6px;border:0;background:transparent;
+  color:var(--label2);font:inherit;font-size:11px;cursor:pointer;font-weight:500;
+  transition:background .09s,color .09s}
+.ff button:hover{background:var(--row-hover);color:var(--label)}
+.ff button.danger:hover{background:rgba(255,59,48,.12);color:var(--red)}
+.ff button.primary{background:var(--accent);color:#fff}
+.ff button.primary:hover{filter:brightness(1.09);background:var(--accent);color:#fff}
+.ff .div{width:.5px;height:12px;background:var(--hairline-soft);flex:none}
+
+/* 尾巴 */
+.fly .tip{position:absolute;bottom:-5px;width:9px;height:9px;
+  background:var(--glass);border-right:.5px solid var(--hairline);
+  border-bottom:.5px solid var(--hairline);transform:rotate(45deg)}
+
+/* ══ 任务栏 ════════════════════════════════════════════════════ */
+.taskbar{position:fixed;left:0;right:0;bottom:0;height:40px;z-index:30;
+  display:flex;align-items:center;padding:0 6px;gap:3px;
+  background:var(--tb);
+  backdrop-filter:blur(56px) saturate(200%);
+  -webkit-backdrop-filter:blur(56px) saturate(200%);
+  border-top:.5px solid var(--hairline);box-shadow:var(--rim)}
+.tb{width:30px;height:30px;border-radius:5px;display:flex;align-items:center;
+  justify-content:center;position:relative;cursor:pointer;
+  transition:background .09s}
+.tb:hover{background:var(--tb-hover)}
+.tb.active{background:var(--tb-active)}
+.tb .sq{width:16px;height:16px;border-radius:4px;display:flex;align-items:center;
+  justify-content:center;font-size:8px;font-weight:700;color:#fff}
+.tb img{width:18px;height:18px;object-fit:contain;display:block}
+body.dark .tb img{filter:brightness(1.2)}
+.tb .badge{position:absolute;right:-3px;top:-2px;min-width:14px;height:13px;padding:0 3.5px;
+  border-radius:6.5px;background:#ff3b30;color:#fff;font-size:8.5px;font-weight:700;
+  line-height:13px;text-align:center;
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+  box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.tb.active::after{content:"";position:absolute;bottom:-1px;left:50%;
+  transform:translateX(-50%);width:10px;height:2px;border-radius:1px;
+  background:var(--accent);opacity:.85}
+.tb-sep{width:.5px;height:18px;background:var(--hairline-soft);margin:0 2px}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:8px;
+  color:var(--label2);font-size:10px;padding-right:2px}
+.tb-clock{line-height:1.1;text-align:right;font-size:9.5px;
+  font-variant-numeric:tabular-nums}
+
+/* ══ 说明卡 ════════════════════════════════════════════════════ */
+.legend{position:absolute;padding:10px 12px;border-radius:12px;
+  background:var(--glass);
+  backdrop-filter:blur(56px) saturate(200%);
+  -webkit-backdrop-filter:blur(56px) saturate(200%);
+  border:.5px solid var(--hairline);box-shadow:var(--shadow),var(--rim);
+  font-size:10.5px;color:var(--label2);line-height:1.62}
+.legend h4{margin:0 0 6px;font-size:10.5px;color:var(--label);font-weight:600;
+  letter-spacing:.3px;text-transform:uppercase}
+.legend .row{display:flex;gap:6px;margin-top:2.5px}
+.legend .k{color:var(--label3);flex:none;width:50px}
+.legend .v{color:var(--label)}
+.legend .hl{color:var(--accent);font-weight:600}
+.legend code{font-family:ui-monospace,"SF Mono",monospace;font-size:9.5px;
+  background:var(--sunken);padding:1px 4px;border-radius:3px}
+.legend .sep{height:.5px;background:var(--hairline-soft);margin:7px 0}
+.legend .foot{font-size:10px;color:var(--label3);line-height:1.55}
+
+.scene{position:absolute;font-size:10px;color:rgba(255,255,255,.94);
+  background:rgba(0,0,0,.30);
+  backdrop-filter:blur(16px) saturate(160%);
+  -webkit-backdrop-filter:blur(16px) saturate(160%);
+  padding:2.5px 9px;border-radius:20px;
+  border:.5px solid rgba(255,255,255,.16);
+  font-weight:500;letter-spacing:.2px;white-space:nowrap}
+</style>
+</head>
+<body>
+
+<div class="desk"></div>
+
+<div class="top">
+  <h1>任务栏未读浮层</h1>
+  <span class="sub">macOS 玻璃 · 5 条折叠 · 展开滚动</span>
+  <span class="sp"></span>
+  <button class="tbtn" onclick="toggleTheme()">
+    <span class="sw" id="sw"></span><span id="tl">夜间</span>
+  </button>
+</div>
+
+<!-- ① 3 条 -->
+<div class="scene" style="left:18px;top:56px">① 3 条 · 不折叠</div>
+<div class="fly" style="left:18px;top:84px">
+  <div class="fh"><span class="ttl">会话完成</span><span class="cnt">3 未读</span></div>
+  <div class="fl">
+    <div class="fi"><span class="dot"></span><span class="nm">dsh-launcher</span>
+      <span class="tail"><span class="tm">19:08</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">my-app</span>
+      <span class="tail"><span class="tm">18:42</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">api-server</span>
+      <span class="tail"><span class="tm">17:31</span><span class="go">打开 →</span></span></div>
+  </div>
+  <div class="ff">
+    <button class="danger">清除提醒</button><span class="div"></span>
+    <button class="primary">打开 Harness</button>
+  </div>
+  <div class="tip" style="left:124px"></div>
+</div>
+
+<!-- ② 折叠 -->
+<div class="scene" style="left:330px;top:56px">② 99+ · 折叠 5 条（点下面试试）</div>
+<div class="fly" style="left:330px;top:84px">
+  <div class="fh"><span class="ttl">会话完成</span><span class="cnt">99+ 未读</span></div>
+  <div class="fl" id="listB">
+    <div class="fi"><span class="dot"></span><span class="nm">dsh-launcher</span>
+      <span class="tail"><span class="tm">19:08</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">my-app</span>
+      <span class="tail"><span class="tm">18:42</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">api-server</span>
+      <span class="tail"><span class="tm">17:31</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">web-frontend</span>
+      <span class="tail"><span class="tm">16:58</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">ml-training</span>
+      <span class="tail"><span class="tm">15:47</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">data-pipeline</span>
+      <span class="tail"><span class="tm">15:20</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">infra-deploy</span>
+      <span class="tail"><span class="tm">15:12</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">docs-site</span>
+      <span class="tail"><span class="tm">14:38</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">api-gateway</span>
+      <span class="tail"><span class="tm">14:02</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">auth-service</span>
+      <span class="tail"><span class="tm">13:29</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">billing-worker</span>
+      <span class="tail"><span class="tm">12:55</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">search-index</span>
+      <span class="tail"><span class="tm">12:10</span><span class="go">打开 →</span></span></div>
+  </div>
+  <div class="fold" id="foldB" onclick="toggle('B')">还有 94 条 <span class="arw">▼</span></div>
+  <div class="ff">
+    <button class="danger">清除提醒</button><span class="div"></span>
+    <button class="primary">打开 Harness</button>
+  </div>
+  <div class="tip" style="left:124px"></div>
+</div>
+
+<!-- ③ 已展开 -->
+<div class="scene" style="left:642px;top:56px">③ 展开后 · 滚动</div>
+<div class="fly" style="left:642px;top:84px">
+  <div class="fh"><span class="ttl">会话完成</span><span class="cnt">99+ 未读</span></div>
+  <div class="fl expanded" id="listC">
+    <div class="fi"><span class="dot"></span><span class="nm">dsh-launcher</span>
+      <span class="tail"><span class="tm">19:08</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">my-app</span>
+      <span class="tail"><span class="tm">18:42</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">api-server</span>
+      <span class="tail"><span class="tm">17:31</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">web-frontend</span>
+      <span class="tail"><span class="tm">16:58</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">ml-training</span>
+      <span class="tail"><span class="tm">15:47</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">data-pipeline</span>
+      <span class="tail"><span class="tm">15:20</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">infra-deploy</span>
+      <span class="tail"><span class="tm">15:12</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">docs-site</span>
+      <span class="tail"><span class="tm">14:38</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">api-gateway</span>
+      <span class="tail"><span class="tm">14:02</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">auth-service</span>
+      <span class="tail"><span class="tm">13:29</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">billing-worker</span>
+      <span class="tail"><span class="tm">12:55</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">search-index</span>
+      <span class="tail"><span class="tm">12:10</span><span class="go">打开 →</span></span></div>
+  </div>
+  <div class="fold expanded" id="foldC" onclick="toggle('C')">收起 <span class="arw">▼</span></div>
+  <div class="ff">
+    <button class="danger">清除提醒</button><span class="div"></span>
+    <button class="primary">打开 Harness</button>
+  </div>
+  <div class="tip" style="left:124px"></div>
+</div>
+
+<!-- 说明 -->
+<div class="legend" style="left:954px;top:56px;width:268px">
+  <h4>交互</h4>
+  <div class="row"><span class="k">≤ 5 条</span><span class="v">直接列出</span></div>
+  <div class="row"><span class="k">&gt; 5 条</span><span class="v">前 5 条 + <span class="hl">还有 N 条</span></span></div>
+  <div class="row"><span class="k">点折叠</span><span class="v">展开为滚动列表</span></div>
+  <div class="row"><span class="k">再点</span><span class="v">收起</span></div>
+  <div class="row"><span class="k">点会话</span><span class="v">跳转到该会话</span></div>
+  <div class="sep"></div>
+  <h4>mac 玻璃规格</h4>
+  <div class="row"><span class="k">模糊</span><span class="v"><code>blur(64px)</code></span></div>
+  <div class="row"><span class="k">饱和</span><span class="v"><code>saturate(210%)</code></span></div>
+  <div class="row"><span class="k">不透明</span><span class="v">白 58% / 暗 56%</span></div>
+  <div class="row"><span class="k">描边</span><span class="v">0.5px 半透明白</span></div>
+  <div class="row"><span class="k">圆角</span><span class="v">14px</span></div>
+  <div class="row"><span class="k">行高</span><span class="v">25px</span></div>
+  <div class="sep"></div>
+  <div class="foot">
+    比上一版的关键差别：模糊从 34px 提到 64px、底色不透明度从 72% 降到 58%、
+    描边从 1px 收到 0.5px、加内高光模拟玻璃边缘折射。
+  </div>
+</div>
+
+<div class="taskbar">
+  <div class="tb"><div class="sq" style="background:#4b5563">⊞</div></div>
+  <div class="tb"><div class="sq" style="background:#0ea5e9">E</div></div>
+  <div class="tb"><div class="sq" style="background:#dc2626">C</div></div>
+  <div class="tb-sep"></div>
+  <div class="tb active"><img id="ic1" src=""><span class="badge">99+</span></div>
+  <div class="tb"><div class="sq" style="background:#111827">⌨</div></div>
+  <div class="tb-right">
+    <span>▲</span><span>🔊</span><span>📶</span>
+    <div class="tb-clock">10:12<br>2026/11/9</div>
+  </div>
+</div>
+
+<script data-icon="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAMx0lEQVR4nNVbD0xVVRi/7/Hi3wLCoTgUhYH8t4bFv1EtaKKzubmmDq1Rq2RZrcT+zqjZ2nLWVmn2Z4JObeksbbM2S2noHMhEQQPJP0BZhrqxMRAKEO2039n93Z13u++9+x4PzW+7XN69555zvt/3ne9833fOcWhBIofD4QgJCQm5cePGDSGE4POZM2fOLCwsLMzNzc2dM2fOnNjY2Ni0tLS06OjoaJTDdyh3/fr16+3t7e3Dw8PDTU1NTZ2dnZ2NjY2NZ8+ePYt3rM/lcrn+0Un7P5BDZ1x9VlRUVLR+/fr1R48ePTowMDAgAiSA0dbW1lZbW1u7cOHChWFhYWFsA206nU7nLWGapDIeHx8fv2LFihVg2swItAJSvKETpGfFMN+zrPk9tGHt2rVrMzIyMlSNoBbdNHI4HA6iHxMTE4NOXbly5Qo7CgbHxsbGvDFrh/At6mBdfD4yMjKydevWrenp6ens003ThhBF6uXl5eXnzp07x455klywiNrB3/39/f3V1dXVoaGhoea+TQi5XC4X7gkJCQn79+/fz45AQuORtL9EDePv06dPny4uLi6mJgR9SDgUlZ83b968S5cuXboZEvcHCNxXrVq1KuhDwqEwjwbYuKqKt5pUW7Nly5YtUVFRUUEBwaFMcZs3b978f5C6HW1obm5uhr8xLhAciuTJ/LVr167dzLEeCKGPQQEhxCR51ej838msCRCmX4bRpVt7jnmiejsR+7xnz549Kk+2JT937ty5EznFoUpevsqp90BAgKNmCwSnTlOnTp0Kz46eWKBMWjGDyeNmTiAUIASqCtir9A8cOHDAn6mOjGHo4cL/wE19ZjYheHf58mV5jY6OWtYJ6u3tFYWFhYgDZJ3+yAN1UIAQKOyBR0cpRGd+8eLFi4mcrwbIpF3q7+8XX3/9tXj88cdFWlqaiImJEU6nUzz//PNGfSQ2v2HDBoTW4uOPP5a/h4eHbQ0HtQwFuWnTpk1mLXDIPzrBgWhtbW1NTk5Oxgeepg+E+wjHWc/ly5e1pqYm7eTJk9qFCxe0vr4+bWxsTIuIiNAmT56spaamahcvXtT27dun9fT0uNU1f/587csvv9QmTZqEfsgLhPrRPN7X1dVpM2bM0Orr67Xk5GS392qf1DveIY2AYa8DIhFBbqKlpaUFvP3DnAIRgbHwJX0V2RMnTojHHntM3HXXXVJKdq6QkBDhcrnkHdKHautS+k8buKenpxvfxsfHiw8++EAMDg76tCmvvPKKyMvLgyGU5cbGxmShw4cPH6a901Tpx8XFxfX29vZ6C2H5GPi8+uqrkgkzY2SOF5/hAsMsj/8dDodoamqSdap2gO2AsdTUVKN+fpudnS26u7vdGMf3AObXX38VK1eulOUmT54sh4wClvygpKSkxBC8S58aKisrK9Xx4on5q1evCsyQaAAMoGO429UAMwD33HOP6OzsNIA1twcpquVDQ0Pl74ceeki+P3jwoFi0aJFISUkR06dPF+Hh4Ub54uJis+BkA7t27dplTItOneA1QfJWAFDVgHJJSYls4I477vCbafNF4DCEdu7c6TYUCMZTTz0ly0GDVPAiIiLEE088YVlvWFiY/Oall15yq4u5xKGhoSFM9RopPz8/n+koK+mzU1CSYDGvMsP/3333XaPD7DTSDuYhYAaR9oRawrINDQ1u/Ve1oKqqqsoAAAlM9aUV8z/88IOsVJVEsC6106+//roBAqfZgoICy7atQKFwysrKZD1mmVLDGxoaGqQNwJ9jx44dsxr/dFWh+llZWbKjqsSCDQIZfPvtt2X7IyMjsv2Ojg6BLLo6bKw0icxjtvjtt9/oCJmHszQIg4ODg4mJiYka/jB1bbb+VIhvvvnGQJwgqCo3ESC89957Bgi6xERCQoIso7Zp7kNmZqZoa2uzlD6JQ33p0qVLteXLly9XH1qp/4IFC/5jiMyqaJ7mggHCunXr3PoBnyEyMvI/IODCdAk3BrOUN+ZVTa+tra3V1umtWKk/fXGqH67Y2FiRk5Mj7r33Xjn1cNpRwfAXCH5DEFWb8Nxzz4mhoSHZl1OnThll+R4OT0tLi/j7779VCXtkXhX28ePHj2sHMZFaaADx+Omnn4yOPvzwwxIQggMv6/fffxffffedeOGFFwQ8aJWpQIcHASSTGRkZiOtlzMDnfPf9998bTKPPNuMEWWhgYGBAOwF/1gIAjv9PP/3U6JjuK8l3Vg1BUl999ZW47777vFpq8/h94403RGNjo/joo48MEPmdp+/5/Ntvv5XMB5qw0nwZQFhkNgpbQKdI/8Yt7CXh2WeffSYmTZokv/NkO2hQv/jiC2m1QdCw+++/341JTwYXv9vb2402/aV/EAx5ekmGMC+zwbvvvturihEclunq6hIPPPCARxDIUGJiokhKShLV1dVG2IxpVx0OVt9hulMDo0BI8xT4EIA333zTaPTOO+9EYsFWg/we94qKCksQ+Pvzzz8Xr732mgxyKMmTJ09Kv99K8tSM0tJSWXY8SSvNFwMffvih4V/j/uOPP7oNA2+EjhEoutFWmgAHBkwitAbR6r/88stegdOj94DHvy0AYGRUAMwBhi9SwXr00UctDRsljGEA9Sf99ddfIioqyq2M+j9D6fHkGDVPyQ+qFdxQGiE0OmPGDCMtZXfcMZcHycJTsxrb/I0ZpK6uTraLEAV+hur4cEggpcZkx3hIOwXvwmIaZMWIAyAZqirumJP9VT1KiWPbyk+w4zdQ/dXIcVwANGIC9uAKs/Inn3xSdo7DID8/340pu8T64Hx6sgeqtlkNFbyDMcYCtVWw4++6gbYBaVcPmSA+guFj59gpBEgqU55IVVHaA3SaIa43R8mT9NesWePWP3+Jwm5ra2vTViKB5kEDOM4x1uCOQgK02LAF8KHs5OrVMuw0HBhPQ8GT10hDiYBHnWH8JQp77969e7XMzMxM7LnxVJgS3r59uyExSq28vFy+82aMYMmVht3qfP/99716iqrqs0x9fb1bXYEQhV1ZWVmpYX9NB0yuBy3Qn8tO08dn+KsmL9T4gNVg+xBieCQtm5ub3YAgA/Pnz/cJAgEHYCqA4yEIPSsrK0umxGpqamrM+27MAIBaW1vlEFDDV3TsnXfecWOO5f/44w83JuDtUdmoNfD9zQGQFfPPPvus8d14iELGvqJQfXOVtgBRjhcNIGMgBDmq98YOPv3004a6oxowijueqxqDNDcDGIKB38gzmEHgnA8XWVX58ag/hYw8qMaFkYiIiIju7u5uX6vBVBAkIai2KgjI8XOMkn755ReDGfoR8O4QNoM4bJDy4gqT6iRx+kUghjTZn3/+GTDzensy9W+ov0tfGLG7LEb0q6qq3OZtVXIPPvigeOutt+SYLSoqcnNy1HKoo6+vz6j/4sWLciWYM4PVilJcXJyMEeBV+uONgsA4ADh06NAhY2XIqa+RpaSkpMAw+NrdqYJAK05tsDunq9llGMlnnnlGfPLJJzL1jtwANMRXWg1ggfxxhDj9IQ+qCl/j4uh2zHU2lsZVEJBR4/odgYCq4/KVKPUEWE1Njfj5559lLIBQGqk4JElgql588UUscBr9sEsc2ufPnz8fHh4e7rZHwKlvGkhNTU1FhsjuHl/ihAgOiROs95s9N28LpmYAsOaohyZBJ0p/yZIlS8x7BDT1wRrdz7S7K0y1yBcuXJAxOrLGdt1bqPsjjzwi9u3b51YnfQ+uEKmpN39nATKPnS8qryCHeV8gXmKOnDVr1ixogZ09duYNE/gfbjayzh0dHXJTRH9/vywXHR2txcXFaUlJSdrs2bO13Nxcbfr06UY9uIK58RuMcyNEdnZ2NoYAeLU8cOHUW8YuCqDm7w6xQLOz/m618YeoydxH7HNHeYheYDx7BBmmmjdNmTdOqV7jRDLPvYK2t9O79Olh27Zt227XjZIc9wh5ve4OsyLag8jIyEhsnLjdtspyyuvr6+ubDUMTyGEKp24PgB5BuB00gZIH83l5eXkBMX+7gkAtVZm3vUfYDgi7d+/ejQa8bae5FaSG8tjniDOKQWGepPoCDJpuxVkhK1JzmRAQzwgE/QCVw3RuqKenp8eqEzeLVC0cHR0dVc8LTejpMZeuVlOmTJmycePGjbQJPNI2kRrBWF4FHKfXcnJycibsxJgVqQgXFBQUcJOFOjSCBYZ6eFJ9jnPGy5YtW2bVp1tyZrisrKxsx44dO65yk45O6lFYu4BQvc2GFr/r6urqKioqKpjP40ZP7VaR06R206ZNm7Z69erVR44cOTKeg9MkJGngzSGHR6cmmFJ3jLcCEjsDKfFZUlJSEoZIaWlpKaYmnPU1H5s3E1Qd6t3V1dVVX19fj8PYZ86cOcMj9J6O6QdK/wLH8oDi14E/xwAAAABJRU5ErkJggg==">
+const ICON = document.currentScript.getAttribute('data-icon');
+document.getElementById('ic1').src = ICON;
+
+// 折叠/展开：全部条目始终在 DOM 里，只切 class
+function toggle(which){
+  const list = document.getElementById('list' + which);
+  const fold = document.getElementById('fold' + which);
+  const expanded = list.classList.toggle('expanded');
+  fold.classList.toggle('expanded', expanded);
+  const n = list.querySelectorAll('.fi').length - 5;
+  fold.innerHTML = expanded
+    ? '收起 <span class="arw">▼</span>'
+    : '还有 ' + n + ' 条 <span class="arw">▼</span>';
+}
+
+function applyTheme(dark){
+  document.body.classList.toggle('dark', dark);
+  document.getElementById('tl').textContent = dark ? '夜间' : '白天';
+  document.getElementById('sw').style.background = dark ? '#28282c' : '#fff';
+  document.getElementById('sw').style.borderColor = dark ? 'rgba(255,255,255,.2)' : 'rgba(0,0,0,.14)';
+  localStorage.setItem('dhl-mac-theme', dark ? 'dark' : 'light');
+}
+function toggleTheme(){ applyTheme(!document.body.classList.contains('dark')); }
+const saved = localStorage.getItem('dhl-mac-theme');
+applyTheme(saved ? saved === 'dark' : matchMedia('(prefers-color-scheme:dark)').matches);
+</script>
+</body>
+</html>

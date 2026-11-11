@@ -97,7 +97,17 @@ identical declarations do not fight. */div:has(> [data-slot='sidebar.footer.acti
 
   function apply(ctx) {
     ensureStyles()
-    ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({ name: 'sidebar.footer.action', id: NS, order: 50, label: '归档管理' }, ArchivePanel))
+    // Registered in dsh's own sidebar panel list: the entry appears in the
+    // sidebar and in dsh's "更多" menu, and takes no room from the
+    // workspace list the way a footer row did.
+    ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+      name: 'sidebar.panellist', id: NS, order: 300, label: '归档管理',
+    }, function ArchiveEntry(props) {
+      if (props && props.size) {
+        return h('span', { className: 'dsh-archive-trigger-icon', 'aria-hidden': true })
+      }
+      return h(ArchivePanel, { wide: true })
+    }))
   }
   return { inject: ['slots', 'locale'], apply }
 }})

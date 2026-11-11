@@ -1,0 +1,682 @@
+import assert from 'node:assert/strict';
+import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink, utimes } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { parsePluginYml, installCandidates, listInstalledPlugins, compareInstalledPlugins, cleanupBrokenPlugin, installPlugin, ensurePnpmPath, ensurePnpmWorkspace, hasCommandOnPath, cleanupPluginSources, updatePlugin, fetchOfficialMarketPlugins, mergeMarketPlugins, readMarketplace, isCoreBundle, repoMatchesEntry } from '../lib/index.js';
+
+test('parsePluginYml 解析 awesome-dsh-plugin 的插件条目格式', () => {
+  const text = `url: https://github.com/1624318455/dsh-plugin-tavily
+name: 1624318455/dsh-plugin-tavily
+category: browser
+description:
+  en: Tavily-backed web search provider.
+  zh: 基于 Tavily 的网页搜索提供方。
+`;
+  const parsed = parsePluginYml(text);
+  assert.equal(parsed.url, 'https://github.com/1624318455/dsh-plugin-tavily');
+  assert.equal(parsed.name, '1624318455/dsh-plugin-tavily');
+  assert.equal(parsed.category, 'browser');
+  assert.equal(parsed.description.en, 'Tavily-backed web search provider.');
+  assert.equal(parsed.description.zh, '基于 Tavily 的网页搜索提供方。');
+});
+
+test('parsePluginYml 忽略注释与空行，容忍 url 中的冒号', () => {
+  const text = `# a comment
+
+url: https://github.com/a/b
+name: a/b
+category: tool
+description:
+  en: Has: a colon inside.
+`;
+  const parsed = parsePluginYml(text);
+  assert.equal(parsed.url, 'https://github.com/a/b');
+  assert.equal(parsed.description.en, 'Has: a colon inside.');
+});
+
+test('parsePluginYml 去掉两端的引号（上游有 category: "browser" 这种写法）', () => {
+  const text = `url: "https://github.com/a/b"
+name: 'a/b'
+category: "browser"
+description:
+  en: "Quoted: description."
+  zh: '中文描述'
+`;
+  const parsed = parsePluginYml(text);
+  assert.equal(parsed.url, 'https://github.com/a/b');
+  assert.equal(parsed.name, 'a/b');
+  assert.equal(parsed.category, 'browser');
+  assert.equal(parsed.description.en, 'Quoted: description.');
+  assert.equal(parsed.description.zh, '中文描述');
+  // 不成对/正文里的引号保持原样
+  assert.equal(parsePluginYml('category: half"quoted').category, 'half"quoted');
+});
+
+test('installCandidates 先生成 npm 包名、再提供 git 回退', () => {
+  const { candidates, git } = installCandidates({ name: '1624318455/dsh-plugin-tavily', url: 'https://github.com/1624318455/dsh-plugin-tavily' });
+  assert.deepEqual(candidates, ['@1624318455/dsh-plugin-tavily', 'dsh-plugin-tavily']);
+  assert.equal(git, 'https://github.com/1624318455/dsh-plugin-tavily.git');
+});
+
+test('installCandidates 解析 repo#子目录 格式：候选剥离 #、不生成整仓 git，改为 subdir 安装', () => {
+  const { candidates, git, repoRef } = installCandidates({ name: 'volcengine/OpenViking#examples/dsh-memory-plugin', url: 'https://github.com/volcengine/OpenViking/tree/main/examples/dsh-memory-plugin' });
+  // candidates 是干净的 npm 名（不带 #），git 不得带 /tree/main/ 这种无效整仓 URL
+  assert.deepEqual(candidates, ['@volcengine/openviking', 'openviking']);
+  assert.equal(git, null);
+  assert.deepEqual(repoRef, { author: 'volcengine', repo: 'OpenViking', subdir: 'examples/dsh-memory-plugin', full: 'volcengine/OpenViking#examples/dsh-memory-plugin' });
+});
+
+test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依赖库', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-list-'));
+  process.env.DSH_HOME = dshHome;
+
+  try {
+    const profileDir = join(dshHome, 'profiles', 'web');
+    const modules = join(profileDir, 'node_modules');
+    await mkdir(modules, { recursive: true });
+    // profile manifest: the real plugin layer is dsh.profile.bundles
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', private: true,
+      dependencies: { 'dsh-community-tool': 'file:/x', 'lodash-es': '1.0.0' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-community-tool', '@deepseek-ai/dsh-experimental-agent-team-profile'] } }
+    }));
+    // bundled plugin: symlink whose target names a launcher bundle marker.
+    // The fixture target must exist on every machine (CI has no installed
+    // app); a dangling symlink would classify as 'broken' instead.
+    const bundleFixture = join(dshHome, 'fixtures', 'DSHArchiveManager');
+    await mkdir(bundleFixture, { recursive: true });
+    await writeFile(join(bundleFixture, 'package.json'), JSON.stringify({ name: 'dsh-archive-manager', version: '0.1.0', description: 'Bundled fixture' }));
+    const bundled = join(modules, 'dsh-archive-manager');
+    await symlink(bundleFixture, bundled);
+    // user plugin (in bundles): a real directory with package.json
+    const user = join(modules, 'dsh-community-tool');
+    await mkdir(user, { recursive: true });
+    await writeFile(join(user, 'package.json'), JSON.stringify({ name: 'dsh-community-tool', version: '1.2.3', description: 'A community tool' }));
+    // ordinary npm dependency present in node_modules — must NOT be listed
+    const lib = join(modules, 'lodash-es');
+    await mkdir(lib, { recursive: true });
+    await writeFile(join(lib, 'package.json'), JSON.stringify({ name: 'lodash-es', version: '4.17.21', description: 'Lodash modules' }));
+    // non-plugin: directory without package.json — must be skipped
+    const junk = join(modules, 'junk-dir');
+    await mkdir(junk, { recursive: true });
+    // broken leftover: dangling symlink pointing at a nonexistent target
+    await symlink('../@volcengine/openviking#examples/dsh-memory-plugin', join(modules, 'dsh-memory-plugin'));
+
+    // dsh 自带层（@deepseek-ai/*）跟着 dsh 版本分发：即使出现在 dsh.profile.bundles 里、
+    // node_modules 里也有实体目录，也不是用户插件（实测升级后 9 个
+    // @deepseek-ai/dsh-experimental-* 被 /installed 标成 user，启动器据此误报兼容性问题）。
+    const coreDir = join(modules, '@deepseek-ai', 'dsh-experimental-agent-team-profile');
+    await mkdir(coreDir, { recursive: true });
+    await writeFile(join(coreDir, 'package.json'), JSON.stringify({
+      name: '@deepseek-ai/dsh-experimental-agent-team-profile', version: '0.1.0-rc.1', description: 'dsh 自带实验层',
+      peerDependencies: { '@deepseek-ai/dsh-llm': '>=99.0.0' }
+    }));
+    // 自带层的悬空软链（旧接口/软链判定失败）也不得列为 broken：用户既升不了也卸不掉。
+    await symlink('../../nonexistent-core-layer', join(modules, '@deepseek-ai', 'dsh-experimental-voice-input-bundle'));
+
+    const items = await listInstalledPlugins();
+    const bundledItem = items.find(item => item.name === 'dsh-archive-manager');
+    const userItem = items.find(item => item.name === 'dsh-community-tool');
+    assert.equal(bundledItem.source, 'bundled');
+    assert.equal(userItem.source, 'user');
+    assert.equal(userItem.version, '1.2.3');
+    assert.equal(items.some(item => item.name === 'junk-dir'), false);
+    // lodash-es is a dependency, not a plugin — it must never appear
+    assert.equal(items.some(item => item.name === 'lodash-es'), false);
+    // dsh 自带层不是用户插件，也不能是 broken 残留
+    assert.equal(items.some(item => item.name === '@deepseek-ai/dsh-experimental-agent-team-profile'), false,
+      'dsh 自带层不列为用户插件');
+    assert.equal(items.some(item => item.name === '@deepseek-ai/dsh-experimental-voice-input-bundle'), false,
+      'dsh 自带层的断链残留不列为 broken');
+    assert.equal(isCoreBundle('@deepseek-ai/dsh-experimental-anything'), true, '前缀即 dsh 自带层');
+    assert.equal(isCoreBundle('@deepseek-ai/dsh-base'), true);
+    assert.equal(isCoreBundle('dsh-community-tool'), false, '普通用户插件不是 dsh 自带层');
+    const brokenItem = items.find(item => item.name === 'dsh-memory-plugin');
+    assert.equal(brokenItem.broken, true);
+    assert.equal(brokenItem.source, 'broken');
+    assert.equal(items.find(item => item.name === 'dsh-memory-plugin').version, null);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('listInstalledPlugins 排序：用户插件按安装/更新时间倒序在上，内置垫底', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-order-'));
+  process.env.DSH_HOME = dshHome;
+
+  // 目录 mtime 用 utimes 钉死（birthtime 不可控也不可信）；来源标记的 clonedAt
+  // 取到比目录更新时应胜出，覆盖「本地 pull 之后目录没动」的情形。
+  const stamp = async (path, iso) => utimes(path, new Date(iso), new Date(iso));
+  try {
+    const modules = join(dshHome, 'profiles', 'web', 'node_modules');
+    const profileDir = join(dshHome, 'profiles', 'web');
+    await mkdir(modules, { recursive: true });
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', private: true,
+      dependencies: { 'dsh-new': 'file:/x', 'dsh-old': 'file:/y', 'dsh-marker': 'file:/z' },
+      dsh: { profile: { bundles: ['dsh-new', 'dsh-old', 'dsh-marker'] } }
+    }));
+    for (const [name, mtime] of [['dsh-new', '2026-10-28T10:00:00.000Z'], ['dsh-old', '2026-10-01T10:00:00.000Z'], ['dsh-marker', '2026-09-01T10:00:00.000Z']]) {
+      const dir = join(modules, name);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'package.json'), JSON.stringify({ name, version: '1.0.0', description: name }));
+      // 来源标记先写再钉目录时间：写文件本身会把目录 mtime 顶成「现在」，
+      // 顺序反了断言就会随机器时钟漂移。
+      if (name === 'dsh-marker') {
+        // 目录时间很旧，但来源标记记着更晚的更新 → 应取标记时间、排到最新
+        await writeFile(join(dir, '.dsh-source.json'), JSON.stringify({
+          author: 'a', repo: 'dsh-marker', url: 'https://github.com/a/dsh-marker', commit: null,
+          clonedAt: '2026-10-27T10:00:00.000Z',
+        }));
+      }
+      await stamp(dir, mtime);
+    }
+    // bundled：时间在用户插件之后也必须垫底
+    const bundleFixture = join(dshHome, 'fixtures', 'DSHPluginManager');
+    await mkdir(bundleFixture, { recursive: true });
+    await writeFile(join(bundleFixture, 'package.json'), JSON.stringify({ name: 'dsh-bundled-one', version: '0.1.0', description: '内置' }));
+    const bundledLink = join(modules, 'dsh-bundled-one');
+    await symlink(bundleFixture, bundledLink);
+    await stamp(bundleFixture, '2026-10-29T10:00:00.000Z');
+    // broken：悬空软链，取不到时间，排最后
+    await symlink(join(dshHome, 'nope'), join(modules, 'dsh-broken-one'));
+
+    const items = await listInstalledPlugins();
+    assert.deepEqual(items.map(item => item.name), ['dsh-new', 'dsh-marker', 'dsh-old', 'dsh-broken-one', 'dsh-bundled-one'],
+      '越新越靠上；内置永远在最后（用户自己装的东西，包括待清理的残留，都在它上面）');
+    assert.deepEqual(items.map(item => item.source), ['user', 'user', 'user', 'broken', 'bundled']);
+    assert.equal(items.find(item => item.name === 'dsh-marker').installedAt, '2026-10-27T10:00:00.000Z', '来源标记的 clonedAt 比目录更新时以它为准');
+    assert.equal(items.find(item => item.name === 'dsh-new').installedAt, '2026-10-28T10:00:00.000Z');
+    assert.equal(items.find(item => item.name === 'dsh-broken-one').installedAt, null, '损坏残留取不到时间，排到用户档末尾');
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('compareInstalledPlugins：同一档内时间相同按名字稳定排序，脏时间值不炸', () => {
+  const base = { version: '1.0.0', description: '' };
+  const rows = [
+    { ...base, name: 'zeta', source: 'user', installedAt: '2026-10-01T00:00:00.000Z' },
+    { ...base, name: 'alpha', source: 'user', installedAt: '2026-10-01T00:00:00.000Z' },
+    { ...base, name: 'bogus', source: 'user', installedAt: 'not-a-date' },
+    { ...base, name: 'no-time', source: 'user', installedAt: null },
+    { ...base, name: 'zzz-bundled', source: 'bundled', installedAt: '2026-10-30T00:00:00.000Z' },
+    { ...base, name: 'aaa-broken', source: 'broken', broken: true, installedAt: null },
+  ].sort(compareInstalledPlugins);
+  assert.deepEqual(rows.map(item => item.name), ['alpha', 'zeta', 'aaa-broken', 'bogus', 'no-time', 'zzz-bundled'],
+    '档内新→旧；取不到时间（损坏/非法值）排到该档末尾并按名字兜底；内置永远最后');
+});
+
+test('installPlugin 已安装的纯 repo 插件直接返回 alreadyInstalled，不触发安装', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-idem-'));
+  process.env.DSH_HOME = dshHome;
+  try {
+    const modules = join(dshHome, 'profiles', 'web', 'node_modules');
+    await mkdir(modules, { recursive: true });
+    // the plugin is listed as a bundle layer in the profile manifest
+    await writeFile(join(dshHome, 'profiles', 'web', 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', private: true,
+      dependencies: { 'dsh-foo': 'file:/x' },
+      dsh: { profile: { bundles: ['dsh-foo'] } }
+    }));
+    const existing = join(modules, 'dsh-foo');
+    await mkdir(existing, { recursive: true });
+    await writeFile(join(existing, 'package.json'), JSON.stringify({ name: 'dsh-foo', version: '1.0.0' }));
+    const result = await installPlugin({ name: 'someauthor/dsh-foo', url: 'https://github.com/someauthor/dsh-foo' });
+    assert.equal(result.ok, true);
+    assert.equal(result.alreadyInstalled, true);
+    assert.equal(result.packageName, 'dsh-foo');
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('cleanupBrokenPlugin 删除残留并拒绝路径穿越', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-clean-'));
+  process.env.DSH_HOME = dshHome;
+
+  try {
+    const modules = join(dshHome, 'profiles', 'web', 'node_modules');
+    await mkdir(modules, { recursive: true });
+    await symlink('/nonexistent/target', join(modules, 'dsh-memory-plugin'));
+    // profile manifest carries a stale dependency record that must be dropped
+    const profileDir = join(dshHome, 'profiles', 'web');
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web',
+      private: true,
+      dependencies: { 'dsh-memory-plugin': 'link:@volcengine/openviking#examples/dsh-memory-plugin', '@openviking/dsh-memory-plugin': 'file:/x' },
+      dsh: { profile: { bundles: ['dsh-memory-plugin', '@openviking/dsh-memory-plugin'] } }
+    }, null, 2));
+
+    const result = await cleanupBrokenPlugin('dsh-memory-plugin');
+    assert.equal(result.ok, true);
+    await assert.rejects(access(join(modules, 'dsh-memory-plugin')));
+    const manifest = JSON.parse(await readFile(join(profileDir, 'package.json'), 'utf8'));
+    assert.equal(manifest.dependencies['dsh-memory-plugin'], undefined);
+    assert.equal(manifest.dependencies['@openviking/dsh-memory-plugin'], 'file:/x');
+    assert.deepEqual(manifest.dsh.profile.bundles, ['@openviking/dsh-memory-plugin']);
+
+    // path traversal / separators must be rejected
+    await assert.rejects(cleanupBrokenPlugin('../evil'));
+    await assert.rejects(cleanupBrokenPlugin('a/b/../c'));
+    await assert.rejects(cleanupBrokenPlugin(''));
+    await assert.rejects(cleanupBrokenPlugin(undefined));
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('ensurePnpmWorkspace 批准依赖构建脚本且不重复追加', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-ws-'));
+  process.env.DSH_HOME = dshHome;
+  try {
+    const profileDir = join(dshHome, 'profiles', 'web');
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(join(profileDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n');
+    await ensurePnpmWorkspace();
+    const content = await readFile(join(profileDir, 'pnpm-workspace.yaml'), 'utf8');
+    assert.match(content, /dangerouslyAllowAllBuilds:\s*true/);
+    // second call must not duplicate the entry
+    await ensurePnpmWorkspace();
+    const after = await readFile(join(profileDir, 'pnpm-workspace.yaml'), 'utf8');
+    assert.equal((after.match(/dangerouslyAllowAllBuilds/g) || []).length, 1);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('ensurePnpmPath 在 PATH 已有 pnpm 时保持原 PATH', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const previousPath = process.env.PATH;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-pnpm-'));
+  process.env.DSH_HOME = dshHome;
+  const bin = join(dshHome, 'fake-bin');
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, 'pnpm'), '#!/bin/sh\n', { mode: 0o755 });
+  process.env.PATH = bin;
+  try {
+    const [pathWithPnpm, note] = await ensurePnpmPath();
+    assert.equal(pathWithPnpm, bin);
+    assert.match(note, /found pnpm/);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    process.env.PATH = previousPath;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('ensurePnpmPath 无 pnpm 有 corepack 时创建转发 shim', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const previousPath = process.env.PATH;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-pnpm2-'));
+  process.env.DSH_HOME = dshHome;
+  const bin = join(dshHome, 'fake-bin');
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, 'corepack'), '#!/bin/sh\n', { mode: 0o755 });
+  process.env.PATH = bin;
+  try {
+    const [pathWithPnpm, note] = await ensurePnpmPath();
+    assert.match(note, /pnpm shim/);
+    assert.ok(pathWithPnpm.startsWith(join(dshHome, 'pnpm-bin') + ':'));
+    const shim = join(dshHome, 'pnpm-bin', 'pnpm');
+    await access(shim);
+    const content = await readFile(shim, 'utf8');
+    assert.match(content, /corepack/);
+    const stat = await import('node:fs').then(m => m.statSync(shim));
+    assert.ok(stat.mode & 0o111);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    process.env.PATH = previousPath;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('ensurePnpmPath 无 pnpm 无 corepack 时保持原 PATH', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const previousPath = process.env.PATH;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-pnpm3-'));
+  process.env.DSH_HOME = dshHome;
+  const bin = join(dshHome, 'empty-bin');
+  await mkdir(bin, { recursive: true });
+  process.env.PATH = bin;
+  try {
+    const [pathWithPnpm, note] = await ensurePnpmPath();
+    assert.equal(pathWithPnpm, bin);
+    assert.match(note, /pnpm unavailable/);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    process.env.PATH = previousPath;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('hasCommandOnPath 只认可可执行文件', async () => {
+  const previousPath = process.env.PATH;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-has-'));
+  const bin = join(dshHome, 'bin');
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, 'executable-tool'), '#!/bin/sh\n', { mode: 0o755 });
+  await writeFile(join(bin, 'non-executable-tool'), '#!/bin/sh\n');
+  try {
+    const hit = await hasCommandOnPath('executable-tool', bin);
+    assert.equal(hit, join(bin, 'executable-tool'));
+    assert.equal(await hasCommandOnPath('non-executable-tool', bin), null);
+    assert.equal(await hasCommandOnPath('missing-tool', bin), null);
+  } finally {
+    process.env.PATH = previousPath;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('cleanupPluginSources 卸载后删除 file: 引用的源码目录，保留仍被引用与外部目录', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-src-'));
+  process.env.DSH_HOME = dshHome;
+
+  try {
+    const profileDir = join(dshHome, 'profiles', 'web');
+    const sources = join(profileDir, 'plugin-sources');
+    const dirA = join(sources, 'authorA-repoA');
+    const dirB = join(sources, 'authorB-repoB');
+    const external = join(profileDir, 'outside-sources');
+    for (const dir of [dirA, dirB, external]) { await mkdir(dir, { recursive: true }); await writeFile(join(dir, 'package.json'), '{}'); }
+    const before = {
+      dependencies: {
+        'pkg-a': `file:${dirA}`,
+        'pkg-b': `file:${dirB}`,
+        'pkg-ext': `file:${external}`,
+        'pkg-npm': '^1.0.0'
+      }
+    };
+    // 卸载后：pkg-a 的引用消失；pkg-b 仍被其他依赖（pkg-b2）指向同一目录
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'pkg-b2': `file:${dirB}`, 'pkg-ext': `file:${external}`, 'pkg-npm': '^1.0.0' }
+    }));
+
+    const removed = await cleanupPluginSources(before, ['pkg-a', 'pkg-b', 'pkg-ext', 'pkg-npm']);
+    assert.deepEqual(removed, [dirA]);
+    await assert.rejects(access(dirA));
+    await access(dirB);   // 仍被 pkg-b2 引用，保留
+    await access(external); // plugin-sources 之外的 file: 依赖不动
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('cleanupPluginSources 无 manifest 或无依赖时为空操作', async () => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-src2-'));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = dshHome;
+  try {
+    assert.deepEqual(await cleanupPluginSources(null, ['pkg-a']), []);
+    assert.deepEqual(await cleanupPluginSources({}, ['pkg-a']), []);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('updatePlugin 拒绝非法插件名', async () => {
+  const result = await updatePlugin('../escape');
+  assert.equal(result.ok, false);
+  assert.match(result.error, /非法/);
+});
+
+// ---------------------------------------------------------------------------
+// 官方插件源：DeepSeek 官方插件发布在 npm 的 @deepseek-ai scope 下，市场直接查 registry。
+// ---------------------------------------------------------------------------
+
+test('installCandidates：@scope/name 就是一个 npm 包名，不能再按作者/仓库拆', () => {
+  const { candidates, git, repoRef } = installCandidates({ name: '@deepseek-ai/dsh-experimental-voice-input-bundle' });
+  assert.deepEqual(candidates, ['@deepseek-ai/dsh-experimental-voice-input-bundle']);
+  assert.equal(git, null, 'scoped 包名没有对应的整仓 git 地址');
+  assert.equal(repoRef, null, '不能把 @deepseek-ai 当成作者去拼 github.com URL');
+});
+
+test('fetchOfficialMarketPlugins：只保留声明 dsh.bundle 的官方包，单个查询失败不影响另一路', async () => {
+  const calls = [];
+  const json = value => ({ ok: true, status: 200, json: async () => value });
+  const fetchImpl = async url => {
+    calls.push(url);
+    if (url.includes('/-/v1/search')) {
+      // 第一个查询整条挂掉：官方来源要能靠第二个查询继续。
+      if (url.includes(encodeURIComponent('@deepseek-ai/dsh-experimental-bundle'))) throw Error('network down');
+      return json({ objects: [
+        { package: { name: '@deepseek-ai/dsh-experimental-voice-input-bundle', date: '2026-10-01T00:00:00.000Z' }, downloads: { monthly: 321 } },
+        { package: { name: '@deepseek-ai/dsh-plugin-manager', date: '2026-09-01T00:00:00.000Z' }, downloads: { monthly: 999 } },
+        { package: { name: '@somebody-else/dsh-plugin-x' }, downloads: { monthly: 1 } },
+        { package: { name: '@deepseek-ai/dsh-fs' }, downloads: { monthly: 5 } }
+      ] });
+    }
+    if (url.includes('dsh-experimental-voice-input-bundle/latest')) {
+      return json({ name: '@deepseek-ai/dsh-experimental-voice-input-bundle', version: '0.2.1-alpha.4', description: 'voice input', dsh: { bundle: { patch: './cordis.patch.yml' } } });
+    }
+    if (url.includes('dsh-plugin-manager/latest')) {
+      // 框架包/库：没有 dsh.bundle，装进 profile 没有意义，不能进市场。
+      return json({ name: '@deepseek-ai/dsh-plugin-manager', version: '0.1.6-alpha.2', description: 'plugin management' });
+    }
+    return json({});
+  };
+  const plugins = await fetchOfficialMarketPlugins({ fetch: fetchImpl });
+  assert.deepEqual(plugins.map(item => item.name), ['@deepseek-ai/dsh-experimental-voice-input-bundle']);
+  const [entry] = plugins;
+  assert.equal(entry.url, entry.name, '官方条目直接用 npm 包名安装');
+  assert.equal(entry.category, 'official');
+  assert.equal(entry.source, 'official');
+  assert.equal(entry.author, '@deepseek-ai');
+  assert.equal(entry.repo, 'dsh-experimental-voice-input-bundle');
+  assert.equal(entry.version, '0.2.1-alpha.4');
+  assert.equal(entry.downloads, 321);
+  assert.equal(entry.addedDate, '2026-10-01T00:00:00.000Z');
+  assert.equal(calls.filter(url => url.includes('/-/v1/search')).length, 2, '两个查询都要发');
+});
+
+test('mergeMarketPlugins：官方条目排前面，按 url 去重', () => {
+  const official = [{ id: 'npm:@deepseek-ai/a', url: '@deepseek-ai/a', name: '@deepseek-ai/a' }];
+  const community = [
+    { id: 'x', url: 'https://github.com/o/x', name: 'o/x' },
+    { id: 'dup', url: '@deepseek-ai/a', name: '@deepseek-ai/a' }
+  ];
+  assert.deepEqual(mergeMarketPlugins(official, community).map(item => item.id), ['npm:@deepseek-ai/a', 'x']);
+  assert.deepEqual(mergeMarketPlugins(null, null), []);
+});
+
+test('readMarketplace：旧版索引（没有官方来源）标记为 stale，提示刷新一次', async () => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-market-'));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = dshHome;
+  try {
+    const marketDir = join(dshHome, 'plugin-market');
+    await mkdir(marketDir, { recursive: true });
+    const indexFile = join(marketDir, 'index.json');
+    await writeFile(indexFile, JSON.stringify({ version: 1, indexedAt: new Date().toISOString(), categories: ['tool'], plugins: [] }));
+    assert.equal((await readMarketplace()).stale, true, 'version 1 的旧索引要提示刷新');
+    await writeFile(indexFile, JSON.stringify({ version: 2, indexedAt: new Date().toISOString(), categories: ['official', 'tool'], plugins: [] }));
+    assert.equal((await readMarketplace()).stale, false, '新版索引且新鲜时不提示');
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// git 回退安装：克隆包名与市场条目名 scope 不一致时按克隆包自己的 npm 名装发行版；
+// 只能装源码时先构建并校验入口，缺入口的包绝不进 profile。
+// 起因：市场条目 omdsh-dev/dsh-genui 的候选名都不存在，npm 上真正的包叫
+// @changfenhuang/dsh-genui；旧路径 git clone → pnpm add file: 不构建，装出来的包
+// 缺 lib/index.js，dsh 启动时 genui 整条 entry 加载失败（dsh-ui 围栏退化成代码块）。
+// ---------------------------------------------------------------------------
+
+/** 铺一个临时的 profile：返回 { dshHome, modules }，在 fn 结束后清理。 */
+async function withEmptyProfile(prefix, fn) {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), prefix));
+  process.env.DSH_HOME = dshHome;
+  try {
+    const modules = join(dshHome, 'profiles', 'web', 'node_modules');
+    await mkdir(modules, { recursive: true });
+    return await fn({ dshHome, modules });
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
+}
+
+test('installPlugin git 回退：按克隆包自己的 npm 名装发行版（市场名与 npm 名 scope 不一致）', async () => {
+  await withEmptyProfile('dsh-pm-clone-npm-', async ({ dshHome }) => {
+    const cloneDir = join(dshHome, 'clone-src');
+    await mkdir(cloneDir, { recursive: true });
+    await writeFile(join(cloneDir, 'package.json'), JSON.stringify({ name: '@acme/dsh-demo', version: '2.0.0', main: 'lib/index.js' }));
+    const commands = [];
+    let prepared = false;
+    const result = await installPlugin(
+      { name: 'omdsh-dev/dsh-demo', url: 'https://github.com/omdsh-dev/dsh-demo' },
+      async args => { commands.push(args); },
+      {
+        clone: async () => ({ ok: true, dest: cloneDir, packageName: '@acme/dsh-demo' }),
+        // 候选名 @omdsh-dev/dsh-demo、dsh-demo 都不存在；克隆包名才是真正的 npm 包
+        npmProbe: async name => name === '@acme/dsh-demo',
+        verifyPresent: async () => true,
+        prepare: async () => { prepared = true; return { ok: true, built: false, missing: [] }; }
+      }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.installedAs, '@acme/dsh-demo');
+    assert.equal(result.fromNpm, true);
+    assert.deepEqual(commands, [['add', '@acme/dsh-demo']]);
+    assert.equal(prepared, false, '有发行版就不该构建源码');
+  });
+});
+
+test('installPlugin git 回退：npm 上没有发行版 → 构建出入口后再装 file:', async () => {
+  await withEmptyProfile('dsh-pm-clone-build-', async ({ dshHome }) => {
+    const cloneDir = join(dshHome, 'clone-src');
+    await mkdir(cloneDir, { recursive: true });
+    await writeFile(join(cloneDir, 'package.json'), JSON.stringify({ name: 'dsh-demo', version: '1.0.0', main: 'lib/index.js' }));
+    const commands = [];
+    const result = await installPlugin(
+      { name: 'acme/dsh-demo', url: 'https://github.com/acme/dsh-demo' },
+      async args => { commands.push(args); },
+      {
+        clone: async () => ({ ok: true, dest: cloneDir, packageName: 'dsh-demo' }),
+        npmProbe: async () => false,
+        verifyPresent: async () => true,
+        prepare: async dir => {
+          await mkdir(join(dir, 'lib'), { recursive: true });
+          await writeFile(join(dir, 'lib', 'index.js'), 'export default 1\n', 'utf8');
+          return { ok: true, built: true, missing: [] };
+        }
+      }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.installedAs, `file:${cloneDir}`);
+    assert.match(String(result.note), /源码已构建/);
+    assert.deepEqual(commands, [['add', `file:${cloneDir}`]]);
+  });
+});
+
+test('installPlugin git 回退：构建后仍缺入口 → 拒绝安装、不执行 pnpm add', async () => {
+  await withEmptyProfile('dsh-pm-clone-refuse-', async ({ dshHome }) => {
+    const cloneDir = join(dshHome, 'clone-src');
+    await mkdir(cloneDir, { recursive: true });
+    await writeFile(join(cloneDir, 'package.json'), JSON.stringify({ name: 'dsh-demo', version: '1.0.0', main: 'lib/index.js' }));
+    const commands = [];
+    const result = await installPlugin(
+      { name: 'acme/dsh-demo', url: 'https://github.com/acme/dsh-demo' },
+      async args => { commands.push(args); },
+      {
+        clone: async () => ({ ok: true, dest: cloneDir, packageName: 'dsh-demo' }),
+        npmProbe: async () => false,
+        verifyPresent: async () => true,
+        prepare: async () => ({ ok: false, error: '插件构建后仍缺入口文件 lib/index.js，已拒绝安装' })
+      }
+    );
+    assert.equal(result.ok, false, '缺入口的包不能装进 profile');
+    assert.match(String(result.error), /缺入口/);
+    assert.deepEqual(commands, [], '拒绝时不能在 profile 里跑任何 pnpm 命令');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 无 scope 候选名撞上别人的同名包：repository 对不上就跳过，不能把插件装成
+// 另一个作者的包（实测 npm 上的 `dsh-genui` 是 lhuans/dsh-genui，而市场条目
+// omdsh-dev/dsh-genui 的发行版叫 @changfenhuang/dsh-genui）。
+// ---------------------------------------------------------------------------
+
+test('repoMatchesEntry：git+ / git@ / .git / 大小写都能对上，别的仓库不算', () => {
+  const ref = { author: 'omdsh-dev', repo: 'dsh-genui' };
+  assert.equal(repoMatchesEntry({ url: 'git+https://github.com/omdsh-dev/dsh-genui.git' }, ref), true);
+  assert.equal(repoMatchesEntry({ url: 'https://github.com/OMDSH-DEV/DSH-GENUI' }, ref), true);
+  assert.equal(repoMatchesEntry('git@github.com:omdsh-dev/dsh-genui.git', ref), true);
+  assert.equal(repoMatchesEntry({ url: 'git+https://github.com/lhuans/dsh-genui.git' }, ref), false, '同名但不同作者');
+  assert.equal(repoMatchesEntry({ url: 'https://github.com/omdsh-dev/dsh-genui-extra.git' }, ref), false);
+  assert.equal(repoMatchesEntry(null, ref), false);
+  assert.equal(repoMatchesEntry({ url: 'https://github.com/omdsh-dev/dsh-genui.git' }, null), false);
+});
+
+test('installPlugin：无 scope 候选名是别人的包 → 跳过它，走 git 回退安装', async () => {
+  await withEmptyProfile('dsh-pm-wrong-name-', async ({ dshHome }) => {
+    const cloneDir = join(dshHome, 'clone-src');
+    await mkdir(cloneDir, { recursive: true });
+    await writeFile(join(cloneDir, 'package.json'), JSON.stringify({ name: 'dsh-demo', version: '1.0.0', main: 'index.js' }));
+    await writeFile(join(cloneDir, 'index.js'), 'export default 1\n', 'utf8');
+    const commands = [];
+    const result = await installPlugin(
+      { name: 'acme/dsh-demo', url: 'https://github.com/acme/dsh-demo' },
+      async args => { commands.push(args); },
+      {
+        // 候选 @acme/dsh-demo 不存在；无 scope 的 dsh-demo 存在但属于别人
+        npmProbe: async name => name === 'dsh-demo',
+        npmRepository: async () => ({ url: 'git+https://github.com/someone-else/dsh-demo.git' }),
+        clone: async () => ({ ok: true, dest: cloneDir, packageName: 'dsh-demo' }),
+        verifyPresent: async () => true,
+        prepare: async () => ({ ok: true, built: false, missing: [] })
+      }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.installedAs, `file:${cloneDir}`, '不能装别人的同名包，走源码安装');
+    assert.deepEqual(commands, [['add', `file:${cloneDir}`]]);
+  });
+});
+
+test('installPlugin：无 scope 候选名 repository 对得上 → 照常装 npm 包', async () => {
+  await withEmptyProfile('dsh-pm-right-name-', async () => {
+    const commands = [];
+    const result = await installPlugin(
+      { name: 'acme/dsh-demo', url: 'https://github.com/acme/dsh-demo' },
+      async args => { commands.push(args); },
+      {
+        npmProbe: async name => name === 'dsh-demo',
+        npmRepository: async () => ({ url: 'git+https://github.com/acme/dsh-demo.git' }),
+        verifyPresent: async () => true
+      }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.installedAs, 'dsh-demo');
+    assert.deepEqual(commands, [['add', 'dsh-demo']]);
+  });
+});
