@@ -326,8 +326,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                miniaturized: window.isMiniaturized,
                keyWindow: window.isKeyWindow
            ) {
-            appendLogString("再次点击 Dock 图标，最小化 Harness 窗口\n")
-            window.miniaturize(nil)
+            appendLogString("再次点击 Dock 图标，收起 Harness 窗口\n")
+            NSApp.hide(nil)
             return true
         }
         if !isHarnessWindowPresented {
@@ -675,8 +675,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                miniaturized: window.isMiniaturized,
                keyWindow: window.isKeyWindow
            ) {
-            appendLogString("再次点击 Harness 窗口入口，最小化内置窗口\n")
-            window.miniaturize(nil)
+            appendLogString("再次点击 Harness 窗口入口，收起内置窗口\n")
+            NSApp.hide(nil)
             return
         }
         openDHLForSession(nil)

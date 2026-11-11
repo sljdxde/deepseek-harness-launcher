@@ -28,9 +28,9 @@ enum HarnessWindowSupport {
         visible && !miniaturized && onActiveSpace
     }
 
-    /// 第二次点击 Dock 图标 / 菜单「打开 Deepseek Harness」时是否该最小化。
-    /// 只有「已经在前台的那个窗口」才 toggle 成最小化；窗口在别的应用后面时
-    /// 第二次点击的语义应该是「拿到前面」，不能反过来把它藏起来。
+    /// 第二次点击 Dock 图标 / 菜单「打开 Deepseek Harness」时是否该把窗口收起。
+    /// 只有「已经在前台的那个窗口」才 toggle 收起；窗口在别的应用后面时第二次
+    /// 点击的语义应该是「拿到前面」，不能反过来把它藏起来。
     static func shouldMinimizeOnToggle(visible: Bool, miniaturized: Bool, keyWindow: Bool) -> Bool {
         visible && !miniaturized && keyWindow
     }
