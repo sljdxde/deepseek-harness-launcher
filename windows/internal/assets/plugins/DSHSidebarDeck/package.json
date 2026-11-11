@@ -1,0 +1,21 @@
+{
+  "name": "dsh-sidebar-deck",
+  "version": "0.1.0",
+  "description": "侧栏 Deck：可拖动的区块式左侧栏（内置，可停用回退官方布局）",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-runtime"]
+    }
+  }
+}

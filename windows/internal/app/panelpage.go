@@ -211,6 +211,7 @@ body{
     <span class="stamp" id="stamp" role="status" aria-live="polite">刚刚更新</span>
     <span class="acts">
       <button type="button" class="act primary" id="openBtn" data-act="open">打开主窗口</button>
+      <button type="button" class="act" id="refreshPageBtn" data-act="refresh-page">刷新页面</button>
       <button type="button" class="act" id="restartBtn" data-act="restart">重启</button>
       <button type="button" class="act" data-act="quit">退出</button>
     </span>
@@ -448,6 +449,11 @@ document.addEventListener('click', function (e) {
   }
   if ((el = t.closest('[data-jump]'))) { post('jump', { id: el.getAttribute('data-jump') }); return; }
   if ((el = t.closest('#openBtn'))) { post('act', { id: 'open' }); return; }
+  if ((el = t.closest('#refreshPageBtn'))) {
+    post('act', { id: 'refresh-page' });
+    say('正在刷新 Harness 页面…');
+    return;
+  }
   if ((el = t.closest('#restartBtn'))) { doRestart(el); return; }
   if ((el = t.closest('[data-act="quit"]'))) { post('act', { id: 'quit' }); return; }
   if ((el = t.closest('[data-expand]'))) {

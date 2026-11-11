@@ -1,4 +1,4 @@
-// Package assets carries the three bundled dsh plugins and their cordis
+// Package assets carries the bundled dsh plugins and their cordis
 // patch. The plugins are pure JS injected through `--patch`, so any
 // platform's dsh loads them unchanged — the Windows launcher embeds the
 // same directories the macOS bundle ships (build.ps1 syncs them from
@@ -27,17 +27,16 @@ type Plugin struct {
 	DirName string
 }
 
-// Plugins lists the bundled plugins in patch order.
+// Plugins lists the bundled plugins in patch order. DSHSidebarDeck is
+// bundled like the others (extracted + junctioned into node_modules) but
+// is NOT part of the base patch file — the launcher stages its takeover
+// patch separately (internal/pluginisolation), so it can fail open to the
+// official sidebar and honour the panel's disable switch.
 var Plugins = []Plugin{
 	{"dsh-archive-manager", "DSHArchiveManager"},
 	{"dsh-plugin-manager", "DSHPluginManager"},
 	{"dsh-session-notify", "DSHSessionNotify"},
-}
-
-// PatchPath is where cordis.patch.yml lands after extraction — the path
-// handed to `dsh web --patch`.
-func PatchPath(root string) string {
-	return filepath.Join(root, "DSHArchiveManager", "cordis.patch.yml")
+	{"dsh-sidebar-deck", "DSHSidebarDeck"},
 }
 
 // ExtractAll writes the embedded plugins under root (freshening files in

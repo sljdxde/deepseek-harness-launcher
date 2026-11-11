@@ -507,18 +507,22 @@ func (c *controller) waitLauncher(l *launch.Launcher) error {
 // WITHOUT showing it. dsh becoming ready is not a request from the user
 // to pop a window up — the launcher starts in the tray with a minimised
 // main window, and clicking the taskbar button is what reveals it.
-func (c *controller) prepareHarnessURL(port int, l *launch.Launcher) {
+// harnessTargetURL is the URL the main window should show for port: the
+// token entry when this launcher captured one, the last saved token URL
+// for an adopted instance (dsh's front page answers 401 without a token,
+// and an adopted instance never printed its token to us).
+func harnessTargetURL(port int, l *launch.Launcher) string {
 	target := launch.OpenURLForEntry(l, port)
-	// An adopted instance never printed its token to us; dsh's front
-	// page answers 401 without one. Fall back to the last token URL this
-	// launcher captured (persisted by the stdout pump), which is still
-	// valid as long as that dsh process is alive.
 	if l == nil || l.EntryURL() == nil {
 		if saved := harnessweb.LoadLastURL(); saved != "" {
 			target = saved
 		}
 	}
-	dshWin.SetURL(c.app, target)
+	return target
+}
+
+func (c *controller) prepareHarnessURL(port int, l *launch.Launcher) {
+	dshWin.SetURL(c.app, harnessTargetURL(port, l))
 }
 
 // openBrowser shows the Harness page in the launcher's own window. The
@@ -550,6 +554,22 @@ func (c *controller) openBrowserForCurrent() {
 		return
 	}
 	c.openBrowser(port, l)
+}
+
+// RefreshPage is the 刷新页面 row (and the Ctrl+R chord): reload the
+// Harness page without restarting dsh — the macOS launcher's ⌘R entry.
+// dsh not running behaves like 打开 (it starts the runtime first).
+func (c *controller) RefreshPage() {
+	c.mu.Lock()
+	port, l := c.port, c.launcher
+	c.mu.Unlock()
+	if port == 0 {
+		go c.Open()
+		return
+	}
+	target := harnessTargetURL(port, l)
+	dshWin.SetURL(c.app, target) // re-point in case dsh was restarted under us
+	dshWin.Reload(c.app)
 }
 
 // Restart is the 重启 menu row: stop the tree, then start again.

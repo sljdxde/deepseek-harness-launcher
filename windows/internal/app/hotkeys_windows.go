@@ -36,10 +36,12 @@ const (
 )
 
 // hotkey ids. 1 is the user's summon chord; the rest are the panel's.
+// 3 is 刷新 Harness 页面 (Ctrl+R) — the macOS launcher moved ⌘R from
+// 重启 to reload-the-page, and the panel's 重启 button keeps no chord.
 const (
 	hotkeySummon  = 1
 	hotkeyOpen    = 2
-	hotkeyRestart = 3
+	hotkeyRefresh = 3
 	hotkeyLog     = 4
 	hotkeyQuit    = 5
 	hotkeyPanel   = 6
@@ -113,7 +115,7 @@ func applyGlobalHotKey(enabled bool, chord string) {
 // user-configurable, so this runs once.
 func applyPanelHotkeys() {
 	registerHotkey(hotkeyOpen, "Ctrl+O")
-	registerHotkey(hotkeyRestart, "Ctrl+R")
+	registerHotkey(hotkeyRefresh, "Ctrl+R")
 	registerHotkey(hotkeyLog, "Ctrl+L")
 	registerHotkey(hotkeyQuit, "Ctrl+Q")
 	registerHotkey(hotkeyPanel, "Ctrl+Alt+L")

@@ -131,6 +131,18 @@ func (d *dshHost) Show(app *application.App, url string) {
 	applog.Logf("dsh window: shown")
 }
 
+// Reload refreshes the loaded page without touching dsh — the counterpart
+// of the macOS launcher's ⌘R「刷新 Harness 页面」. ForceReload bypasses the
+// webview cache, so the reload always picks up the current server state.
+func (d *dshHost) Reload(app *application.App) {
+	w := d.ensure(app)
+	if w == nil {
+		return
+	}
+	w.ForceReload()
+	applog.Logf("dsh window: page reloaded")
+}
+
 // Hide minimises the main window (the shell does this itself too).
 func (d *dshHost) Hide() {
 	d.mu.Lock()

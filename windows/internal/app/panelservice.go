@@ -45,6 +45,9 @@ func (s *PanelService) Act(id string) {
 		go s.ctl.openSettings()
 	case "restart":
 		go s.ctl.Restart()
+	case "refresh-page":
+		// 刷新 Harness 页面：只重载页面，不动 dsh（macOS ⌘R 的对应项）。
+		go s.ctl.RefreshPage()
 	case "update-launcher":
 		go s.ctl.openLauncherUpdate()
 	case "update-dsh":

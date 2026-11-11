@@ -8,6 +8,7 @@ package launch
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,12 +17,15 @@ import (
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/assets"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/harnessweb"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/paths"
+	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/pluginisolation"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/proc"
 )
 
@@ -133,9 +137,10 @@ func Prepare() (pluginsRoot string, err error) {
 	return pluginsRoot, err
 }
 
-// Start runs `dsh web --patch <yml> --no-open --port <port>` with the
-// given environment, captures the stdout entry line, and waits until the
-// web service answers. The context cancels the whole launch.
+// Start runs `dsh web` with the bundled plugins injected through the
+// staged --patch overlays (base / sidebar-deck takeover / user-disabled),
+// captures the stdout entry line, and waits until the web service
+// answers. The context cancels the whole launch.
 func (l *Launcher) Start(ctx context.Context, exePath string, port int, env []string) error {
 	l.mu.Lock()
 	if l.cmd != nil {
@@ -147,13 +152,11 @@ func (l *Launcher) Start(ctx context.Context, exePath string, port int, env []st
 	l.entryURL = nil
 	l.mu.Unlock()
 
-	patchPath := assets.PatchPath(filepath.Join(dataDir(), "plugins"))
-	args := []string{
-		"web",
-		"--patch", patchPath,
-		"--no-open",
-		"--port", fmt.Sprint(port),
+	patchBase, patchDeck, patchDisabled, notes := pluginisolation.StageBootPatches(filepath.Join(dataDir(), "plugins"), paths.DSHHome())
+	for _, note := range notes {
+		l.emit(note + "\n")
 	}
+	args := BootArgs(port, patchBase, patchDeck, patchDisabled)
 	cmd := proc.CommandContext(ctx, exePath, args...)
 	cmd.Dir = paths.DSHHome()
 	cmd.Env = env
@@ -193,6 +196,18 @@ func (l *Launcher) Start(ctx context.Context, exePath string, port int, env []st
 			return err
 		}
 		return nil
+	}
+}
+
+// emit forwards one launcher-generated log line to the stdout hook (the
+// same channel the process pump uses, so staging notes land in the
+// launcher log exactly like the macOS launcher's boot log lines).
+func (l *Launcher) emit(line string) {
+	l.mu.Lock()
+	hook := l.Stdout
+	l.mu.Unlock()
+	if hook != nil {
+		hook(line)
 	}
 }
 
@@ -287,6 +302,41 @@ func (l *Launcher) Stop() {
 // SessionOpenURL is the session-notify open endpoint for a port.
 func SessionOpenURL(port int) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/dsh-session-notify/open", port)
+}
+
+// BootArgs mirrors PluginIsolationSupport.bootArguments: `web`, then each
+// non-empty patch slot in priority order — base (bundled plugins), deck
+// (sidebar takeover), disabled (user intent, applied last so it wins) —
+// then --no-open/--port. dsh treats a missing --patch file as fatal, so
+// an empty slot is skipped instead of passed as a blank path.
+func BootArgs(port int, basePatch, deckPatch, disabledPatch string) []string {
+	args := []string{"web"}
+	for _, patch := range []string{basePatch, deckPatch, disabledPatch} {
+		if patch != "" {
+			args = append(args, "--patch", patch)
+		}
+	}
+	return append(args, "--no-open", "--port", strconv.Itoa(port))
+}
+
+// OpenSessionPayload builds the JSON body for POST
+// /dsh-session-notify/open. embeddedOnly sets requireEmbedded so the
+// plugin defers the command until the launcher's own page claims it: a
+// background browser tab's document.hasFocus() can lie, and a stolen
+// command switches sessions in a window the user cannot see — the
+// 「点了没反应」 bug.
+func OpenSessionPayload(sessionID string, embeddedOnly bool) (string, bool) {
+	trimmed := strings.TrimSpace(sessionID)
+	if trimmed == "" {
+		return "", false
+	}
+	// Marshal of a string cannot fail; the error exists only for the
+	// general interface signature.
+	id, _ := json.Marshal(trimmed)
+	if embeddedOnly {
+		return `{"sessionId":` + string(id) + `,"requireEmbedded":true}`, true
+	}
+	return `{"sessionId":` + string(id) + `}`, true
 }
 
 // SessionEventsURL is the session-notify events endpoint for a port.

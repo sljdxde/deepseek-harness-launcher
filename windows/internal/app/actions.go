@@ -16,6 +16,7 @@ import (
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/applog"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/dshrt"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/dshupdate"
+	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/launch"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/nodeenv"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/paths"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/session"
@@ -228,7 +229,7 @@ func (c *controller) startUpdateSchedule() {
 	setHotkeyActions(map[int]func(){
 		hotkeySummon:  func() { go c.Open() },
 		hotkeyOpen:    func() { go c.Open() },
-		hotkeyRestart: func() { go c.Restart() },
+		hotkeyRefresh: func() { go c.RefreshPage() },
 		hotkeyLog: func() {
 			if h != nil {
 				go h.openLog()
@@ -300,8 +301,14 @@ func (c *controller) openSession(sessionID string) {
 		return
 	}
 	c.openBrowser(port, launcher)
-	// the plugin queues a page navigation command the web client claims
-	payload := fmt.Sprintf(`{"sessionId":%q}`, sessionID)
+	// the plugin queues a page navigation command the web client claims.
+	// requireEmbedded keeps a background browser tab from claiming it
+	// first (its document.hasFocus() lies): the command then switches
+	// sessions inside an invisible window — 「点了没反应」.
+	payload, ok := launch.OpenSessionPayload(sessionID, true)
+	if !ok {
+		return
+	}
 	status := postJSON(port, "/dsh-session-notify/open", payload)
 	applog.Logf("session open %s -> HTTP %d", sessionID, status)
 	sessionStore.MarkRead(sessionID)
