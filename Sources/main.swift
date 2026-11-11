@@ -289,7 +289,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Harness 窗口是否真的在用户眼前（最小化不算——Dock 点击应该能把它拿回来）。
     private var isHarnessWindowPresented: Bool {
         guard let window = harnessWindow?.window else { return false }
-        return HarnessWindowSupport.isWindowPresented(visible: window.isVisible, miniaturized: window.isMiniaturized)
+        return HarnessWindowSupport.isWindowPresented(
+            visible: window.isVisible,
+            miniaturized: window.isMiniaturized,
+            onActiveSpace: window.isOnActiveSpace
+        )
     }
 
     /// 应用被激活（点 Dock / Cmd-Tab / 从 Finder 再次打开）时恢复 Harness 窗口。

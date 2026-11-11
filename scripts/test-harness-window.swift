@@ -96,9 +96,10 @@ struct HarnessWindowChecks {
         )
 
         // MARK: - 1b. 窗口是否「在眼前」（Dock 点击恢复窗口的依据）
-        check(HarnessWindowSupport.isWindowPresented(visible: true, miniaturized: false), "正常可见窗口算已呈现")
-        check(!HarnessWindowSupport.isWindowPresented(visible: true, miniaturized: true), "最小化窗口不算已呈现（Dock 点击要能拿回来）")
-        check(!HarnessWindowSupport.isWindowPresented(visible: false, miniaturized: false), "关闭的窗口不算已呈现")
+        check(HarnessWindowSupport.isWindowPresented(visible: true, miniaturized: false, onActiveSpace: true), "正常可见窗口算已呈现")
+        check(!HarnessWindowSupport.isWindowPresented(visible: true, miniaturized: true, onActiveSpace: true), "最小化窗口不算已呈现（Dock 点击要能拿回来）")
+        check(!HarnessWindowSupport.isWindowPresented(visible: true, miniaturized: false, onActiveSpace: false), "窗口在别的 Space 不算已呈现（Dock 点击要能切回来）")
+        check(!HarnessWindowSupport.isWindowPresented(visible: false, miniaturized: false, onActiveSpace: true), "关闭的窗口不算已呈现")
 
         // MARK: - 2. 链接与导航
         checkEqual(
