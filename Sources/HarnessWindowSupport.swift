@@ -28,13 +28,6 @@ enum HarnessWindowSupport {
         visible && !miniaturized && onActiveSpace
     }
 
-    /// 第二次点击 Dock 图标 / 菜单「打开 Deepseek Harness」时是否该把窗口收起。
-    /// 只有「已经在前台的那个窗口」才 toggle 收起；窗口在别的应用后面时第二次
-    /// 点击的语义应该是「拿到前面」，不能反过来把它藏起来。
-    static func shouldMinimizeOnToggle(visible: Bool, miniaturized: Bool, keyWindow: Bool) -> Bool {
-        visible && !miniaturized && keyWindow
-    }
-
     /// macOS 窗口默认尺寸：Harness 界面在 1280×860 下是完整三栏布局，再小侧栏会挤。
     static let defaultWindowSize = CGSize(width: 1280, height: 860)
     static let minimumWindowSize = CGSize(width: 960, height: 600)

@@ -153,13 +153,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 选中标签页（多浏览器实例下那条路必然落空，正是「又开了一个窗口」的来源）。
     /// 延迟创建：只有真正打开过一次界面才建窗口。
     private var harnessWindow: HarnessWindowController?
-    /// 最近一次应用被激活的时刻：用来区分「Dock 点击把后台应用带到前台」与
-    /// 「应用已经在前台、用户再次点 Dock 想收窗口」。两者都可能让窗口变成 key，
-    /// 只靠 isKeyWindow 会在前者误最小化。
-    private var lastBecameActiveAt = Date.distantPast
-    /// 上次因「二次点击」主动收起窗口的时刻：紧接着的 Dock 点击是「恢复」，
-    /// 不能又当成二次点击收起来，否则窗口会在收起/恢复之间反复。
-    private var lastHiddenAt = Date.distantPast
     /// 菜单栏图标旁的短暂状态文案（如「正在重启…」/「已重启 ✓」）。
     /// 点击菜单项后菜单即关闭，反馈必须出现在菜单栏本身才能被看见；
     /// makeStatusImage 重建图标时按此保持 variableLength 不裁剪文案。
@@ -309,7 +302,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 状态项本身也持有一个 AppKit 窗口，系统会把它算成「有可见窗口」，于是点
     /// Dock 图标时 flag=true、旧逻辑直接什么都不做——表现就是「窗口不会回来」。
     @objc private func applicationDidBecomeActive() {
-        lastBecameActiveAt = Date()
         guard settings.embeddedHarnessWindow, state == .running, selectedPort != nil else { return }
         if isHarnessWindowPresented { return }
         // 设置窗口在前台时不要抢：用户点 Dock 可能就是想回到设置。
@@ -321,25 +313,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 点程序坞图标（或从 Finder 再次打开）时：Harness 窗口不可见就把它拿回来。
     /// `flag` 会把菜单栏状态项的窗口也算进去，不能作为判断依据（见 applicationDidBecomeActive）。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard settingsWindow?.window?.isVisible != true else { return true }
-        // 刚被「二次点击」收起的窗口，下一次 Dock 点击是恢复，不是再次收起。
-        if Date().timeIntervalSince(lastHiddenAt) < 2 {
-            openDHL()
-            return true
-        }
-        if let window = harnessWindow?.window,
-           Date().timeIntervalSince(lastBecameActiveAt) > 0.5,
-           HarnessWindowSupport.shouldMinimizeOnToggle(
-               visible: window.isVisible,
-               miniaturized: window.isMiniaturized,
-               keyWindow: window.isKeyWindow
-           ) {
-            appendLogString("再次点击 Dock 图标，收起 Harness 窗口\n")
-            lastHiddenAt = Date()
-            NSApp.hide(nil)
-            return true
-        }
-        if !isHarnessWindowPresented {
+        if !isHarnessWindowPresented, settingsWindow?.window?.isVisible != true {
             appendLogString("收到重新打开请求（hasVisibleWindows=\(flag)），恢复 Harness 窗口\n")
             openDHL()
         }
@@ -676,19 +650,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - 浏览器打开与连接探测
 
     @objc private func openDHL() {
-        // 用户第二次点「打开 Deepseek Harness」/Dock 图标时，已经在前台的窗口
-        // 应该收起到 Dock，而不是原样再前置一次。
-        if settings.embeddedHarnessWindow, let window = harnessWindow?.window,
-           HarnessWindowSupport.shouldMinimizeOnToggle(
-               visible: window.isVisible,
-               miniaturized: window.isMiniaturized,
-               keyWindow: window.isKeyWindow
-           ) {
-            appendLogString("再次点击 Harness 窗口入口，收起内置窗口\n")
-            lastHiddenAt = Date()
-            NSApp.hide(nil)
-            return
-        }
         openDHLForSession(nil)
     }
 

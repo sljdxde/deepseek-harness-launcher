@@ -100,9 +100,6 @@ struct HarnessWindowChecks {
         check(!HarnessWindowSupport.isWindowPresented(visible: true, miniaturized: true, onActiveSpace: true), "最小化窗口不算已呈现（Dock 点击要能拿回来）")
         check(!HarnessWindowSupport.isWindowPresented(visible: true, miniaturized: false, onActiveSpace: false), "窗口在别的 Space 不算已呈现（Dock 点击要能切回来）")
         check(!HarnessWindowSupport.isWindowPresented(visible: false, miniaturized: false, onActiveSpace: true), "关闭的窗口不算已呈现")
-        check(HarnessWindowSupport.shouldMinimizeOnToggle(visible: true, miniaturized: false, keyWindow: true), "前台窗口二次点击应最小化")
-        check(!HarnessWindowSupport.shouldMinimizeOnToggle(visible: true, miniaturized: false, keyWindow: false), "在别的应用后面时二次点击应先拿到前面，不是最小化")
-        check(!HarnessWindowSupport.shouldMinimizeOnToggle(visible: true, miniaturized: true, keyWindow: true), "已经最小化时不应再 toggle")
 
         // MARK: - 2. 链接与导航
         checkEqual(
