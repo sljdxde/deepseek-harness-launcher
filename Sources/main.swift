@@ -708,7 +708,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if settings.embeddedHarnessWindow {
             presentHarnessWindow(port: port, forceReload: false) { [weak self] in
                 guard let target else { return }
-                self?.requestSessionOpen(sessionId: target, port: port)
+                self?.requestSessionOpen(sessionId: target, port: port, embeddedOnly: true)
             }
             return
         }
@@ -814,10 +814,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Hand a target session to the Harness client. This is best-effort: an
     /// external Harness may not have the bundled plugin, in which case the
     /// caller still opens the normal Harness home page.
-    private func requestSessionOpen(sessionId: String, port: Int) {
-        guard !sessionId.isEmpty,
-              let url = URL(string: "http://127.0.0.1:\(port)/dsh-session-notify/open"),
-              let body = try? JSONSerialization.data(withJSONObject: ["sessionId": sessionId]) else { return }
+    private func requestSessionOpen(sessionId: String, port: Int, embeddedOnly: Bool = false) {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/dsh-session-notify/open"),
+              let payload = SessionJumpSupport.openSessionPayload(sessionId: sessionId, embeddedOnly: embeddedOnly),
+              let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
         ServiceProbe.postJSON(at: url, body: body, timeout: 1) { [weak self] status in
             // 命令通道不存在（外部 Harness / 旧插件）时页面不会换会话：只有首页被
             // 打开。记一行日志，别让「点了没跳」没有任何痕迹。
@@ -853,7 +853,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // 「已重启 ✓」承担，与浏览器路径一致。
             presentHarnessWindow(port: port, forceReload: restartTakeover) { [weak self] in
                 guard let target else { return }
-                self?.requestSessionOpen(sessionId: target, port: port)
+                self?.requestSessionOpen(sessionId: target, port: port, embeddedOnly: true)
             }
             return
         }
@@ -2715,7 +2715,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // 在这条路上不存在，也就没有「新开一个窗口」的退化。
                 presentHarnessWindow(port: port, forceReload: false) { [weak self] in
                     guard let sessionId else { return }
-                    self?.requestSessionOpen(sessionId: sessionId, port: port)
+                    self?.requestSessionOpen(sessionId: sessionId, port: port, embeddedOnly: true)
                 }
                 return
             }

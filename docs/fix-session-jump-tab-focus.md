@@ -471,3 +471,33 @@ AppleScript / NSWorkspace / HTTP），单测入口：
 里定义，`main.swift` 重新出现 `未找到匹配标签页` 的分支就判失败——防止可测逻辑再塞回
 不可测的异步回调里。
 
+
+### 四之九、2026-11-11：后台 Chrome 的 `hasFocus()` 谎报，抢走「打开会话」命令
+
+内置窗口架构下仍然复现「点了不跳」：点击菜单里的完成提醒后，启动器日志只有
+`用户查看会话完成提醒：<id>`，随后没有任何报错，但窗口停在原会话。
+
+现场：启动器（DHL）是前台应用，chrome-devtools-mcp 拉起的后台 Chrome 页面却仍
+把 `document.hasFocus()` 报成 `true`，并且每次 `/dsh-session-notify/commands`
+轮询都带着 `visible=1`。命令入队后的「焦点优先」窗口挡不住它——它自称有焦点，
+可能比内置 WKWebView 先领走命令，在本来看不见的 Chrome 窗口里执行
+`uiWorkspace.openSession`；用户面前的内置窗口自然纹丝不动。
+
+同一轮还发现同一个谎报会把「看过即已读」的 `viewed` 信号发给启动器，导致完成
+角标刚亮就被撤销（菜单栏没有数字）。两处根因是同一个：**不能用 `document.hasFocus()`
+单独判断「用户在看/在操作这个页面」**。
+
+修复分两层：
+
+1. **客户端（立即生效）**：`pageLooksEmbedded()` 区分内置 WKWebView/Safari 与
+   Chromium 系页面；外部 Chrome 页面必须最近有 `isTrusted` 的真实用户操作
+   （pointerdown/keydown/wheel/touchstart）才允许上报 `viewing` 或领取跳转命令。
+   后台自动化标签页不再能冒充用户。
+2. **服务端定向（下次重启 dsh 生效）**：`/open` 支持 `requireEmbedded`；内置窗口
+   模式下启动器带上该标记，服务端只把命令发给心跳里 `embedded=1` 的页面，
+   Chrome 页面即使 `hasFocus()` 谎报也看不到、领不到。旧客户端不传 `embedded`
+   按内置处理，保持兼容。
+
+回归：`scripts/test-session-jump-browser.mjs` 用真实 Chromium + 真实 HTTP 跑四种
+场景（后台 Chrome 不领/有真实操作可领/内置页面直接领/两者并存时归内置），另有
+`requireEmbedded` 定向场景；`test-client` 与 `test-session-notify` 补协议级用例。

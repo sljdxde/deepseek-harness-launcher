@@ -255,7 +255,7 @@ export function createCommandQueue() {
   }
 
   return {
-    enqueue(sessionId, now = Date.now()) {
+    enqueue(sessionId, now = Date.now(), options = {}) {
       prune(now);
       const existing = commands.find(command => command.sessionId === sessionId);
       if (existing) return existing;
@@ -266,6 +266,9 @@ export function createCommandQueue() {
         expiresAt: now + COMMAND_TTL_MS,
         visibleUntil: now + VISIBLE_CLIENT_GRACE_MS,
         focusedUntil: now + FOCUSED_CLIENT_GRACE_MS,
+        // 内置窗口模式：命令只允许 WKWebView 页面领取，外部 Chrome 标签页
+        // 即使 document.hasFocus() 谎报 true 也不能抢（否则会话切在看不见的窗口里）。
+        requireEmbedded: options.requireEmbedded === true,
         claimedBy: null,
         claimedUntil: 0,
       };
@@ -273,9 +276,18 @@ export function createCommandQueue() {
       if (commands.length > COMMAND_LIMIT) commands.splice(0, commands.length - COMMAND_LIMIT);
       return command;
     },
-    list(now = Date.now()) {
+    /**
+     * 待领取命令列表。
+     * @param {number} now
+     * @param {{embedded?: boolean}} options - `embedded === false` 时过滤掉
+     *   `requireEmbedded` 的命令（外部 Chrome 页面连看都不用看到）。
+     */
+    list(now = Date.now(), options = {}) {
       prune(now);
-      return commands.filter(command => !command.claimedBy).map(commandView);
+      return commands
+        .filter(command => !command.claimedBy)
+        .filter(command => !(command.requireEmbedded && options.embedded === false))
+        .map(commandView);
     },
     /**
      * 领取一条打开会话命令。
@@ -283,11 +295,12 @@ export function createCommandQueue() {
      *   入队后的 `FOCUSED_CLIENT_GRACE_MS` 内只有焦点页面能领：另一个浏览器
      *   实例里的 Harness 页面虽然「可见」（窗口在后面）但没有焦点，不许抢。
      */
-    claim(commandId, clientId, visible, focused = false, now = Date.now()) {
+    claim(commandId, clientId, visible, focused = false, now = Date.now(), embedded = true) {
       prune(now);
       const command = commands.find(item => item.commandId === commandId);
       if (!command) return { kind: 'missing' };
       if (command.claimedBy && command.claimedBy !== clientId) return { kind: 'busy' };
+      if (command.requireEmbedded && !embedded) return { kind: 'deferred-embedded' };
       if (!focused && command.focusedUntil > now) return { kind: 'deferred-focused' };
       if (!visible && command.visibleUntil > now) return { kind: 'deferred' };
       command.claimedBy = clientId;
@@ -396,7 +409,9 @@ export function apply(ctx) {
             const value = await body(req);
             const sessionId = typeof value.sessionId === 'string' ? value.sessionId.trim() : '';
             if (!sessionId) { jsonStatus(res, 400, { error: 'sessionId is required' }); return; }
-            json(res, { command: commandView(commands.enqueue(sessionId)) });
+            // 内置窗口模式由启动器置 true：只有 WKWebView 页面能领，外部 Chrome
+            // 标签页即使抢到命令也不执行（从根上消除多页面抢跳转）。
+            json(res, { command: commandView(commands.enqueue(sessionId, Date.now(), { requireEmbedded: value.requireEmbedded === true })) });
           } catch (error) {
             jsonStatus(res, 400, { error: String(error?.message || error) });
           }
@@ -407,6 +422,7 @@ export function apply(ctx) {
         path: '/dsh-session-notify/commands',
         handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          let embedded = true;
           try {
             const params = new URL(req.url, 'http://127.0.0.1').searchParams;
             const clientId = params.get('clientId');
@@ -416,6 +432,9 @@ export function apply(ctx) {
             // 顺手回报「用户正在看哪个会话」（页面可见且有焦点时才报，空值＝没在看）。
             // 只在**观看目标变化**时记一条 viewed：轮询是 750ms 一次，每次都记会把
             // 缓冲区冲爆，真正完成提醒就被挤出去了。
+            // 页面类型由客户端心跳上报：明确 `embedded=0` 的 Chrome 页面看不到
+            // 只给内置窗口的命令。缺省按内置处理（旧客户端兼容）。
+            embedded = params.get('embedded') !== '0';
             const viewing = (params.get('viewing') ?? '').trim();
             if (clientId && viewing !== presence.watches(clientId)) {
               presence.watch(clientId, viewing);
@@ -425,7 +444,7 @@ export function apply(ctx) {
               if (viewing && pendingCompletion(viewing)) pushViewed(viewing, titleFor(viewing));
             }
           } catch { /* a poll without clientId still gets the queue */ }
-          json(res, { items: commands.list() });
+          json(res, { items: commands.list(Date.now(), { embedded }) });
         },
       });
       const claimDispose = host.webServer.register({
@@ -438,9 +457,22 @@ export function apply(ctx) {
             const commandId = typeof value.commandId === 'string' ? value.commandId.trim() : '';
             const clientId = typeof value.clientId === 'string' ? value.clientId.trim() : '';
             if (!commandId || !clientId) { jsonStatus(res, 400, { error: 'commandId and clientId are required' }); return; }
-            const result = commands.claim(commandId, clientId, value.visible === true, value.focused === true);
+            // 缺省按内置页面处理（旧客户端不传 embedded），显式 false 的 Chrome
+            // 页面不能领取 requireEmbedded 命令。
+            const result = commands.claim(
+              commandId,
+              clientId,
+              value.visible === true,
+              value.focused === true,
+              Date.now(),
+              value.embedded !== false,
+            );
             if (result.kind === 'missing') { jsonStatus(res, 404, { error: 'command not found' }); return; }
             if (result.kind === 'busy') { jsonStatus(res, 409, { error: 'command already claimed' }); return; }
+            if (result.kind === 'deferred-embedded') {
+              jsonStatus(res, 409, { error: 'waiting for embedded Harness window' });
+              return;
+            }
             if (result.kind === 'deferred-focused') {
               jsonStatus(res, 409, { error: 'waiting for focused Harness tab' });
               return;

@@ -55,6 +55,8 @@ node --check "$ROOT/Plugins/DSHLauncherSettings/lib/index.js"
 node --check "$ROOT/Plugins/DSHLauncherSettings/client/client.js"
 node --test "$ROOT/Plugins/DSHSessionNotify/test/session-notify.test.js"
 node --test "$ROOT/Plugins/DSHSessionNotify/test/client.test.js"
+# 真实浏览器端到端：后台 Chrome 页面不得抢「打开会话」命令（无 Playwright 时自动 SKIP）。
+node "$ROOT/scripts/test-session-jump-browser.mjs"
 if rg -q 'stopRunningAgents|需要二次确认删除|只能删除已归档' "$ROOT/Plugins/DSHArchiveManager/lib/index.js"; then
   echo "archive deletion must not perform runtime or archive-state validation" >&2
   exit 1

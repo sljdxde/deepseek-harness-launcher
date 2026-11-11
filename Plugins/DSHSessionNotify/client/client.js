@@ -50,14 +50,71 @@ window.__ModuleLoader__.load({ id: "dsh-session-notify", factory: () => {
   }
 
   /**
+   * 这个页面是不是启动器的内置 WKWebView（或 Safari 这类非 Chromium 浏览器）。
+   *
+   * 主要靠 UA：WKWebView 是 Safari 风格（AppleWebKit，无 Chrome/Chromium），
+   * Chrome 系（包括 chrome-devtools-mcp 拉起的自动化实例）UA 一定带 Chrome/。
+   * 若页面注册了 WK 消息处理器也直接认。区分它是因为 `document.hasFocus()`
+   * 在 macOS 上对「后面的 Chrome 窗口」会撒谎：实测启动器在最前时，后台
+   * Chrome 页面仍报 hasFocus true，于是它冒充「用户正在看」，把菜单栏的
+   * 完成提醒瞬间撤销。
+   */
+  function pageLooksEmbedded() {
+    try {
+      if (typeof window === 'undefined') return false
+      if (window.__DHL_EMBEDDED__ === true) return true
+      if (window.webkit && window.webkit.messageHandlers) return true
+      const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || ''
+      return /AppleWebKit/.test(ua) && !/Chrome\//.test(ua) && !/Chromium\//.test(ua)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 外部浏览器页面的「最近真实用户操作」时间戳。
+   *
+   * 只认 `isTrusted` 的指针/键盘/滚轮/触摸事件：自动化脚本（Runtime.evaluate、
+   * 合成事件）不会刷新它。后台自动化标签页因此不能把用户的完成提醒标成已读。
+   */
+  const GESTURE_TRUST_MS = 10 * 60 * 1000
+  /**
+   * 领取「打开会话」命令的信任窗口：比「正在看」更短。点菜单栏里的完成提醒时，
+   * 用户的手在启动器上，后台 Chrome 标签页不该抢走跳转命令——否则命令被执行在
+   * 看不见的窗口里，用户看到的就是「点了没反应」。
+   */
+  const CLAIM_GESTURE_TRUST_MS = 2 * 60 * 1000
+  let lastUserGestureAt = 0
+  function markUserGesture(event) {
+    if (event && event.isTrusted) lastUserGestureAt = Date.now()
+  }
+  const GESTURE_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart']
+
+  /**
    * 用户此刻正在看的会话：主视图里 `retainedBy.mainView > 0` 的那一个（宿主 UI
    * 判断「当前会话」用的也是这个字段），并且只在本页面可见且有焦点时才算数——
    * 甩到后台的标签页不该把它当年看过的会话钉成已读。
+   *
+   * 外部浏览器（非 WKWebView）还要求最近 10 分钟内有真实用户操作：单靠
+   * `document.hasFocus()` 挡不住后台的自动化 Chrome 标签页（见 pageLooksEmbedded）。
    * @param snapshot - `ctx.sessions.list` 的快照。
    * @returns 会话 id；没有在看任何会话时返回空串。
    */
+  /**
+   * 这个页面有没有资格领取跳转命令。
+   *
+   * 内置 WKWebView 永远有资格（它就是用户面前的 Harness 窗口）。外部 Chrome
+   * 页面必须最近有真实用户操作：`document.hasFocus()` 会谎报（后台 Chrome
+   * 窗口也返回 true），只靠它会让自动化标签页抢走跳转命令。
+   */
+  function canClaimCommands() {
+    if (pageLooksEmbedded()) return true
+    return Date.now() - lastUserGestureAt <= CLAIM_GESTURE_TRUST_MS
+  }
+
   function viewingSession(snapshot) {
     if (!pageIsVisible() || !pageHasFocus()) return ''
+    if (!pageLooksEmbedded() && Date.now() - lastUserGestureAt > GESTURE_TRUST_MS) return ''
     for (const row of Object.values(snapshot?.byId ?? {})) {
       if (row && typeof row.id === 'string' && (row.retainedBy?.mainView ?? 0) > 0) return row.id
     }
@@ -115,8 +172,10 @@ window.__ModuleLoader__.load({ id: "dsh-session-notify", factory: () => {
           // alone does nothing if the user switched to another tab — the
           // launcher must open a new tab in that instance instead.
           const visibility = pageIsVisible() ? 1 : 0
-          const feed = await readJSON(`${COMMANDS_URL}?clientId=${encodeURIComponent(id)}&viewing=${encodeURIComponent(viewingSession(snapshot))}&visible=${visibility}`)
+          const feed = await readJSON(`${COMMANDS_URL}?clientId=${encodeURIComponent(id)}&viewing=${encodeURIComponent(viewingSession(snapshot))}&visible=${visibility}&embedded=${pageLooksEmbedded() ? 1 : 0}`)
           if (disposed || !Array.isArray(feed?.items)) return
+          // 不是用户正在操作的外部 Chrome 页面：不要领取跳转命令，留给内置窗口。
+          if (!canClaimCommands()) return
           for (const item of feed.items) {
             if (!item?.commandId || !item.sessionId || !hasSession(ctx.sessions.list.getSnapshot(), item.sessionId)) continue
             const claimed = await readJSON(CLAIM_URL, {
@@ -126,7 +185,7 @@ window.__ModuleLoader__.load({ id: "dsh-session-notify", factory: () => {
               // 浏览器实例里的 Harness 页面可能也「可见」（窗口在后面），但它
               // 没有焦点——让它先领走，会话就会切在用户看不见的窗口里，表现
               // 成「浏览器前置了却还是旧会话」。
-              body: JSON.stringify({ commandId: item.commandId, clientId: id, visible: pageIsVisible(), focused: pageHasFocus() }),
+              body: JSON.stringify({ commandId: item.commandId, clientId: id, visible: pageIsVisible(), focused: pageHasFocus(), embedded: pageLooksEmbedded() }),
             })
             const command = claimed?.command
             if (!command || disposed) continue
@@ -183,12 +242,19 @@ window.__ModuleLoader__.load({ id: "dsh-session-notify", factory: () => {
       const canWatchVisibility = typeof document?.addEventListener === 'function'
       const onVisibilityChange = () => { void poll() }
       if (canWatchVisibility) document.addEventListener('visibilitychange', onVisibilityChange)
+      // 真实用户操作心跳：外部浏览器页面只有最近操作过才允许上报「正在看」。
+      if (canWatchVisibility) {
+        for (const type of GESTURE_EVENTS) document.addEventListener(type, markUserGesture, { capture: true, passive: true })
+      }
       void poll()
       return () => {
         disposed = true
         clearInterval(timer)
         unsubscribe?.()
-        if (canWatchVisibility) document.removeEventListener('visibilitychange', onVisibilityChange)
+        if (canWatchVisibility) {
+          document.removeEventListener('visibilitychange', onVisibilityChange)
+          for (const type of GESTURE_EVENTS) document.removeEventListener(type, markUserGesture, { capture: true, passive: true })
+        }
         if (canListen) {
           window.removeEventListener('pagehide', markBye)
           window.removeEventListener('beforeunload', markBye)

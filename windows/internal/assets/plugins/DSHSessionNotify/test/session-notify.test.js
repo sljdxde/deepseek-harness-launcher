@@ -496,3 +496,55 @@ test('health 探针：注册在 webServer effect 里、零依赖、dispose 后�
   harness.dispose();
   assert.equal(harness.hasRoute('/dsh-session-notify/health'), false);
 });
+
+test('requireEmbedded 命令：外部 Chrome 页面看不到、也领不到；内置页面正常领取', async () => {
+  const queue = createCommandQueue();
+  const command = queue.enqueue('session-embedded', 1000, { requireEmbedded: true });
+
+  // 外部 Chrome 页面（embedded=false）连列表都看不到这条命令。
+  assert.deepEqual(queue.list(1000, { embedded: false }), []);
+  // 内置页面看得到。
+  assert.deepEqual(queue.list(1000, { embedded: true }).map(item => item.commandId), [command.commandId]);
+
+  // 即使有人拿着 commandId 硬领，非内置页面也会被拒。
+  assert.deepEqual(queue.claim(command.commandId, 'chrome-tab', true, true, 1000, false), { kind: 'deferred-embedded' });
+  // 内置页面（启动器已前置，有焦点）领取。
+  const claimed = queue.claim(command.commandId, 'wkwebview', true, true, 1000, true);
+  assert.equal(claimed.kind, 'claimed');
+  assert.equal(claimed.command.sessionId, 'session-embedded');
+});
+
+test('requireEmbedded 命令走真实路由：/open 带标记，列表按 embedded 过滤，claim 拒绝 Chrome', async () => {
+  const harness = makeHarness();
+  apply(harness.ctx);
+  const opened = await harness.call('/dsh-session-notify/open', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId: 'session-route', requireEmbedded: true }),
+  });
+  assert.equal(opened.status, 200);
+  const commandId = opened.json().command.commandId;
+
+  const chromeList = await harness.call('/dsh-session-notify/commands', {
+    url: '/dsh-session-notify/commands?clientId=chrome-tab&embedded=0',
+  });
+  assert.deepEqual(chromeList.json().items, [], 'Chrome 页面不应看到内置窗口专用命令');
+
+  const embeddedList = await harness.call('/dsh-session-notify/commands', {
+    url: '/dsh-session-notify/commands?clientId=wkwebview&embedded=1',
+  });
+  assert.deepEqual(embeddedList.json().items.map(item => item.commandId), [commandId]);
+
+  const chromeClaim = await harness.call('/dsh-session-notify/commands/claim', {
+    method: 'POST',
+    body: JSON.stringify({ commandId, clientId: 'chrome-tab', visible: true, focused: true, embedded: false }),
+  });
+  assert.equal(chromeClaim.status, 409);
+  assert.match(chromeClaim.json().error, /embedded Harness window/);
+
+  const embeddedClaim = await harness.call('/dsh-session-notify/commands/claim', {
+    method: 'POST',
+    body: JSON.stringify({ commandId, clientId: 'wkwebview', visible: true, focused: true, embedded: true }),
+  });
+  assert.equal(embeddedClaim.status, 200);
+  assert.equal(embeddedClaim.json().command.sessionId, 'session-route');
+});

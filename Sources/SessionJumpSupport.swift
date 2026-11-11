@@ -215,6 +215,21 @@ enum SessionJumpSupport {
         pageVisible == true ? .activateOnly : .openNewTabInConnectedInstance
     }
 
+    // MARK: - 跳转请求
+
+    /// 「打开会话」POST `/dsh-session-notify/open` 的请求体。
+    ///
+    /// `embeddedOnly` 为 true（内置窗口模式）时带 `requireEmbedded`：服务端只允许
+    /// WKWebView 页面领取。外部 Chrome 标签页的 `document.hasFocus()` 会谎报 true，
+    /// 光靠焦点优先挡不住它抢命令——抢走后会话切在看不见的窗口里，表现成「点了没反应」。
+    static func openSessionPayload(sessionId: String, embeddedOnly: Bool) -> [String: Any]? {
+        let trimmed = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var payload: [String: Any] = ["sessionId": trimmed]
+        if embeddedOnly { payload["requireEmbedded"] = true }
+        return payload
+    }
+
     // MARK: - 日志文案
 
     /// 选中流程的结果日志（含成功路径与全部降级路径）；main.swift 只 append。

@@ -443,6 +443,21 @@ struct SessionJumpChecks {
             bundleIdentifier: "com.google.Chrome", targetURL: target
         )?.contains("matchesHarnessOrigin") == true, "标签脚本必须用 origin 匹配")
 
+        // MARK: - 7. 跳转请求体：内置窗口模式必须带 requireEmbedded
+        let embeddedPayload = SessionJumpSupport.openSessionPayload(
+            sessionId: "session-embedded", embeddedOnly: true
+        )
+        check(embeddedPayload?["sessionId"] as? String == "session-embedded", "请求体必须带 sessionId")
+        check(embeddedPayload?["requireEmbedded"] as? Bool == true,
+              "内置窗口模式必须带 requireEmbedded=true，否则后台 Chrome 会抢跳转命令")
+        let browserPayload = SessionJumpSupport.openSessionPayload(
+            sessionId: "session-browser", embeddedOnly: false
+        )
+        check(browserPayload?["requireEmbedded"] == nil,
+              "外部浏览器模式不能带 requireEmbedded，否则 Chrome 页面永远领不到命令")
+        check(SessionJumpSupport.openSessionPayload(sessionId: "   ", embeddedOnly: true) == nil,
+              "空 sessionId 不应生成请求体")
+
         if !failures.isEmpty {
             for failure in failures { print("FAIL: \(failure)") }
             exit(1)
