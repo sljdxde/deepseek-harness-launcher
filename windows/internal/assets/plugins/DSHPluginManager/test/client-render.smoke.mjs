@@ -152,6 +152,9 @@ function makeDocument() {
     removeEventListener(type) { listeners.delete(type); },
     dispatch(type, event) { const fn = listeners.get(type); if (fn) fn(event); },
     head: { appendChild() {} },
+    // 面板本身常驻挂载在 body 上（mountPanel 里 appendChild）；这个假的 document
+    // 之前漏了 body，所有场景在 apply() 阶段就崩了。
+    body: { appendChild() {} },
     getElementById: () => null,
     createElement: () => ({ set textContent(v) {} }),
   };
@@ -162,6 +165,10 @@ function boot({ fetchImpl, setTimeoutImpl }) {
   let plugin;
   const window = { __ModuleLoader__: { load(record) { plugin = record.factory(name => {
     if (name === 'react') return runtime.makeReact();
+    // mountPanel 会把面板常驻挂到 body 上：这里只要一个不抛错的渲染入口，
+    // 真正的渲染由本文件的 Runtime.render(trigger) 驱动。
+    if (name === 'react-dom/client') return { createRoot: () => ({ render() {} }) };
+    if (name === 'react-dom') return { render() {} };
     throw new Error('unexpected require ' + name);
   }); } } };
   vm.runInNewContext(source, {
@@ -174,6 +181,9 @@ function boot({ fetchImpl, setTimeoutImpl }) {
   });
   let trigger;
   plugin.apply({ slots: { inject(name, cb) { cb(); }, register(spec, component) { trigger = component; } } });
+  // 面板入口已改成 sidebar.panellist（由「更多」菜单通过 OPEN_EVENT 打开），
+  // 侧边栏角标与「点开面板」的行为仍在 PluginTrigger 里，直接用它做渲染冒烟。
+  if (typeof plugin.PluginTrigger === 'function') trigger = plugin.PluginTrigger;
   assert.equal(typeof trigger, 'function');
   return { runtime, trigger, document: documentStub };
 }
@@ -887,4 +897,79 @@ console.log('== 冒烟全部通过 ==');
   await settle(runtime);
   assert.equal(findByText(runtime.tree, 'button', '插件市场'), undefined, '刷新市场进行中点关闭能关掉面板');
   console.log('场景11（刷新市场是后台任务：可关闭、不阻塞操作）通过');
+}
+
+/** 场景 12：插件停用 / 启用开关（服务端拒绝时回滚 + 复用重启确认） */
+{
+  const calls = [];
+  const toggles = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) {
+      return respond({ items: [
+        { name: 'dsh-context', version: '1.0.0', description: '上下文插件' },
+        { name: 'dsh-plugin-manager', version: '0.1.0', description: '插件管理器', source: 'bundled' },
+        { name: 'dsh-flaky', version: '1.0.0', description: '会失败的插件' },
+      ] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/disabled')) {
+      return respond({ items: [
+        { bundle: 'dsh-context', rowIds: ['dsh-context'], disabled: toggles.includes('dsh-context'), canDisable: true, reason: null },
+        { bundle: 'dsh-plugin-manager', rowIds: ['dsh-plugin-manager'], disabled: false, canDisable: false, reason: '插件管理器自身，停用后无法从界面恢复' },
+        { bundle: 'dsh-flaky', rowIds: ['dsh-flaky'], disabled: toggles.includes('dsh-flaky'), canDisable: true, reason: null },
+      ] });
+    }
+    if (url === '/dsh-plugin-manager/set-disabled') {
+      const body = JSON.parse(options.body || '{}');
+      if (body.bundle === 'dsh-flaky') return respond({ error: '行 id 写入失败（模拟）' });
+      if (body.disabled) toggles.push(body.bundle);
+      else toggles.splice(toggles.indexOf(body.bundle) >>> 0, 1);
+      return respond({ ok: true, bundle: body.bundle, disabled: body.disabled, rowIds: [body.bundle], restartRequired: true });
+    }
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({ checkedAt: '2026-09-22T11:00:00.000Z', refreshing: false, lastBatch: null, summary: { updateAvailable: 0 }, inventory: [] });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+
+  const switches = () => findAll(runtime.tree, node => node.type === 'input' && node.props.role === 'switch');
+  let all = switches();
+  assert.equal(all.length, 3, '每个可管理插件行一个开关（内置插件同一套开关）');
+  assert.equal(all[0].props.checked, false, '默认是启用状态');
+  assert.equal(all[0].props.disabled, false);
+  assert.equal(all[1].props.disabled, true, '插件管理器自身的开关禁用');
+  const switchesWithTitle = () => findAll(runtime.tree, node => node.type === 'label' && String(node.props.className || '').includes('dsh-pm-switch'));
+  assert.match(switchesWithTitle()[1].props.title, /无法从界面恢复/, '禁用原因写在开关的 title 里');
+  assert.ok(textOf(runtime.tree).includes('不可停用'), '禁用开关旁有文字说明');
+
+  // 停用：POST 请求体、行内状态、toast 与重启确认（复用卸载确认流程）
+  switches()[0].props.onChange();
+  await settle(runtime);
+  const disableCall = calls.find(call => call.url === '/dsh-plugin-manager/set-disabled');
+  assert.deepEqual(JSON.parse(disableCall.options.body), { bundle: 'dsh-context', disabled: true });
+  assert.equal(switches()[0].props.checked, true, '停用后开关处于已停用状态');
+  assert.ok(toasts(runtime.tree).some(item => item.kind === 'info' && item.text === '已停用 dsh-context，重启 dsh 后生效'), '提示重启后生效');
+  assert.ok(textOf(runtime.tree).includes('已停用 dsh-context'), '出现重启确认框');
+  assert.ok(textOf(runtime.tree).includes('重启 dsh 后生效。是否立即重启？'), '重启确认文案说明生效时机');
+
+  // 启用：再切回来
+  switches()[0].props.onChange();
+  await settle(runtime);
+  assert.equal(switches()[0].props.checked, false, '启用后开关回到启用状态');
+  assert.ok(toasts(runtime.tree).some(item => item.kind === 'info' && item.text === '已启用 dsh-context，重启 dsh 后生效'));
+  assert.ok(textOf(runtime.tree).includes('已启用 dsh-context'));
+
+  // 失败回滚：服务端报错时 toast + 恢复原状态
+  switches()[2].props.onChange();
+  await settle(runtime);
+  assert.equal(switches()[2].props.checked, false, '失败后开关回到原状态');
+  assert.ok(toasts(runtime.tree).some(item => item.kind === 'error' && /停用 dsh-flaky 失败/.test(item.text)), '失败要 toast 报错');
+  assert.ok(!textOf(runtime.tree).includes('已停用 dsh-flaky'), '失败不弹重启确认');
+  console.log('场景12（插件停用/启用开关 + 失败回滚 + 重启确认）通过');
 }

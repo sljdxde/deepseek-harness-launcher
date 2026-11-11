@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { apply, updatePlugins, isBatchUpdateRunning } from '../lib/index.js';
+import { apply, updatePlugins, isBatchUpdateRunning, invalidatePluginRowCache } from '../lib/index.js';
 
 function makeRes() {
   const calls = [];
@@ -51,6 +51,7 @@ test('apply 注册全部插件管理路由', () => {
   const paths = routes.map(route => route.path).sort();
   assert.deepEqual(paths, [
     '/dsh-plugin-manager/cleanup',
+    '/dsh-plugin-manager/disabled',
     '/dsh-plugin-manager/ignore',
     '/dsh-plugin-manager/install',
     '/dsh-plugin-manager/installed',
@@ -58,6 +59,7 @@ test('apply 注册全部插件管理路由', () => {
     '/dsh-plugin-manager/refresh',
     '/dsh-plugin-manager/release-notes',
     '/dsh-plugin-manager/restart',
+    '/dsh-plugin-manager/set-disabled',
     '/dsh-plugin-manager/unignore',
     '/dsh-plugin-manager/uninstall',
     '/dsh-plugin-manager/uninstall-many',
@@ -280,4 +282,75 @@ test('release-notes 路由拒绝缺少插件名或版本号的请求', async () 
   const missingName = makeRes();
   await route.handler(makeReqWithBody('POST', { version: '2.0.0' }), missingName);
   assert.equal(missingName.calls.find(call => call[0] === 'writeHead')[1], 400);
+});
+
+
+test('disabled / set-disabled 路由：读取清单、拒绝不可停用、停用写入与启用移除', async () => {
+  const previousHome = process.env.DSH_HOME;
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-route-disabled-'));
+  process.env.DSH_HOME = dshHome;
+  invalidatePluginRowCache();
+  try {
+    const modules = join(dshHome, 'profiles', 'web', 'node_modules');
+    for (const name of ['dsh-context', 'dsh-other']) {
+      await mkdir(join(modules, name), { recursive: true });
+      await writeFile(join(modules, name, 'cordis.patch.yml'), `- insert:\n    - id: ${name}-row\n      name: ${name}\n`);
+      await writeFile(join(modules, name, 'package.json'), JSON.stringify({ name, version: '1.0.0' }));
+    }
+    await writeFile(join(dshHome, 'profiles', 'web', 'package.json'), JSON.stringify({
+      dsh: { profile: { bundles: ['dsh-context', 'dsh-other'] } },
+    }));
+
+    const { routes } = boot();
+    const jsonBody = res => JSON.parse(res.calls.find(call => call[0] === 'end')[1]);
+    const status = res => res.calls.find(call => call[0] === 'writeHead')[1];
+    const disabled = routes.find(route => route.path === '/dsh-plugin-manager/disabled');
+    const setDisabled = routes.find(route => route.path === '/dsh-plugin-manager/set-disabled');
+
+    const listed = makeRes();
+    await disabled.handler(makeReq('GET'), listed);
+    assert.equal(status(listed), 200);
+    const payload = jsonBody(listed);
+    const byName = new Map(payload.items.map(item => [item.bundle, item]));
+    assert.deepEqual(byName.get('dsh-context').rowIds, ['dsh-context-row']);
+    assert.equal(byName.get('dsh-context').canDisable, true);
+    assert.equal(byName.get('dsh-context').disabled, false);
+
+    // 不可停用：服务端拒绝（UI 置灰只是提示）
+    const protectedRes = makeRes();
+    await setDisabled.handler(makeReqWithBody('POST', { bundle: 'dsh-plugin-manager', disabled: true }), protectedRes);
+    assert.equal(status(protectedRes), 400);
+    assert.equal(jsonBody(protectedRes).code, 'protected');
+
+    // 缺 disabled 布尔值
+    const badBodyRes = makeRes();
+    await setDisabled.handler(makeReqWithBody('POST', { bundle: 'dsh-context' }), badBodyRes);
+    assert.equal(status(badBodyRes), 400);
+    assert.match(jsonBody(badBodyRes).error, /disabled/);
+
+    const disableRes = makeRes();
+    await setDisabled.handler(makeReqWithBody('POST', { bundle: 'dsh-context', disabled: true }), disableRes);
+    assert.equal(status(disableRes), 200);
+    assert.equal(jsonBody(disableRes).disabled, true);
+    assert.deepEqual(jsonBody(disableRes).rowIds, ['dsh-context-row']);
+    const stateFile = join(dshHome, 'plugin-manager', 'disabled.json');
+    const document = JSON.parse(await readFile(stateFile, 'utf8'));
+    assert.equal(document.version, 1);
+    assert.deepEqual(document.disabled.map(entry => entry.bundle), ['dsh-context']);
+
+    const afterList = makeRes();
+    await disabled.handler(makeReq('GET'), afterList);
+    assert.equal(jsonBody(afterList).items.find(item => item.bundle === 'dsh-context').disabled, true);
+
+    const enableRes = makeRes();
+    await setDisabled.handler(makeReqWithBody('POST', { bundle: 'dsh-context', disabled: false }), enableRes);
+    assert.equal(status(enableRes), 200);
+    assert.equal(jsonBody(enableRes).disabled, false);
+    assert.deepEqual(JSON.parse(await readFile(stateFile, 'utf8')).disabled, []);
+  } finally {
+    invalidatePluginRowCache();
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
 });

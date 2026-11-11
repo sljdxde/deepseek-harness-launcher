@@ -43,6 +43,16 @@ node --test "$ROOT/Plugins/DSHArchiveManager/test/health-route.test.js"
 rg -q 'patchWorkspaceDeleteForAutoArchive' "$ROOT/Plugins/DSHArchiveManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/client/client.js"
+node --check "$ROOT/Plugins/DSHSidebarDeck/lib/index.js"
+node --check "$ROOT/Plugins/DSHSidebarDeck/client/client.js"
+node --check "$ROOT/Plugins/DSHMoreMenu/lib/index.js"
+node --check "$ROOT/Plugins/DSHMoreMenu/client/client.js"
+node --check "$ROOT/Plugins/DSHUiEnhance/lib/index.js"
+node --check "$ROOT/Plugins/DSHUiEnhance/client/client.js"
+# 工作区目录名悬停消失 / 行内按钮点不动 两个回归的单元测试（假 DOM 装载真实 client.js）。
+node --test "$ROOT/Plugins/DSHUiEnhance/test/client.test.js"
+node --check "$ROOT/Plugins/DSHLauncherSettings/lib/index.js"
+node --check "$ROOT/Plugins/DSHLauncherSettings/client/client.js"
 node --test "$ROOT/Plugins/DSHSessionNotify/test/session-notify.test.js"
 node --test "$ROOT/Plugins/DSHSessionNotify/test/client.test.js"
 if rg -q 'stopRunningAgents|需要二次确认删除|只能删除已归档' "$ROOT/Plugins/DSHArchiveManager/lib/index.js"; then
@@ -58,6 +68,8 @@ node --test "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
 # 客户端 UI 渲染冒烟：纯函数测不到的组件接线（工具栏/行内标记/批量轮询/多选/降级）。
 node "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-manager.integration.test.js"
+# 插件停用/启用：行 id 发现 → patch 文本渲染 → 状态写入/启用移除 → 去重/不可停用过滤。
+node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-disabled.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
 # 安装前的源码 import 校验（残缺克隆不许换掉能用版本）。
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-source-imports.test.js"
@@ -92,6 +104,16 @@ rg -Fq 'isUpdateIgnored' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Pl
 rg -Fq '/dsh-plugin-manager/ignore' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq '/dsh-plugin-manager/unignore' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'ignorableEntries' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
+# 插件停用/启用：服务端接口、状态文件与启动器读取链路必须都在。
+rg -Fq "'/dsh-plugin-manager/disabled'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/set-disabled'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq '/dsh-plugin-manager/disabled' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '/dsh-plugin-manager/set-disabled' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'setPluginDisabled' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-disabled.test.js"
+rg -Fq 'parseDumpConfigRows' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-disabled.test.js"
+rg -Fq 'renderDisabledPatch' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-disabled.test.js"
+# 场景 12：停用开关、失败回滚与重启确认在渲染冒烟里必须真的接线。
+rg -Fq '场景12（插件停用/启用开关' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 # peer 区间工具仍保留（仅供语义单测复用），但主流程不再拿它们做兼容性判定。
 rg -Fq 'readInstalledPeerDependencies' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-peer-compat.test.js"
 # 客户端更新 UI 的纯函数（多选/框选/角标/进度/批量 toast）必须有单测。
@@ -100,7 +122,10 @@ rg -Fq 'rangeSelection' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test
 rg -Fq 'updatesBadgeText' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
 rg -Fq 'batchToast' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
 rg -Fq 'progressStepText' "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
-rg -q "register\([^\n]*PluginTrigger" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# macOS 面板入口：sidebar.panellist（dsh 的「更多」菜单），常驻面板由 OPEN_EVENT 打开；
+# 旧的 sidebar.footer.action 单独入口已随 Windows 版合并移除（footer 三个入口太挤）。
+rg -q "sidebar.panellist" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -q "dsh-plugin-manager:open" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 侧边栏底部动作：宿主把该 slot 渲染成 Settings 旁边的一行 nowrap flex，
 # 两个占位者都声称整行宽，第二个就会被排到侧边栏右边缘之外（DOM 里存在、
 # 屏幕上看不见）。因此每个动作自己占一整行（容器 wrap + flex:0 0 100%），
@@ -381,7 +406,8 @@ if rg -Fq 'DHL.dmg' "$ROOT/Sources/UpdateSupport.swift"; then
   exit 1
 fi
 rg -q 'case \.noPublishedRelease' "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift"
-rg -q "return \{ inject: \['slots', 'locale'\], apply \}" "$ROOT/Plugins/DSHArchiveManager/client/client.js"
+# 归档面板现在还要 main slot 页面 + layout 服务（点图标静默无效的修复），只锁缺省两项。
+rg -q "return \{ inject: \['slots', 'locale'" "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 rg -q 'dsh-archive-select-all' "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 rg -q 'selectAllRef\.current\.indeterminate' "$ROOT/Plugins/DSHArchiveManager/client/client.js"
 plutil -lint "$ROOT/Resources/Info.plist"

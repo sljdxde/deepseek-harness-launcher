@@ -140,7 +140,8 @@ final class SessionNotifyStore {
     var unreadCount: Int { unread.count }
 
     /// 侧栏「已完成」红点用的会话 id（按完成时间倒序）。与 unread 分开：
-    /// 同一会话在眼前收尾时 unread 会被 viewed 撤销，但侧栏仍应能看见完成标记。
+    /// 同一会话在眼前收尾时 unread 会被 viewed 撤销，但侧栏仍应能看见完成标记；
+    /// 标记由内置窗口脚本负责「点过/选中即当已看」（见 HarnessWindowSupport）。
     var completedSessionIds: [String] {
         completed.values.sorted { $0.at > $1.at }.map(\.sessionId)
     }

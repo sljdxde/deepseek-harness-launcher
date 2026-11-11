@@ -12,9 +12,9 @@
  * 本插件不改 dsh 的源码（改源码会被 dsh 升级冲掉），而是：
  *   1. 注入一段 CSS，把 `.rowActions` 从「悬停才显示」改成「常驻半透明、
  *      悬停变实」；
- *   2. 用 MutationObserver 在会话行里补两个常驻图标按钮（重命名 / 分叉），
- *      点击时转成对 dsh 原生菜单项的调用 —— 也就是不复制业务逻辑，只把
- *      入口提前；
+ *   2. 用 MutationObserver 在会话行里补一个图标按钮（重命名），点击时转成
+ *      对 dsh 原生菜单项的调用 —— 也就是不复制业务逻辑，只把入口提前；
+ *      分叉这类低频操作不摆在行上，仍收在 ⋯ 菜单里（Ctrl+D 快捷键保留）；
  *   3. 绑定键盘：F2 重命名当前会话、Ctrl+D 分叉、Ctrl+Shift+A 归档。
  *
  * dsh 的 CSS Module 类名是哈希的（`YDXeBa_rowActions` 这类），不能依赖，
@@ -46,12 +46,11 @@ ${ROW}[data-${NS}-session]:hover ${ROW_ACTIONS},
 ${ROW}[data-${NS}-session] ${ROW_ACTIONS}:focus-within {
   opacity: 1;
 }
-/* 悬停时让时间标签让位（dsh 原本也是这么做的，这里保留同样行为，
-   避免时间与按钮挤在一起） */
-${ROW}:hover > span:nth-last-child(2),
-${ROW}:focus-within > span:nth-last-child(2) {
-  display: none;
-}
+/* 注意：别按 span:nth-last-child(2) 给「时间标签让位」再补规则。
+   工作区分组行（projectRow）的直接子 span 是 [folder, chevron, projectText,
+   rowActions]，nth-last-child(2) 恰好是**目录名**，这样写会在悬停时把整行
+   目录名藏掉（0.3.11 回归）；会话行的时间让位 dsh 自己已经做了
+   （sessionRow:hover 时 rowResting 会被官方样式隐藏），不需要重复。 */
 
 /* ── 2. 插件补的常驻按钮 ────────────────────────────────────────────
    16px 图标按钮，与 dsh 自己的 iconButton 同尺寸同配色，视觉上无缝。 */
@@ -102,12 +101,11 @@ ${ROW}:focus-within > span:nth-last-child(2) {
 .${NS}-hint[data-show='1'] { opacity: 1; }
 `
 
-  // 图标：与 dsh 用同一套语义（铅笔=重命名，分叉=复制分支）。
+  // 图标：与 dsh 用同一套语义（铅笔=重命名）。
   // 手绘 SVG 而不是 require dsh 的图标模块：那些是内部模块，版本间会变。
   const ICON_EDIT = 'M11.6 2.6 13.4 4.4 5.4 12.4 3.2 13 2.6 10.8z'
-  const ICON_FORK = 'M4 3.5a1.5 1.5 0 1 0 0 3M4 9.5a1.5 1.5 0 1 0 0 3M12 6.5a1.5 1.5 0 1 0 0 3'
 
-  function makeIcon(path, extra) {
+  function makeIcon(path) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     svg.setAttribute('viewBox', '0 0 16 16')
     svg.setAttribute('fill', 'none')
@@ -118,11 +116,6 @@ ${ROW}:focus-within > span:nth-last-child(2) {
     const p = document.createElementNS('http://www.w3.org/2000/svg', 'path')
     p.setAttribute('d', path)
     svg.appendChild(p)
-    if (extra) {
-      const p2 = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-      p2.setAttribute('d', extra)
-      svg.appendChild(p2)
-    }
     return svg
   }
 
@@ -134,11 +127,15 @@ ${ROW}:focus-within > span:nth-last-child(2) {
     document.head.appendChild(style)
   }
 
-  // 会话行 → 它的行内菜单按钮（⋯）。找不到返回 null。
+  // 会话行 → 原生行内 ⋯ 按钮。找不到返回 null。
+  // 注意：本插件注入的按钮也在 rowActions 里，且排在 ⋯ 前面；它们同样带
+  // aria-label，直接取第一个会把「重命名」按钮自己当 ⋯，点下去递归调用。
+  // 所以按本插件的类名排除自己注入的按钮。
   function menuButton(row) {
     const actions = row.querySelector(':scope > span:last-child')
     if (!actions) return null
-    return actions.querySelector('button[aria-label]')
+    const buttons = Array.from(actions.querySelectorAll('button[aria-label]'))
+    return buttons.find((button) => !button.classList.contains(NS + '-btn')) || null
   }
 
   /**
@@ -152,20 +149,27 @@ ${ROW}:focus-within > span:nth-last-child(2) {
     const trigger = menuButton(row)
     if (!trigger) return false
     trigger.click()
-    // 菜单是异步渲染的：下一帧找它
-    requestAnimationFrame(() => {
+    // 菜单是点完才异步渲染的（React portal），只等一帧经常还没挂上；
+    // 这里短轮询找菜单项，超时才收起菜单并提示。
+    const deadline = Date.now() + 800
+    const timer = setInterval(() => {
       // dsh 的菜单项是带 role 的按钮或可点击项；按可见文本匹配
       const candidates = Array.from(document.querySelectorAll(
         '[role="menuitem"], [role="menu"] button, [data-menu-item]'
       ))
       const target = candidates.find(el => (el.textContent || '').trim().includes(label))
-      if (target) target.click()
-      else {
+      if (target) {
+        clearInterval(timer)
+        target.click()
+        return
+      }
+      if (Date.now() > deadline) {
+        clearInterval(timer)
         // 兜底：菜单没渲染出来就把 ⋯ 收起来，别留一个空菜单
         trigger.click()
         showHint(`没找到「${label}」菜单项`)
       }
-    })
+    }, 30)
     return true
   }
 
@@ -186,7 +190,7 @@ ${ROW}:focus-within > span:nth-last-child(2) {
 
   /**
    * 给一行补常驻按钮。已经补过就跳过（幂等，MutationObserver 会反复触发）。
-   * 只补「重命名 / 分叉」两个高频操作；归档是破坏性低频操作，留在 ⋯ 里。
+   * 只补「重命名」这一个高频操作；分叉、归档留在 ⋯ 里（Ctrl+D 仍可快捷分叉）。
    */
   function enhanceRow(row) {
     if (row.getAttribute('data-' + NS + '-done') === '1') return
@@ -220,20 +224,8 @@ ${ROW}:focus-within > span:nth-last-child(2) {
       clickMenuAction(row, '重命名')
     })
 
-    const forkBtn = document.createElement('button')
-    forkBtn.type = 'button'
-    forkBtn.className = `${NS}-btn ${NS}-fork`
-    forkBtn.title = '分叉会话（Ctrl+D）'
-    forkBtn.setAttribute('aria-label', '分叉会话')
-    forkBtn.appendChild(makeIcon(ICON_FORK, 'M12 6.5h2.5M4 5v4.5M4 8h8'))
-    forkBtn.addEventListener('click', (e) => {
-      e.stopPropagation()
-      clickMenuAction(row, '分叉')
-    })
-
-    // 插在 ⋯ 之前：视觉顺序 = 重命名、分叉、更多
+    // 插在 ⋯ 之前：视觉顺序 = 重命名、⋯、归档、置顶
     actions.insertBefore(editBtn, actions.firstChild)
-    actions.insertBefore(forkBtn, editBtn.nextSibling)
   }
 
   function enhanceAll() {

@@ -20,11 +20,14 @@ async function loadPlugin(globals = {}) {
     if (name === 'react') {
       return { createElement: () => null, Fragment: 'fragment', useState: () => [null, () => {}], useMemo: fn => fn(), useEffect: () => {}, useRef: v => ({ current: v }) };
     }
+    // apply() 里的 mountPanel 会挂载常驻面板；单测只关心注册契约，给空渲染入口即可。
+    if (name === 'react-dom/client') return { createRoot: () => ({ render() {} }) };
+    if (name === 'react-dom') return { render() {} };
     throw new Error('unexpected require: ' + name);
   };
   vm.runInNewContext(source, {
     window,
-    document: { head: { appendChild() {} }, getElementById: () => null, createElement: () => ({ set textContent(v) {} }) },
+    document: { head: { appendChild() {} }, body: { appendChild() {} }, getElementById: () => null, createElement: () => ({ set textContent(v) {} }) },
     setTimeout: fn => { fn(); return 0 },
     setInterval: () => 0,
     clearInterval: () => {},
@@ -514,13 +517,25 @@ test('pollUpdates：refreshing=true 时每 1.5s 重试，最多 20 次', async (
   assert.equal(stuck, 21, '首请求 + 最多 20 次重试');
 });
 
-test('apply 仍然只注册 sidebar.footer.action（宿主契约不变）', async () => {
+test('apply 注册 main 页面 + sidebar.panellist 图标（新版 DSH 点击图标才能打开面板）', async () => {
   const plugin = await loadPlugin();
   const registered = [];
-  const ctx = { slots: { inject(name, callback) { assert.equal(name, 'sidebar.footer.action'); callback(); }, register(spec, component) { registered.push({ spec: plain(spec), component }); } } };
+  const injected = [];
+  const ctx = {
+    layout: { selectPanel() {} },
+    slots: {
+      inject(name, callback) { injected.push(name); callback(); },
+      register(spec, component) { registered.push({ spec: plain(spec), component }); },
+    },
+  };
   plugin.apply(ctx);
-  assert.equal(registered.length, 1);
-  assert.deepEqual(registered[0].spec, { name: 'sidebar.footer.action', id: 'dsh-plugin-manager', order: 60, label: '插件管理' });
-  assert.equal(typeof registered[0].component, 'function');
-  assert.deepEqual(Array.from(plugin.inject), ['slots', 'locale']);
+  assert.deepEqual(injected, ['main', 'sidebar.panellist']);
+  const main = registered.find(({ spec }) => spec.name === 'main');
+  const entry = registered.find(({ spec }) => spec.name === 'sidebar.panellist');
+  assert.deepEqual(main.spec, { name: 'main', key: 'dsh-plugin-manager', locale: 'dsh-plugin-manager' });
+  assert.equal(typeof main.component, 'function');
+  assert.deepEqual(entry.spec, { name: 'sidebar.panellist', id: 'dsh-plugin-manager', order: 100, label: '插件管理' });
+  assert.equal(typeof entry.component, 'function');
+  assert.equal(typeof plugin.PluginTrigger, 'function', '渲染冒烟用的入口组件保持导出');
+  assert.deepEqual(Array.from(plugin.inject), ['slots', 'locale', 'layout']);
 });

@@ -153,6 +153,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 选中标签页（多浏览器实例下那条路必然落空，正是「又开了一个窗口」的来源）。
     /// 延迟创建：只有真正打开过一次界面才建窗口。
     private var harnessWindow: HarnessWindowController?
+    private var keyMonitor: Any?
+    /// 最近一次应用被激活的时刻：用来区分「Dock 点击把后台应用带到前台」与
+    /// 「应用已经在前台、用户再次点 Dock 想收窗口」。两者都可能让窗口变成 key，
+    /// 只靠 isKeyWindow 会在前者误最小化。
     /// 菜单栏图标旁的短暂状态文案（如「正在重启…」/「已重启 ✓」）。
     /// 点击菜单项后菜单即关闭，反馈必须出现在菜单栏本身才能被看见；
     /// makeStatusImage 重建图标时按此保持 variableLength 不裁剪文案。
@@ -239,14 +243,26 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
     private var pluginManagerURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHPluginManager") ?? rootURL.appendingPathComponent("Plugins/DSHPluginManager") }
     private var sessionNotifyPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSessionNotify") ?? rootURL.appendingPathComponent("Plugins/DSHSessionNotify") }
+    private var sidebarDeckPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSidebarDeck") ?? rootURL.appendingPathComponent("Plugins/DSHSidebarDeck") }
+    private var moreMenuPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHMoreMenu") ?? rootURL.appendingPathComponent("Plugins/DSHMoreMenu") }
+    private var uiEnhancePluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHUiEnhance") ?? rootURL.appendingPathComponent("Plugins/DSHUiEnhance") }
+    private var launcherSettingsPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHLauncherSettings") ?? rootURL.appendingPathComponent("Plugins/DSHLauncherSettings") }
     private var bundledPlugins: [BundledPlugin] {
         [
             BundledPlugin(linkName: "dsh-archive-manager", bundleMarker: "DSHArchiveManager", url: pluginURL),
             BundledPlugin(linkName: "dsh-plugin-manager", bundleMarker: "DSHPluginManager", url: pluginManagerURL),
-            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL)
+            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL),
+            BundledPlugin(linkName: "dsh-sidebar-deck", bundleMarker: "DSHSidebarDeck", url: sidebarDeckPluginURL),
+            BundledPlugin(linkName: "dsh-more-menu", bundleMarker: "DSHMoreMenu", url: moreMenuPluginURL),
+            BundledPlugin(linkName: "dsh-ui-enhance", bundleMarker: "DSHUiEnhance", url: uiEnhancePluginURL),
+            BundledPlugin(linkName: "dsh-launcher-settings", bundleMarker: "DSHLauncherSettings", url: launcherSettingsPluginURL)
         ]
     }
     private var patchPath: String { pluginURL.appendingPathComponent("cordis.patch.yml").path }
+    /// 用户在插件管理面板里停用的插件（面板写状态、启动器读；与崩溃隔离状态分开）。
+    private var pluginDisabledStateURL: URL {
+        PluginIsolationSupport.disabledStateURL(home: DSHRuntimeSupport.dshHomeURL)
+    }
     private var logURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let logs = home.appendingPathComponent("Library/Logs/Deepseek Harness Launcher", isDirectory: true)
@@ -282,8 +298,28 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self, selector: #selector(applicationDidBecomeActive),
             name: NSApplication.didBecomeActiveNotification, object: nil
         )
+        // Cmd/Ctrl+R 强制刷新：菜单快捷键之外再兜一层键盘监听，
+        // 页面卡死/焦点在 WKWebView 内时也能触发。
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if event.keyCode == 15, flags.contains(.command) || flags.contains(.control) {
+                self.reloadHarnessWindow()
+                return nil
+            }
+            return event
+        }
         configureStatusItem(); applyGlobalHotKey(showAlert: false); start(); scheduleAutoUpdateChecks(initialCheck: true); scheduleDSHUpdateCheck()
         removeStaleInstallerRelaunchJobs()
+    }
+
+    /// Dock 图标右键菜单：提供随时可用的强制刷新入口（不重启 dsh）。
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        let refresh = NSMenuItem(title: "刷新 Harness 页面", action: #selector(reloadHarnessWindow), keyEquivalent: "")
+        refresh.target = self
+        menu.addItem(refresh)
+        return menu
     }
 
     /// Harness 窗口是否真的在用户眼前（最小化不算——Dock 点击应该能把它拿回来）。
@@ -313,7 +349,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 点程序坞图标（或从 Finder 再次打开）时：Harness 窗口不可见就把它拿回来。
     /// `flag` 会把菜单栏状态项的窗口也算进去，不能作为判断依据（见 applicationDidBecomeActive）。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !isHarnessWindowPresented, settingsWindow?.window?.isVisible != true {
+        guard settingsWindow?.window?.isVisible != true else { return true }
+        if !isHarnessWindowPresented {
             appendLogString("收到重新打开请求（hasVisibleWindows=\(flag)），恢复 Harness 窗口\n")
             openDHL()
         }
@@ -361,7 +398,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let open = menuRowItem(title: "打开 Deepseek Harness", action: #selector(openDHL), keyEquivalent: "o")
         let port = menuRowItem(title: "端口：未运行", action: nil, enabled: { false }); port.tag = 1001
         portMenuRow = port.view as? MenuRowView
-        let restart = menuRowItem(title: "重启 Deepseek Harness", action: #selector(restartDSH), keyEquivalent: "r")
+        let refresh = menuRowItem(title: "刷新 Harness 页面", action: #selector(reloadHarnessWindow), keyEquivalent: "r")
+        let restart = menuRowItem(title: "重启 Deepseek Harness", action: #selector(restartDSH))
         let update = menuRowItem(title: LauncherMenuTitle.idle, action: #selector(checkForUpdates))
         update.tag = 1002; updateMenuItem = update; updateMenuRow = update.view as? MenuRowView
         let dshUpdate = menuRowItem(title: "检查 Deepseek Harness 更新", action: #selector(checkDSHForUpdates))
@@ -374,7 +412,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let runtime = menuRowItem(title: "运行环境", action: #selector(fixRuntimeFromMenu))
         runtime.tag = 1005; runtime.isHidden = true
         runtimeMenuItem = runtime; runtimeMenuRow = runtime.view as? MenuRowView
-        [open, port, runtime, restart, NSMenuItem.separator(), update, dshUpdate, settingsItem, logs, quit].forEach(menu.addItem)
+        [open, port, runtime, refresh, restart, NSMenuItem.separator(), update, dshUpdate, settingsItem, logs, quit].forEach(menu.addItem)
         return menu
     }
 
@@ -2016,12 +2054,53 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if state == .checking { setState(.stopped) }
     }
 
+    /// 把面板写入的「用户停用」状态渲染成启动器自己的 --patch overlay。
+    /// 没有停用项或写不进去时返回 nil：dsh 对空/不存在的 patch 文件都是致命错误，
+    /// 宁可回到“一个插件都不停用”的原始行为，也不能让启动失败。
+    private func stagedPluginDisabledPatchPath() -> String? {
+        let entries = PluginIsolationSupport.readDisabledState(url: pluginDisabledStateURL)
+        guard !entries.isEmpty else { return nil }
+        let directory = PluginIsolationSupport.disabledPatchDirectory(home: DSHRuntimeSupport.dshHomeURL)
+        guard let patch = PluginIsolationSupport.stagedDisabledPatchFile(disabled: entries, directory: directory) else {
+            appendLogString("读取到 \(entries.count) 个已停用插件，但停用覆盖层写入失败；本次启动不会停用任何插件（可重试）\n")
+            return nil
+        }
+        appendLogString("插件停用覆盖层：\(patch.path)（\(entries.map(\.bundle).joined(separator: "、"))）\n")
+        return patch.path
+    }
+
+    /// 侧栏 Deck 接管补丁：停用官方侧栏 + 插入 Deck 行。
+    /// 任何一环不满足（资源缺失 / 用户停用 / 写盘失败）都返回 nil，退回官方侧栏——
+    /// Deck 是“增强”，绝不能因为它的补丁缺失把侧栏弄没。
+    private func stagedSidebarDeckPatchPath() -> String? {
+        let patchSource = sidebarDeckPluginURL.appendingPathComponent("cordis.patch.yml")
+        guard FileManager.default.fileExists(atPath: patchSource.path) else {
+            appendLogString("未找到侧栏 Deck 资源，本次使用官方侧栏\n")
+            return nil
+        }
+        let disabled = PluginIsolationSupport.readDisabledState(url: pluginDisabledStateURL)
+        if PluginIsolationSupport.isSidebarDeckDisabled(in: disabled) {
+            appendLogString("侧栏 Deck 已被用户停用，本次使用官方侧栏\n")
+            return nil
+        }
+        let directory = PluginIsolationSupport.disabledPatchDirectory(home: DSHRuntimeSupport.dshHomeURL)
+        guard let patch = PluginIsolationSupport.stagedSidebarDeckPatchFile(directory: directory) else {
+            appendLogString("侧栏 Deck 接管补丁写入失败，本次使用官方侧栏\n")
+            return nil
+        }
+        appendLogString("侧栏 Deck 接管补丁：\(patch.path)\n")
+        return patch.path
+    }
+
     private func launchInstalledDSH(port: Int, executableURL: URL, environment: [String: String]) {
         let task = Process(); task.executableURL = executableURL
         let arguments = PluginIsolationSupport.bootArguments(
             port: port,
             basePatch: FileManager.default.isReadableFile(atPath: patchPath) ? patchPath : nil,
-            isolationPatch: nil
+            deckPatch: stagedSidebarDeckPatchPath(),
+            isolationPatch: nil,
+            // 用户停用层排在最后：最后应用的覆盖优先级最高，确保用户意图生效。
+            disabledPatch: stagedPluginDisabledPatchPath()
         )
         task.arguments = arguments
         task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser

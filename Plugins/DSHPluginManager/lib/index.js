@@ -125,6 +125,25 @@ export function isCoreBundle(name) {
  */
 const PROTECTED_PLUGINS = new Set(['dsh-plugin-manager', 'dsh-archive-manager', 'dsh-session-notify']);
 
+/**
+ * 可在插件管理面板里「停用」的插件不能包含这三类：
+ * - dsh-base / dsh-web-app 是 Harness 本体，停掉连界面都起不来；
+ * - dsh-plugin-manager 是面板自身，停掉之后没有界面能再把开关打开。
+ * 客户端只是把开关置灰，真正的拦截在这一层（服务端）和启动器读取状态时各做一次。
+ */
+const UNDISABLEABLE_PLUGINS = new Map([
+  ['@deepseek-ai/dsh-base', 'dsh 核心层，停用后 Harness 无法启动'],
+  ['@deepseek-ai/dsh-web-app', 'dsh Web 界面层，停用后没有可用的 Harness 界面'],
+  ['dsh-plugin-manager', '插件管理器自身，停用后无法从界面恢复'],
+]);
+
+/** 用户停用状态文件（与启动器的崩溃隔离状态刻意分开，见 Sources/PluginIsolationSupport.swift）。 */
+const PLUGIN_MANAGER_DIR = () => join(dshHome(), 'plugin-manager');
+const DISABLED_STATE_FILE = () => join(PLUGIN_MANAGER_DIR(), 'disabled.json');
+const DISABLED_STATE_VERSION = 1;
+/** 插件名只允许 npm 包名形状：它既进状态文件，也会被拼接成 node_modules 路径。 */
+const BUNDLE_NAME_RE = /^(?:@[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+$/;
+
 async function pathExists(path) {
   try { await fs.access(path); return true; } catch { return false; }
 }
@@ -397,6 +416,480 @@ async function pluginInstalledAtIso(directory) {
   const info = await fs.stat(real).catch(() => null);
   if (info && Number.isFinite(info.mtimeMs) && info.mtimeMs > best) best = info.mtimeMs;
   return best >= 0 ? new Date(best).toISOString() : null;
+}
+
+// MARK: - 插件停用 / 启用
+//
+// 语义：停用 = 把该插件在 dsh 装配树里贡献的顶层行写成 `- id: <rowId>` +
+// `disabled: true` 的 --patch 覆盖层；启用 = 移除这条覆盖。状态落盘在
+// `$DSH_HOME/plugin-manager/disabled.json`，**启动器**（Sources/PluginIsolationSupport.swift）
+// 在下次拉起 dsh 时读取并渲染成 overlay——写 profile 文件会被 dsh plugin 的
+// reconcile 覆盖掉，只有 --patch 是稳定可撤销的。
+//
+// 行 id 以 `dsh web --dump-config` 为准（启动器还会把内置插件补丁一起传进来，
+// 内置插件的行归属靠 dump 里的 `name:` 认领）。dump 输出里可能含用户配置的
+// 密钥类字段，所以这里只保留 `# ==` 段与顶层 `- id:` / `name:`，绝不把 dump
+// 原文、也不把它写进日志或 HTTP 响应。dump 很便宜（实测 ~0.1s）但没必要每次
+// 都跑：结果按 profile/patch/dsh 版本的 mtime 指纹缓存。
+
+/**
+ * 一次 dump-config 的解析结果：顶层装配行（缩进的子行由父行连带 disabled）。
+ * @typedef {{id:string,name:string|null,bundle:string,patched:boolean}} DumpRow
+ */
+
+/** 插件名归一化 + 校验（只认 npm 包名形状，既进状态文件也被拼进 node_modules 路径）。 */
+export function normalizeDisabledBundle(bundle) {
+  const value = typeof bundle === 'string' ? bundle.trim() : '';
+  return BUNDLE_NAME_RE.test(value) && !value.includes('..') ? value : null;
+}
+
+/** 该 bundle 不允许停用的原因；允许停用返回 null。 */
+export function undisableableReason(bundle) {
+  return UNDISABLEABLE_PLUGINS.get(String(bundle ?? '')) ?? null;
+}
+
+/** 行 id 会被写进 YAML；只放过与启动器 `PluginIsolationSupport.isSafeRowId` 一致的字符集。 */
+export function isSafeRowId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9_.:@/-]+$/.test(value);
+}
+
+/** 行 id 列表归一化：去空、去不安全字符、去重（保持原顺序）。 */
+function normalizeRowIds(rowIds) {
+  const out = [];
+  const seen = new Set();
+  for (const id of Array.isArray(rowIds) ? rowIds : []) {
+    if (!isSafeRowId(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/**
+ * 把 `dsh web --dump-config` 的输出解析成顶层行列表。
+ *
+ * 只认顶格（第 0 列）的 `- id:`：缩进的子行由父 group 继承 disabled，单独禁它
+ * 会把别人的 config 当成覆盖目标。`# == <owner>` / `# == <owner>, patched by <x>`
+ * 记录这一段的来源；`patched by` 段里的行是「改别人的行」，不能算作 owner 自己
+ * 贡献的新行——这与启动器 `PluginIsolationSupport.ownRowIds` 的口径一致。
+ *
+ * @param {string} dump - dump-config 原文（仅在进程内使用）。
+ * @returns {DumpRow[]}
+ */
+export function parseDumpConfigRows(dump) {
+  const rows = [];
+  let section = null;
+  let current = null;
+  const flush = () => {
+    if (current) rows.push(current);
+    current = null;
+  };
+  for (const raw of String(dump ?? '').split('\n')) {
+    if (raw.startsWith('# == ')) {
+      flush();
+      const owners = raw.slice(5).split(',');
+      const bundle = (owners[0] ?? '').trim();
+      section = bundle ? { bundle, patched: raw.includes('patched by') } : null;
+      continue;
+    }
+    if (!section) continue;
+    const idMatch = /^- id: (.+)$/.exec(raw);
+    if (idMatch) {
+      flush();
+      current = { id: idMatch[1].trim(), name: null, bundle: section.bundle, patched: section.patched };
+      continue;
+    }
+    if (!current) continue;
+    const nameMatch = /^ {2}name: (.+)$/.exec(raw);
+    if (nameMatch) current.name = unquoteYamlScalar(nameMatch[1].trim());
+  }
+  flush();
+  return rows.filter(row => isSafeRowId(row.id));
+}
+
+/**
+ * 某个 bundle 在装配树里的顶层行 id。
+ *
+ * 1. 自己那一节的顶层行（`# == <bundle>`，且不是 patched by 段）；
+ * 2. 没有自己那一节时（内置插件经启动器补丁插入、或 bundle 只被用户 patch
+ *    改过），按行的 `name:` 认领——dsh 的行本来就声明「这一行装的是哪个包」。
+ *
+ * @param {string} bundle
+ * @param {DumpRow[]} rows - parseDumpConfigRows 的结果。
+ * @returns {string[]}
+ */
+export function rowIdsForBundleFromRows(bundle, rows) {
+  const name = String(bundle ?? '');
+  const list = Array.isArray(rows) ? rows : [];
+  const own = list.filter(row => !row.patched && row.bundle === name).map(row => row.id);
+  const seen = new Set();
+  const unique = ids => ids.filter(id => !seen.has(id) && seen.add(id));
+  if (own.length > 0) return unique(own);
+  const named = list
+    .filter(row => row.name === name || (typeof row.name === 'string' && row.name.startsWith(`${name}/`)))
+    .map(row => row.id);
+  return unique(named);
+}
+
+/** 从插件自己的 cordis.patch.yml 里解析 `- insert:` 块里的 (id, name) 声明。 */
+export function declaredRowsFromPatchYaml(yaml) {
+  const rows = [];
+  let anchor = null; // null = 不在 insert 块；-1 = 在块里但还没遇到第一行；其余 = 首行缩进
+  let current = null;
+  const flush = () => {
+    if (current) rows.push(current);
+    current = null;
+  };
+  for (const raw of String(yaml ?? '').split('\n')) {
+    const indent = raw.length - raw.trimStart().length;
+    const body = raw.trim();
+    if (!body || body.startsWith('#')) continue;
+    if (indent === 0) {
+      flush();
+      anchor = body.startsWith('- insert:') ? -1 : null;
+      continue;
+    }
+    if (anchor === null) continue;
+    const idMatch = /^- id: (.+)$/.exec(body);
+    if (idMatch) {
+      if (anchor === -1) anchor = indent;
+      if (indent === anchor) {
+        flush();
+        current = { id: unquoteYamlScalar(idMatch[1].trim()), name: null };
+      }
+      continue;
+    }
+    if (current && indent === anchor + 2) {
+      const nameMatch = /^name: (.+)$/.exec(body);
+      if (nameMatch) current.name = unquoteYamlScalar(nameMatch[1].trim());
+    }
+  }
+  flush();
+  return rows.filter(row => isSafeRowId(row.id));
+}
+
+/** 从插件自己 patch 的声明里取它插入的行（按 name 认领，name 缺省时不猜）。 */
+export function rowIdsFromDeclaredRows(bundle, declared) {
+  const name = String(bundle ?? '');
+  const ids = (Array.isArray(declared) ? declared : [])
+    .filter(row => row.name === name || (typeof row.name === 'string' && row.name.startsWith(`${name}/`)))
+    .map(row => row.id);
+  return normalizeRowIds(ids);
+}
+
+/** 启动器拉起 dsh 时带的 --patch 路径（内置插件行只在这些补丁里出现）。 */
+export function patchPathsFromArgv(argv) {
+  const list = Array.isArray(argv) ? argv : [];
+  const paths = [];
+  for (let index = 0; index < list.length; index += 1) {
+    if (list[index] !== '--patch') continue;
+    const value = list[index + 1];
+    if (typeof value === 'string' && value) paths.push(value);
+    index += 1;
+  }
+  return paths;
+}
+
+/** argv 取不到时，从 node_modules 里 DSHArchiveManager 的软链反查启动器补丁。 */
+async function launcherBasePatchPath(options = {}) {
+  const modulesDir = options.modulesDir ?? profilesWebModules();
+  const entries = await listScopedModules(modulesDir);
+  for (const entry of entries) {
+    const target = await linkTarget(entry.path);
+    if (!target || !target.includes('DSHArchiveManager')) continue;
+    const patch = join(resolve(dirname(entry.path), target), 'cordis.patch.yml');
+    if (await pathExists(patch)) return patch;
+  }
+  return null;
+}
+
+async function launcherPatchPaths(options = {}) {
+  if (Array.isArray(options.patches)) {
+    return [...new Set(options.patches.filter(value => typeof value === 'string' && value))];
+  }
+  const fromArgv = [];
+  for (const path of patchPathsFromArgv(options.argv ?? process.argv)) {
+    if (await pathExists(path)) fromArgv.push(path);
+  }
+  if (fromArgv.length > 0) return [...new Set(fromArgv)];
+  const base = await launcherBasePatchPath(options);
+  return base ? [base] : [];
+}
+
+/**
+ * 跑一次 `dsh web --dump-config`（带上启动器当前的 --patch）。
+ * 输出可能包含用户 patch 里的密钥字段：只在内存里解析，绝不落盘/打日志。
+ */
+async function dumpProfileConfig(options = {}) {
+  const patches = options.patches ?? await launcherPatchPaths(options);
+  const args = ['web', '--dump-config'];
+  for (const patch of patches) args.push('--patch', patch);
+  const { stdout } = await run(dshCli(), args, {
+    cwd: dshHome(),
+    timeout: 30000,
+    maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env },
+  });
+  return String(stdout ?? '');
+}
+
+async function fileStampMs(path) {
+  const info = await fs.stat(path).catch(() => null);
+  return info && Number.isFinite(info.mtimeMs) ? info.mtimeMs : null;
+}
+
+/** dump 结果缓存指纹：profile 清单、用户补丁、内置插件补丁、dsh 版本任一变化就重跑。 */
+async function discoveryFingerprint(options = {}) {
+  if (typeof options.fingerprint === 'string') return options.fingerprint;
+  const patches = options.patches ?? await launcherPatchPaths(options);
+  const stamps = await Promise.all([
+    fileStampMs(join(profilesWebDir(), 'package.json')),
+    fileStampMs(join(profilesWebDir(), 'cordis.patch.yml')),
+    fileStampMs(join(dshHome(), 'runtime', 'node_modules', '@deepseek-ai', 'dsh', 'package.json')),
+    ...patches.map(patch => fileStampMs(patch)),
+  ]);
+  return JSON.stringify(stamps);
+}
+
+/** @type {{fingerprint:string, rows:Map<string,string[]>, dumpOk:boolean}|null} */
+let rowIdCache = null;
+
+/** 安装/卸载/更新后行 id 可能变化；指纹通常能覆盖，显式清缓存留给需要强刷的调用方。 */
+export function invalidatePluginRowCache() {
+  rowIdCache = null;
+}
+
+/**
+ * 发现每个 bundle 的顶层行 id（带进程内缓存）。
+ * @param {{force?:boolean, dump?:string, patches?:string[], argv?:string[], modulesDir?:string, fingerprint?:string}} [options]
+ * @returns {Promise<Map<string,string[]>>}
+ */
+export async function discoverPluginRowIds(options = {}) {
+  const fingerprint = await discoveryFingerprint(options);
+  if (options.force !== true && rowIdCache && rowIdCache.fingerprint === fingerprint) return rowIdCache.rows;
+
+  let dumpOk = typeof options.dump === 'string';
+  let dump = options.dump;
+  if (typeof dump !== 'string') {
+    try {
+      dump = await dumpProfileConfig(options);
+      dumpOk = true;
+    } catch {
+      dump = '';
+      dumpOk = false;
+    }
+  }
+
+  const rows = parseDumpConfigRows(dump);
+  const candidates = new Set();
+  for (const row of rows) {
+    if (row.bundle && !row.bundle.startsWith('/')) candidates.add(row.bundle);
+    if (row.name) candidates.add(row.name);
+  }
+  const map = new Map();
+  for (const bundle of candidates) {
+    const ids = rowIdsForBundleFromRows(bundle, rows);
+    if (ids.length > 0) map.set(bundle, ids);
+  }
+  rowIdCache = { fingerprint, rows: map, dumpOk };
+  return map;
+}
+
+/** 读插件自己的 cordis.patch.yml（dump 不可用时的回退；按 name 认领，不按目录位置猜）。 */
+async function declaredRowsForBundle(bundle, options = {}) {
+  const modulesDir = options.modulesDir ?? profilesWebModules();
+  const patch = join(modulesDir, ...bundle.split('/'), 'cordis.patch.yml');
+  let text;
+  try { text = await fs.readFile(patch, 'utf8'); } catch { return []; }
+  return declaredRowsFromPatchYaml(text);
+}
+
+/** 结合 dump 结果与插件 patch 声明解析一个 bundle 的行 id（dump 里没有才回退）。 */
+async function rowsForBundleFromCache(bundle, cache, options = {}) {
+  const fromDump = cache.rows.get(bundle) ?? [];
+  if (fromDump.length > 0) return fromDump;
+  // dump 成功但树里没有这个 bundle：说明它当前没有被装配，不能拿 patch 声明
+  // 里「本该插入」的行去停用——那会把不存在的东西写进 overlay。
+  if (cache.dumpOk === true) return [];
+  return rowIdsFromDeclaredRows(bundle, await declaredRowsForBundle(bundle, options));
+}
+
+/**
+ * 一个 bundle 当前的顶层行 id（供 set/describe 使用）。
+ * @returns {Promise<string[]>}
+ */
+export async function pluginRowIds(bundle, options = {}) {
+  const name = normalizeDisabledBundle(bundle);
+  if (!name) return [];
+  if (options.rowsByBundle) {
+    const direct = typeof options.rowsByBundle.get === 'function' ? options.rowsByBundle.get(name) : options.rowsByBundle[name];
+    return normalizeRowIds(direct);
+  }
+  const cache = await cachedRowDiscovery(options);
+  return rowsForBundleFromCache(name, cache, options);
+}
+
+async function cachedRowDiscovery(options = {}) {
+  const fingerprint = await discoveryFingerprint(options);
+  if (options.force !== true && rowIdCache && rowIdCache.fingerprint === fingerprint) return rowIdCache;
+  await discoverPluginRowIds({ ...options, force: true });
+  return rowIdCache ?? { fingerprint, rows: new Map(), dumpOk: false };
+}
+
+/** 把状态文件读成经过校验的停用记录；缺失/畸形/含不可停用 bundle 的记录一律丢弃。 */
+export async function readDisabledState(options = {}) {
+  const file = options.stateFile ?? DISABLED_STATE_FILE();
+  const document = await readJsonQuiet(file);
+  const list = Array.isArray(document?.disabled) ? document.disabled : [];
+  const out = [];
+  const seen = new Set();
+  for (const entry of list) {
+    const bundle = normalizeDisabledBundle(entry?.bundle);
+    if (!bundle || seen.has(bundle) || UNDISABLEABLE_PLUGINS.has(bundle)) continue;
+    const rowIds = normalizeRowIds(entry?.rowIds);
+    if (rowIds.length === 0) continue;
+    seen.add(bundle);
+    out.push({ bundle, rowIds, disabledAt: typeof entry?.disabledAt === 'string' ? entry.disabledAt : null });
+  }
+  return out;
+}
+
+/** 原子写状态文件（版本 + 时间戳；人可读，也允许手工修）。 */
+async function writeDisabledState(entries, options = {}) {
+  const file = options.stateFile ?? DISABLED_STATE_FILE();
+  const disabled = (Array.isArray(entries) ? entries : [])
+    .map(entry => ({
+      bundle: normalizeDisabledBundle(entry?.bundle),
+      rowIds: normalizeRowIds(entry?.rowIds),
+      disabledAt: typeof entry?.disabledAt === 'string' ? entry.disabledAt : new Date().toISOString(),
+    }))
+    .filter(entry => entry.bundle && !UNDISABLEABLE_PLUGINS.has(entry.bundle) && entry.rowIds.length > 0);
+  const payload = { version: DISABLED_STATE_VERSION, updatedAt: new Date().toISOString(), disabled };
+  await writeTextAtomic(file, JSON.stringify(payload, null, 2) + '\n');
+}
+
+/** 与启动器一致的 overlay 文本（启动器侧才是权威渲染器；这里供接口预览与单测锁形状）。 */
+export function renderDisabledPatch(entries) {
+  const seen = new Set();
+  const lines = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const bundle = normalizeDisabledBundle(entry?.bundle);
+    if (!bundle || UNDISABLEABLE_PLUGINS.has(bundle)) continue;
+    for (const id of normalizeRowIds(entry?.rowIds)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      lines.push(`- id: ${id}\n  disabled: true\n`);
+    }
+  }
+  return lines.join('');
+}
+
+async function pluginInstalled(bundle, options = {}) {
+  const modulesDir = options.modulesDir ?? profilesWebModules();
+  return (await resolveModule(modulesDir, bundle)) !== null;
+}
+
+/**
+ * 停用 / 启用一个插件并落盘。服务端是最后一道闸：不可停用的 bundle、找不到
+ * 行 id 的 bundle 一律拒绝，绝不写一条禁不掉任何东西的覆盖。
+ *
+ * @param {string} bundle
+ * @param {boolean} disabled
+ * @param {{stateFile?:string, rowsByBundle?:Map<string,string[]>|Record<string,string[]>, modulesDir?:string, dump?:string, patches?:string[], fingerprint?:string, force?:boolean, skipInstalledCheck?:boolean}} [options]
+ * @returns {Promise<{ok:boolean,bundle?:string,disabled?:boolean,rowIds?:string[],restartRequired?:boolean,code?:string,error?:string}>}
+ */
+export async function setPluginDisabled(bundle, disabled, options = {}) {
+  const name = normalizeDisabledBundle(bundle);
+  if (!name) return { ok: false, code: 'bad-name', error: '缺少合法的插件名' };
+  const reason = undisableableReason(name);
+  if (reason) return { ok: false, code: 'protected', error: `${name} 不能停用：${reason}` };
+
+  const file = options.stateFile ?? DISABLED_STATE_FILE();
+  await fs.mkdir(dirname(file), { recursive: true, mode: 0o700 });
+  try {
+    return await withFileLock(file, async () => {
+      const state = await readDisabledState({ ...options, stateFile: file });
+      const existing = state.find(entry => entry.bundle === name);
+      if (disabled !== true) {
+        await writeDisabledState(state.filter(entry => entry.bundle !== name), { stateFile: file });
+        return { ok: true, bundle: name, disabled: false, rowIds: existing?.rowIds ?? [], restartRequired: true };
+      }
+      if (options.skipInstalledCheck !== true && !(await pluginInstalled(name, options))) {
+        return { ok: false, code: 'not-installed', error: `${name} 不在已安装插件里，无法停用` };
+      }
+      const rowIds = await pluginRowIds(name, options);
+      if (rowIds.length === 0) {
+        return {
+          ok: false,
+          code: 'row-not-found',
+          error: `没有从 dsh 配置里找到 ${name} 的行 id；请确认它当前随 dsh 一起装配（重启启动器后再试）`,
+        };
+      }
+      await writeDisabledState([
+        ...state.filter(entry => entry.bundle !== name),
+        { bundle: name, rowIds, disabledAt: new Date().toISOString() },
+      ], { stateFile: file });
+      return { ok: true, bundle: name, disabled: true, rowIds, restartRequired: true };
+    }, { waitMs: 15000 });
+  } catch (error) {
+    return { ok: false, code: 'io', error: `写入停用状态失败：${String(error?.message || error)}` };
+  }
+}
+
+/** 卸载/清理后清掉该插件的停用记录：覆盖层里留着不存在的行只有告警、没有意义。 */
+export async function removeDisabledBundle(bundle, options = {}) {
+  const name = normalizeDisabledBundle(bundle);
+  if (!name) return false;
+  const file = options.stateFile ?? DISABLED_STATE_FILE();
+  try {
+    await fs.mkdir(dirname(file), { recursive: true, mode: 0o700 });
+    return await withFileLock(file, async () => {
+      const state = await readDisabledState({ stateFile: file });
+      if (!state.some(entry => entry.bundle === name)) return false;
+      await writeDisabledState(state.filter(entry => entry.bundle !== name), { stateFile: file });
+      return true;
+    }, { waitMs: 5000 });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 已安装插件 + 停用状态 + 行 id 的合成视图，供 `GET /dsh-plugin-manager/disabled`。
+ * @param {{installed?:Array<object>, ...}} [options]
+ * @returns {Promise<{items:Array<{bundle:string,rowIds:string[],disabled:boolean,canDisable:boolean,reason:string|null}>}>}
+ */
+export async function describeDisabledPlugins(options = {}) {
+  const installed = Array.isArray(options.installed) ? options.installed : await listInstalledPlugins();
+  const state = await readDisabledState(options);
+  const stateByBundle = new Map(state.map(entry => [entry.bundle, entry]));
+  const cache = await cachedRowDiscovery(options);
+
+  const items = [];
+  for (const plugin of installed) {
+    const name = normalizeDisabledBundle(plugin?.name);
+    if (!name) continue;
+    const stateEntry = stateByBundle.get(name) ?? null;
+    const reason = undisableableReason(name);
+    let rowIds = stateEntry?.rowIds ?? [];
+    const discovered = await rowsForBundleFromCache(name, cache, options).catch(() => []);
+    if (discovered.length > 0) rowIds = discovered;
+    // 已停用但当前 dump 里找不到行（插件刚升级换了行 id、或 dump 不可用）时仍允许
+    // 「启用」——否则用户会被一条自己关不掉的记录卡住。只有「未停用且找不到行」
+    // 才禁用开关并给出原因。
+    const foundRows = rowIds.length > 0;
+    const canDisable = reason === null && (stateEntry !== null || foundRows);
+    items.push({
+      bundle: name,
+      rowIds,
+      disabled: stateEntry !== null,
+      canDisable,
+      reason: reason ?? (stateEntry === null && !foundRows
+        ? '没有从 dsh 配置里定位到这个插件的行 id，暂时无法停用'
+        : null),
+    });
+  }
+  return { items };
 }
 
 const dshCli = () => join(dshHome(), 'runtime', 'node_modules', '.bin', 'dsh');
@@ -1135,6 +1628,9 @@ export async function uninstallPlugin(name, command = pluginCommand) {
       }
     }
     const note = removedSources.length > 0 ? `${result.note}；已清理插件源码目录` : result.note;
+    // 停用记录跟着插件走：卸掉之后覆盖层里再留着它的行 id 只会得到一条
+    // 「entry not found」的启动告警，没有意义。
+    await removeDisabledBundle(name).catch(() => {});
     // 插件已从 node_modules 移除，但当前 dsh 进程仍在内存里加载着它（侧边栏
     // slot、事件监听都还在）。返回 needsRestart 让前端引导用户重启 dsh。
     return { ok: true, note, removedSources, needsRestart: true, verified: true };
@@ -3148,6 +3644,27 @@ export function apply(ctx) {
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/installed', handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
           try { json(res, 200, { items: await listInstalledPlugins() }); } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 每个已安装插件是否被用户停用、能否停用、以及停用会禁掉哪些行 id。
+        // `?refresh=1` 强制重新跑一次 dump-config（面板打开时用默认缓存即可）。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/disabled', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          try {
+            const url = new URL(req.url || '/', 'http://127.0.0.1');
+            const payload = await describeDisabledPlugins({ force: url.searchParams.get('refresh') === '1' });
+            json(res, 200, payload);
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 停用/启用：只改启动器下次启动读的 --patch 覆盖，不写 profile 文件。
+        // 服务端是最后一道闸（UI 置灰只是提示），不可停用的 bundle 在这里再次拒绝。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/set-disabled', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            if (typeof value?.disabled !== 'boolean') { json(res, 400, { error: '缺少 disabled 布尔值' }); return; }
+            const result = await setPluginDisabled(value.bundle, value.disabled);
+            json(res, result.ok ? 200 : 400, result);
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/marketplace', handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }

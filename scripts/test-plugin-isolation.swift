@@ -296,6 +296,151 @@ struct PluginIsolationTests {
         )
         check(support.decideRecovery(emptyInput) != .isolate(bundle: "@a/b", source: .bisect), "决策不会凭空发明插件名")
 
+        // MARK: - 用户停用（面板写入、启动器读取的 --patch overlay）
+
+        checkEqual(
+            support.bootArguments(port: 3080, basePatch: "/base.yml", isolationPatch: nil, disabledPatch: "/disabled.yml").joined(separator: " "),
+            "web --patch /base.yml --patch /disabled.yml --no-open --port 3080",
+            "用户停用 overlay 排在内置插件补丁之后"
+        )
+        checkEqual(
+            support.bootArguments(port: 3080, basePatch: "/base.yml", isolationPatch: "/iso.yml", disabledPatch: "/disabled.yml").joined(separator: " "),
+            "web --patch /base.yml --patch /iso.yml --patch /disabled.yml --no-open --port 3080",
+            "三个槽位都传时顺序固定：base → 崩溃隔离 → 用户停用（最后生效）"
+        )
+        checkEqual(
+            support.bootArguments(port: 3080, basePatch: "/base.yml", isolationPatch: nil, disabledPatch: nil).joined(separator: " "),
+            "web --patch /base.yml --no-open --port 3080",
+            "没有停用项时不改变现有启动命令"
+        )
+        checkEqual(
+            support.bootArguments(port: 3080, basePatch: "/base.yml", deckPatch: "/deck.yml", isolationPatch: "/iso.yml", disabledPatch: "/disabled.yml").joined(separator: " "),
+            "web --patch /base.yml --patch /deck.yml --patch /iso.yml --patch /disabled.yml --no-open --port 3080",
+            "侧栏 Deck 接管补丁排在 base 之后、崩溃隔离/用户停用之前"
+        )
+
+        checkEqual(
+            support.undisableableReason(for: "@deepseek-ai/dsh-base") ?? "nil",
+            "dsh 核心层，停用后 Harness 无法启动",
+            "core base 不可停用"
+        )
+        checkEqual(
+            support.undisableableReason(for: "@deepseek-ai/dsh-web-app") ?? "nil",
+            "dsh Web 界面层，停用后没有可用的 Harness 界面",
+            "core web-app 不可停用"
+        )
+        checkEqual(
+            support.undisableableReason(for: "dsh-plugin-manager") ?? "nil",
+            "插件管理器自身，停用后无法从界面恢复",
+            "插件管理器自身不可停用"
+        )
+        check(support.undisableableReason(for: "dsh-archive-manager") == nil, "内置归档插件允许用户主动停用")
+        check(support.undisableableReason(for: "dsh-session-notify") == nil, "内置通知插件允许用户主动停用")
+
+        let contextPlugin = support.DisabledPlugin(bundle: "dsh-context", rowIds: ["dsh-context"], disabledAt: "2026-11-11T00:00:00Z")
+        let archivePlugin = support.DisabledPlugin(bundle: "dsh-archive-manager", rowIds: ["dsh-archive-manager"], disabledAt: "2026-11-11T00:00:00Z")
+        let basePlugin = support.DisabledPlugin(bundle: "@deepseek-ai/dsh-base", rowIds: ["session"], disabledAt: "2026-11-11T00:00:00Z")
+        let managerPlugin = support.DisabledPlugin(bundle: "dsh-plugin-manager", rowIds: ["dsh-plugin-manager"], disabledAt: "2026-11-11T00:00:00Z")
+        let crashIsolated = support.IsolatedPlugin(bundle: "@a/b", rowIds: ["row-x", "dsh-context", "bad\ninjected"], reason: "r", isolatedAt: "t")
+
+        checkEqual(
+            support.renderCombinedDisabledPatch(isolation: [], disabled: [contextPlugin, archivePlugin]),
+            "- id: dsh-context\n  disabled: true\n- id: dsh-archive-manager\n  disabled: true\n",
+            "用户停用正常渲染；内置插件（非 core/管理器）允许停用"
+        )
+        checkEqual(
+            support.renderCombinedDisabledPatch(isolation: [], disabled: [basePlugin, managerPlugin]),
+            "",
+            "不可停用的 core/管理器即使状态文件里有记录也不渲染"
+        )
+        checkEqual(
+            support.renderCombinedDisabledPatch(isolation: [crashIsolated], disabled: [contextPlugin]),
+            "- id: dsh-context\n  disabled: true\n- id: row-x\n  disabled: true\n",
+            "崩溃隔离与用户停用合并、按行 id 去重，且不安全 id 被过滤"
+        )
+        check(
+            support.renderCombinedDisabledPatch(isolation: [crashIsolated], disabled: [contextPlugin]).hasPrefix("- id: dsh-context\n"),
+            "用户停用的行排在崩溃隔离之前（冲突时用户意图优先）"
+        )
+        checkEqual(support.renderCombinedDisabledPatch(isolation: [], disabled: []), "", "没有任何条目时渲染空串")
+
+        let deckPlugin = support.DisabledPlugin(bundle: "dsh-sidebar-deck", rowIds: ["dsh-sidebar-deck"], disabledAt: "2026-11-11T00:00:00Z")
+        checkEqual(
+            support.renderCombinedDisabledPatch(isolation: [], disabled: [deckPlugin]),
+            "- id: dsh-sidebar-deck\n  disabled: true\n- id: ui-sidebar\n  disabled: false\n",
+            "停用侧栏 Deck：禁用 Deck 行，并把官方侧栏行重新启用"
+        )
+        check(
+            support.renderCombinedDisabledPatch(isolation: [], disabled: [deckPlugin])
+                .hasSuffix("- id: ui-sidebar\n  disabled: false\n"),
+            "重新启用条目追加在最后（覆盖层后应用、优先级最高）"
+        )
+        check(
+            !support.renderCombinedDisabledPatch(isolation: [], disabled: [contextPlugin]).contains("ui-sidebar"),
+            "没停用 Deck 时不碰官方侧栏行"
+        )
+        check(support.replacementRows["dsh-sidebar-deck"] == ["ui-sidebar"], "Deck 的接管行关系固定")
+
+        check(support.renderSidebarDeckPatch().contains("- id: ui-sidebar\n  disabled: true"), "Deck 接管补丁停用官方侧栏")
+        check(support.renderSidebarDeckPatch().contains("- id: dsh-sidebar-deck\n"), "Deck 接管补丁插入自己")
+        check(support.isSidebarDeckDisabled(in: [deckPlugin]), "状态里能识别 Deck 被用户停用")
+        check(!support.isSidebarDeckDisabled(in: [contextPlugin]), "其它插件停用不影响 Deck 判定")
+        let deckPatchDir = FileManager.default.temporaryDirectory.appendingPathComponent("dhl-deck-\\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: deckPatchDir) }
+        if let deckPatchURL = support.stagedSidebarDeckPatchFile(directory: deckPatchDir) {
+            let text = (try? String(contentsOf: deckPatchURL, encoding: .utf8)) ?? ""
+            checkEqual(text, support.renderSidebarDeckPatch(), "Deck 接管补丁能落盘且内容一致")
+        } else {
+            check(false, "Deck 接管补丁应能写入临时目录")
+        }
+
+        let disabledRoot = FileManager.default.temporaryDirectory.appendingPathComponent("dhl-disabled-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: disabledRoot) }
+        try? FileManager.default.createDirectory(at: disabledRoot, withIntermediateDirectories: true)
+        let disabledStateURL = support.disabledStateURL(home: disabledRoot)
+        check(disabledStateURL.path.hasSuffix("/plugin-manager/disabled.json"), "状态文件落点在 $DSH_HOME/plugin-manager/disabled.json")
+        check(support.disabledPatchDirectory(home: disabledRoot).lastPathComponent == "plugin-manager", "overlay 与状态文件在同一目录")
+
+        check(!support.isSafeBundleName("../evil"), "bundle 名拒绝路径穿越")
+        check(support.isSafeBundleName("@scope/name"), "正常 scoped 包名放行")
+        check(support.readDisabledState(url: disabledStateURL).isEmpty, "状态文件不存在时按没有停用处理")
+        try? FileManager.default.createDirectory(at: support.disabledPatchDirectory(home: disabledRoot), withIntermediateDirectories: true)
+        try? """
+        {
+          "version": 1,
+          "updatedAt": "2026-11-11T00:00:00Z",
+          "disabled": [
+            { "bundle": "dsh-context", "rowIds": ["dsh-context", "bad\\ninjected"], "disabledAt": "t" },
+            { "bundle": "dsh-plugin-manager", "rowIds": ["dsh-plugin-manager"], "disabledAt": "t" },
+            { "bundle": "@deepseek-ai/dsh-base", "rowIds": ["session"], "disabledAt": "t" },
+            { "bundle": "../evil", "rowIds": ["x"], "disabledAt": "t" },
+            { "bundle": "empty-rows", "rowIds": [], "disabledAt": "t" },
+            { "bundle": "dsh-context", "rowIds": ["duplicate"], "disabledAt": "t" }
+          ]
+        }
+        """.write(to: disabledStateURL, atomically: true, encoding: .utf8)
+        let readBack = support.readDisabledState(url: disabledStateURL)
+        checkEqual(readBack.count, 1, "只保留合法、去重、含安全行 id 的记录，实际 \(readBack.count) 条")
+        checkEqual(readBack.first?.bundle ?? "nil", "dsh-context", "保留合法的 bundle")
+        checkEqual(readBack.first?.rowIds.joined(separator: ",") ?? "nil", "dsh-context", "不安全行 id 被过滤")
+
+        try? "[not json".write(to: disabledStateURL, atomically: true, encoding: .utf8)
+        check(support.readDisabledState(url: disabledStateURL).isEmpty, "畸形 JSON 不能让启动器变成故障源")
+
+        try? FileManager.default.removeItem(at: disabledStateURL)
+        check(support.stagedDisabledPatchFile(disabled: [], directory: support.disabledPatchDirectory(home: disabledRoot)) == nil, "没有停用项时不产出 overlay")
+        let stagedDisabled = support.stagedDisabledPatchFile(disabled: [contextPlugin], directory: support.disabledPatchDirectory(home: disabledRoot))
+        checkEqual(stagedDisabled?.lastPathComponent ?? "nil", support.disabledPatchFileName, "有停用项时产出 overlay 文件")
+        checkEqual(
+            (stagedDisabled.flatMap { try? String(contentsOf: $0, encoding: .utf8) }) ?? "",
+            "- id: dsh-context\n  disabled: true\n",
+            "overlay 是可被 dsh 解析的顶格 YAML 列表"
+        )
+        check(
+            support.stagedDisabledPatchFile(disabled: [contextPlugin], directory: URL(fileURLWithPath: "/System/Library/CoreFinder/x")) == nil,
+            "写不进去时返回 nil（宁可不停用，也不递半截文件给 dsh）"
+        )
+
         // MARK: - 启动前静态预检
 
         let fm = FileManager.default

@@ -72,6 +72,20 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-row-title{font-size:14px;font-weight:600;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-pm-row-meta{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-pm-badge{border:1px solid var(--dsw-alias-border-l3);border-radius:4px;color:var(--dsw-alias-label-secondary);flex:none;font-size:11px;line-height:16px;padding:1px 6px}
+.dsh-pm-badge-disabled{border-color:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-state-warn-primary)}
+/* 停用/启用开关：轨道 + 圆点用纯 CSS，避免再引一套组件库；禁用态由 title 说明原因 */
+.dsh-pm-switch{align-items:center;cursor:pointer;display:flex;flex:none;gap:6px;user-select:none}
+.dsh-pm-switch-input{height:1px;margin:-1px;opacity:0;overflow:hidden;position:absolute;width:1px}
+.dsh-pm-switch-track{background:var(--dsw-alias-bg-module-platform);border:1px solid var(--dsw-alias-border-l3);border-radius:999px;box-sizing:border-box;display:inline-block;flex:none;height:18px;position:relative;transition:background .15s ease,border-color .15s ease;width:32px}
+.dsh-pm-switch-track:after{background:var(--dsw-alias-label-primary-foreground);border-radius:50%;box-shadow:0 1px 2px rgba(0,0,0,.28);content:"";height:14px;left:1px;position:absolute;top:1px;transition:transform .15s ease;width:14px}
+.dsh-pm-switch-input:checked + .dsh-pm-switch-track{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}
+.dsh-pm-switch-input:checked + .dsh-pm-switch-track:after{transform:translateX(14px)}
+.dsh-pm-switch-input:focus-visible + .dsh-pm-switch-track{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
+.dsh-pm-switch-input:disabled + .dsh-pm-switch-track{cursor:not-allowed;opacity:.45}
+.dsh-pm-switch-text{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;white-space:nowrap}
+.dsh-pm-switch:has(.dsh-pm-switch-input:disabled){cursor:not-allowed}
+.dsh-pm-row-off .dsh-pm-row-title{opacity:.62}
+.dsh-pm-row-off .dsh-pm-row-meta{opacity:.82}
 .dsh-pm-row-action{background:transparent;border:0;border-radius:6px;color:var(--dsw-alias-state-error-primary);cursor:pointer;font:inherit;font-size:12px;line-height:18px;padding:5px 10px}
 .dsh-pm-row-action:hover{background:rgba(220,50,47,.1)}
 .dsh-pm-row-action:disabled{cursor:not-allowed;opacity:.5}
@@ -667,8 +681,11 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const [confirmUninstall, setConfirmUninstall] = React.useState(null)
     const [selected, setSelected] = React.useState(new Set())
     const [confirmBatch, setConfirmBatch] = React.useState(false)
-    // 卸载成功后暂存插件名，非 null 时弹「是否立即重启 dsh」确认框。
+    // 重启确认框：{ title, copy }。卸载/停用/启用共用一个确认流程。
     const [restartPrompt, setRestartPrompt] = React.useState(null)
+    // 插件停用状态：bundle -> { rowIds, disabled, canDisable, reason }。
+    // 由 GET /dsh-plugin-manager/disabled 提供；接口失败时开关保持禁用（不猜状态）。
+    const [disabledPlugins, setDisabledPlugins] = React.useState({})
     // 「更新内容」弹窗：{name, version, loading, data}
     const [notes, setNotes] = React.useState(null)
     const [error, setError] = React.useState('')
@@ -692,7 +709,26 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const autoRefreshed = React.useRef(false)
     const loadInstalled = () => fetch('/dsh-plugin-manager/installed', { cache: 'no-store' })
       .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); setInstalled(v.items || []); setError('') })
+      .then(() => loadDisabled())
       .catch(e => setError(String(e.message || e)))
+    /// 停用状态与已安装列表分开读：接口失败时只让开关不可用，不拖垮整个面板。
+    const loadDisabled = () => fetch('/dsh-plugin-manager/disabled', { cache: 'no-store' })
+      .then(r => r.json()).then(v => {
+        if (v.error) throw Error(v.error)
+        const map = {}
+        for (const item of (Array.isArray(v.items) ? v.items : [])) {
+          if (!item || typeof item.bundle !== 'string') continue
+          map[item.bundle] = {
+            bundle: item.bundle,
+            rowIds: Array.isArray(item.rowIds) ? item.rowIds : [],
+            disabled: item.disabled === true,
+            canDisable: item.canDisable === true,
+            reason: typeof item.reason === 'string' && item.reason ? item.reason : null,
+          }
+        }
+        setDisabledPlugins(map)
+      })
+      .catch(e => { if (aliveRef.current) toast('error', `读取插件停用状态失败：${String(e.message || e)}`) })
     const loadMarket = () => fetch('/dsh-plugin-manager/marketplace', { cache: 'no-store' })
       .then(r => r.json()).then(v => {
         if (v.error) throw Error(v.error)
@@ -706,6 +742,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         if (!autoRefreshed.current) { autoRefreshed.current = true; return refreshMarket() }
         setError(String(e.message || e)); setMarket(false)
       })
+    // loadInstalled 成功后顺带刷新停用状态，避免打开面板时重复请求 /disabled。
     React.useEffect(() => { loadInstalled() }, [])
     React.useEffect(() => { if (tab === 'market') loadMarket() }, [tab])
     // 打开面板立刻读一次更新缓存；服务端若正在后台刷新（首轮检测），就等它跑完再显示。
@@ -1040,7 +1077,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         .then(r => r.json()).then(v => {
           if (v.error) throw Error(v.error)
           if (!v.ok) throw Error(v.error || '卸载失败')
-          if (v.needsRestart) setRestartPrompt(name)
+          if (v.needsRestart) setRestartPrompt({ title: `已卸载 ${name}`, copy: '侧边栏入口会在重启 dsh 后消失。是否立即重启？' })
           else toast('success', `已卸载 ${name}`)
           return loadInstalled().then(reloadUpdatesAfterUninstall)
         })
@@ -1055,6 +1092,57 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         toast('info', '正在重启 Deepseek Harness，页面即将自动刷新…')
         setBusy('')
       }, 400)
+    }
+
+    /// 停用/启用一个插件：写的是启动器的 --patch 覆盖层，重启 dsh 后生效。
+    /// 先乐观切换开关（用户点了就该有反馈），失败再回滚原状态并 toast——
+    /// 服务端才是最后一道闸（不可停用/找不到行 id 的插件会在那里被拒）。
+    const togglePluginDisabled = (item, nextDisabled) => {
+      if (!item || !item.name || item.broken) return
+      const name = item.name
+      const previous = disabledPlugins[name] || null
+      if (busy !== '' || previous && previous.canDisable === false) return
+      setDisabledPlugins(current => ({
+        ...current,
+        [name]: {
+          bundle: name,
+          rowIds: (previous && previous.rowIds) || [],
+          disabled: nextDisabled,
+          canDisable: true,
+          reason: null,
+        },
+      }))
+      setBusy('disable-' + name)
+      fetch('/dsh-plugin-manager/set-disabled', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ bundle: name, disabled: nextDisabled }) })
+        .then(r => r.json()).then(v => {
+          if (v.error) throw Error(v.error)
+          if (!v.ok) throw Error(v.error || '设置失败')
+          setDisabledPlugins(current => ({
+            ...current,
+            [name]: {
+              bundle: name,
+              rowIds: Array.isArray(v.rowIds) ? v.rowIds : ((current[name] && current[name].rowIds) || []),
+              disabled: v.disabled === true,
+              canDisable: true,
+              reason: null,
+            },
+          }))
+          if (!aliveRef.current) return
+          const verb = nextDisabled ? '停用' : '启用'
+          toast('info', `已${verb} ${name}，重启 dsh 后生效`)
+          setRestartPrompt({ title: `已${verb} ${name}`, copy: '重启 dsh 后生效。是否立即重启？' })
+        })
+        .catch(e => {
+          // 回到原状态：没读到过就删掉，本来就有就恢复。
+          setDisabledPlugins(current => {
+            const next = { ...current }
+            if (previous) next[name] = previous
+            else delete next[name]
+            return next
+          })
+          if (aliveRef.current) toast('error', `${nextDisabled ? '停用' : '启用'} ${name} 失败：${String(e.message || e)}`)
+        })
+        .finally(() => setBusy(''))
     }
 
     /// 忽略一批更新：只忽略传进去的版本，远端出了更高的版本会重新提醒。服务端的忽略
@@ -1189,13 +1277,13 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           const failed = (v.results || []).filter(r => !r.ok)
           if (failed.length === 0) {
             toast('success', `已卸载 ${selectedNames.length} 个插件`)
-            setRestartPrompt(`${selectedNames.length} 个插件`)
+            setRestartPrompt({ title: `已卸载 ${selectedNames.length} 个插件`, copy: '侧边栏入口会在重启 dsh 后消失。是否立即重启？' })
           } else {
             toast('error', `卸载失败：${failed.map(f => f.name).join('、')}`)
             const done = selectedNames.filter(name => !failed.some(f => f.name === name))
             if (done.length > 0) {
               toast('success', `已卸载 ${done.length} 个插件`)
-              setRestartPrompt(`${done.length} 个插件`)
+              setRestartPrompt({ title: `已卸载 ${done.length} 个插件`, copy: '侧边栏入口会在重启 dsh 后消失。是否立即重启？' })
             }
           }
           setSelected(new Set())
@@ -1248,6 +1336,32 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
     const installedRows = installed.map((item, index) => {
       const selectable = !item.broken && item.source !== 'bundled'
+      // 停用状态来自服务端（GET /disabled）；读不到时开关置灰，不猜测。
+      const disableInfo = disabledPlugins[item.name] || null
+      const pluginOff = Boolean(disableInfo && disableInfo.disabled)
+      const switchPending = busy === 'disable-' + item.name
+      const switchDisabled = !disableInfo || !disableInfo.canDisable || switchPending || busyOther || batchRunning
+      const switchTitle = !disableInfo ? '停用状态读取失败，重新打开面板再试'
+        : !disableInfo.canDisable ? (disableInfo.reason || '这个插件不支持停用')
+        : pluginOff ? '启用这个插件（重启 dsh 后生效）'
+        : '停用这个插件（重启 dsh 后生效）'
+      // 开关旁边的常驻状态文字：禁用原因只写在 title 里不够，旁边直接说清楚。
+      const switchText = switchPending ? '切换中…'
+        : !disableInfo || !disableInfo.canDisable ? '不可停用'
+        : pluginOff ? '已停用' : '已启用'
+      const switchNode = item.broken ? null : h('label', { className: 'dsh-pm-switch', title: switchTitle },
+        h('input', {
+          type: 'checkbox',
+          role: 'switch',
+          className: 'dsh-pm-switch-input',
+          checked: pluginOff,
+          disabled: switchDisabled,
+          title: switchTitle,
+          'aria-label': (pluginOff ? '启用 ' : '停用 ') + item.name,
+          onChange: () => togglePluginDisabled(item, !pluginOff),
+        }),
+        h('span', { className: 'dsh-pm-switch-track', 'aria-hidden': true }),
+        h('span', { className: 'dsh-pm-switch-text' }, switchText))
       // 更新检测结果按插件名对齐已安装列表；接口不可用时 entry 恒为 null，整行退回原样。
       const entry = updateEntryFor(updates, item.name)
       const updatable = Boolean(entry && entry.status === 'update-available')
@@ -1258,7 +1372,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       const note = progressNote || updateStatusNote(entry)
       const updating = busy === 'update-' + item.name || (progressActive && progressCurrent === item.name)
       return h('div', {
-        className: `dsh-pm-row${selectable ? ' dsh-pm-row-selectable' : ''}`,
+        className: `dsh-pm-row${selectable ? ' dsh-pm-row-selectable' : ''}${pluginOff ? ' dsh-pm-row-off' : ''}`,
         key: item.name,
         ref: node => { if (node) rowsRef.current.set(item.name, node); else rowsRef.current.delete(item.name) },
         onClick: event => onRowClick(event, index),
@@ -1302,7 +1416,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
                 title: ignored ? '恢复这个版本的更新提醒' : `不再提醒 ${item.name} 的 v${entry.latestVersion}（远端出更高版本时会再提醒）`,
               }, ignored ? '取消忽略' : '忽略')
             : null),
+        switchNode,
         item.source === 'bundled' ? h('span', { className: 'dsh-pm-badge' }, '内置') : null,
+        pluginOff ? h('span', { className: 'dsh-pm-badge dsh-pm-badge-disabled' }, '已停用') : null,
         item.broken ? h('span', { className: 'dsh-pm-badge', style: { borderColor: 'var(--dsw-alias-state-error-primary)', color: 'var(--dsw-alias-state-error-primary)' } }, '损坏') : null,
         item.broken
           ? h('button', { className: 'dsh-pm-row-action', disabled: busy === 'cleanup-' + item.name || batchRunning || busyOther, onClick: () => cleanupBroken(item), title: batchRunning ? '批量更新进行中，等它结束后再清理' : '清理损坏的安装残留' }, busy === 'cleanup-' + item.name ? '清理中…' : '清理')
@@ -1510,8 +1626,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
               h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setConfirmBatch(false), disabled: busy === 'uninstall-many' }, '取消'),
               h('button', { className: 'dsh-pm-confirm-danger', onClick: uninstallManyGo, disabled: busy === 'uninstall-many' }, busy === 'uninstall-many' ? '卸载中…' : '确认卸载'))),
           restartPrompt && h('div', { className: 'dsh-pm-confirm' },
-            h('div', { className: 'dsh-pm-confirm-title' }, `已卸载 ${restartPrompt}`),
-            h('div', { className: 'dsh-pm-confirm-copy' }, '侧边栏入口会在重启 dsh 后消失。是否立即重启？'),
+            h('div', { className: 'dsh-pm-confirm-title' }, restartPrompt.title),
+            h('div', { className: 'dsh-pm-confirm-copy' }, restartPrompt.copy),
             h('div', { className: 'dsh-pm-confirm-actions' },
               h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setRestartPrompt(null) }, '稍后'),
               h('button', { className: 'dsh-pm-confirm-primary', onClick: restartNow, disabled: busy === 'restart' }, busy === 'restart' ? '重启中…' : '立即重启'))),
@@ -1601,24 +1717,37 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     ensureStyles()
     const openPanel = mountPanel(ctx)
 
+    // 侧栏图标只负责“选中面板”；真正的页面必须注册到 main slot。
+    // 旧版 DSH 的 sidebar.panellist 会直接用组件渲染页面，新版只渲染图标，
+    // 不注册 main 时点击图标会 silent no-op（本次用户报的“点不开”）。
+    ctx.slots.inject('main', () => ctx.slots.register({
+      name: 'main', key: NS, locale: NS,
+    }, function PluginManagerMain() {
+      return h(PluginManagerPage, {
+        wide: true,
+        t: (k, v) => (v && v.name ? k + ' ' + v.name : k),
+        onClose: () => ctx.layout.selectPanel(null),
+      })
+    }))
+
     // Registered in dsh's own sidebar panel list, so the entry shows up in
     // the sidebar and in dsh's "更多" menu — no extra footer row, which is
     // what was squeezing the workspace list.
     ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
       name: 'sidebar.panellist', id: NS, order: 100, label: '插件管理',
-    }, function PluginManagerEntry(props) {
-      if (props && props.size) {
-        return h('span', { className: 'dsh-pm-trigger-icon', 'aria-hidden': true })
-      }
-      return h(PluginManagerPage, { wide: true, t: (k, v) => (v && v.name ? k + ' ' + v.name : k), onClose: () => { if (openPanel) openPanel() } })
+    }, function PluginManagerEntry() {
+      return h('span', { className: 'dsh-pm-trigger-icon', 'aria-hidden': true })
     }))
   }
 
   // createToastStore / createUpdatesStore 与更新检测的纯函数仅为单测导出（vm 加载后可取用），
   // 宿主只消费 inject/apply。
   return {
-    inject: ['slots', 'locale'],
+    inject: ['slots', 'locale', 'layout'],
     apply,
+    // 渲染冒烟需要直接挂载侧边栏入口（角标/打开面板的行为只在这个组件里）；
+    // 宿主只消费 inject/apply，导出不改变运行时契约。
+    PluginTrigger,
     createToastStore,
     createUpdatesStore,
     updatesAvailableCount,

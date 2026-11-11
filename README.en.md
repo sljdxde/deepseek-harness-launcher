@@ -12,7 +12,20 @@ The app and menu-bar icons are derived from the official `deepseek-harness-deskt
 
 `@deepseek-ai/dsh` is the upstream Harness runtime. It can be used directly from the command line, and the upstream project also provides `deepseek-harness-desktop`, a Tauri 2 desktop shell.
 
-Deepseek Harness Launcher is a third, macOS-only option: a native Swift/AppKit app that hosts the Harness UI in an embedded `WKWebView` window (the default UI, with a browser fallback in Settings). It is not an Electron or Tauri shell, does not bundle Node, and does not manage multiple dsh runtime versions; it launches the dsh runtime already installed on the host and injects bundled plugins such as the archive manager, plugin manager, and session notifications. It does not replace the Harness runtime.
+Deepseek Harness Launcher is a third, lightweight option: on macOS it is a native Swift/AppKit app that hosts the Harness UI in an embedded `WKWebView` window (the default UI, with a browser fallback in Settings); on Windows it is a Go + Wails tray app, with feature parity on both platforms. It is not a full Electron or Tauri shell: it launches the dsh runtime already installed on the host and injects bundled plugins such as the archive manager, plugin manager, and session notifications. It does not replace the Harness runtime.
+
+The only differences between the two platforms are how the system mechanisms are implemented, not which features exist:
+
+| Capability | macOS | Windows |
+|---|---|---|
+| Resident entry | Menu-bar status item + Dock icon | Tray icon + a **Harness main window** that can be pinned to the taskbar |
+| Opening the UI | Menu-bar menu "Open" / global ⌃⌥D | **Click the taskbar button to restore the Harness main window, click again to minimize** (native Windows behavior); click/right-click the tray icon for the launcher panel (Sessions / Updates / Settings tabs) |
+| dsh page | Built-in `WKWebView` window (can fall back to the system browser) | dsh page embedded in the launcher's own window (same injected plugins) |
+| Launch at login | `LaunchAgent` | Registry `HKCU\...\Run` |
+| Self update | Download the DMG, replace the .app | Download the exe, replace it and restart |
+| Completion reminders | Red unread badge in the menu bar | Red unread badge on the tray/taskbar + Windows Toast notifications |
+| Node runtime | Uses the system node/npm | **Bundled portable Node (embedded in the exe)** (no install needed, or fall back to the system node) |
+| Installation | Double-click the installer inside the DMG | **The exe is the installer**: double-click to install into `%LOCALAPPDATA%`, with Control Panel uninstall |
 
 ---
 
@@ -31,15 +44,15 @@ Deepseek Harness Launcher is a third, macOS-only option: a native Swift/AppKit a
 | 9 | **Live state and logs** | The current port is shown in the menu. stdout, stderr, and lifecycle records are written to `~/Library/Logs/Deepseek Harness Launcher/dhl.log`. |
 | 10 | **Global quick summon** | Press `Control-Option-D` (record a custom combination in Settings) from any app to open and bring forward the built-in Harness window; dsh is started first if needed. The default path has no browser instance, AppleScript, or tab matching, and never opens extra tabs or windows. Browser fallback mode keeps the original tab-reuse and degradation logic (the macOS multi-instance addressing limit is described under "Browser fallback mode"). |
 | 11 | **Scheduled update checks (dsh + launcher)** | A background timer — always on, one round every 6 hours by default, the first 8 seconds after launch — checks npm for a newer `@deepseek-ai/dsh` and this repository's Releases for a newer launcher, without blocking startup. When something is available the menu row says so and the menu-bar icon gains a blue up-arrow badge, so you see it without opening the menu. |
-| 12 | **Built-in plugin manager** | Adds a Plugin Manager entry to the Harness Web sidebar with Installed and Marketplace pages: view/uninstall installed plugins, update them to the latest version, or **ignore one version** (the badge stops nagging; a higher remote version brings it back), and browse a marketplace built from two sources: the community `awesome-dsh-plugin` list and **DeepSeek's official plugins** (npm `@deepseek-ai` packages that declare `dsh.bundle`, pinned first in the category list; DeepSeek maintains no third-party list repo and ships no index source), with categories, search, sort by stars/downloads and one-click install. Before updating, the row's "更新内容" action shows that version's GitHub Release notes or the matching CHANGELOG section; after an update only that plugin's cached check result is patched, so other plugins keep their update markers and the sidebar badge. Install/uninstall run through `dsh plugin --profile web`, bootstrapping pnpm via corepack when missing. |
+| 12 | **Built-in plugin manager** | Adds a Plugin Manager entry to the Harness Web sidebar with Installed and Marketplace pages: view/uninstall installed plugins, update them to the latest version, or **ignore one version** (the badge stops nagging; a higher remote version brings it back), and browse a marketplace built from two sources: the community `awesome-dsh-plugin` list and **DeepSeek's official plugins** (npm `@deepseek-ai` packages that declare `dsh.bundle`, pinned first in the category list; DeepSeek maintains no third-party list repo and ships no index source), with categories, search, sort by stars/downloads and one-click install. Before updating, the row's "更新内容" action shows that version's GitHub Release notes or the matching CHANGELOG section; after an update only that plugin's cached check result is patched, so other plugins keep their update markers and the sidebar badge. Install/uninstall run through `dsh plugin --profile web`, bootstrapping pnpm via corepack when missing. Every plugin row has a **Disable / Enable** switch: disabling writes that plugin's rows in the dsh plugin tree into the launcher's `--patch` overlay (`disabled: true`) and takes effect after dsh restarts; enabling removes that overlay. Bundled plugins can be disabled too (they still cannot be uninstalled), but `@deepseek-ai/dsh-base`, `@deepseek-ai/dsh-web-app`, and the plugin manager itself cannot be disabled — their switches are greyed out with an explanation. |
 | 13 | **Session-completion notifications** (menu rows are labelled with the **workspace name**, resolved from the session id via `~/.dsh/storages/workspace.json`, falling back to the session title and then a short id; clicking one row marks only that row read and jumps to its session/workspace while the others stay clickable; `清除完成提醒` still clears everything) | A bundled server plugin watches root-session `turn/end` events (the same approach as the community dsh-notify plugin, but without OS popups). When a turn finishes, both the menu-bar icon and the Dock icon gain a Foxmail-style red unread count (**counted per session**: a session that ends several turns still counts once) and the menu lists recent completions/errors (time · title · outcome); clicking an entry brings the built-in Harness window forward and switches it to that session (there is no browser-tab selection step), then clears that entry's unread mark; clear everything with one click. **Interrupted turns and queued messages do not raise the badge**: a turn cancelled by the user (`reason.kind === 'user'`, which is what a queued/interjected message leaves behind) is not a completion, and every `turn/start` posts a `resumed` record that retracts that session's unread reminder — so a session that runs again right after finishing never shows as "finished". **Seeing it counts as reading it**: having that session open in the visible, focused Harness page (the built-in window, or a tab in browser fallback mode) also retracts its reminder (the injected client piggybacks "which session am I showing" on its 750 ms poll; the plugin posts a `viewed` record only when that target changes, and a turn that ends in front of the user is followed by one immediately), so the badge drops within one poll cycle. A background or unfocused page never reports, so it cannot pin other sessions as read. |
 | 14 | **Automatic recovery from startup failures (removed)** | The launcher no longer disables plugins, bisects, or falls back to safe mode when dsh fails to start; it reports the failure as-is and leaves the profile's dependencies and bundle list untouched. |
 
 **Scope and trade-offs**
 
-- macOS only; Windows and Linux are not supported.
+- macOS and Windows are supported; Linux is not.
 - The built-in window only hosts the Harness page (a loopback host and the current port): external and documentation links go to the system browser, and it is not a general-purpose browser with an address bar. Turning off the built-in-window switch restores the complete browser path (fallback mode).
-- Node and npm must already be usable on the host. Deepseek Harness Launcher does not manage multiple dsh runtime versions.
+- On macOS, Node and npm must already be usable on the host; the Windows build bundles portable Node. Deepseek Harness Launcher does not manage multiple dsh runtime versions.
 - The first start shows an installation window and can take several minutes; later starts reuse `~/.dsh/runtime`.
 - Deepseek Harness Launcher only adds its own bundled-plugin links (archive manager, plugin manager, session notifications) and temporary patches. Existing Harness profiles, sessions, and other plugins remain managed by dsh.
 
@@ -207,8 +220,34 @@ The launcher **no longer runs plugin compatibility checks**: no static scan at s
 The launcher **no longer** decides which plugin should be disabled. The pre-launch static pre-check (scanning relative imports and pre-isolating), stderr attribution and bisect after a failed launch, the isolation overlay (`--patch` + `disabled: true`), safe mode (`--profile rescue`), the one-click rollback prompt after a failed dsh update, and the "N plugins isolated" menu entry have all been removed.
 
 - If dsh exits during startup, the launcher only logs and reports it; no automatic restart or plugin disabling.
-- Normal launch arguments no longer carry an isolation overlay, so every bundle in `dsh.profile.bundles` loads as usual.
+- Normal launch arguments no longer carry an **automatic isolation** overlay; plugins the user explicitly disables in the panel still take effect through a separate `disabled` overlay (see "Built-in plugin manager").
 - The pure helpers in `Sources/PluginIsolationSupport.swift` and `Sources/PluginSourceCheck.swift` and their tests remain for reuse and semantic regression; the main flow does not call them.
+
+### Windows: install, uninstall, and builds
+
+Install (the exe is the installer; it is user-level and needs no administrator rights):
+
+1. Download `DHL-windows-amd64.exe` from GitHub Releases (portable Node is embedded, so no Node.js install is required);
+2. Double-click it: the launcher installs itself into `%LOCALAPPDATA%\Programs\DHL` (copies the exe and extracts the bundled Node), creates a Start-menu shortcut and an "Installed apps" uninstall entry, then starts. Double-clicking a newer installer afterwards upgrades the installed copy (the same version simply starts it). On first run SmartScreen may warn about an unknown publisher; choose "More info -> Run anyway".
+
+To skip self-installation, run it with the `DHL_NO_INSTALL=1` environment variable, or put a `.portable` marker file / `data` directory next to the exe (portable mode). Running the exe directly from the build directory is development mode and also skips self-installation.
+
+Uninstall (all `~/.dsh` data and the runtime are preserved); choose one:
+
+- Launcher "Settings" -> "About" -> "Uninstall launcher";
+- Windows "Settings -> Apps -> Installed apps" -> uninstall Deepseek Harness Launcher;
+- The command line `DHL.exe --uninstall`.
+
+Uninstalling stops dsh and removes `%LOCALAPPDATA%\Programs\DHL` (including historical backups), `%LOCALAPPDATA%\DHL` (logs and bundled plugin copies), Start-menu/desktop/taskbar shortcuts, the autostart registry entry and the uninstall entry, and prunes profile links to bundled plugins; **other `~/.dsh` data** (sessions, credentials, runtime, and user-installed plugins) is preserved.
+
+Build from source (Go 1.26+):
+
+```powershell
+cd windows
+powershell -ExecutionPolicy Bypass -File fetch-node.ps1   # download portable Node and keep the zip (for embedding into the exe)
+powershell -ExecutionPolicy Bypass -File build.ps1         # build\DHL.exe (self-contained installer)
+go test ./...                                              # unit tests
+```
 
 ### Uninstall
 

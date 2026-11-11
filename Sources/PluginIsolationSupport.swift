@@ -1,10 +1,12 @@
 import Foundation
 
-/// 【已停用】插件隔离、启动前静态预检、逐个排除与安全模式已从启动器主流程整体移除：
-/// 启动器不再主动禁用、跳过或回退任何插件，dsh 启动失败时只如实记日志并报错。
-/// 本文件与 Sources/PluginSourceCheck.swift 的纯函数及对应单测保留，仅为复用与语义
-/// 回归；主流程现在只还用到 bootArguments(port:basePatch:isolationPatch:)，且恒传
-/// isolationPatch: nil。下方是原设计说明（历史口径，主流程已不执行）。
+/// 【部分已停用】启动器**不会**再自动隔离/跳过/回退插件，dsh 启动失败时只如实记
+/// 日志并报错；本文件与 Sources/PluginSourceCheck.swift 的纯函数及对应单测保留，
+/// 仅为复用与语义回归。主流程现在用到的是两件事：
+/// - bootArguments(...) 的三个 --patch 槽位（内置插件补丁 / 崩溃隔离(恒 nil) / 用户停用）；
+/// - 用户在插件管理面板里明确停用的插件（`plugin-manager/disabled.json`，见下方
+///   “用户停用”一节）与合并渲染逻辑。
+/// 下方是原“崩溃隔离”的设计说明（历史口径，主流程已不自动执行）。
 ///
 /// 插件隔离：dsh 因为某个插件起不来时，把它从下一次启动里禁用掉，保证服务能拉起来。
 ///
@@ -46,6 +48,92 @@ enum PluginIsolationSupport {
     /// 隔离状态文件名（JSON）与由它渲染出的 patch 文件名（YAML）。
     static let stateFileName = "plugin-isolation.json"
     static let patchFileName = "plugin-isolation.yml"
+
+    /// 用户在插件管理面板里「停用」的插件。与上面的崩溃隔离**状态文件分开**：
+    /// 崩溃隔离是启动器自动行为，用户停用是用户的明确意图，两者不能互相覆盖。
+    /// 它们最终合并进同一个 --patch overlay（渲染时按行 id 去重）。
+    struct DisabledPlugin: Codable, Equatable {
+        let bundle: String
+        /// 该 bundle 在装配树里贡献的顶层行 id（面板服务端从 dump-config 发现）。
+        let rowIds: [String]
+        let disabledAt: String?
+    }
+
+    /// 面板不允许停用的 bundle：core 两层与插件管理器自身。
+    /// 注意这套清单**不是** `protectedBundles`（后者还含内置插件，是崩溃隔离的口径：
+    /// 内置插件不自动隔离，但允许用户主动停用）。
+    static let undisableableBundles: Set<String> = [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "dsh-plugin-manager"
+    ]
+
+    /// 用户停用状态与 overlay 的落点（都在 `$DSH_HOME/plugin-manager/` 下）。
+    static let disabledStateFileName = "disabled.json"
+    static let disabledPatchFileName = "plugin-disabled.yml"
+    static let disabledStateDirectoryName = "plugin-manager"
+
+    /// 接管型插件：生效时会顶掉某些官方行（写在自己 `cordis.patch.yml` 的
+    /// `disabled: true` 里）。用户在面板里停用它时，必须把被顶掉的行放回来，
+    /// 否则停用后界面上会永久缺一块（侧栏 Deck 就是这种插件：它接管左侧栏时
+    /// 停用官方 `ui-sidebar`，停用 Deck 必须把官方侧栏启用回来）。
+    ///
+    /// 覆盖层排在最后，`disabled: false` 的重新启用条目追加在所有停用条目之后，
+    /// 因此优先级最高。对没装 Deck 的部署，这条是幂等的 no-op。
+    static let replacementRows: [String: [String]] = [
+        "dsh-sidebar-deck": ["ui-sidebar"]
+    ]
+
+    /// 侧栏 Deck（自带布局插件）。它在 launcher 里不是 profile bundle，而是像归档
+    /// 插件一样「链接进 node_modules + 由启动器补丁插入」；插入时同时停用官方侧栏
+    /// 外壳。只有 Deck 资源就绪、且用户没在面板里停用它时才传这份补丁——任何一环
+    /// 不满足都退回官方侧栏（失败开放，不制造白屏）。
+    static let sidebarDeckBundle = "dsh-sidebar-deck"
+    static let sidebarDeckPatchFileName = "sidebar-deck.yml"
+
+    static func renderSidebarDeckPatch() -> String {
+        """
+        - id: ui-sidebar
+          disabled: true
+        - insert:
+            - id: dsh-sidebar-deck
+              name: 'dsh-sidebar-deck'
+        """ + "\n"
+    }
+
+    /// 写 Deck 接管补丁；写失败返回 nil（调用方不传 --patch，官方侧栏照常工作）。
+    static func stagedSidebarDeckPatchFile(directory: URL) -> URL? {
+        let url = directory.appendingPathComponent(sidebarDeckPatchFileName)
+        let text = renderSidebarDeckPatch()
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: url, options: .atomic)
+            return url
+        } catch { return nil }
+    }
+
+    static func isSidebarDeckDisabled(in disabled: [DisabledPlugin]) -> Bool {
+        disabled.contains { $0.bundle == sidebarDeckBundle }
+    }
+
+    /// 不可停用的原因（UI 的 tooltip 与服务端错误共用同一套口径）。
+    static func undisableableReason(for bundle: String) -> String? {
+        switch bundle {
+        case "@deepseek-ai/dsh-base": return "dsh 核心层，停用后 Harness 无法启动"
+        case "@deepseek-ai/dsh-web-app": return "dsh Web 界面层，停用后没有可用的 Harness 界面"
+        case "dsh-plugin-manager": return "插件管理器自身，停用后无法从界面恢复"
+        default: return nil
+        }
+    }
+
+    static func disabledStateURL(home: URL) -> URL {
+        home.appendingPathComponent(disabledStateDirectoryName, isDirectory: true)
+            .appendingPathComponent(disabledStateFileName)
+    }
+
+    static func disabledPatchDirectory(home: URL) -> URL {
+        home.appendingPathComponent(disabledStateDirectoryName, isDirectory: true)
+    }
 
     // MARK: - 失败归因
 
@@ -256,14 +344,88 @@ enum PluginIsolationSupport {
         } catch { return nil }
     }
 
+    // MARK: - 用户停用（面板写入、启动器读取）
+
+    /// bundle 名来自状态文件（可能被手改）：只认 npm 包名形状，且拒绝路径穿越。
+    static func isSafeBundleName(_ name: String) -> Bool {
+        !name.isEmpty && name.count <= 128 && !name.contains("..")
+            && name.allSatisfy { $0.isLetter || $0.isNumber || "_.@/-".contains($0) }
+    }
+
+    /// 状态文件只解码、不渲染；任何畸形字段一律丢弃——停用状态坏掉时宁可“全部启用”，
+    /// 也不能让用户连 dsh 都起不来。不可停用的 bundle 在这里再兜一次（服务端也会拦）。
+    static func readDisabledState(url: URL) -> [DisabledPlugin] {
+        guard let data = try? Data(contentsOf: url),
+              let file = try? JSONDecoder().decode(DisabledStateFile.self, from: data) else { return [] }
+        var seen = Set<String>()
+        return file.disabled.compactMap { entry in
+            guard isSafeBundleName(entry.bundle),
+                  !undisableableBundles.contains(entry.bundle),
+                  seen.insert(entry.bundle).inserted else { return nil }
+            let safeIds = entry.rowIds.filter(isSafeRowId)
+            guard !safeIds.isEmpty else { return nil }
+            return DisabledPlugin(bundle: entry.bundle, rowIds: safeIds, disabledAt: entry.disabledAt)
+        }
+    }
+
+    /// 把「崩溃隔离」与「用户停用」合并成一个 overlay，按行 id 去重。
+    ///
+    /// 冲突取舍：用户停用**优先**（它的行 id 先收进来，且启动参数里它的 --patch 排在
+    /// 最后、优先级最高）；崩溃隔离即使想保留同一行也只是写同样的 disabled: true，
+    /// 不存在“隔离救回一个用户明确要停用的插件”这种语义。反过来，用户停用别的行
+    /// 不影响崩溃隔离救场——两个来源的其余行都保留。
+    static func renderCombinedDisabledPatch(isolation: [IsolatedPlugin], disabled: [DisabledPlugin]) -> String {
+        var seen = Set<String>()
+        var ids: [String] = []
+        func collect(_ rowIds: [String]) {
+            for id in rowIds where isSafeRowId(id) && seen.insert(id).inserted { ids.append(id) }
+        }
+        for entry in disabled where !undisableableBundles.contains(entry.bundle) { collect(entry.rowIds) }
+        for entry in isolation where !protectedBundles.contains(entry.bundle) { collect(entry.rowIds) }
+        // 接管型插件被停用：把它顶掉的官方行重新启用（见 replacementRows）。
+        var reenableIds: [String] = []
+        for entry in disabled {
+            for rowId in replacementRows[entry.bundle] ?? [] where isSafeRowId(rowId) && !reenableIds.contains(rowId) {
+                reenableIds.append(rowId)
+            }
+        }
+        let disableText = ids.map { "- id: \($0)\n  disabled: true\n" }.joined()
+        let reenableText = reenableIds.map { "- id: \($0)\n  disabled: false\n" }.joined()
+        return disableText + reenableText
+    }
+
+    /// 落盘合并后的 overlay；没有可停用的行时返回 nil（调用方据此不传 --patch）。
+    /// 写失败也返回 nil：宁可回到“一个插件都不停用”的原始行为，也不递半截文件给 dsh。
+    static func stagedDisabledPatchFile(
+        isolation: [IsolatedPlugin] = [],
+        disabled: [DisabledPlugin],
+        directory: URL
+    ) -> URL? {
+        let text = renderCombinedDisabledPatch(isolation: isolation, disabled: disabled)
+        guard !text.isEmpty else { return nil }
+        let url = directory.appendingPathComponent(disabledPatchFileName)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: url, options: .atomic)
+            return url
+        } catch { return nil }
+    }
+
     // MARK: - 启动参数
 
-    /// 常规启动参数。`isolationPatch` 为 nil 时保持与历史完全一致的一条命令。
-    /// 两个 patch 路径都可能为 nil：dsh 对「不存在的 --patch 文件」是致命错误，
-    /// 所以宁可少传一个 overlay，也绝不把不存在的路径递过去。
-    static func bootArguments(port: Int, basePatch: String?, isolationPatch: String?) -> [String] {
+    /// 常规启动参数。三个 patch 槽位都为空时保持与历史完全一致的一条命令。
+    /// 顺序即优先级：`--patch` 后应用的覆盖最后生效，所以用户停用层排在最后；
+    /// 某个路径为 nil/空时直接跳过——dsh 对「不存在的 --patch 文件」是致命错误，
+    /// 宁可少传一个 overlay，也绝不把不存在的路径递过去。
+    static func bootArguments(
+        port: Int,
+        basePatch: String?,
+        deckPatch: String? = nil,
+        isolationPatch: String?,
+        disabledPatch: String? = nil
+    ) -> [String] {
         var arguments = ["web"]
-        for path in [basePatch, isolationPatch] {
+        for path in [basePatch, deckPatch, isolationPatch, disabledPatch] {
             if let path, !path.isEmpty { arguments += ["--patch", path] }
         }
         return arguments + ["--no-open", "--port", String(port)]
@@ -367,4 +529,11 @@ private extension JSONEncoder {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try encoder.encode(value)
     }
+}
+
+/// `disabled.json` 的外层结构：版本与时间戳供人排查，读取时只关心 disabled。
+private struct DisabledStateFile: Decodable {
+    let version: Int?
+    let updatedAt: String?
+    let disabled: [PluginIsolationSupport.DisabledPlugin]
 }

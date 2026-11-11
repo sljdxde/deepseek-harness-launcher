@@ -20,9 +20,9 @@ identical declarations do not fight. */div:has(> [data-slot='sidebar.footer.acti
     document.head.appendChild(style)
   }
 
-  function ArchivePanel({ wide }) {
+  function ArchivePanel({ wide, autoOpen = false, onClose }) {
     ensureStyles()
-    const [open, setOpen] = React.useState(false)
+    const [open, setOpen] = React.useState(autoOpen)
     const [items, setItems] = React.useState([])
     const [selectedIds, setSelectedIds] = React.useState([])
     const [confirmIds, setConfirmIds] = React.useState(null)
@@ -67,17 +67,18 @@ identical declarations do not fight. */div:has(> [data-slot='sidebar.footer.acti
           h('button', { className: 'dsh-archive-row-restore', disabled: busy, onClick: () => restore([item.id]), title: '取消归档，回到会话列表' }, '还原'),
           h('button', { className: 'dsh-archive-row-delete', disabled: busy, onClick: () => requestDelete([item.id]) }, '删除')))
 
+    const close = () => { if (onClose) onClose(); else setOpen(false) }
     const confirmItems = items.filter(item => confirmIds?.includes(item.id))
     return h(React.Fragment, null,
-      h('button', { type: 'button', className: wide === false ? 'dsh-archive-trigger dsh-archive-trigger-rail' : 'dsh-archive-trigger', onClick: () => setOpen(true), title: '归档管理', 'aria-label': '归档管理' },
+      !autoOpen && h('button', { type: 'button', className: wide === false ? 'dsh-archive-trigger dsh-archive-trigger-rail' : 'dsh-archive-trigger', onClick: () => setOpen(true), title: '归档管理', 'aria-label': '归档管理' },
         h('span', { className: 'dsh-archive-trigger-icon', 'aria-hidden': true }), wide && h('span', null, '归档')),
       open && h(React.Fragment, null,
-        h('div', { className: 'dsh-archive-backdrop', onClick: () => !busy && setOpen(false) }),
+        h('div', { className: 'dsh-archive-backdrop', onClick: () => !busy && close() }),
         h('div', { className: 'dsh-archive-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': '归档管理' },
           h('div', { className: 'dsh-archive-header' },
             h('strong', null, '归档管理'),
             h('span', { className: 'dsh-archive-header-spacer' }),
-            h('button', { className: 'dsh-archive-close', onClick: () => !busy && setOpen(false), 'aria-label': '关闭' }, '×')),
+            h('button', { className: 'dsh-archive-close', onClick: () => !busy && close(), 'aria-label': '关闭' }, '×')),
           h('div', { className: 'dsh-archive-toolbar' },
             h('label', { className: 'dsh-archive-select-all' },
               h('input', { ref: selectAllRef, type: 'checkbox', checked: allSelected, onChange: toggleAll, disabled: items.length === 0 || busy, 'aria-label': allSelected ? '取消全选' : '全选' }),
@@ -97,17 +98,25 @@ identical declarations do not fight. */div:has(> [data-slot='sidebar.footer.acti
 
   function apply(ctx) {
     ensureStyles()
+    // 新版 DSH 的 sidebar.panellist 只渲染图标，页面必须注册到 main slot；
+    // 只注册 sidebar.panellist 会让点击图标变成静默 no-op（本次 bug）。
+    ctx.slots.inject('main', () => ctx.slots.register({
+      name: 'main', key: NS, locale: NS,
+    }, function ArchiveMain() {
+      return h(ArchivePanel, {
+        wide: true,
+        autoOpen: true,
+        onClose: () => ctx.layout.selectPanel(null),
+      })
+    }))
     // Registered in dsh's own sidebar panel list: the entry appears in the
-    // sidebar and in dsh's "更多" menu, and takes no room from the
-    // workspace list the way a footer row did.
+    // sidebar and in dsh's "更多" menu, and takes no room from the workspace
+    // list the way a footer row did.
     ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
       name: 'sidebar.panellist', id: NS, order: 300, label: '归档管理',
-    }, function ArchiveEntry(props) {
-      if (props && props.size) {
-        return h('span', { className: 'dsh-archive-trigger-icon', 'aria-hidden': true })
-      }
-      return h(ArchivePanel, { wide: true })
+    }, function ArchiveEntry() {
+      return h('span', { className: 'dsh-archive-trigger-icon', 'aria-hidden': true })
     }))
   }
-  return { inject: ['slots', 'locale'], apply }
+  return { inject: ['slots', 'locale', 'layout'], apply }
 }})
