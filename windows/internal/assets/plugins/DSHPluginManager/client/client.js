@@ -76,10 +76,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 /* 停用/启用开关：轨道 + 圆点用纯 CSS，避免再引一套组件库；禁用态由 title 说明原因 */
 .dsh-pm-switch{align-items:center;cursor:pointer;display:flex;flex:none;gap:6px;user-select:none}
 .dsh-pm-switch-input{height:1px;margin:-1px;opacity:0;overflow:hidden;position:absolute;width:1px}
+/* 开关视觉：启用 = 开启状态、墨色轨道（浅色主题下即黑）；停用 = 关闭状态、浅色轨道。
+   轨道/圆点用语义令牌（label-primary / bg-module-platform），深色主题自动反色。 */
 .dsh-pm-switch-track{background:var(--dsw-alias-bg-module-platform);border:1px solid var(--dsw-alias-border-l3);border-radius:999px;box-sizing:border-box;display:inline-block;flex:none;height:18px;position:relative;transition:background .15s ease,border-color .15s ease;width:32px}
-.dsh-pm-switch-track:after{background:var(--dsw-alias-label-primary-foreground);border-radius:50%;box-shadow:0 1px 2px rgba(0,0,0,.28);content:"";height:14px;left:1px;position:absolute;top:1px;transition:transform .15s ease;width:14px}
-.dsh-pm-switch-input:checked + .dsh-pm-switch-track{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}
-.dsh-pm-switch-input:checked + .dsh-pm-switch-track:after{transform:translateX(14px)}
+.dsh-pm-switch-track:after{background:var(--dsw-alias-label-primary);border-radius:50%;box-shadow:0 1px 2px rgba(0,0,0,.28);content:"";height:14px;left:1px;position:absolute;top:1px;transition:transform .15s ease,background .15s ease;width:14px}
+.dsh-pm-switch-input:checked + .dsh-pm-switch-track{background:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-primary)}
+.dsh-pm-switch-input:checked + .dsh-pm-switch-track:after{background:var(--dsw-alias-label-primary-foreground);transform:translateX(14px)}
 .dsh-pm-switch-input:focus-visible + .dsh-pm-switch-track{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .dsh-pm-switch-input:disabled + .dsh-pm-switch-track{cursor:not-allowed;opacity:.45}
 .dsh-pm-switch-text{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;white-space:nowrap}
@@ -1339,26 +1341,31 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       // 停用状态来自服务端（GET /disabled）；读不到时开关置灰，不猜测。
       const disableInfo = disabledPlugins[item.name] || null
       const pluginOff = Boolean(disableInfo && disableInfo.disabled)
+      // 开关方向按通行约定：ON = 插件正在生效（启用），OFF = 已停用。
+      // 状态未知（读不到 /disabled）时显示 OFF 且置灰，不假装启用。
+      const pluginOn = Boolean(disableInfo && disableInfo.disabled === false)
       const switchPending = busy === 'disable-' + item.name
       const switchDisabled = !disableInfo || !disableInfo.canDisable || switchPending || busyOther || batchRunning
       const switchTitle = !disableInfo ? '停用状态读取失败，重新打开面板再试'
         : !disableInfo.canDisable ? (disableInfo.reason || '这个插件不支持停用')
-        : pluginOff ? '启用这个插件（重启 dsh 后生效）'
-        : '停用这个插件（重启 dsh 后生效）'
+        : pluginOn ? '停用这个插件（重启 dsh 后生效）'
+        : '启用这个插件（重启 dsh 后生效）'
       // 开关旁边的常驻状态文字：禁用原因只写在 title 里不够，旁边直接说清楚。
       const switchText = switchPending ? '切换中…'
-        : !disableInfo || !disableInfo.canDisable ? '不可停用'
-        : pluginOff ? '已停用' : '已启用'
+        : !disableInfo ? '状态未知'
+        : !disableInfo.canDisable ? '不可停用'
+        : pluginOn ? '已启用' : '已停用'
       const switchNode = item.broken ? null : h('label', { className: 'dsh-pm-switch', title: switchTitle },
         h('input', {
           type: 'checkbox',
           role: 'switch',
           className: 'dsh-pm-switch-input',
-          checked: pluginOff,
+          checked: pluginOn,
           disabled: switchDisabled,
           title: switchTitle,
-          'aria-label': (pluginOff ? '启用 ' : '停用 ') + item.name,
-          onChange: () => togglePluginDisabled(item, !pluginOff),
+          'aria-label': (pluginOn ? '停用 ' : '启用 ') + item.name,
+          // 点击即切换：启用中 → 请求停用；已停用 → 请求启用。
+          onChange: () => togglePluginDisabled(item, pluginOn),
         }),
         h('span', { className: 'dsh-pm-switch-track', 'aria-hidden': true }),
         h('span', { className: 'dsh-pm-switch-text' }, switchText))

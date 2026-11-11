@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-deck", factory: (require) => { t
   --dk-sel:color-mix(in srgb,var(--dk-ink) 6.5%,transparent);
   --dk-accent:var(--dsw-alias-brand-primary,#4f46e5);
   --dk-bg:color-mix(in srgb,var(--dk-ink) 3.4%,var(--dk-card));
-  --fs-l0:14px; --fs-l1:13px; --fs-l2:12.5px; --fs-l3:11px;
+  --fs-l0:15px; --fs-l1:14px; --fs-l2:12px; --fs-l3:11px;
   height:100%;width:100%;display:flex;flex-direction:column;min-height:0;overflow:hidden;
   padding:0;box-sizing:border-box;color:var(--dk-ink2);
   background:var(--dk-bg);
@@ -53,55 +53,62 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-deck", factory: (require) => { t
 .dsh-deck-block[data-dragging="true"]{opacity:.35}
 .dsh-deck-block[data-deck-block="workspace"]{flex:1;min-height:150px;overflow:hidden}
 .dsh-deck-block:not([data-deck-block="workspace"]){flex:none}
-.dsh-deck-hd{display:flex;align-items:center;gap:8px;height:26px;margin-top:14px;user-select:none}
+.dsh-deck-hd{display:flex;align-items:center;gap:8px;height:30px;margin-top:16px;user-select:none}
 .dsh-deck-block:first-child .dsh-deck-hd{margin-top:2px}
 .dsh-deck-grip{width:16px;height:20px;display:grid;place-items:center;color:var(--dk-ink3);opacity:0;cursor:grab;touch-action:none;border-radius:5px;font-size:var(--fs-l2);line-height:1;flex:none}
 .dsh-deck-block:hover .dsh-deck-grip,.dsh-deck-chip:hover .dsh-deck-grip{opacity:.7}
 .dsh-deck-grip:hover{background:var(--dk-hov);color:var(--dk-ink);opacity:1}
 .dsh-deck-grip:active{cursor:grabbing}
-.dsh-deck-root .dsh-deck-title{display:flex;align-items:center;gap:5px;flex:none;height:26px;font-size:var(--fs-l1);font-weight:650;letter-spacing:-.008em;color:var(--dk-ink);text-align:left;white-space:nowrap}
+.dsh-deck-root .dsh-deck-title{display:flex;align-items:center;gap:6px;flex:none;height:30px;font-size:var(--fs-l1);font-weight:700;letter-spacing:-.014em;color:var(--dk-ink);text-align:left;white-space:nowrap}
 .dsh-deck-root .dsh-deck-title:hover{color:var(--dk-ink)}
-.dsh-deck-caret{width:11px;height:11px;display:grid;place-items:center;opacity:.75;flex:none;color:var(--dk-ink3);margin-left:-1px}
-.dsh-deck-caret svg{width:10px;height:10px;display:block}
-.dsh-deck-count{font-size:var(--fs-l3);font-weight:500;color:var(--dk-ink3);font-variant-numeric:tabular-nums;flex:none}
+.dsh-deck-caret{width:12px;height:12px;display:grid;place-items:center;opacity:.8;flex:none;color:var(--dk-ink3);margin-left:-2px}
+.dsh-deck-caret svg{width:11px;height:11px;display:block}
+.dsh-deck-count{font-size:var(--fs-l3);font-weight:600;color:var(--dk-ink3);font-variant-numeric:tabular-nums;flex:none}
 .dsh-deck-rule{flex:1;height:.5px;background:var(--dk-line);border-radius:1px;min-width:8px}
 .dsh-deck-hdacts{display:flex;align-items:center;gap:0;flex:none}
 .dsh-deck-bd{padding:0 0 10px;min-width:0}
 .dsh-deck-block[data-deck-block="workspace"] .dsh-deck-bd{flex:1;display:flex;flex-direction:column;min-height:0;padding-bottom:4px}
 /* 行 */
-.dsh-deck-row{flex:none;display:flex;align-items:center;gap:7px;height:26px;padding:0 8px;border-radius:6px;cursor:default;min-width:0;color:var(--dk-ink2);transition:background .15s,color .15s}
+.dsh-deck-row{flex:none;display:flex;align-items:center;gap:7px;height:25px;padding:0 8px;border-radius:6px;cursor:default;min-width:0;color:var(--dk-ink2);transition:background .15s,color .15s}
 .dsh-deck-row:hover{background:var(--dk-hov);color:var(--dk-ink)}
 .dsh-deck-row .dsh-deck-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-l2);line-height:1.4}
 .dsh-deck-row .dsh-deck-m{font-size:var(--fs-l3);font-weight:500;color:var(--dk-ink3);flex:none;font-variant-numeric:tabular-nums;line-height:1.4}
 .dsh-deck-row.is-current{background:var(--dk-sel);color:var(--dk-ink)}
 .dsh-deck-row.is-current .dsh-deck-t{font-weight:500}
+.dsh-deck-plugrow{width:100%;cursor:pointer}
+.dsh-deck-plugrow .dsh-deck-m{color:var(--dk-ink3)}
 .dsh-deck-dot{width:5px;height:5px;border-radius:50%;flex:none;background:transparent}
 .dsh-deck-dot.run{background:var(--dk-accent);animation:dsh-deck-pulse 1.8s infinite}
 .dsh-deck-dot.on{background:var(--dk-ink)}
 @keyframes dsh-deck-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--dk-accent) 35%,transparent)}70%{box-shadow:0 0 0 4px transparent}100%{box-shadow:0 0 0 0 transparent}}
 /* 面板：白卡 + 发丝分隔 + 折叠行 + 管理浮层 */
-.dsh-deck-panelcard{background:var(--dk-card);border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.04),0 0 0 .5px color-mix(in srgb,var(--dk-ink) 6%,transparent);position:relative}
-.dsh-deck-panelrows{display:flex;flex-direction:column;max-height:min(26vh,220px);overflow:auto;border-radius:10px 10px 0 0;scrollbar-width:thin;scrollbar-color:var(--dk-line) transparent}
+.dsh-deck-panelcard{position:relative}
+.dsh-deck-panelrows{display:flex;flex-direction:column;max-height:min(26vh,220px);overflow:auto;scrollbar-width:thin;scrollbar-color:var(--dk-line) transparent}
 .dsh-deck-panelrows::-webkit-scrollbar{width:4px}
 .dsh-deck-panelrows::-webkit-scrollbar-thumb{background:var(--dk-line);border-radius:4px}
-.dsh-deck-root .dsh-deck-panelrow{flex:none;display:flex;align-items:center;gap:9px;height:32px;padding:0 11px;min-width:0;font-size:var(--fs-l2);color:var(--dk-ink2);width:100%;position:relative;transition:background .15s,color .15s}
-.dsh-deck-root .dsh-deck-panelrow + .dsh-deck-panelrow:before{content:"";position:absolute;left:11px;right:11px;top:0;height:.5px;background:var(--dk-line2)}
+.dsh-deck-root .dsh-deck-panelrow{flex:none;display:flex;align-items:center;gap:9px;height:29px;padding:0 9px 0 10px;min-width:0;font-size:var(--fs-l2);color:var(--dk-ink2);width:100%;position:relative;transition:background .15s,color .15s;border-radius:7px}
+.dsh-deck-root .dsh-deck-panelrow + .dsh-deck-panelrow:before{content:"";position:absolute;left:10px;right:10px;top:0;height:.5px;background:var(--dk-line2)}
 .dsh-deck-root .dsh-deck-panelrow:hover{background:var(--dk-hov);color:var(--dk-ink)}
 .dsh-deck-root .dsh-deck-panelrow .dsh-deck-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-deck-root .dsh-deck-panelrow>div[data-slot]{display:contents}
 .dsh-deck-root .dsh-deck-panelrow svg{width:15px;height:15px;display:block;flex:none;color:var(--dk-ink3)}
-.dsh-deck-root .dsh-deck-panelrow.is-active{color:var(--dk-ink)}
-.dsh-deck-root .dsh-deck-panelrow.is-active .dsh-deck-label{font-weight:600}
+/* 选中态：浅墨底 + 左侧 2px 竖条，比加粗字更安静也更容易扫 */
+.dsh-deck-root .dsh-deck-panelrow.is-active{color:var(--dk-ink);background:var(--dk-sel)}
+.dsh-deck-root .dsh-deck-panelrow.is-active:before{content:"";position:absolute;left:2px;top:6px;bottom:6px;width:2px;border-radius:2px;background:var(--dk-ink)}
 .dsh-deck-root .dsh-deck-panelrow.is-active svg{color:var(--dk-ink2)}
-.dsh-deck-root .dsh-deck-panelfold{flex:none;display:flex;align-items:center;justify-content:center;gap:4px;height:28px;width:100%;border-top:.5px solid var(--dk-line2);border-radius:0 0 10px 10px;font-size:var(--fs-l3);font-weight:500;color:var(--dk-ink3);transition:background .15s,color .15s}
-.dsh-deck-root .dsh-deck-panelfold:hover{background:var(--dk-hov);color:var(--dk-ink2)}
+.dsh-deck-root .dsh-deck-panelfold{flex:none;display:flex;align-items:center;justify-content:center;height:28px;width:100%;margin-top:2px;font-size:var(--fs-l3);font-weight:500;color:var(--dk-ink3);transition:background .15s,color .15s}
+.dsh-deck-root .dsh-deck-panelfold span{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;background:var(--dk-hov);transition:background .15s,color .15s}
+.dsh-deck-root .dsh-deck-panelfold:hover span{background:var(--dk-sel);color:var(--dk-ink2)}
 .dsh-deck-root .dsh-deck-panelfold svg{width:11px;height:11px;display:block}
 .dsh-deck-panelmanage{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:40;background:var(--dk-card);border-radius:11px;box-shadow:0 16px 44px rgba(20,22,30,.16),0 2px 8px rgba(20,22,30,.06),0 0 0 .5px color-mix(in srgb,var(--dk-ink) 9%,transparent);padding:5px;max-height:300px;overflow:auto}
-.dsh-deck-pmhd{display:flex;align-items:center;gap:8px;padding:6px 6px 7px 8px;font-size:var(--fs-l3);font-weight:600;letter-spacing:.03em;color:var(--dk-ink3)}
+.dsh-deck-pmhd{display:flex;align-items:center;gap:8px;padding:7px 7px 8px 9px;font-size:var(--fs-l3);font-weight:650;letter-spacing:.02em;color:var(--dk-ink2)}
+.dsh-deck-pmall{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:var(--fs-l3);font-weight:500;color:var(--dk-ink3)}
+.dsh-deck-pmall button{font-size:var(--fs-l3);font-weight:500;color:var(--dk-ink3)}
+.dsh-deck-pmall button:hover{color:var(--dk-ink)}
 .dsh-deck-pmhd .x{margin-left:auto;width:20px;height:20px;border-radius:5px;display:grid;place-items:center;color:var(--dk-ink3)}
 .dsh-deck-pmhd .x:hover{background:var(--dk-hov);color:var(--dk-ink)}
 .dsh-deck-pmhd .x svg{width:11px;height:11px;display:block}
-.dsh-deck-pmrow{display:flex;align-items:center;gap:9px;height:30px;padding:0 8px;border-radius:7px;font-size:var(--fs-l2);color:var(--dk-ink2)}
+.dsh-deck-pmrow{display:flex;align-items:center;gap:9px;height:31px;padding:0 9px;border-radius:8px;font-size:var(--fs-l2);color:var(--dk-ink2)}
 .dsh-deck-pmrow:hover{background:var(--dk-hov);color:var(--dk-ink)}
 .dsh-deck-pmrow svg{width:15px;height:15px;color:var(--dk-ink3);flex:none}
 .dsh-deck-pmrow .dsh-deck-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -154,6 +161,7 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-deck", factory: (require) => { t
   }
 
   /* ────────────────────────── 常量 / 布局状态 ────────────────────────── */
+  /* 只声明 sidebar 自己的子插槽；plugins.* 是根作用域插槽，只读不声明（声明会和官方插件管理页冲突）。 */
   const CHILDREN = {
     'sidebar.brand.mark': { kind: 'single', scope: 'root' },
     'sidebar.brand.name': { kind: 'single', scope: 'root' },
@@ -164,8 +172,8 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-deck", factory: (require) => { t
     'sidebar.settings': { kind: 'single', scope: 'root' },
     'sidebar.footer.action': { kind: 'list', scope: 'root' }
   }
-  const BLOCK_TITLES = { recent: '最近会话', workspace: '工作区', panels: '面板' }
-  const BLOCKS = ['recent', 'workspace', 'panels']
+  const BLOCK_TITLES = { recent: '最近会话', workspace: '工作区', panels: '面板', plugins: '插件' }
+  const BLOCKS = ['recent', 'workspace', 'panels', 'plugins']
   const LKEY = 'dsh-sidebar-deck-layout-v1'
 
   function defaultLayout() { return { stack: BLOCKS.slice(), dock: [], collapsed: {}, panelsHidden: {}, panelsExpanded: false } }
@@ -274,6 +282,56 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-deck", factory: (require) => { t
     return rows
   }
 
+  /* 已安装插件：优先读插件管理面板的 /installed 清单（真实安装的插件），
+     读不到时退回 plugins.item 插槽（官方设置项）。两条路都失败则只显示入口。 */
+  function pluginLabel(item) {
+    const desc = String((item && item.description) || '').split(/[·：:]/)[0].trim()
+    if (desc && desc.length <= 14 && !/^dsh-/i.test(desc)) return desc
+    const name = String((item && item.name) || '')
+    return name.replace(/^@[^/]+\//, '').replace(/^dsh-/, '')
+  }
+  function useInstalledPlugins(deck) {
+    const slots = deck.slots
+    const [rows, setRows] = React.useState([])
+    React.useEffect(() => {
+      let alive = true
+      const fallback = () => {
+        if (!slots || !slots.entries) return
+        try {
+          const items = slots.entries('plugins.item') || []
+          const next = items.map((entry) => {
+            const options = (entry && entry.options) || {}
+            const id = options.id || ''
+            return { id, name: id, label: resolveLabel(options.label, id) }
+          }).filter((row) => row.id)
+          if (alive) setRows((current) => (current.length ? current : next))
+        } catch (e) { /* 没有该插槽时忽略 */ }
+      }
+      const read = () => {
+        fetch('/dsh-plugin-manager/installed').then((response) => (response.ok ? response.json() : null)).then((data) => {
+          if (!alive) return
+          if (!data || !Array.isArray(data.items)) { fallback(); return }
+          const next = data.items
+            .filter((item) => item && item.name && !item.broken)
+            .map((item) => ({ id: item.name, name: item.name, label: pluginLabel(item), version: item.version }))
+          setRows(next)
+        }).catch(() => fallback())
+      }
+      read()
+      fallback()
+      const timer = setInterval(read, 20000)
+      return () => { alive = false; clearInterval(timer) }
+    }, [slots])
+    return rows
+  }
+  function openPluginConfig(deck, id) {
+    try {
+      const nav = service(deck.ctx, 'pluginNavigation')
+      if (nav && typeof nav.openBundle === 'function') { nav.openBundle(id); return true }
+    } catch (e) { /* 回落 */ }
+    try { selectPanel(deck, 'plugins'); return true } catch (e) { return false }
+  }
+
   /* ────────────────────────── 区块 ────────────────────────── */
   function BlockHeader({ id, layout, onGripDown, count, actions }) {
     const collapsed = !!(layout.collapsed && layout.collapsed[id])
@@ -297,8 +355,14 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-deck", factory: (require) => { t
       )
     )
   }
-  function PanelsCount({ deck }) {
+  function PanelsCount({ deck, layout }) {
     const rows = usePanels(deck)
+    const hidden = (layout && layout.panelsHidden) || {}
+    const visible = rows.filter((row) => !hidden[row.id]).length
+    return visible ? h('span', { className: 'dsh-deck-count' }, String(visible)) : null
+  }
+  function PluginsCount({ deck }) {
+    const rows = useInstalledPlugins(deck)
     return rows.length ? h('span', { className: 'dsh-deck-count' }, String(rows.length)) : null
   }
   function RecentCount({ deck }) {
@@ -317,6 +381,7 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-deck", factory: (require) => { t
       if (id === 'recent') body = h(RecentBody, { deck })
       else if (id === 'workspace') body = h(SlotBody, { renderSlot, name: 'sidebar.workspaces', props: { wide: true, expandSidebar: () => toggleSidebar(deck) } })
       else if (id === 'panels') body = h(PanelsBody, { deck, renderSlot, usePanelInfo, layout, manageOpen, onToggleManage, onTogglePanel })
+      else if (id === 'plugins') body = h(PluginsBody, { deck })
       else if (id === 'tools') body = h(SlotBody, { renderSlot, name: 'sidebar.footer.action', props: { wide: true } })
     }
     if (embedded) return h('div', { className: 'dsh-deck-bd' }, body)
@@ -325,7 +390,7 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-deck", factory: (require) => { t
         id,
         layout,
         onGripDown,
-        count: id === 'recent' ? h(RecentCount, { deck }) : id === 'workspace' ? h(WorkspaceCount, { useWorkspaces }) : id === 'panels' ? h(PanelsCount, { deck }) : null,
+        count: id === 'recent' ? h(RecentCount, { deck }) : id === 'workspace' ? h(WorkspaceCount, { useWorkspaces }) : id === 'panels' ? h(PanelsCount, { deck, layout }) : id === 'plugins' ? h(PluginsCount, { deck }) : null,
         actions: id === 'panels' ? h('button', {
           className: 'dsh-deck-iconbtn sm',
           title: '管理面板',
@@ -383,13 +448,17 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-deck", factory: (require) => { t
           setLayout({ ...current, panelsExpanded: !expanded })
         }
       },
-        expanded ? '收起' : '显示其余 ' + (visible.length - 4) + ' 个',
+        h('span', null, expanded ? '收起' : '显示其余 ' + (visible.length - 4) + ' 个'),
         icon(expanded ? 'chevronUp' : 'chevronDown')
       ) : null,
       manageOpen ? h('div', { className: 'dsh-deck-panelmanage' },
         h('div', { className: 'dsh-deck-pmhd' },
           h('span', null, '管理面板'),
-          h('button', { className: 'x', title: '关闭', onClick: () => onToggleManage() }, icon('close'))
+          h('span', { className: 'dsh-deck-pmall' },
+            h('button', { onClick: () => setPanelsVisibility(all, false) }, '全部隐藏'),
+            h('button', { onClick: () => setPanelsVisibility(all, true) }, '全部显示'),
+            h('button', { className: 'x', title: '关闭', onClick: () => onToggleManage() }, icon('close'))
+          )
         ),
         all.map((row) => h('div', { key: row.id, className: 'dsh-deck-pmrow' },
           renderSlot('sidebar.panellist', { size: 15, active: false }, { only: row.id }),
@@ -407,6 +476,25 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-deck", factory: (require) => { t
     )
   }
 
+  function PluginsBody({ deck }) {
+    const rows = useInstalledPlugins(deck)
+    if (!rows.length) {
+      return h('div', { className: 'dsh-deck-row' },
+        h('span', { className: 'dsh-deck-t' }, '未读取到已安装插件'),
+        h('span', { className: 'dsh-deck-m' }, '插件管理')
+      )
+    }
+    return rows.map((row) => h('button', {
+      key: row.id,
+      className: 'dsh-deck-row dsh-deck-plugrow',
+      title: row.label + (row.version ? ' · ' + row.version : ''),
+      onClick: () => openPluginConfig(deck, row.id)
+    },
+      h('span', { className: 'dsh-deck-t' }, row.label),
+      row.version ? h('span', { className: 'dsh-deck-m' }, row.version) : null
+    ))
+  }
+
   /* 服务全部按需取：deck 只 inject slots，其余服务缺失时降级而不是让侧栏起不来。 */
   function service(ctx, name) {
     try { return ctx && typeof ctx.get === 'function' ? ctx.get(name) : undefined } catch (e) { return undefined }
@@ -416,6 +504,16 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-deck", factory: (require) => { t
   function openSession(deck, id) { try { const nav = service(deck.ctx, 'uiWorkspace'); if (nav && nav.openSession) nav.openSession(id) } catch (e) {} }
   function toggleSidebar(deck) { try { const layout = deck.layout || service(deck.ctx, 'layout'); if (layout && layout.toggleSidebar) layout.toggleSidebar() } catch (e) {} }
   function selectPanel(deck, id) { try { const layout = deck.layout || service(deck.ctx, 'layout'); if (layout && layout.selectPanel) layout.selectPanel(id) } catch (e) {} }
+  /* 批量设置面板显隐：全部显示 = 清空 hidden，全部隐藏 = 全部标记 hidden。 */
+  function setPanelsVisibility(rows, visible) {
+    const current = getLayout()
+    const hidden = { ...(current.panelsHidden || {}) }
+    for (const row of rows || []) {
+      if (visible) delete hidden[row.id]
+      else hidden[row.id] = true
+    }
+    setLayout({ ...current, panelsHidden: hidden })
+  }
 
   /* ────────────────────────── Deck ────────────────────────── */
   function Deck(props) {
