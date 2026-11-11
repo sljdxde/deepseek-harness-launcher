@@ -243,20 +243,14 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
     private var pluginManagerURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHPluginManager") ?? rootURL.appendingPathComponent("Plugins/DSHPluginManager") }
     private var sessionNotifyPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSessionNotify") ?? rootURL.appendingPathComponent("Plugins/DSHSessionNotify") }
-    private var sidebarDeckPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSidebarDeck") ?? rootURL.appendingPathComponent("Plugins/DSHSidebarDeck") }
     private var bundledPlugins: [BundledPlugin] {
         [
             BundledPlugin(linkName: "dsh-archive-manager", bundleMarker: "DSHArchiveManager", url: pluginURL),
             BundledPlugin(linkName: "dsh-plugin-manager", bundleMarker: "DSHPluginManager", url: pluginManagerURL),
-            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL),
-            BundledPlugin(linkName: "dsh-sidebar-deck", bundleMarker: "DSHSidebarDeck", url: sidebarDeckPluginURL)
+            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL)
         ]
     }
     private var patchPath: String { pluginURL.appendingPathComponent("cordis.patch.yml").path }
-    /// 用户在插件管理面板里停用的插件（面板写状态、启动器读；与崩溃隔离状态分开）。
-    private var pluginDisabledStateURL: URL {
-        PluginIsolationSupport.disabledStateURL(home: DSHRuntimeSupport.dshHomeURL)
-    }
     private var logURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let logs = home.appendingPathComponent("Library/Logs/Deepseek Harness Launcher", isDirectory: true)
@@ -2051,53 +2045,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if state == .checking { setState(.stopped) }
     }
 
-    /// 把面板写入的「用户停用」状态渲染成启动器自己的 --patch overlay。
-    /// 没有停用项或写不进去时返回 nil：dsh 对空/不存在的 patch 文件都是致命错误，
-    /// 宁可回到“一个插件都不停用”的原始行为，也不能让启动失败。
-    private func stagedPluginDisabledPatchPath() -> String? {
-        let entries = PluginIsolationSupport.readDisabledState(url: pluginDisabledStateURL)
-        guard !entries.isEmpty else { return nil }
-        let directory = PluginIsolationSupport.disabledPatchDirectory(home: DSHRuntimeSupport.dshHomeURL)
-        guard let patch = PluginIsolationSupport.stagedDisabledPatchFile(disabled: entries, directory: directory) else {
-            appendLogString("读取到 \(entries.count) 个已停用插件，但停用覆盖层写入失败；本次启动不会停用任何插件（可重试）\n")
-            return nil
-        }
-        appendLogString("插件停用覆盖层：\(patch.path)（\(entries.map(\.bundle).joined(separator: "、"))）\n")
-        return patch.path
-    }
-
-    /// 侧栏 Deck 接管补丁：停用官方侧栏 + 插入 Deck 行。
-    /// 任何一环不满足（资源缺失 / 用户停用 / 写盘失败）都返回 nil，退回官方侧栏——
-    /// Deck 是“增强”，绝不能因为它的补丁缺失把侧栏弄没。
-    private func stagedSidebarDeckPatchPath() -> String? {
-        let patchSource = sidebarDeckPluginURL.appendingPathComponent("cordis.patch.yml")
-        guard FileManager.default.fileExists(atPath: patchSource.path) else {
-            appendLogString("未找到侧栏 Deck 资源，本次使用官方侧栏\n")
-            return nil
-        }
-        let disabled = PluginIsolationSupport.readDisabledState(url: pluginDisabledStateURL)
-        if PluginIsolationSupport.isSidebarDeckDisabled(in: disabled) {
-            appendLogString("侧栏 Deck 已被用户停用，本次使用官方侧栏\n")
-            return nil
-        }
-        let directory = PluginIsolationSupport.disabledPatchDirectory(home: DSHRuntimeSupport.dshHomeURL)
-        guard let patch = PluginIsolationSupport.stagedSidebarDeckPatchFile(directory: directory) else {
-            appendLogString("侧栏 Deck 接管补丁写入失败，本次使用官方侧栏\n")
-            return nil
-        }
-        appendLogString("侧栏 Deck 接管补丁：\(patch.path)\n")
-        return patch.path
-    }
-
     private func launchInstalledDSH(port: Int, executableURL: URL, environment: [String: String]) {
         let task = Process(); task.executableURL = executableURL
         let arguments = PluginIsolationSupport.bootArguments(
             port: port,
             basePatch: FileManager.default.isReadableFile(atPath: patchPath) ? patchPath : nil,
-            deckPatch: stagedSidebarDeckPatchPath(),
-            isolationPatch: nil,
-            // 用户停用层排在最后：最后应用的覆盖优先级最高，确保用户意图生效。
-            disabledPatch: stagedPluginDisabledPatchPath()
+            isolationPatch: nil
         )
         task.arguments = arguments
         task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
