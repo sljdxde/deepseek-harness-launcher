@@ -1,0 +1,1754 @@
+import assert from 'node:assert/strict';
+import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import {
+  applyIgnoredUpdates,
+  applyPluginUpdate,
+  checkPluginUpdates,
+  classifyPluginSource,
+  collectPluginSources,
+  comparePluginVersions,
+  decidePluginUpdate,
+  extractChangelogSection,
+  fetchPluginReleaseNotes,
+  fetchRemotePackageVersion,
+  fetchTargetPeerDependencies,
+  githubRepoFromUrl,
+  ignorePluginUpdates,
+  isBatchUpdateRunning,
+  isUpdateIgnored,
+  parseLockCommit,
+  parsePluginVersion,
+  pluginMajorVersion,
+  probeGitHead,
+  patchUpdateCacheAfterUpdate,
+  pruneSourceBackups,
+  readIgnoredUpdates,
+  readLastBatchUpdate,
+  readUpdateCache,
+  readUpdateProgress,
+  unignorePluginUpdates,
+  updatePlugins,
+  writeUpdateCache,
+  runUpdateCheck,
+  summarizeUpdateInventory,
+  updatePlugin
+} from '../lib/index.js';
+
+// 「已安装插件版本检测与更新」的离线单测：所有联网动作（pnpm view / git ls-remote /
+// raw.githubusercontent）都通过注入的假 probe 或假 clone 替掉，测试不访问网络。
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/** 轮询等待条件成立（用于等后台刷新跑完），超时返回 false。 */
+async function waitFor(predicate, { timeout = 3000, interval = 10 } = {}) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    if (await predicate()) return true;
+    if (Date.now() > deadline) return false;
+    await sleep(interval);
+  }
+}
+
+async function exists(path) {
+  try { await access(path); return true; } catch { return false; }
+}
+
+/** 在临时 DSH_HOME 下跑测试（跑完恢复原值并删掉临时目录）。 */
+async function withTempDshHome(prefix, fn) {
+  const previousHome = process.env.DSH_HOME;
+  const home = await mkdtemp(join(tmpdir(), prefix));
+  process.env.DSH_HOME = home;
+  try {
+    return await fn(home);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 用例 1：版本号解析与比较
+// ---------------------------------------------------------------------------
+
+test('用例1 parsePluginVersion / comparePluginVersions 遵循 npm 语义', () => {
+  // 数字段按数值比较，不是字典序
+  assert.equal(comparePluginVersions('1.2.0', '1.10.0'), -1);
+  assert.equal(comparePluginVersions('1.10.0', '1.2.0'), 1);
+  assert.equal(comparePluginVersions('1.2.0', '2.0.0'), -1);
+  // 同 base 下预发布低于正式版
+  assert.equal(comparePluginVersions('1.2.0-rc.1', '1.2.0'), -1);
+  // 预发布标识按段比较
+  assert.equal(comparePluginVersions('1.2.0-alpha.2', '1.2.0-beta.1'), -1);
+  assert.equal(comparePluginVersions('1.2.0-rc.2', '1.2.0-rc.10'), -1);
+  // 相同版本 / build 元数据不参与比较 / 前缀 v 被忽略
+  assert.equal(comparePluginVersions('1.2.0', '1.2.0'), 0);
+  assert.equal(comparePluginVersions('1.2.0+build.7', '1.2.0'), 0);
+  assert.equal(comparePluginVersions('v1.2.0', '1.2.0'), 0);
+
+  // 解析结构：base 数字段 + 预发布标识（build 元数据被丢弃）
+  assert.deepEqual(parsePluginVersion('v1.2.0+build.7'), { base: [1, 2, 0], pre: null });
+  assert.deepEqual(parsePluginVersion('1.2.0-rc.2'), { base: [1, 2, 0], pre: ['rc', '2'] });
+
+  assert.equal(pluginMajorVersion('2.0.0-rc.1'), 2);
+  assert.equal(pluginMajorVersion('1.2.0'), 1);
+});
+
+// ---------------------------------------------------------------------------
+// 用例 2：pnpm-lock.yaml 里解析 git 依赖的 commit
+// ---------------------------------------------------------------------------
+
+// 真实形态的 lock 片段：importers 里 `specifier:` 与下一行 `version:` 同行出现，
+// version 指向 codeload 的 tar.gz（新写法）或 resolution 里的 commit（老写法）。
+const LOCK_TEXT = `lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      dsh-notify:
+        specifier: ^1.2.3
+        version: 1.2.3
+      TokenLedger:
+        specifier: github:zh667/TokenLedger
+        version: https://codeload.github.com/zh667/TokenLedger/tar.gz/438d3086249d427e7185a69c5453cb1553c84f0b
+      OpenViking:
+        specifier: github:volcengine/OpenViking#examples/dsh-memory-plugin
+        version: https://codeload.github.com/volcengine/OpenViking/tar.gz/ABCDEF0123456789ABCDEF0123456789ABCDEF01
+
+packages:
+  github.com/zh667/TokenLedger/438d3086249d427e7185a69c5453cb1553c84f0b:
+    resolution: {tarball: https://codeload.github.com/zh667/TokenLedger/tar.gz/438d3086249d427e7185a69c5453cb1553c84f0b}
+`;
+
+test('用例2 parseLockCommit 从 tar.gz 形态的 version 里取出小写 sha', () => {
+  assert.equal(parseLockCommit(LOCK_TEXT, 'github:zh667/TokenLedger'), '438d3086249d427e7185a69c5453cb1553c84f0b');
+  // 带 #subdir 的 spec 也能取到（窗口从该 specifier 开始）
+  assert.equal(parseLockCommit(LOCK_TEXT, 'github:volcengine/OpenViking#examples/dsh-memory-plugin'), 'abcdef0123456789abcdef0123456789abcdef01');
+  // 不在 lock 里的 spec → null
+  assert.equal(parseLockCommit(LOCK_TEXT, 'github:someone/else'), null);
+  // 空输入 / 空 spec → null
+  assert.equal(parseLockCommit('', 'github:zh667/TokenLedger'), null);
+  assert.equal(parseLockCommit(LOCK_TEXT, null), null);
+});
+
+test('用例2 parseLockCommit 也认 resolution 里的 commit 写法（并统一转小写）', () => {
+  const lockText = `lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      dsh-legacy:
+        specifier: github:owner/legacy
+        version: 1.0.0
+packages:
+  github.com/owner/legacy/0123456789ABCDEF0123456789ABCDEF01234567:
+    resolution: {commit: 0123456789ABCDEF0123456789ABCDEF01234567}
+`;
+  assert.equal(parseLockCommit(lockText, 'github:owner/legacy'), '0123456789abcdef0123456789abcdef01234567');
+  // 另一条 spec 不匹配时仍是 null
+  assert.equal(parseLockCommit(lockText, 'github:owner/other'), null);
+});
+
+// ---------------------------------------------------------------------------
+// 用例 3：已安装插件 → 来源归类
+// ---------------------------------------------------------------------------
+
+test('用例3 classifyPluginSource 裸名/范围归 npm', () => {
+  // 没有依赖记录（手工放进 node_modules 的 npm 包）：仍按同名 npm 包处理
+  const bare = classifyPluginSource({ name: 'dsh-notify' });
+  assert.equal(bare.kind, 'npm');
+  assert.deepEqual(bare.remote, { type: 'npm', package: 'dsh-notify' });
+  assert.equal(bare.spec, null);
+
+  // 带范围/标签的 spec 也归到 registry 上的同名包
+  const ranged = classifyPluginSource({ name: 'dsh-notify', spec: '^1.2.3', installedVersion: '1.2.3' });
+  assert.equal(ranged.kind, 'npm');
+  assert.equal(ranged.remote.package, 'dsh-notify');
+  assert.equal(ranged.installedVersion, '1.2.3');
+
+  const tagged = classifyPluginSource({ name: '@scope/pkg', spec: 'latest' });
+  assert.equal(tagged.kind, 'npm');
+  assert.equal(tagged.remote.package, '@scope/pkg');
+});
+
+test('用例3 classifyPluginSource 识别 github: / git+https 依赖', () => {
+  const gh = classifyPluginSource({ name: 'dsh-notify', spec: 'github:zhengjy01/dsh-notify', installedVersion: '1.2.0' });
+  assert.equal(gh.kind, 'git');
+  assert.equal(gh.remote.type, 'git');
+  assert.equal(gh.remote.author, 'zhengjy01');
+  assert.equal(gh.remote.repo, 'dsh-notify');
+  assert.equal(gh.remote.subdir, null);
+  assert.equal(gh.remote.dir, null);
+  assert.equal(gh.remote.url, 'https://github.com/zhengjy01/dsh-notify.git');
+
+  const sub = classifyPluginSource({ name: 'dsh-memory', spec: 'github:owner/repo#packages/foo' });
+  assert.equal(sub.kind, 'git');
+  assert.equal(sub.remote.author, 'owner');
+  assert.equal(sub.remote.repo, 'repo');
+  assert.equal(sub.remote.subdir, 'packages/foo');
+
+  const httpsGit = classifyPluginSource({ name: 'ledger', spec: 'git+https://github.com/o/r.git' });
+  assert.equal(httpsGit.kind, 'git');
+  assert.equal(httpsGit.remote.author, 'o');
+  assert.ok(httpsGit.remote.url.startsWith('https://github.com/o/'));
+});
+
+test('用例3 classifyPluginSource 用来源标记（.dsh-source.json）反推远端与已装 commit', () => {
+  const marker = {
+    author: 'owner',
+    repo: 'repo',
+    subdir: 'packages/foo',
+    url: 'https://github.com/owner/repo.git',
+    commit: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  };
+  const source = classifyPluginSource({
+    name: 'foo',
+    spec: 'file:/opt/dsh/plugin-sources/owner-repo-foo',
+    installedVersion: '1.0.0',
+    installedCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    marker
+  });
+  assert.equal(source.kind, 'git');
+  assert.equal(source.remote.author, 'owner');
+  assert.equal(source.remote.repo, 'repo');
+  assert.equal(source.remote.subdir, 'packages/foo');
+  assert.equal(source.remote.dir, '/opt/dsh/plugin-sources/owner-repo-foo');
+  // marker 里的 commit 优先于 lock 里解析出来的
+  assert.equal(source.installedCommit, marker.commit);
+});
+
+test('用例3 classifyPluginSource：老克隆目录靠市场索引反推远端，反推不出才算 local', () => {
+  const dir = '/opt/dsh/plugin-sources/volcengine-OpenViking-dsh-memory-plugin';
+  const marketNames = new Set(['volcengine/openviking-dsh-memory-plugin']);
+  const inferred = classifyPluginSource({
+    name: 'dsh-memory',
+    spec: `file:${dir}`,
+    installedVersion: '1.0.0',
+    marketNames
+  });
+  assert.equal(inferred.kind, 'git');
+  assert.equal(inferred.remote.author, 'volcengine');
+  assert.equal(inferred.remote.repo, 'OpenViking-dsh-memory-plugin');
+  assert.equal(inferred.remote.subdir, null);
+  assert.equal(inferred.remote.url, 'https://github.com/volcengine/OpenViking-dsh-memory-plugin.git');
+  assert.equal(inferred.remote.dir, dir);
+
+  // 市场索引里有目录名但没有可用候选（名字里连 `-` 都没有）→ 本地来源
+  const noCandidate = classifyPluginSource({
+    name: 'handmade',
+    spec: 'file:/opt/dsh/plugin-sources/localplugin',
+    installedVersion: '0.1.0',
+    marketNames: new Set(['someone/other'])
+  });
+  assert.equal(noCandidate.kind, 'local');
+  assert.equal(noCandidate.remote, null);
+
+  // 市场索引匹配不上时不敢乱猜 author/repo（`tt-a1i/xxx` 会被拆错）→ 本地来源
+  const notMatched = classifyPluginSource({
+    name: 'dsh-memory',
+    spec: `file:${dir}`,
+    installedVersion: '1.0.0',
+    marketNames: new Set(['someone/other'])
+  });
+  assert.equal(notMatched.kind, 'local');
+  assert.equal(notMatched.remote, null);
+
+  // 没有市场索引（空集）时同样判本地
+  const noMarket = classifyPluginSource({
+    name: 'dsh-memory',
+    spec: `file:${dir}`,
+    installedVersion: '1.0.0',
+    marketNames: new Set()
+  });
+  assert.equal(noMarket.kind, 'local');
+  assert.equal(noMarket.remote, null);
+
+  // 旧目录仍可被 collectPluginSources → discoverSourceMarker 用 ls-remote 补标记，
+  // 这个过程由 discoverSourceMarker 自己负责，不在 classifyPluginSource 里联网。
+});
+
+// ---------------------------------------------------------------------------
+// 用例 4：是否需要更新
+// ---------------------------------------------------------------------------
+
+test('用例4 decidePluginUpdate：小版本/跨大版本/有新提交/ahead/failed/local', () => {
+  const minor = decidePluginUpdate({
+    kind: 'npm',
+    installedVersion: '1.2.0',
+    installedCommit: null,
+    remote: { version: '1.3.0', channel: 'latest' }
+  });
+  assert.equal(minor.status, 'update-available');
+  assert.equal(minor.latestVersion, '1.3.0');
+  assert.equal(minor.channel, 'latest');
+  assert.equal(minor.major, false);
+  assert.equal(minor.error, null);
+
+  // 跨大版本仍提示，但带上 major 标注
+  const major = decidePluginUpdate({
+    kind: 'npm',
+    installedVersion: '1.9.0',
+    installedCommit: null,
+    remote: { version: '2.0.0' }
+  });
+  assert.equal(major.status, 'update-available');
+  assert.equal(major.latestVersion, '2.0.0');
+  assert.equal(major.major, true);
+
+  // 版本号没变、只是远端有新 commit → 不算可更新，只附注一句
+  const commitOnly = decidePluginUpdate({
+    kind: 'git',
+    installedVersion: '1.2.0',
+    installedCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    remote: { version: '1.2.0', commit: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' }
+  });
+  assert.equal(commitOnly.status, 'up-to-date');
+  assert.equal(commitOnly.latestVersion, '1.2.0');
+  assert.match(commitOnly.note, /新提交/);
+
+  // 已装的比远端还新
+  const ahead = decidePluginUpdate({
+    kind: 'npm',
+    installedVersion: '1.3.0',
+    installedCommit: null,
+    remote: { version: '1.2.0' }
+  });
+  assert.equal(ahead.status, 'ahead');
+  assert.equal(ahead.latestVersion, '1.2.0');
+
+  // 探测失败：error 原样带出
+  const failed = decidePluginUpdate({
+    kind: 'npm',
+    installedVersion: '1.2.0',
+    installedCommit: null,
+    remote: { error: 'registry 不可用：ETIMEDOUT' }
+  });
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.error, 'registry 不可用：ETIMEDOUT');
+  assert.equal(failed.latestVersion, null);
+
+  // 本地来源：不检测，也不报失败
+  const local = decidePluginUpdate({ kind: 'local', installedVersion: null, installedCommit: null, remote: null });
+  assert.equal(local.status, 'unknown');
+  assert.equal(local.error, null);
+});
+
+test('用例4 decidePluginUpdate：装正式版时远端只有预发布就不提示', () => {
+  const quiet = decidePluginUpdate({
+    kind: 'npm',
+    installedVersion: '1.2.0',
+    installedCommit: null,
+    remote: { version: '1.3.0-beta.1', channel: 'latest' }
+  });
+  assert.equal(quiet.status, 'up-to-date');
+  assert.equal(quiet.latestVersion, '1.3.0-beta.1');
+  // note 要说明“远端只有预发布版本”
+  assert.match(quiet.note, /预发布/);
+
+  // 已装的就是预发布时，预发布之间正常比较
+  const prerelease = decidePluginUpdate({
+    kind: 'npm',
+    installedVersion: '1.3.0-beta.1',
+    installedCommit: null,
+    remote: { version: '1.3.0-beta.2' }
+  });
+  assert.equal(prerelease.status, 'update-available');
+  assert.equal(prerelease.latestVersion, '1.3.0-beta.2');
+  assert.equal(prerelease.major, false);
+});
+
+// ---------------------------------------------------------------------------
+// 用例 5：清单汇总
+// ---------------------------------------------------------------------------
+
+test('用例5 summarizeUpdateInventory 统计各状态条数', () => {
+  const summary = summarizeUpdateInventory([
+    { status: 'update-available' },
+    { status: 'update-available' },
+    { status: 'up-to-date' },
+    { status: 'ahead' },
+    { status: 'failed' },
+    { status: 'unknown' }
+  ]);
+  assert.deepEqual(summary, { total: 6, updateAvailable: 2, ignored: 0, failed: 1, unknown: 1 });
+
+  // 空清单 / 非数组入参都不抛错
+  assert.deepEqual(summarizeUpdateInventory([]), { total: 0, updateAvailable: 0, ignored: 0, failed: 0, unknown: 0 });
+  assert.deepEqual(summarizeUpdateInventory(null), { total: 0, updateAvailable: 0, ignored: 0, failed: 0, unknown: 0 });
+
+  // 已忽略的更新不算「可更新」：侧边栏角标与启动器菜单行都读这个数
+  assert.deepEqual(
+    summarizeUpdateInventory([
+      { status: 'update-available' },
+      { status: 'update-available', ignored: true }
+    ]),
+    { total: 2, updateAvailable: 1, ignored: 1, failed: 0, unknown: 0 }
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 用例 6：一轮检测（runUpdateCheck，注入假 probe）
+// ---------------------------------------------------------------------------
+
+function sampleSources() {
+  return [
+    { name: 'dsh-notify', kind: 'npm', spec: '^1.2.3', installedVersion: '1.2.0', installedCommit: null, remote: { type: 'npm', package: 'dsh-notify' } },
+    { name: 'TokenLedger', kind: 'git', spec: 'github:zh667/TokenLedger', installedVersion: '1.0.0', installedCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', remote: { type: 'git', url: 'https://github.com/zh667/TokenLedger.git', author: 'zh667', repo: 'TokenLedger', subdir: null, dir: null } },
+    { name: 'handmade', kind: 'local', spec: null, installedVersion: null, installedCommit: null, remote: null }
+  ];
+}
+
+test('用例6 runUpdateCheck 按来源分派探测并逐条给状态', async () => {
+  const calls = { npm: [], git: [] };
+  const entries = await runUpdateCheck(sampleSources(), {
+    npm: async name => { calls.npm.push(name); return { version: '2.0.0', channel: 'latest' }; },
+    git: async remote => { calls.git.push(remote.url); return { version: '1.1.0', commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }; }
+  });
+
+  // npm 探测收到包名，git 探测收到远端（不会去探测 local）
+  assert.deepEqual(calls.npm, ['dsh-notify']);
+  assert.deepEqual(calls.git, ['https://github.com/zh667/TokenLedger.git']);
+
+  assert.equal(entries.length, 3);
+  const [npmEntry, gitEntry, localEntry] = entries;
+
+  assert.equal(npmEntry.name, 'dsh-notify');
+  assert.equal(npmEntry.status, 'update-available');
+  assert.equal(npmEntry.latestVersion, '2.0.0');
+  assert.equal(npmEntry.major, true); // 1.2.0 → 2.0.0
+
+  assert.equal(gitEntry.status, 'update-available');
+  assert.equal(gitEntry.latestVersion, '1.1.0');
+  assert.equal(gitEntry.major, false);
+  // 远端 commit 与已装 commit 相同 → 不该出现“有新提交”的附注
+  assert.equal(gitEntry.note, null);
+
+  // 本地来源没有远端 → unknown（不是 failed）
+  assert.equal(localEntry.status, 'unknown');
+  assert.equal(localEntry.latestVersion, null);
+  assert.equal(localEntry.error, null);
+});
+
+test('用例6 runUpdateCheck：单条探测抛错/返回 error 只影响该条', async () => {
+  // 一条抛异常、一条正常：抛异常由 mapWithConcurrency 兜底，整条结果被替换成
+  // `{error}`（不经过 decidePluginUpdate，所以没有 status），这里只断言错误被带出、
+  // 且同批的其它条目不受影响。真实 probe（probeNpmDistTags / probeGitHead）自己
+  // 就把异常收成 `{error}` 返回，走的是下面那条路径。
+  const mixed = await runUpdateCheck(sampleSources().slice(0, 2), {
+    npm: async () => { throw new Error('registry 不可用'); },
+    git: async () => ({ version: '1.1.0', commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' })
+  });
+  assert.match(mixed[0].error, /registry 不可用/);
+  // 兜底结果当前没有 status（summary 也不会把它计进 failed）；将来若补成
+  // status: 'failed' 这个断言同样成立。
+  assert.ok(mixed[0].status === undefined || mixed[0].status === 'failed');
+  assert.equal(mixed[1].status, 'update-available');
+  assert.equal(mixed[1].latestVersion, '1.1.0');
+
+  // 一条返回 {error}、一条正常
+  const withError = await runUpdateCheck(sampleSources().slice(0, 2), {
+    npm: async () => ({ version: '2.0.0' }),
+    git: async () => ({ error: 'git ls-remote 失败' })
+  });
+  assert.equal(withError[0].status, 'update-available');
+  assert.equal(withError[0].latestVersion, '2.0.0');
+  assert.equal(withError[1].status, 'failed');
+  assert.equal(withError[1].error, 'git ls-remote 失败');
+  assert.equal(withError[1].latestVersion, null);
+});
+
+test('用例6 探测函数缺少远端信息时直接返回 error（不联网）', async () => {
+  // 只覆盖参数校验分支，不触发任何网络访问
+  assert.match((await probeGitHead({})).error, /缺少远端地址/);
+  assert.match((await fetchRemotePackageVersion({})).error, /缺少仓库信息/);
+  assert.match((await fetchRemotePackageVersion({ author: 'owner' })).error, /缺少仓库信息/);
+});
+
+test('远端 package.json：raw 卡住/超时时用 api.github.com 兜底（实测国内网络 raw 14～60 秒且断流）', async () => {
+  const remote = { author: 'owner', repo: 'plugin', subdir: null };
+  const commit = 'a'.repeat(40);
+  const rawURL = `https://raw.githubusercontent.com/owner/plugin/${commit}/package.json`;
+  const apiURL = `https://api.github.com/repos/owner/plugin/contents/package.json?ref=${commit}`;
+
+  // 1) raw 正常：只打 raw，不进 API
+  const happy = [];
+  const happyResult = await fetchRemotePackageVersion(remote, commit, 1000, {
+    fetch: async url => {
+      happy.push(url);
+      return { ok: true, json: async () => ({ version: '2.1.0' }) };
+    }
+  });
+  assert.deepEqual(happyResult, { version: '2.1.0' });
+  assert.deepEqual(happy, [rawURL], 'raw 成功时不该多打一次 API');
+
+  // 2) raw 超时（AbortError）→ API 兜底：base64 解出来仍是 package.json
+  const urls = [];
+  const fallback = await fetchRemotePackageVersion(remote, commit, 1000, {
+    fetch: async url => {
+      urls.push(url);
+      if (url === rawURL) {
+        const error = new Error('This operation was aborted');
+        error.name = 'AbortError';
+        throw error;
+      }
+      return { ok: true, json: async () => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ version: '3.4.5' })).toString('base64') }) };
+    }
+  });
+  assert.deepEqual(fallback, { version: '3.4.5' });
+  assert.deepEqual(urls, [rawURL, apiURL]);
+
+  // 3) 两条路都失败：如实报 raw 那一步的原因，并把 undici 的内部措辞换成人能看懂的超时说明
+  const bothFailed = await fetchRemotePackageVersion(remote, commit, 1000, {
+    fetch: async url => {
+      if (url === rawURL) {
+        const error = new Error('This operation was aborted');
+        error.name = 'AbortError';
+        throw error;
+      }
+      return { ok: false, status: 403, json: async () => ({}) };
+    }
+  });
+  assert.match(bothFailed.error, /超时（1 秒）/);
+  assert.doesNotMatch(bothFailed.error, /aborted/);
+
+  // 4) raw 404 且 API 也不可用：报 raw 的 HTTP 状态（主路径更好对号）
+  const missing = await fetchRemotePackageVersion(remote, commit, 1000, {
+    fetch: async url => ({ ok: false, status: url === rawURL ? 404 : 500, json: async () => ({}) })
+  });
+  assert.match(missing.error, /HTTP 404/);
+
+  // 5) API 返回畸形载荷：不能当成成功
+  const malformed = await fetchRemotePackageVersion(remote, commit, 1000, {
+    fetch: async url => (url === rawURL
+      ? { ok: true, json: async () => ({}) }
+      : { ok: true, json: async () => ({ encoding: 'base64', content: Buffer.from('not json').toString('base64') }) })
+  });
+  assert.match(malformed.error, /没有 version/);
+});
+
+test('git 来源更新前的 peer 门禁同样吃 raw→API 兜底（以前静默拿到空 peer，门禁形同不存在）', async () => {
+  const source = {
+    name: 'qoder-plugin',
+    installedVersion: '0.5.0',
+    installedCommit: 'b'.repeat(40),
+    remote: { type: 'git', author: 'owner', repo: 'plugin', subdir: null }
+  };
+  const urls = [];
+  const peers = await fetchTargetPeerDependencies(source, '0.5.0', {
+    fetch: async url => {
+      urls.push(url);
+      if (String(url).startsWith('https://raw.githubusercontent.com/')) {
+        const error = new Error('This operation was aborted');
+        error.name = 'AbortError';
+        throw error;
+      }
+      return {
+        ok: true,
+        json: async () => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ version: '0.5.0', peerDependencies: { '@earendil-works/pi-ai': '>=0.85.0 <0.88.0' } })).toString('base64') })
+      };
+    }
+  });
+  assert.deepEqual(peers, { '@earendil-works/pi-ai': '>=0.85.0 <0.88.0' });
+  assert.equal(urls.length, 2, 'raw 失败后必须再问一次 API');
+
+  // 两条路都不通：仍然静默返回空（更新不被阻断），只是门禁这次确实拿不到依据
+  const unavailable = await fetchTargetPeerDependencies(source, '0.5.0', {
+    fetch: async () => ({ ok: false, status: 500, json: async () => ({}) })
+  });
+  assert.deepEqual(unavailable, {});
+});
+
+// ---------------------------------------------------------------------------
+// 用例 7：执行更新（applyPluginUpdate，注入 check/command/clone）
+// ---------------------------------------------------------------------------
+
+const UPDATE_AVAILABLE = [{ status: 'update-available', latestVersion: '2.0.0' }];
+
+test('用例7 applyPluginUpdate：npm 来源执行 `add <name>@<latest>`', async () => {
+  const commands = [];
+  const source = {
+    name: 'dsh-notify',
+    kind: 'npm',
+    spec: '^1.2.3',
+    installedVersion: '1.2.0',
+    installedCommit: null,
+    remote: { type: 'npm', package: 'dsh-notify' }
+  };
+  const result = await applyPluginUpdate(source, {
+    check: async () => [{ status: 'update-available', latestVersion: '2.0.0' }],
+    command: async args => { commands.push(args); return { note: 'ok' }; },
+    // 离线单测没有真实 node_modules：注入「已物化」，重试路径不触发
+    verifyApplied: async () => true
+  });
+
+  assert.deepEqual(commands, [['add', 'dsh-notify@2.0.0']]);
+  assert.equal(result.ok, true);
+  assert.equal(result.updatedTo, '2.0.0');
+  assert.equal(result.restartRequired, true);
+});
+
+test('用例7 applyPluginUpdate：github: 来源按原 spec 重新解析', async () => {
+  const commands = [];
+  const source = {
+    name: 'TokenLedger',
+    kind: 'git',
+    spec: 'github:zh667/TokenLedger',
+    installedVersion: '1.0.0',
+    installedCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    remote: { type: 'git', url: 'https://github.com/zh667/TokenLedger.git', author: 'zh667', repo: 'TokenLedger', subdir: null, dir: null }
+  };
+  const result = await applyPluginUpdate(source, {
+    check: async () => UPDATE_AVAILABLE,
+    command: async args => { commands.push(args); }
+  });
+
+  assert.deepEqual(commands, [['add', 'github:zh667/TokenLedger']]);
+  assert.equal(result.ok, true);
+  assert.equal(result.updatedTo, '2.0.0');
+  assert.equal(result.restartRequired, true);
+});
+
+test('用例7 applyPluginUpdate：file: 克隆来源先备份、clone 重建、再 add file:<新目录>', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-pm-apply-'));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    // 与真实布局一致：启动器克隆的目录在 $DSH_HOME/profiles/web/plugin-sources，
+    // 更新的「备份-改名-重克隆」只允许动这里（见 applyPluginUpdate 的 dev-linked 守卫）。
+    const sourcesDir = join(home, 'profiles', 'web', 'plugin-sources');
+    const dir = join(sourcesDir, 'owner-repo');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'index.js'), '// 旧版本', 'utf8');
+
+    const commands = [];
+    const cloneCalls = [];
+    const source = {
+      name: 'repo',
+      kind: 'git',
+      spec: `file:${dir}`,
+      installedVersion: '1.0.0',
+      installedCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      remote: { type: 'git', url: 'https://github.com/owner/repo.git', author: 'owner', repo: 'repo', subdir: null, dir }
+    };
+
+    const result = await applyPluginUpdate(source, {
+      check: async () => [{ status: 'update-available', latestVersion: '1.1.0' }],
+      command: async args => { commands.push(args); },
+      clone: async (ref, subdir) => {
+        cloneCalls.push({ ref, subdir });
+        // 模拟 clone 成功：把目标目录重建出来并写入新内容（真 clone 一定带 package.json）
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'index.js'), '// 新版本', 'utf8');
+        await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'repo', version: '1.1.0' }), 'utf8');
+        return { ok: true, dest: dir, packageName: 'repo' };
+      }
+    });
+
+    // 传给 clone 的引用信息正确
+    assert.deepEqual(cloneCalls, [
+      { ref: { author: 'owner', repo: 'repo', subdir: null, full: 'owner/repo' }, subdir: null }
+    ]);
+
+    // (b) 新目录由 clone 重建
+    assert.equal(await readFile(join(dir, 'index.js'), 'utf8'), '// 新版本');
+    // (a) 旧目录被改名成 <dir>.bak-<时间戳>，旧内容还在
+    const backups = (await readdir(sourcesDir)).filter(name => name.startsWith('owner-repo.bak-'));
+    assert.equal(backups.length, 1);
+    assert.match(backups[0], /^owner-repo\.bak-\d{14}$/);
+    assert.equal(await readFile(join(sourcesDir, backups[0], 'index.js'), 'utf8'), '// 旧版本');
+    // (c) pnpm 记录的是新目录
+    assert.deepEqual(commands, [['add', `file:${dir}`]]);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.updatedTo, '1.1.0');
+    assert.equal(result.restartRequired, true);
+    assert.match(result.note, /owner-repo\.bak-/);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('用例7 applyPluginUpdate：clone 失败时回滚备份（原目录恢复、无 .bak 残留）', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-pm-apply-fail-'));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    // 同上：对齐真实布局，让目录落在守卫允许的 $DSH_HOME/profiles/web/plugin-sources。
+    const sourcesDir = join(home, 'profiles', 'web', 'plugin-sources');
+    const dir = join(sourcesDir, 'owner-repo');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'index.js'), '// 旧版本', 'utf8');
+
+    const commands = [];
+    const source = {
+      name: 'repo',
+      kind: 'git',
+      spec: `file:${dir}`,
+      installedVersion: '1.0.0',
+      installedCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      remote: { type: 'git', url: 'https://github.com/owner/repo.git', author: 'owner', repo: 'repo', subdir: null, dir }
+    };
+
+    // 当前实现是在 applyPluginUpdate 层直接 throw（由 updatePlugin 兜成 {ok:false}），
+    // 所以两种“失败”形态都接受，重点是回滚结果一致。
+    let outcome = null;
+    try {
+      outcome = await applyPluginUpdate(source, {
+        check: async () => [{ status: 'update-available', latestVersion: '1.1.0' }],
+        command: async args => { commands.push(args); },
+        clone: async () => ({ ok: false, error: 'boom' })
+      });
+    } catch (error) {
+      outcome = error;
+    }
+    if (outcome instanceof Error) assert.match(outcome.message, /boom/);
+    else assert.equal(outcome.ok, false);
+
+    // 备份被回滚：原目录内容恢复，且没有 .bak-* 残留
+    assert.equal(await readFile(join(dir, 'index.js'), 'utf8'), '// 旧版本');
+    assert.deepEqual((await readdir(sourcesDir)).filter(name => name.includes('.bak-')), []);
+    // clone 失败时不应去改 pnpm 依赖
+    assert.deepEqual(commands, []);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('用例7 updatePlugin：clone 失败时公开接口返回 ok:false 且旧目录完好', async () => {
+  await withTempDshHome('dsh-pm-update-fail-', async home => {
+    const profileDir = join(home, 'profiles', 'web');
+    const sourceDir = join(profileDir, 'plugin-sources', 'owner-repo');
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, 'index.js'), '// 旧版本', 'utf8');
+    await writeFile(join(sourceDir, '.dsh-source.json'), JSON.stringify({
+      author: 'owner',
+      repo: 'repo',
+      subdir: null,
+      url: 'https://github.com/owner/repo.git',
+      commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    }), 'utf8');
+    await mkdir(join(profileDir, 'node_modules', 'repo'), { recursive: true });
+    await writeFile(join(profileDir, 'node_modules', 'repo', 'package.json'), JSON.stringify({ name: 'repo', version: '1.0.0' }), 'utf8');
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-web-profile',
+      dsh: { profile: { bundles: ['repo'] } },
+      dependencies: { repo: `file:${sourceDir}` }
+    }), 'utf8');
+
+    // 先确认 profile 里的这条依赖被识别成 git 克隆来源
+    const sources = await collectPluginSources();
+    assert.equal(sources.length, 1);
+    assert.equal(sources[0].kind, 'git');
+    assert.equal(sources[0].remote.dir, sourceDir);
+    assert.equal(sources[0].installedCommit, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+
+    const result = await updatePlugin('repo', {
+      check: async () => [{ status: 'update-available', latestVersion: '1.1.0' }],
+      peerProbe: async () => ({}),
+      command: async () => {},
+      clone: async () => ({ ok: false, error: 'boom' })
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /boom/);
+    assert.equal(await readFile(join(sourceDir, 'index.js'), 'utf8'), '// 旧版本');
+  });
+});
+
+test('用例7 applyPluginUpdate：local 来源与“没有可更新版本”都返回 ok:false', async () => {
+  const localSource = {
+    name: 'handmade',
+    kind: 'local',
+    spec: 'file:/opt/dsh/plugin-sources/localplugin',
+    installedVersion: '0.1.0',
+    installedCommit: null,
+    remote: null
+  };
+  const commands = [];
+  const local = await applyPluginUpdate(localSource, {
+    check: async () => UPDATE_AVAILABLE,
+    command: async args => { commands.push(args); }
+  });
+  assert.equal(local.ok, false);
+  assert.equal(local.error, '该插件来源无法自动更新');
+  assert.deepEqual(commands, []);
+
+  // 检测结论不是 update-available 时，不带换代动作直接返回失败
+  const upToDate = await applyPluginUpdate(localSource, {
+    check: async () => [{ status: 'up-to-date', latestVersion: '0.1.0' }]
+  });
+  assert.equal(upToDate.ok, false);
+  assert.equal(upToDate.status, 'up-to-date');
+  assert.equal(upToDate.error, '没有检测到可更新的版本');
+
+  // 探测失败时把 error 带出来
+  const failed = await applyPluginUpdate(localSource, {
+    check: async () => [{ status: 'failed', error: 'registry 不可用' }]
+  });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.error, 'registry 不可用');
+});
+
+// ---------------------------------------------------------------------------
+// 用例 8：备份清理
+// ---------------------------------------------------------------------------
+
+test('用例8 pruneSourceBackups 只保留最新的一个备份', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-pm-prune-'));
+  try {
+    const sourcesDir = join(home, 'plugin-sources');
+    const name = 'owner-repo';
+    await mkdir(sourcesDir, { recursive: true });
+    await mkdir(join(sourcesDir, name), { recursive: true });
+    await mkdir(join(sourcesDir, `${name}.bak-1`), { recursive: true });
+    await mkdir(join(sourcesDir, `${name}.bak-2`), { recursive: true });
+
+    const removed = await pruneSourceBackups(join(sourcesDir, name));
+    assert.deepEqual(removed, [`${name}.bak-1`]);
+    const left = (await readdir(sourcesDir)).filter(entry => entry.startsWith(`${name}.bak-`));
+    assert.deepEqual(left, [`${name}.bak-2`]);
+    assert.ok(await exists(join(sourcesDir, name)));
+
+    // 再来一次没有可删的 → 返回空列表
+    assert.deepEqual(await pruneSourceBackups(join(sourcesDir, name)), []);
+    // 目录不存在也不抛错
+    assert.deepEqual(await pruneSourceBackups(join(home, 'nope', name)), []);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 用例 9：checkPluginUpdates 的缓存语义（临时 DSH_HOME，跑完恢复）
+// ---------------------------------------------------------------------------
+
+test('用例9 checkPluginUpdates：缓存新鲜不联网、force 才重新探测', async () => {
+  await withTempDshHome('dsh-pm-updates-', async home => {
+    // 空 profile：没有任何可检测的插件来源
+    assert.deepEqual(await collectPluginSources(), []);
+    // 还没有检测过 → 没有缓存
+    assert.equal(await readUpdateCache(), null);
+
+    // 造一个 npm 来源的已装插件（只读本地文件，不联网）
+    const profileDir = join(home, 'profiles', 'web');
+    await mkdir(join(profileDir, 'node_modules', 'dsh-notify'), { recursive: true });
+    await writeFile(join(profileDir, 'node_modules', 'dsh-notify', 'package.json'), JSON.stringify({ name: 'dsh-notify', version: '1.2.0' }), 'utf8');
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-web-profile',
+      dsh: { profile: { bundles: ['dsh-notify'] } },
+      dependencies: { 'dsh-notify': '^1.2.3' }
+    }), 'utf8');
+
+    const sources = await collectPluginSources();
+    assert.equal(sources.length, 1);
+    assert.equal(sources[0].kind, 'npm');
+    assert.equal(sources[0].installedVersion, '1.2.0');
+
+    let probeCalls = 0;
+    const probe = {
+      npm: async name => {
+        probeCalls += 1;
+        assert.equal(name, 'dsh-notify');
+        await sleep(10); // 让两次刷新的 checkedAt 一定不同
+        return { version: '2.0.0', channel: 'latest' };
+      },
+      git: async () => { throw new Error('npm 来源不应触发 git 探测'); }
+    };
+
+    // 首次：没有缓存 → 触发一轮检测。当前实现不阻塞响应（立刻回 refreshing: true），
+    // 结果由后台写盘；这里等缓存落盘后再断言内容（对"等结果"的旧形态同样成立）。
+    const first = await checkPluginUpdates({ probe });
+    assert.equal(typeof first.refreshing, 'boolean');
+    assert.ok(Array.isArray(first.inventory));
+    assert.ok(await waitFor(async () => (await readUpdateCache())?.inventory?.length === 1), '首次检测应把结果写进缓存');
+    assert.equal(probeCalls, 1);
+
+    // 缓存落盘到 profile 下的 .plugin-updates.json，内容与返回结构一致
+    const cacheFile = join(profileDir, '.plugin-updates.json');
+    assert.ok(await exists(cacheFile));
+    const firstCache = await readUpdateCache();
+    assert.ok(firstCache.checkedAt);
+    const onDisk = JSON.parse(await readFile(cacheFile, 'utf8'));
+    assert.equal(onDisk.checkedAt, firstCache.checkedAt);
+    const cachedEntry = firstCache.inventory[0];
+    assert.equal(cachedEntry.name, 'dsh-notify');
+    assert.equal(cachedEntry.status, 'update-available');
+    assert.equal(cachedEntry.latestVersion, '2.0.0');
+
+    // 第二次：缓存新鲜且未 force → 不再探测，直接回缓存
+    const second = await checkPluginUpdates({ probe });
+    assert.equal(probeCalls, 1);
+    assert.equal(second.refreshing, false);
+    assert.equal(second.checkedAt, firstCache.checkedAt);
+    assert.deepEqual(second.summary, { total: 1, updateAvailable: 1, ignored: 0, failed: 0, unknown: 0 });
+    assert.equal(second.inventory[0].latestVersion, '2.0.0');
+
+    // 等后台那轮彻底收尾（inFlight 清空），再验证 force
+    await sleep(20);
+
+    // force：即使缓存新鲜也重新探测，先回旧缓存并在后台改写
+    const forced = await checkPluginUpdates({ force: true, probe });
+    assert.equal(forced.refreshing, true);
+    assert.ok(await waitFor(() => probeCalls === 2), 'force 后应重新探测一次');
+    // 等后台把新缓存写完，再还原 DSH_HOME，避免后台写进真实的 ~/.dsh
+    assert.ok(await waitFor(async () => (await readUpdateCache())?.checkedAt !== firstCache.checkedAt), '后台应写入新的 checkedAt');
+    assert.equal(probeCalls, 2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 回归：已卸载插件的「幽灵更新条目」
+//
+// 用户实测：卸载旧插件后，侧边栏角标与「全部更新 (n)」还是 2，可实际只剩 1 个
+// 已安装插件可更新。缓存是「检测那一刻」的快照，卸载不会清理它；而
+// checkPluginUpdates 在缓存新鲜时原样返回，幽灵条目就继续计入 summary。
+// ---------------------------------------------------------------------------
+
+test('回归：已卸载插件的幽灵更新条目不再计入角标与「全部更新」', async () => {
+  await withTempDshHome('dsh-pm-ghost-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    // 面板里现在只剩 dsh-keep 还装着；dsh-gone 已经被卸载（manifest 与 node_modules 都没有）
+    await mkdir(join(profile, 'node_modules', 'dsh-keep'), { recursive: true });
+    await writeFile(join(profile, 'node_modules', 'dsh-keep', 'package.json'), JSON.stringify({ name: 'dsh-keep', version: '1.0.0' }));
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { 'dsh-keep': '^1.0.0' },
+      dsh: { profile: { bundles: ['dsh-keep'] } }
+    }));
+    // 缓存是卸载前那一轮检测的结论：两个条目都是 update-available
+    const checkedAt = new Date().toISOString();
+    await writeUpdateCache({
+      checkedAt,
+      inventory: [
+        { name: 'dsh-gone', kind: 'npm', status: 'update-available', installedVersion: '0.5.0', latestVersion: '0.7.6' },
+        { name: 'dsh-keep', kind: 'npm', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' }
+      ]
+    });
+    // 缓存是新鲜的（checkedAt 刚刚），整轮都不该联网——探针抛错兜住这点。
+    const probe = { npm: async () => { throw new Error('不该联网'); }, git: async () => { throw new Error('不该联网'); } };
+
+    const snapshot = await checkPluginUpdates({ probe });
+
+    assert.deepEqual(snapshot.inventory.map(entry => entry.name), ['dsh-keep'], '已卸载插件的条目不能出现在检测结果里');
+    assert.deepEqual(snapshot.summary, { total: 1, updateAvailable: 1, ignored: 0, failed: 0, unknown: 0 },
+      '角标与「全部更新 (n)」只能按已安装插件计数');
+    assert.equal(snapshot.refreshing, false, '裁剪幽灵条目不算重新检测');
+
+    // 顺手把缓存修好：下次读取（含启动器轮询）不用再裁，重新安装同名插件也不会读到旧结论
+    const disk = JSON.parse(await readFile(join(profile, '.plugin-updates.json'), 'utf8'));
+    assert.deepEqual(disk.inventory.map(entry => entry.name), ['dsh-keep'], '缓存文件里的幽灵条目也要清掉');
+    assert.equal(disk.checkedAt, checkedAt, '裁剪不能改检测时间：其它条目还是同一轮结论');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 回归：联调/自测阶段发现的三处缺陷 + 更新进度状态
+// ---------------------------------------------------------------------------
+
+test('回归 1：探测函数抛错也要计入 failed（不能只留一个没有 status 的条目）', async () => {
+  const entries = await runUpdateCheck([
+    { name: 'dsh-notify', kind: 'npm', spec: '^1.2.3', installedVersion: '1.2.0', installedCommit: null, remote: { type: 'npm', package: 'dsh-notify' } }
+  ], { npm: async () => { throw new Error('registry 不可用'); } });
+  assert.equal(entries[0].status, 'failed');
+  assert.match(entries[0].error, /registry 不可用/);
+  assert.deepEqual(summarizeUpdateInventory(entries), { total: 1, updateAvailable: 0, ignored: 0, failed: 1, unknown: 0 });
+});
+
+test('回归 2：`git+https://…/repo.git` 的仓库名不重复 .git 后缀', () => {
+  const source = classifyPluginSource({ name: 'demo', spec: 'git+https://github.com/o/r.git', installedVersion: '1.0.0' });
+  assert.equal(source.kind, 'git');
+  assert.equal(source.remote.repo, 'r');
+  assert.equal(source.remote.url, 'https://github.com/o/r.git');
+});
+
+test('回归 3：npm spec 不会误取相邻 git 依赖的 commit', () => {
+  const sha = 'b'.repeat(40);
+  const lock = [
+    '  foo:',
+    '    specifier: ^1.2.3',
+    '    version: 1.2.3',
+    '  bar:',
+    '    specifier: github:o/r',
+    `    version: https://codeload.github.com/o/r/tar.gz/${sha}`
+  ].join('\n');
+  assert.equal(parseLockCommit(lock, '^1.2.3'), null);
+  assert.equal(parseLockCommit(lock, 'github:o/r'), sha);
+});
+
+test('进度：单插件更新走 准备 → 步骤 → 完成，并保留结果', async () => {
+  await withTempDshHome('dsh-pm-progress-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    await mkdir(join(profile, 'node_modules', 'demo-plugin'), { recursive: true });
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { 'demo-plugin': 'github:o/demo-plugin' },
+      dsh: { profile: { bundles: ['demo-plugin'] } }
+    }));
+    await writeFile(join(profile, 'node_modules', 'demo-plugin', 'package.json'), JSON.stringify({ name: 'demo-plugin', version: '1.0.0' }));
+
+    // 进度是模块级状态（同一个插件进程里会一直保留）：这里不假设它是空的，
+    // 只要求这次更新自己走完一轮（finishedAt 变化 + 结果只含本次的插件）。
+    const before = readUpdateProgress();
+    const seen = [];
+    const result = await updatePlugin('demo-plugin', {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      peerProbe: async () => ({}),
+      command: async args => { seen.push({ args, step: readUpdateProgress()?.step, done: readUpdateProgress()?.done }); }
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.updatedTo, '2.0.0');
+    assert.equal(result.restartRequired, true);
+    // GitHub 依赖走"重新解析原 spec"，执行命令时进度已经进入这一步
+    assert.deepEqual(seen.map(entry => entry.args), [['add', 'github:o/demo-plugin']]);
+    assert.match(seen[0].step, /正在重新解析/);
+    assert.equal(seen[0].done, 0);
+
+    const progress = readUpdateProgress();
+    assert.equal(progress.active, false);
+    assert.equal(progress.kind, 'single');
+    assert.equal(progress.total, 1);
+    assert.equal(progress.done, 1);
+    assert.equal(progress.step, '已完成');
+    assert.ok(progress.finishedAt);
+    assert.notEqual(progress.finishedAt, before?.finishedAt);
+    assert.deepEqual(progress.results.map(item => [item.name, item.ok]), [['demo-plugin', true]]);
+  });
+});
+
+test('进度：批量更新共用一个进度对象（total/done 累加）', async () => {
+  await withTempDshHome('dsh-pm-progress-batch-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    for (const name of ['plugin-a', 'plugin-b']) {
+      await mkdir(join(profile, 'node_modules', name), { recursive: true });
+      await writeFile(join(profile, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '1.0.0' }));
+    }
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { 'plugin-a': 'github:o/plugin-a', 'plugin-b': 'github:o/plugin-b' },
+      dsh: { profile: { bundles: ['plugin-a', 'plugin-b'] } }
+    }));
+
+    const { updatePlugins, readLastBatchUpdate } = await import('../lib/index.js');
+    const snapshot = [];
+    const summary = await updatePlugins(['plugin-a', 'plugin-b'], {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '3.0.0', error: null })),
+      command: async () => { const p = readUpdateProgress(); snapshot.push({ total: p.total, done: p.done, current: p.current }); }
+    });
+    assert.equal(summary.updated, 2);
+    assert.equal(summary.failed, 0);
+    assert.deepEqual(snapshot.map(item => [item.total, item.done]), [[2, 0], [2, 1]]);
+    assert.deepEqual(snapshot.map(item => item.current), ['plugin-a', 'plugin-b']);
+    const progress = readUpdateProgress();
+    assert.equal(progress.active, false);
+    assert.equal(progress.kind, 'batch');
+    assert.equal(progress.done, 2);
+    assert.equal(readLastBatchUpdate().updated, 2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 回归：缓存必须校验（畸形条目曾让调用方直接崩），且测试不能写进真实 profile
+// ---------------------------------------------------------------------------
+
+test('回归 4：读缓存时丢弃畸形条目，整份没用就当作没有缓存', async () => {
+  await withTempDshHome('dsh-pm-cache-sanity-', async home => {
+    const cacheFile = join(home, 'cache.json');
+    // 缺 name/status 的条目（历史上由探测异常落盘）必须被丢掉
+    await writeUpdateCache({ checkedAt: new Date().toISOString(), inventory: [{ error: 'boom' }] }, cacheFile);
+    assert.equal(await readUpdateCache({ cacheFile }), null);
+
+    // 同一份里既有合法又有畸形：只留合法的
+    await writeUpdateCache({
+      checkedAt: new Date().toISOString(),
+      inventory: [
+        { name: 'ok-plugin', status: 'up-to-date', installedVersion: '1.0.0' },
+        { error: 'boom' },
+        { name: '', status: 'failed' },
+        { name: 'no-status' }
+      ]
+    }, cacheFile);
+    const sanitized = await readUpdateCache({ cacheFile });
+    assert.deepEqual(sanitized.inventory.map(item => item.name), ['ok-plugin']);
+
+    // checkedAt 缺失/非法 → 当作过期，但条目仍可用
+    await writeUpdateCache({ inventory: [{ name: 'p', status: 'up-to-date' }] }, cacheFile);
+    const noStamp = await readUpdateCache({ cacheFile });
+    assert.equal(noStamp.inventory.length, 1);
+    assert.equal(noStamp.checkedAt, null);
+  });
+});
+
+test('回归 5：探测抛错时落盘的条目也必须带 name/status（供面板/启动器安全消费）', async () => {
+  await withTempDshHome('dsh-pm-cache-write-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    await mkdir(join(profile, 'node_modules', 'p'), { recursive: true });
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { p: 'github:o/p' },
+      dsh: { profile: { bundles: ['p'] } }
+    }));
+    await writeFile(join(profile, 'node_modules', 'p', 'package.json'), JSON.stringify({ name: 'p', version: '1.0.0' }));
+    const cacheFile = join(home, 'cache.json');
+
+    // 注入会抛错的 git 探测：这条要落成 failed，而不是没有 name/status 的裸条目
+    await checkPluginUpdates({ force: true, cacheFile, probe: { git: async () => { throw new Error('registry 不可用'); } } });
+    for (let i = 0; i < 100 && !(await readUpdateCache({ cacheFile })); i += 1) await sleep(30);
+    const cached = await readUpdateCache({ cacheFile });
+    assert.ok(cached, '应当写出一份缓存');
+    assert.equal(cached.inventory.length, 1);
+    assert.equal(cached.inventory[0].name, 'p');
+    assert.equal(cached.inventory[0].status, 'failed');
+    assert.match(cached.inventory[0].error, /registry 不可用/);
+    assert.equal(cached.inventory[0].spec, 'github:o/p', '条目要能反查回原始 spec，面板才画得出更新按钮');
+  });
+});
+
+test('回归 6：缓存文件里的畸形 JSON 不能让调用方崩', async () => {
+  await withTempDshHome('dsh-pm-cache-broken-', async home => {
+    const cacheFile = join(home, 'cache.json');
+    await writeFile(cacheFile, '{ this is not json');
+    assert.equal(await readUpdateCache({ cacheFile }), null);
+    await writeFile(cacheFile, JSON.stringify({ checkedAt: 'not-a-date', inventory: 'nope' }));
+    assert.equal(await readUpdateCache({ cacheFile }), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 回归：更新成功后必须让「检测结果缓存」失效，否则面板与启动器会长时间显示旧计数
+// （用户实测：更新完插件，菜单还显示"2 个可更新"）。
+// ---------------------------------------------------------------------------
+
+test('回归 7：更新成功后修补缓存里这一条，其它插件的标记与角标不受影响', async () => {
+  await withTempDshHome('dsh-pm-invalidate-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    for (const name of ['demo', 'other']) {
+      await mkdir(join(profile, 'node_modules', name), { recursive: true });
+      await writeFile(join(profile, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '1.0.0' }));
+    }
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: 'github:o/demo', other: 'github:o/other' },
+      dsh: { profile: { bundles: ['demo', 'other'] } }
+    }));
+    const cacheFile = join(home, 'cache.json');
+    const checkedAt = new Date().toISOString();
+
+    await writeUpdateCache({
+      checkedAt,
+      inventory: [
+        { name: 'demo', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' },
+        { name: 'other', status: 'update-available', installedVersion: '1.0.0', latestVersion: '3.0.0' }
+      ]
+    }, cacheFile);
+
+    const result = await updatePlugin('demo', {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      peerProbe: async () => ({}),
+      command: async () => {},
+      cacheFile
+    });
+    assert.equal(result.ok, true);
+
+    const patched = await readUpdateCache({ cacheFile });
+    assert.ok(patched, '缓存不能整份删掉：删掉会让面板上其它插件的更新标记一起消失、按钮全变灰');
+    const byName = Object.fromEntries(patched.inventory.map(item => [item.name, item]));
+    assert.equal(byName.demo.status, 'up-to-date', '刚更新的插件立刻变成「已是最新」');
+    assert.equal(byName.demo.installedVersion, '2.0.0');
+    assert.equal(byName.other.status, 'update-available', '其它插件的检测结论原样保留');
+    assert.equal(patched.checkedAt, checkedAt, '检测时间不动：其它条目还是同一轮结论');
+
+    // 缓存仍然新鲜 → 下一次 /updates 不该触发重检，其它插件的标记立刻就能读到。
+    let probes = 0;
+    const snapshot = await checkPluginUpdates({
+      cacheFile,
+      probe: { git: async () => { probes += 1; return { version: '3.0.0', commit: 'c'.repeat(40) }; } }
+    });
+    assert.equal(snapshot.refreshing, false);
+    assert.equal(probes, 0);
+    assert.deepEqual(snapshot.summary, { total: 2, updateAvailable: 1, ignored: 0, failed: 0, unknown: 0 });
+  });
+});
+
+test('patchUpdateCacheAfterUpdate：批量结果逐条修补，失败条目和其它条目都不动', async () => {
+  await withTempDshHome('dsh-pm-patch-cache-', async () => {
+    const cacheFile = join(process.env.DSH_HOME, 'cache.json');
+    await writeUpdateCache({
+      checkedAt: new Date().toISOString(),
+      inventory: [
+        { name: 'a', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' },
+        { name: 'b', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' },
+        { name: 'c', status: 'up-to-date', installedVersion: '1.0.0', latestVersion: '1.0.0' }
+      ]
+    }, cacheFile);
+
+    assert.equal(await patchUpdateCacheAfterUpdate([
+      { name: 'a', ok: true, updatedTo: '2.0.0' },
+      { name: 'b', ok: false, error: 'boom' }
+    ], cacheFile), true);
+    const byName = Object.fromEntries((await readUpdateCache({ cacheFile })).inventory.map(item => [item.name, item]));
+    assert.equal(byName.a.status, 'up-to-date');
+    assert.equal(byName.b.status, 'update-available', '失败的插件保持可更新');
+    assert.equal(byName.c.status, 'up-to-date', '本来就没更新的条目保持原样');
+    assert.equal(await patchUpdateCacheAfterUpdate([{ name: 'zzz', ok: true }], cacheFile), false, '缓存里没有这个插件就不改');
+    assert.equal(await patchUpdateCacheAfterUpdate([], cacheFile), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 回归 8：更新后要复核已安装版本——file: 依赖换源后 pnpm 有时不会重新物化
+// node_modules，于是界面会一直显示"可更新"（用户实测）。
+// ---------------------------------------------------------------------------
+
+test('回归 8：更新后复核版本，没生效就删掉包目录强制重装并二次复核', async () => {
+  await withTempDshHome('dsh-pm-verify-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    const sourcesDir = join(profile, 'plugin-sources', 'o-demo');
+    const installedDir = join(profile, 'node_modules', 'demo');
+    await mkdir(installedDir, { recursive: true });
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: `file:${sourcesDir}` },
+      dsh: { profile: { bundles: ['demo'] } }
+    }));
+    await writeFile(join(installedDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }));
+    await mkdir(sourcesDir, { recursive: true });
+    await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }));
+    // 真实克隆会在目录里写来源标记；有它才会被识别成 git 来源（否则算本地插件、不更新）。
+    await writeFile(join(sourcesDir, '.dsh-source.json'), JSON.stringify({
+      author: 'o', repo: 'demo', subdir: null, url: 'https://github.com/o/demo.git', commit: 'a'.repeat(40)
+    }));
+
+    const commands = [];
+    const dirGoneOnSecondAdd = [];
+    const command = async (args) => {
+      commands.push(args);
+      // 实测（pnpm 11）：`pnpm add file:<dir>` 对已记录的 file: 依赖直接回
+      // "Already up to date"，不会重新物化——所以重试**必须先删掉包目录**。
+      dirGoneOnSecondAdd.push(!(await exists(installedDir)));
+      if (commands.length >= 2) {
+        await mkdir(installedDir, { recursive: true });
+        await writeFile(join(installedDir, 'package.json'), JSON.stringify({ name: 'demo', version: '2.0.0' }));
+      }
+    };
+    const clone = async (_ref, _subdir) => {
+      await mkdir(sourcesDir, { recursive: true });
+      await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '2.0.0' }));
+      return { ok: true, dest: sourcesDir, packageName: 'demo' };
+    };
+
+    const result = await updatePlugin('demo', {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      peerProbe: async () => ({}),
+      command,
+      clone
+    });
+    assert.equal(result.ok, true);
+    assert.equal(commands.length, 2, '应当补一次强制重装');
+    assert.deepEqual(dirGoneOnSecondAdd, [false, true], '重试前必须删掉包目录，否则 pnpm 会直接跳过');
+    assert.deepEqual(commands[1], ['add', `file:${sourcesDir}`]);
+    assert.equal(result.verified, true, '复核通过要如实上报');
+    assert.match(result.note, /v2\.0\.0/);
+  });
+});
+
+test('回归 8b：强制重装后仍未生效则如实标记 verified=false（界面可提示）', async () => {
+  await withTempDshHome('dsh-pm-verify-bad-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    const sourcesDir = join(profile, 'plugin-sources', 'o-demo');
+    const installedDir = join(profile, 'node_modules', 'demo');
+    await mkdir(installedDir, { recursive: true });
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: `file:${sourcesDir}` },
+      dsh: { profile: { bundles: ['demo'] } }
+    }));
+    await writeFile(join(installedDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }));
+    await mkdir(sourcesDir, { recursive: true });
+    await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }));
+    // 真实克隆会在目录里写来源标记；有它才会被识别成 git 来源（否则算本地插件、不更新）。
+    await writeFile(join(sourcesDir, '.dsh-source.json'), JSON.stringify({
+      author: 'o', repo: 'demo', subdir: null, url: 'https://github.com/o/demo.git', commit: 'a'.repeat(40)
+    }));
+
+    const result = await updatePlugin('demo', {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      peerProbe: async () => ({}),
+      command: async () => {},          // pnpm 假装置之不理
+      clone: async () => {
+        // 真 clone 会把新源码（含 package.json）落回目录；这里只重建最小形态。
+        await mkdir(sourcesDir, { recursive: true });
+        await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '2.0.0' }), 'utf8');
+        return { ok: true, dest: sourcesDir, packageName: 'demo' };
+      }
+    });
+    assert.equal(result.ok, true, '源码已更新，仍算成功');
+    assert.equal(result.verified, false);
+    assert.match(result.note, /重启 dsh|未生效/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 「忽略这个版本」：记录读写、命中判定、缓存装饰与两个接口的归一化
+// ---------------------------------------------------------------------------
+
+test('忽略：isUpdateIgnored 只认同名同版本的 update-available', () => {
+  const ignored = { 'dsh-a': { version: '2.0.0', at: null } };
+  const available = { name: 'dsh-a', status: 'update-available', latestVersion: '2.0.0' };
+  assert.equal(isUpdateIgnored(available, ignored), true);
+  // 远端出了更高的版本 → 重新提醒（忽略只针对一个版本）
+  assert.equal(isUpdateIgnored({ ...available, latestVersion: '2.1.0' }, ignored), false);
+  // 别的插件 / 已是最新 / 没有目的版本 / 记录里没有版本号，都不算忽略
+  assert.equal(isUpdateIgnored({ ...available, name: 'dsh-b' }, ignored), false);
+  assert.equal(isUpdateIgnored({ ...available, status: 'up-to-date' }, ignored), false);
+  assert.equal(isUpdateIgnored({ ...available, latestVersion: null }, ignored), false);
+  assert.equal(isUpdateIgnored(available, { 'dsh-a': { version: '', at: null } }), false);
+  assert.equal(isUpdateIgnored(null, ignored), false);
+  assert.equal(isUpdateIgnored(available, null), false);
+
+  // 只给命中的那一条打标，其余条目原样返回
+  const decorated = applyIgnoredUpdates([available, { name: 'dsh-b', status: 'update-available', latestVersion: '9.9.9' }], ignored);
+  assert.equal(decorated[0].ignored, true);
+  assert.equal(decorated[1].ignored, undefined);
+  assert.deepEqual(applyIgnoredUpdates(null, ignored), []);
+});
+
+test('忽略：记录文件读写、坏条目过滤、取消忽略', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-pm-ignore-'));
+  const file = join(home, 'ignored.json');
+  try {
+    assert.deepEqual(await readIgnoredUpdates({ file }), {}, '文件不存在时是空记录，不抛错');
+
+    assert.deepEqual(await ignorePluginUpdates([{ name: 'dsh-a', version: '2.0.0' }], { file }), { ok: true, ignored: ['dsh-a'], failed: [] });
+    const stored = await readIgnoredUpdates({ file });
+    assert.equal(stored['dsh-a'].version, '2.0.0');
+    assert.ok(stored['dsh-a'].at, '记录时间便于排查');
+
+    // 手工改坏 / 半截写入：读不出 version 的记录直接丢掉，不能变成新的故障源
+    await writeFile(file, JSON.stringify({ 'dsh-a': '1.0.0', 'dsh-b': { version: '' }, 'dsh-c': { version: '3.0.0', at: 5 }, '': { version: '9.9.9' } }), 'utf8');
+    assert.deepEqual(await readIgnoredUpdates({ file }), {
+      'dsh-a': { version: '1.0.0', at: null },
+      'dsh-c': { version: '3.0.0', at: null }
+    });
+    await writeFile(file, 'not json at all', 'utf8');
+    assert.deepEqual(await readIgnoredUpdates({ file }), {});
+
+    // 取消忽略：记录消失，重复取消也算成功
+    await ignorePluginUpdates([{ name: 'dsh-a', version: '1.0.0' }, { name: 'dsh-b', version: '2.0.0' }], { file });
+    assert.deepEqual(await unignorePluginUpdates(['dsh-a'], { file }), { ok: true, unignored: ['dsh-a'] });
+    assert.deepEqual(Object.keys(await readIgnoredUpdates({ file })), ['dsh-b']);
+    assert.equal((await unignorePluginUpdates(['dsh-a'], { file })).ok, true);
+
+    // 非法入参
+    assert.equal((await ignorePluginUpdates([], { file })).ok, false);
+    assert.equal((await ignorePluginUpdates([{}], { file })).ok, false);
+    assert.equal((await unignorePluginUpdates([], { file })).ok, false);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('忽略：没带版本号时从检测缓存补，缓存里也查不到就如实报出来（不许静默空操作）', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-pm-ignore-cache-'));
+  const file = join(home, 'ignored.json');
+  const cacheFile = join(home, '.plugin-updates.json');
+  try {
+    await writeUpdateCache({
+      checkedAt: new Date().toISOString(),
+      inventory: [{ name: 'dsh-a', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' }]
+    }, cacheFile);
+
+    const result = await ignorePluginUpdates([{ name: 'dsh-a' }, { name: 'dsh-unknown' }], { file, cacheFile });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.ignored, ['dsh-a']);
+    assert.deepEqual(result.failed, ['dsh-unknown']);
+    assert.equal((await readIgnoredUpdates({ file }))['dsh-a'].version, '2.0.0');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('忽略：checkPluginUpdates 读时打标（角标归零），取消忽略立刻恢复且不重新联网', async () => {
+  await withTempDshHome('dsh-pm-ignore-check-', async home => {
+    const profileDir = join(home, 'profiles', 'web');
+    await mkdir(profileDir, { recursive: true });
+    // 两个插件都还装着：缓存里的条目只对已安装插件有效（已卸载插件的条目会被裁掉）
+    for (const name of ['dsh-notify', 'dsh-other']) {
+      await mkdir(join(profileDir, 'node_modules', name), { recursive: true });
+      await writeFile(join(profileDir, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '1.0.0' }));
+    }
+    await writeFile(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { 'dsh-notify': '^1.2.3', 'dsh-other': '^1.0.0' },
+      dsh: { profile: { bundles: ['dsh-notify', 'dsh-other'] } }
+    }));
+    await writeUpdateCache({
+      checkedAt: new Date().toISOString(),
+      inventory: [
+        { name: 'dsh-notify', kind: 'npm', status: 'update-available', installedVersion: '1.2.0', latestVersion: '2.0.0' },
+        { name: 'dsh-other', kind: 'npm', status: 'update-available', installedVersion: '1.0.0', latestVersion: '3.0.0' }
+      ]
+    });
+    // 缓存是新鲜的（checkedAt 刚刚），所以整轮都不会联网——用抛错的 probe 兜住这点。
+    const probe = { npm: async () => { throw new Error('不该联网'); }, git: async () => { throw new Error('不该联网'); } };
+
+    const before = await checkPluginUpdates({ probe });
+    assert.deepEqual(before.summary, { total: 2, updateAvailable: 2, ignored: 0, failed: 0, unknown: 0 });
+
+    await ignorePluginUpdates([{ name: 'dsh-notify', version: '2.0.0' }]);
+    const after = await checkPluginUpdates({ probe });
+    assert.deepEqual(after.summary, { total: 2, updateAvailable: 1, ignored: 1, failed: 0, unknown: 0 }, '被忽略的那条不再计入可更新');
+    assert.equal(after.inventory.find(item => item.name === 'dsh-notify').ignored, true);
+    assert.equal(after.inventory.find(item => item.name === 'dsh-other').ignored, undefined);
+    // 缓存文件里存的仍是原始检测结论：忽略只是读时叠加
+    const onDisk = JSON.parse(await readFile(join(profileDir, '.plugin-updates.json'), 'utf8'));
+    assert.equal(onDisk.inventory.find(item => item.name === 'dsh-notify').ignored, undefined);
+
+    await unignorePluginUpdates(['dsh-notify']);
+    const restored = await checkPluginUpdates({ probe });
+    assert.deepEqual(restored.summary, { total: 2, updateAvailable: 2, ignored: 0, failed: 0, unknown: 0 });
+  });
+});
+
+test('原子写顺手收掉上次被杀留下的临时文件；活进程的 staging 不动', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-pm-staging-'));
+  const file = join(home, 'ignored.json');
+  try {
+    // 实测形态：~/.dsh/profiles/web/.plugin-updates.json.11800.tmp —— 原子写写一半被
+    // dsh 重启截断，之后没人清理。999999 在本机不可能是活进程（macOS PID 上限远低于它）。
+    const dead = join(home, 'ignored.json.999999.tmp');
+    // PID 1 永远在（对本进程是 EPERM）→ 必须保留，宁可留一个别人的 staging 也不能删活进程的文件。
+    const live = join(home, 'ignored.json.1.tmp');
+    // 别的文件的同后缀临时文件不该被顺手删掉。
+    const unrelated = join(home, 'other.json.999998.tmp');
+    await writeFile(dead, '{"half":', 'utf8');
+    await writeFile(live, '{"half":', 'utf8');
+    await writeFile(unrelated, '{"half":', 'utf8');
+
+    assert.deepEqual(await ignorePluginUpdates([{ name: 'dsh-a', version: '1.0.0' }], { file }), { ok: true, ignored: ['dsh-a'], failed: [] });
+
+    const names = await readdir(home);
+    assert.equal(names.includes('ignored.json.999999.tmp'), false, '上次被杀留下的临时文件应被收掉');
+    assert.equal(names.includes('ignored.json.1.tmp'), true, '活进程的 staging 必须保留');
+    assert.equal(names.includes('other.json.999998.tmp'), true, '别的文件的临时文件不归它管');
+    assert.equal(JSON.parse(await readFile(file, 'utf8'))['dsh-a'].version, '1.0.0', '写入本身照常生效');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 回归 9：pnpm 没有重新物化 `file:` 依赖时，node_modules 还链在**旧目录**上。
+// 旧代码在收尾阶段查的是 node_modules 解析出来的目录，于是把旧目录里更新前就存在的
+// import 缺口报成"新源码残缺"，回滚时还把 package.json 的依赖改成指向 `.bak-…` 目录。
+// 用户实测的 qoder 插件就是这样卡在 0.5.0：每点一次更新，`.bak-` 名字就多套一层
+// （…bak-A.bak-B.bak-C），永远升不上去。
+// ---------------------------------------------------------------------------
+
+test('回归 9：node_modules 仍指向旧目录时，旧目录的缺口不算新源码残缺（不回滚、不把依赖改成 .bak）', async () => {
+  await withTempDshHome('dsh-pm-stale-tree-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    const sourcesDir = join(profile, 'plugin-sources', 'o-demo');
+    const devDir = join(home, 'dev-checkout');
+    const installedDir = join(profile, 'node_modules', 'demo');
+    // 旧源码（node_modules 还链着它）本身就有 import 缺口：更新前就存在，和这次更新无关。
+    await mkdir(devDir, { recursive: true });
+    await writeFile(join(devDir, 'package.json'), JSON.stringify({ name: 'demo', version: '0.5.0' }), 'utf8');
+    await writeFile(join(devDir, 'probe.mjs'), "import { x } from '../lib/claim.js'\n", 'utf8');
+    // 克隆出来的新源码是完整的 0.7.4。
+    await mkdir(sourcesDir, { recursive: true });
+    await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '0.7.4' }), 'utf8');
+    await writeFile(join(sourcesDir, '.dsh-source.json'), JSON.stringify({
+      author: 'o', repo: 'demo', subdir: null, url: 'https://github.com/o/demo.git', commit: 'b'.repeat(40)
+    }), 'utf8');
+    await mkdir(join(profile, 'node_modules'), { recursive: true });
+    await symlink(devDir, installedDir, 'dir');
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: `file:${sourcesDir}` },
+      dsh: { profile: { bundles: ['demo'] } }
+    }), 'utf8');
+
+    const commands = [];
+    const command = async (args) => {
+      commands.push(args);
+      // 模拟实测的 pnpm 行为：`add file:<新目录>` 之后 node_modules 仍然链在旧目录上。
+      await rm(installedDir, { recursive: true, force: true }).catch(() => {});
+      await mkdir(join(profile, 'node_modules'), { recursive: true });
+      await symlink(devDir, installedDir, 'dir');
+    };
+    const clone = async () => {
+      await mkdir(sourcesDir, { recursive: true });
+      await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '0.7.4' }), 'utf8');
+      return { ok: true, dest: sourcesDir, packageName: 'demo' };
+    };
+
+    const result = await updatePlugin('demo', {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '0.7.4', error: null })),
+      // 门禁探测在真实入口会联网；单测注入空 peer，保证离线可跑。
+      peerProbe: async () => ({}),
+      command,
+      clone
+    });
+
+    assert.equal(result.ok, true, '源码已换成新版就算成功（node_modules 没跟上只是待重启确认）');
+    assert.equal(result.verified, false, '没复核上就如实上报');
+    assert.match(result.note, /重启 dsh 后确认/);
+    assert.doesNotMatch(result.note, /源码缺少模块/, '旧目录更新前就有的缺口不能报成新源码残缺');
+    assert.equal(commands.some(args => String(args[1]).includes('.bak-')), false,
+      '不能把依赖改成指向 .bak 目录（那会让 .bak 名字逐次叠加，更新永远回不来）');
+    // 新源码完整、旧目录没被动过、依赖记录仍指向原源码目录。
+    assert.equal(JSON.parse(await readFile(join(sourcesDir, 'package.json'), 'utf8')).version, '0.7.4');
+    assert.equal(JSON.parse(await readFile(join(devDir, 'package.json'), 'utf8')).version, '0.5.0');
+    const manifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'));
+    assert.equal(manifest.dependencies.demo, `file:${sourcesDir}`);
+  });
+});
+
+test('回归 10：新源码真的残缺时回滚成原目录内容，依赖不被改成 .bak 目录', async () => {
+  await withTempDshHome('dsh-pm-broken-new-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    const sourcesDir = join(profile, 'plugin-sources', 'o-demo');
+    const installedDir = join(profile, 'node_modules', 'demo');
+    await mkdir(sourcesDir, { recursive: true });
+    await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }), 'utf8');
+    await writeFile(join(sourcesDir, 'index.js'), '// 旧版本', 'utf8');
+    await writeFile(join(sourcesDir, '.dsh-source.json'), JSON.stringify({
+      author: 'o', repo: 'demo', subdir: null, url: 'https://github.com/o/demo.git', commit: 'c'.repeat(40)
+    }), 'utf8');
+    await mkdir(installedDir, { recursive: true });
+    await writeFile(join(installedDir, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }), 'utf8');
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: `file:${sourcesDir}` },
+      dsh: { profile: { bundles: ['demo'] } }
+    }), 'utf8');
+
+    const commands = [];
+    const command = async (args) => {
+      commands.push(args);
+      // 第二次 add（收尾重装）后源码变残缺、但版本号是新的：版本复核会通过，
+      // 只有 import 图能发现它是坏的。
+      if (commands.filter(item => item[0] === 'add').length === 2) {
+        await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '2.0.0' }), 'utf8');
+        await writeFile(join(sourcesDir, 'probe.mjs'), "import { x } from './missing.js'\n", 'utf8');
+      }
+    };
+    const clone = async () => {
+      await mkdir(sourcesDir, { recursive: true });
+      await writeFile(join(sourcesDir, 'package.json'), JSON.stringify({ name: 'demo', version: '2.0.0' }), 'utf8');
+      return { ok: true, dest: sourcesDir, packageName: 'demo' };
+    };
+
+    const result = await updatePlugin('demo', {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '2.0.0', error: null })),
+      // 门禁探测在真实入口会联网；单测注入空 peer，保证离线可跑。
+      peerProbe: async () => ({}),
+      command,
+      clone
+    });
+
+    assert.equal(result.ok, false, '残缺源码必须让更新失败');
+    assert.match(result.error, /缺少模块/);
+    // 旧内容回到依赖目录（内容级回滚），版本也退回 1.0.0。
+    assert.equal(await readFile(join(sourcesDir, 'index.js'), 'utf8'), '// 旧版本');
+    assert.equal(JSON.parse(await readFile(join(sourcesDir, 'package.json'), 'utf8')).version, '1.0.0');
+    // 回滚命令指回原目录，不是 .bak 目录。
+    assert.deepEqual(commands.at(-1), ['add', `file:${sourcesDir}`]);
+    assert.equal(commands.some(args => String(args[1]).includes('.bak-')), false, '依赖不能被改成指向 .bak 目录');
+    assert.deepEqual((await readdir(join(profile, 'plugin-sources'))).filter(name => name.includes('.bak-')), [],
+      '备份被换回原位，不留 .bak 残留');
+  });
+});
+
+test('回归 11：批量更新不允许并发（第二次直接拒绝），空名单不产生假批次', async () => {
+  await withTempDshHome('dsh-pm-batch-guard-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    await mkdir(join(profile, 'node_modules', 'plugin-a'), { recursive: true });
+    await writeFile(join(profile, 'node_modules', 'plugin-a', 'package.json'), JSON.stringify({ name: 'plugin-a', version: '1.0.0' }), 'utf8');
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { 'plugin-a': 'github:o/plugin-a' },
+      dsh: { profile: { bundles: ['plugin-a'] } }
+    }), 'utf8');
+
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const first = updatePlugins(['plugin-a'], {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '3.0.0', error: null })),
+      // 门禁探测在真实入口会联网；单测注入空 peer，保证离线可跑。
+      peerProbe: async () => ({}),
+      command: async () => { await gate; }
+    });
+    assert.equal(await waitFor(() => isBatchUpdateRunning()), true, '第一批应当已受理并进入执行');
+
+    const second = await updatePlugins(['plugin-a'], {
+      check: async sources => sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '3.0.0', error: null })),
+      // 门禁探测在真实入口会联网；单测注入空 peer，保证离线可跑。
+      peerProbe: async () => ({}),
+      command: async () => {}
+    });
+    assert.equal(second.ok, false);
+    assert.equal(second.busy, true);
+    assert.match(second.error, /已有批量更新/);
+    const running = readUpdateProgress();
+    assert.equal(running.active, true, '拒绝第二个批次不能破坏正在跑的进度对象');
+    assert.equal(running.total, 1);
+    assert.equal(readLastBatchUpdate().finishedAt, null, '被拒绝的请求不能写收尾批次');
+
+    release();
+    const summary = await first;
+    assert.equal(summary.ok, true);
+    assert.equal(summary.updated, 1);
+    assert.equal(summary.failed, 0);
+    assert.equal(isBatchUpdateRunning(), false, '批次结束后放行下一次');
+
+    const empty = await updatePlugins([]);
+    assert.equal(empty.ok, false);
+    assert.match(empty.error, /没有要更新的插件/);
+    assert.equal((await updatePlugins(null)).ok, false, '非数组入参同样拒绝');
+    assert.notEqual(readLastBatchUpdate().finishedAt, null, '空名单不能把上次的真实批次冲掉');
+  });
+});
+
+test('进度：批量更新在「检查远端」阶段就写上当前插件（面板才不会只显示等待中）', async () => {
+  await withTempDshHome('dsh-pm-progress-check-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    for (const name of ['plugin-a', 'plugin-b']) {
+      await mkdir(join(profile, 'node_modules', name), { recursive: true });
+      await writeFile(join(profile, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '1.0.0' }));
+    }
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { 'plugin-a': 'github:o/plugin-a', 'plugin-b': 'github:o/plugin-b' },
+      dsh: { profile: { bundles: ['plugin-a', 'plugin-b'] } }
+    }));
+
+    const seen = [];
+    const summary = await updatePlugins(['plugin-a', 'plugin-b'], {
+      // 联网检查这一步以前是「无主」阶段：progress.current 还是 null，
+      // 面板上已经轮到的插件也只显示「等待中」。
+      check: async sources => {
+        const progress = readUpdateProgress();
+        seen.push({ current: progress.current, step: progress.step });
+        return sources.map(item => ({ name: item.name, status: 'update-available', latestVersion: '3.0.0', error: null }));
+      },
+      peerProbe: async () => ({}),
+      command: async () => {}
+    });
+    assert.deepEqual(seen.map(item => item.current), ['plugin-a', 'plugin-b'], '检查阶段进度里已经是当前插件');
+    assert.ok(seen.every(item => /正在检查远端/.test(item.step ?? '')), '阶段文案要说明在检查远端：' + JSON.stringify(seen));
+    assert.equal(summary.ok, true);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// 「这个版本改了什么」：Release notes / CHANGELOG 解析
+// ---------------------------------------------------------------------------
+
+test('githubRepoFromUrl：repository/homepage 里认出 GitHub owner/repo', () => {
+  assert.deepEqual(githubRepoFromUrl('git+https://github.com/o/repo.git'), { author: 'o', repo: 'repo' });
+  assert.deepEqual(githubRepoFromUrl({ url: 'https://github.com/o/repo' }), { author: 'o', repo: 'repo' });
+  assert.deepEqual(githubRepoFromUrl('https://github.com/o/repo/tree/main/packages/x'), { author: 'o', repo: 'repo' });
+  assert.equal(githubRepoFromUrl('https://gitlab.com/o/repo'), null);
+  assert.equal(githubRepoFromUrl(null), null);
+});
+
+test('extractChangelogSection：按版本号取段落，遇到同级 heading 为止', () => {
+  const changelog = [
+    '# Changelog',
+    '',
+    '## [2.1.0] - 2026-10-20',
+    '- 新版本的功能',
+    '',
+    '### 修复',
+    '- 某个修复',
+    '',
+    '## [2.0.0] - 2026-10-01',
+    '- 老版本',
+    ''
+  ].join('\n');
+  assert.match(extractChangelogSection(changelog, '2.1.0'), /新版本的功能/);
+  assert.match(extractChangelogSection(changelog, '2.1.0'), /某个修复/, '子标题内容也要带上');
+  assert.doesNotMatch(extractChangelogSection(changelog, '2.1.0'), /老版本/, '不能捞到下个版本的段落');
+  assert.match(extractChangelogSection(changelog, '2.0.0'), /老版本/);
+  assert.equal(extractChangelogSection(changelog, '9.9.9'), null, '没有这个版本返回 null');
+  assert.equal(extractChangelogSection('', '1.0.0'), null);
+  // 版本号不能匹配到更长版本号的前缀：2.0.0 不应命中 2.0.01
+  assert.equal(extractChangelogSection('## 2.0.01\n- x', '2.0.0'), null);
+  assert.match(extractChangelogSection('## v1.2.3\n- ok', '1.2.3'), /ok/, '标题带 v 前缀也认');
+});
+
+test('fetchPluginReleaseNotes：优先 GitHub Release，没有就用 CHANGELOG 兜底并缓存', async () => {
+  await withTempDshHome('dsh-pm-notes-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    await mkdir(join(profile, 'node_modules', 'demo'), { recursive: true });
+    await writeFile(join(profile, 'node_modules', 'demo', 'package.json'), JSON.stringify({
+      name: 'demo', version: '1.0.0', repository: { url: 'git+https://github.com/o/demo.git' }
+    }));
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo: 'github:o/demo' },
+      dsh: { profile: { bundles: ['demo'] } }
+    }));
+
+    let calls = 0;
+    const fetchImpl = async url => {
+      calls += 1;
+      const notFound = { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+      if (url.includes('/releases/tags/')) return notFound;
+      if (url.endsWith('/CHANGELOG.zh.md')) return notFound;
+      if (url.endsWith('/CHANGELOG.md')) {
+        return { ok: true, status: 200, text: async () => '## [2.0.0] - 2026-10-01\n- 支持新东西\n\n## [1.0.0]\n- 老东西\n', json: async () => ({}) };
+      }
+      return notFound;
+    };
+    const notes = await fetchPluginReleaseNotes('demo', '2.0.0', { fetch: fetchImpl });
+    assert.equal(notes.ok, true);
+    assert.equal(notes.kind, 'changelog');
+    assert.match(notes.notes, /支持新东西/);
+    assert.doesNotMatch(notes.notes, /老东西/);
+    assert.match(notes.url, /github\.com\/o\/demo\/blob\//);
+
+    // 缓存命中：同一个 name@version 不再联网
+    const before = calls;
+    const cached = await fetchPluginReleaseNotes('demo', '2.0.0', { fetch: fetchImpl });
+    assert.deepEqual(cached, notes);
+    assert.equal(calls, before, '30 分钟内复用缓存');
+  });
+});
+
+test('fetchPluginReleaseNotes：有 GitHub Release 就用它的正文', async () => {
+  await withTempDshHome('dsh-pm-notes-release-', async home => {
+    const profile = join(home, 'profiles', 'web');
+    // 用另一个仓库名：缓存按「包名@版本」全局共享，不能命中上一个用例的结果。
+    await mkdir(join(profile, 'node_modules', 'demo2'), { recursive: true });
+    await writeFile(join(profile, 'node_modules', 'demo2', 'package.json'), JSON.stringify({ name: 'demo2', version: '1.0.0' }));
+    await writeFile(join(profile, 'package.json'), JSON.stringify({
+      name: 'web', private: true,
+      dependencies: { demo2: 'github:q/demo2' },
+      dsh: { profile: { bundles: ['demo2'] } }
+    }));
+    const fetchImpl = async url => {
+      if (url.includes('/repos/q/demo2/releases/tags/v2.0.0')) {
+        return { ok: true, status: 200, json: async () => ({ name: 'v2.0.0', body: '## 亮点\n- 发布说明正文', html_url: 'https://github.com/q/demo2/releases/tag/v2.0.0' }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    };
+    const notes = await fetchPluginReleaseNotes('demo2', '2.0.0', { fetch: fetchImpl });
+    assert.equal(notes.ok, true);
+    assert.equal(notes.kind, 'release');
+    assert.match(notes.notes, /发布说明正文/);
+    assert.match(notes.url, /releases\/tag\/v2\.0\.0/);
+    // 拿不到名字/版本时直接报错，不发请求
+    assert.equal((await fetchPluginReleaseNotes('', '1.0.0')).ok, false);
+    assert.equal((await fetchPluginReleaseNotes('demo2', '')).ok, false);
+  });
+});

@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>DHL Windows · 方案一（完整设计）</title>
+<style>
+/* ── 主题：白天 / 夜间 两套，全部用 dsh 的静态色板值 ───────────── */
+:root{
+  --bg:#f9fafb; --stage:#ebeef2; --layer1:#fff; --layer2:#f5f7fa; --layer3:#e9ecf2;
+  --l1:#e1e5ee; --l2:#cfd3d6; --l3:#adb2b8;
+  --text:#0f1115; --text2:#81858c; --text3:#979da6;
+  --brand:#3b82f6; --brandHover:#4d93f8; --brand50:#eff6ff; --brand100:#dbeafe;
+  --danger:#dc322f; --danger50:#fdecec; --danger100:#f8d4d3;
+  --ok:#22a06b; --ok50:#e8f6ef;
+  --warn:#d97706; --warn50:#fef3e2;
+  --shadow:0 12px 34px rgba(15,17,21,.14);
+  --shadow-sm:0 2px 8px rgba(15,17,21,.08);
+}
+body.dark{
+  --bg:#12141a; --stage:#1a1d24; --layer1:#1e2026; --layer2:#24272e; --layer3:#2c3038;
+  --l1:#33373f; --l2:#3d424b; --l3:#5a6068;
+  --text:#f2f4f7; --text2:#9aa0a8; --text3:#7a808a;
+  --brand:#4d93f8; --brandHover:#60a5fa; --brand50:#1a2432; --brand100:#23324a;
+  --danger:#f0655f; --danger50:#3a2020; --danger100:#542c2c;
+  --ok:#3fbf87; --ok50:#1c2f26;
+  --warn:#e8a33d; --warn50:#33280f;
+  --shadow:0 12px 34px rgba(0,0,0,.5);
+  --shadow-sm:0 2px 8px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+body{margin:0;padding:0;font:13px/1.55 "Segoe UI","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--text);transition:background .2s,color .2s}
+
+/* 顶栏 */
+.top{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:14px;
+  padding:14px 26px;background:var(--layer1);border-bottom:1px solid var(--l1)}
+.top h1{font-size:16px;margin:0;font-weight:600}
+.top .ver{font-size:11px;padding:2px 8px;border-radius:20px;background:var(--brand50);
+  color:var(--brand);border:1px solid var(--brand100);font-weight:500}
+.top .sp{flex:1}
+.themebtn{display:flex;align-items:center;gap:7px;padding:6px 14px;border-radius:8px;
+  border:1px solid var(--l2);background:var(--layer1);color:var(--text);
+  font:inherit;font-size:12.5px;cursor:pointer}
+.themebtn:hover{background:var(--layer2)}
+.themebtn .sw{width:14px;height:14px;border-radius:50%;border:1px solid var(--l2)}
+
+/* 布局 */
+.wrap{padding:24px 26px 60px;max-width:1560px;margin:0 auto}
+.sect-title{font-size:13px;font-weight:600;margin:26px 0 3px;color:var(--text)}
+.sect-title:first-child{margin-top:0}
+.sect-sub{color:var(--text2);font-size:12px;margin:0 0 16px}
+.row{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
+
+/* 通用卡片 */
+.card{background:var(--layer1);border:1px solid var(--l1);border-radius:12px;
+  box-shadow:var(--shadow)}
+.stage{background:var(--stage);border:1px solid var(--l1);border-radius:12px;
+  padding:20px;display:flex;justify-content:center;align-items:flex-start}
+.cap{color:var(--text2);font-size:11.5px;text-align:center;margin-top:10px}
+
+/* ══ 托盘面板（替换右键菜单）══════════════════════════════════ */
+.tray{width:296px;overflow:hidden;border-radius:12px;background:var(--layer1);
+  border:1px solid var(--l1);box-shadow:var(--shadow)}
+.tray-head{padding:12px 14px;border-bottom:1px solid var(--l1);
+  background:linear-gradient(180deg,var(--layer2),var(--layer1))}
+.tray-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+.tray-ico{width:17px;height:17px;object-fit:contain;display:block}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none;
+  box-shadow:0 0 0 3px var(--ok50)}
+.tray-meta{color:var(--text2);font-size:11.5px;margin-top:5px;padding-left:15px;
+  display:flex;align-items:center;gap:6px}
+.tray-meta .port{font-family:ui-monospace,monospace;color:var(--text)}
+.tray-body{padding:6px}
+.mi{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:7px;
+  cursor:pointer;font-size:13px;color:var(--text);position:relative}
+.mi:hover{background:var(--layer2)}
+.mi .ic{width:16px;height:16px;flex:none;display:flex;align-items:center;
+  justify-content:center;color:var(--text2)}
+.mi:hover .ic{color:var(--text)}
+.mi .lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mi .kb{font-size:10.5px;color:var(--text3);font-family:ui-monospace,monospace}
+.mi.primary{background:var(--brand);color:#fff;font-weight:500}
+.mi.primary:hover{background:var(--brandHover)}
+.mi.primary .ic{color:#fff}
+.mi.danger{color:var(--danger)}
+.mi.danger .ic{color:var(--danger)}
+.mi.dim{color:var(--text3);cursor:default;font-size:12px}
+.mi.dim:hover{background:transparent}
+.sep{height:1px;background:var(--l1);margin:5px 8px}
+
+/* 角标：更新（蓝） / 未读（红） */
+.pill{font-size:10.5px;padding:1.5px 7px;border-radius:20px;font-weight:500;
+  white-space:nowrap;flex:none}
+.pill.upd{background:var(--brand50);color:var(--brand);border:1px solid var(--brand100)}
+.pill.unread{background:var(--danger50);color:var(--danger);border:1px solid var(--danger100)}
+
+/* ══ 任务栏示意 ═══════════════════════════════════════════════ */
+.taskbar{width:100%;max-width:520px;background:var(--layer1);border:1px solid var(--l1);
+  border-radius:10px;padding:9px 12px;display:flex;align-items:center;gap:9px;
+  box-shadow:var(--shadow-sm)}
+.tb-btn{width:34px;height:32px;border-radius:6px;background:var(--layer2);
+  display:flex;align-items:center;justify-content:center;position:relative;
+  border:1px solid transparent}
+.tb-btn.active{background:var(--brand50);border-color:var(--brand100)}
+.tb-ico{width:18px;height:18px;border-radius:5px;background:var(--brand);
+  display:flex;align-items:center;justify-content:center;color:#fff;
+  font-size:9px;font-weight:700}
+/* 任务栏按钮里用的是应用自己的图标（与 exe / 快捷方式同一份） */
+.tb-img{width:20px;height:20px;object-fit:contain;display:block}
+/* 夜间模式下把图标轻微提亮，避免深色背景上糊成一团 */
+body.dark .tb-img{filter:brightness(1.15)}
+/* 红色数字角标 —— Windows 任务栏 overlay 效果 */
+.tb-badge{position:absolute;right:-4px;top:-4px;min-width:15px;height:15px;
+  padding:0 4px;border-radius:8px;background:#e53e3e;color:#fff;
+  font-size:9.5px;font-weight:700;line-height:15px;text-align:center;
+  border:1.5px solid var(--layer1);font-family:ui-monospace,monospace}
+.tb-sep{width:1px;height:22px;background:var(--l1);margin:0 2px}
+.tb-tray{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text2);
+  font-size:11px}
+.tb-clock{font-size:11px;color:var(--text2);line-height:1.25;text-align:right}
+
+/* ══ 设置面板（Web UI 风格）═══════════════════════════════════ */
+.side{width:230px;background:var(--layer1);border:1px solid var(--l1);
+  border-radius:12px;padding:8px;box-shadow:var(--shadow)}
+.si{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:7px;
+  font-size:12.5px;color:var(--text)}
+.si .ic{width:15px;height:15px;color:var(--text2);display:flex;align-items:center}
+.si.new{background:var(--brand50);color:var(--brand);font-weight:500}
+.si.new .ic{color:var(--brand)}
+.si .tagnew{margin-left:auto;font-size:9.5px;padding:1px 5px;border-radius:9px;
+  background:var(--brand);color:#fff;font-weight:600}
+
+.setwin{width:352px;background:var(--layer1);border:1px solid var(--l1);
+  border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+.sh{display:flex;align-items:center;gap:8px;padding:11px 14px;
+  border-bottom:1px solid var(--l1);font-size:13px;font-weight:600}
+.sh .x{margin-left:auto;color:var(--text2);cursor:pointer;font-size:14px;line-height:1}
+.sb{padding:2px 0 10px;max-height:520px;overflow:auto}
+.ss{padding:11px 14px 5px;font-size:10.5px;font-weight:700;color:var(--text2);
+  letter-spacing:.5px;text-transform:uppercase}
+.sr{display:flex;align-items:center;gap:10px;padding:7px 14px;font-size:12.5px}
+.sr .lbl{flex:1}
+.sr .lbl small{display:block;color:var(--text3);font-size:11px;margin-top:1px;line-height:1.4}
+input[type=number],input[type=text],select{padding:4px 7px;border-radius:6px;
+  border:1px solid var(--l2);background:var(--layer1);color:var(--text);
+  font:inherit;font-size:12px}
+input[type=number]{width:64px}
+input[type=text].wide{width:104px}
+select{width:100%;max-width:180px}
+.chk{width:15px;height:15px;accent-color:var(--brand);flex:none;cursor:pointer}
+.sf{padding:10px 14px;border-top:1px solid var(--l1);display:flex;
+  justify-content:flex-end;gap:8px;background:var(--layer2)}
+.btn{padding:5px 14px;border-radius:6px;border:1px solid var(--l2);
+  background:var(--layer1);color:var(--text);font:inherit;font-size:12.5px;cursor:pointer}
+.btn:hover{background:var(--layer3)}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.primary:hover{background:var(--brandHover)}
+
+/* 镜像源卡片 */
+.mirror{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:8px;
+  border:1px solid var(--l1);background:var(--layer2);margin:5px 14px}
+.mirror.sel{border-color:var(--brand);background:var(--brand50)}
+.mirror .radio{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--l2);
+  flex:none;display:flex;align-items:center;justify-content:center}
+.mirror.sel .radio{border-color:var(--brand)}
+.mirror.sel .radio::after{content:"";width:7px;height:7px;border-radius:50%;
+  background:var(--brand)}
+.mirror .m-main{flex:1;min-width:0}
+.mirror .m-name{font-size:12.5px;font-weight:500}
+.mirror .m-url{font-size:10.5px;color:var(--text3);font-family:ui-monospace,monospace;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mirror .m-badge{font-size:9.5px;padding:1px 6px;border-radius:9px;
+  background:var(--ok50);color:var(--ok);border:1px solid transparent;font-weight:600}
+
+/* 说明块 */
+.note{background:var(--layer2);border-left:2.5px solid var(--brand);
+  padding:10px 12px;border-radius:0 7px 7px 0;font-size:11.5px;
+  color:var(--text2);margin-top:14px;line-height:1.65}
+.note b{color:var(--text);font-weight:600}
+.note.warn{border-left-color:var(--warn);background:var(--warn50)}
+.note.ok{border-left-color:var(--ok);background:var(--ok50)}
+.kv{display:flex;gap:8px;font-size:11.5px;margin-top:6px}
+.kv .k{color:var(--text3);flex:none;width:74px}
+.kv .v{color:var(--text)}
+code{font-family:ui-monospace,monospace;font-size:11px;background:var(--layer3);
+  padding:1px 5px;border-radius:4px}
+h4{font-size:12px;margin:16px 0 8px;font-weight:600;color:var(--text)}
+h4:first-child{margin-top:0}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>DHL Windows · 方案一（完整设计）</h1>
+  <span class="ver">v0.3.11</span>
+  <span class="sp"></span>
+  <button class="themebtn" onclick="toggleTheme()">
+    <span class="sw" id="sw"></span><span id="themeLabel">夜间</span>
+  </button>
+</div>
+
+<div class="wrap">
+
+  <div class="sect-title">一 · 托盘面板（替换现有右键菜单）</div>
+  <p class="sect-sub">左键 / 右键托盘都弹出这个面板。按钮与 macOS 版逐项对齐，更新分两条链路。</p>
+
+  <div class="row">
+
+    <!-- 托盘面板 -->
+    <div>
+      <div class="stage">
+        <div class="tray">
+          <div class="tray-head">
+            <div class="tray-title"><img class="tray-ico" src="data:image/png;base64,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">Deepseek Harness Launcher</div>
+            <div class="tray-meta">运行中 · 端口 <span class="port">3080</span></div>
+          </div>
+          <div class="tray-body">
+            <div class="mi primary"><span class="ic">▶</span><span class="lb">打开 Deepseek Harness</span><span class="kb">Ctrl+O</span></div>
+            <div class="mi"><span class="ic">⚙</span><span class="lb">设置…</span><span class="kb">Ctrl+,</span></div>
+            <div class="mi"><span class="ic">↻</span><span class="lb">重启 Deepseek Harness</span><span class="kb">Ctrl+R</span></div>
+            <div class="sep"></div>
+            <div class="mi"><span class="ic">▤</span><span class="lb">会话完成（3 个未读）</span><span class="pill unread">3</span></div>
+            <div class="sep"></div>
+            <div class="mi"><span class="ic">↓</span><span class="lb">检测启动器（DHL）更新</span><span class="pill upd">v0.4.0</span></div>
+            <div class="mi"><span class="ic">↓</span><span class="lb">检查 Deepseek Harness 更新</span><span class="pill upd">v0.2.3</span></div>
+            <div class="sep"></div>
+            <div class="mi"><span class="ic">▣</span><span class="lb">打开日志</span><span class="kb">Ctrl+L</span></div>
+            <div class="mi danger"><span class="ic">⏻</span><span class="lb">退出 Deepseek Harness</span><span class="kb">Ctrl+Q</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="cap">左键或右键托盘 → 面板</div>
+      <div class="note">
+        <b>与 macOS 菜单逐项对齐：</b>
+        <div class="kv"><span class="k">打开</span><span class="v">▶ 打开 Deepseek Harness</span></div>
+        <div class="kv"><span class="k">端口</span><span class="v">标题下方常驻显示（替代原禁用行）</span></div>
+        <div class="kv"><span class="k">重启</span><span class="v">↻ 重启</span></div>
+        <div class="kv"><span class="k">会话完成</span><span class="v">▤ 未读区（有未读才出现）</span></div>
+        <div class="kv"><span class="k">更新</span><span class="v">两条独立链路，各带版本角标</span></div>
+        <div class="kv"><span class="k">设置/日志/退出</span><span class="v">固定三项</span></div>
+      </div>
+    </div>
+
+    <!-- 会话完成展开 -->
+    <div>
+      <div class="stage">
+        <div class="tray">
+          <div class="tray-head">
+            <div class="tray-title"><img class="tray-ico" src="data:image/png;base64,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">Deepseek Harness Launcher</div>
+            <div class="tray-meta">运行中 · 端口 <span class="port">3080</span></div>
+          </div>
+          <div class="tray-body">
+            <div class="mi primary"><span class="ic">▶</span><span class="lb">打开 Deepseek Harness</span><span class="kb">Ctrl+O</span></div>
+            <div class="mi"><span class="ic">⚙</span><span class="lb">设置…</span><span class="kb">Ctrl+,</span></div>
+            <div class="mi"><span class="ic">↻</span><span class="lb">重启 Deepseek Harness</span><span class="kb">Ctrl+R</span></div>
+            <div class="sep"></div>
+            <div class="mi dim" style="padding-bottom:4px">会话完成（3 个未读）</div>
+            <div class="mi" style="padding-left:20px"><span class="lb">19:08 ·「dsh-launcher」 已完成</span></div>
+            <div class="mi" style="padding-left:20px"><span class="lb">18:42 ·「my-app」 出错</span></div>
+            <div class="mi" style="padding-left:20px"><span class="lb">17:31 ·「api-server」 已完成</span></div>
+            <div class="mi" style="padding-left:20px;color:var(--text2)"><span class="lb">清除完成提醒</span></div>
+            <div class="sep"></div>
+            <div class="mi"><span class="ic">↓</span><span class="lb">检测启动器（DHL）更新</span></div>
+            <div class="mi"><span class="ic">↓</span><span class="lb">检查 Deepseek Harness 更新</span></div>
+            <div class="sep"></div>
+            <div class="mi"><span class="ic">▣</span><span class="lb">打开日志</span></div>
+            <div class="mi danger"><span class="ic">⏻</span><span class="lb">退出 Deepseek Harness</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="cap">有未读时展开最近 3 条，点击直接跳会话</div>
+      <div class="note ok">
+        <b>与 mac 一致的未读语义：</b>按<b>会话</b>计数（同一会话跑 5 轮仍算 1 个）；
+        点开某条只清那一条；「看过即已读」；未读落盘，重启后还在。
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══ 任务栏角标 ══ -->
+  <div class="sect-title">二 · 任务栏固定 + 红色数字角标</div>
+  <p class="sect-sub">固定在任务栏的图标上直接显示未读数，与 macOS 菜单栏角标同一效果。</p>
+
+  <div class="row">
+    <div>
+      <div class="stage">
+        <div>
+          <div class="taskbar">
+            <div class="tb-btn"><div class="tb-ico" style="background:#4b5563">⊞</div></div>
+            <div class="tb-btn"><div class="tb-ico" style="background:#0ea5e9">E</div></div>
+            <div class="tb-btn"><div class="tb-ico" style="background:#dc2626">C</div></div>
+            <div class="tb-sep"></div>
+            <div class="tb-btn active">
+              <img class="tb-img" src="data:image/png;base64,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">
+              <span class="tb-badge">3</span>
+            </div>
+            <div class="tb-btn"><div class="tb-ico" style="background:#111827">⌨</div></div>
+            <div class="tb-tray">
+              <span>▲</span><span>🔊</span><span>📶</span>
+              <div class="tb-clock">10:12<br>2026/11/9</div>
+            </div>
+          </div>
+          <div class="cap">有 3 个未读会话 → 红色「3」</div>
+        </div>
+      </div>
+      <div class="note">
+        <b>技术方案：</b>用 Win32 <code>ITaskbarList3::SetOverlayIcon</code> 在任务栏按钮右下角画角标
+        （Explorer 原生能力，Win7+ 都有，本机 Win10 19045 支持）。<br>
+        <b>数字 &gt; 99</b> 显示 <code>99+</code>；<b>0 个未读</b> 清除角标；更新可用时另用蓝色小圆点（与托盘角标一致）。
+      </div>
+    </div>
+
+    <div>
+      <div class="stage">
+        <div>
+          <div class="taskbar">
+            <div class="tb-btn"><div class="tb-ico" style="background:#4b5563">⊞</div></div>
+            <div class="tb-btn active"><img class="tb-img" src="data:image/png;base64,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"></div>
+            <div class="tb-btn"><div class="tb-ico" style="background:#0ea5e9">E</div></div>
+            <div class="tb-tray">
+              <span>▲</span><span>🔊</span>
+              <div class="tb-clock">10:12<br>2026/11/9</div>
+            </div>
+          </div>
+          <div class="cap">全部已读 → 角标消失</div>
+          <div style="height:14px"></div>
+          <div class="taskbar">
+            <div class="tb-btn"><div class="tb-ico" style="background:#4b5563">⊞</div></div>
+            <div class="tb-btn active">
+              <img class="tb-img" src="data:image/png;base64,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">
+              <span class="tb-badge">12</span>
+            </div>
+            <div class="tb-tray"><span>▲</span><span>🔊</span>
+              <div class="tb-clock">10:12<br>2026/11/9</div></div>
+          </div>
+          <div class="cap">12 个未读 → 红色「12」</div>
+        </div>
+      </div>
+      <div class="note warn">
+        <b>前提（必须一起做）：</b>当前 DHL 是纯托盘应用，<code>MainWindowHandle=0</code>，
+        <b>没有任务栏按钮</b>，既不能固定也没地方挂角标。所以方案一必须包含：
+        <div class="kv"><span class="k">① 隐藏宿主窗口</span><span class="v">创建 0×0 不可见窗口，只为让任务栏按钮存在</span></div>
+        <div class="kv"><span class="k">② 固定</span><span class="v">快捷方式带 AppUserModelID，右键固定后点击 → 打开 Harness 页面</span></div>
+        <div class="kv"><span class="k">③ 角标</span><span class="v">ITaskbarList3 挂到该窗口的按钮上</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 设置 ══ -->
+  <div class="sect-title">三 · 设置（搬进 Harness Web UI）</div>
+  <p class="sect-sub">侧边栏新增「启动器设置」，用 dsh 设计令牌，白天/夜间自动跟随；默认国内镜像源。</p>
+
+  <div class="row">
+    <div>
+      <div class="stage">
+        <div>
+          <div class="side">
+            <div class="si"><span class="ic">▤</span>归档</div>
+            <div class="si"><span class="ic">▦</span>插件管理</div>
+            <div class="si new"><span class="ic">⚙</span>启动器设置<span class="tagnew">新</span></div>
+            <div class="si"><span class="ic">⚙</span>设置</div>
+          </div>
+          <div class="cap">Harness 侧边栏入口</div>
+        </div>
+      </div>
+      <div class="note">
+        <b>入口共三条：</b>① 托盘面板「设置…」② Harness 侧边栏「启动器设置」③ <code>Ctrl+,</code><br>
+        设置面板本身只有一个（Web UI），三处都打开同一个。
+      </div>
+    </div>
+
+    <div>
+      <div class="stage">
+        <div class="setwin">
+          <div class="sh">启动器设置<span class="x">✕</span></div>
+          <div class="sb">
+
+            <div class="ss">更新</div>
+            <div class="sr"><span class="lbl">检查频率<small>启动器与 Harness 各自检查，最小 1 小时</small></span>
+              <input type="number" value="6"><span style="color:var(--text3);font-size:11.5px">小时</span></div>
+            <div class="sr"><span class="lbl">自动检测插件更新<small>后台检查已装插件的版本</small></span>
+              <input type="checkbox" class="chk" checked></div>
+
+            <div class="ss">npm 镜像源</div>
+            <div class="mirror sel">
+              <span class="radio"></span>
+              <div class="m-main"><div class="m-name">npmmirror（国内）</div>
+                <div class="m-url">https://registry.npmmirror.com</div></div>
+              <span class="m-badge">默认</span>
+            </div>
+            <div class="mirror">
+              <span class="radio"></span>
+              <div class="m-main"><div class="m-name">npm 官方</div>
+                <div class="m-url">https://registry.npmjs.org</div></div>
+            </div>
+            <div class="sr" style="padding-top:2px"><span class="lbl" style="color:var(--text3);font-size:11px">
+              安装时先试选中源，失败自动回退另一个。</span></div>
+
+            <div class="ss">启动</div>
+            <div class="sr"><span class="lbl">就绪后自动打开浏览器</span>
+              <input type="checkbox" class="chk" checked></div>
+            <div class="sr"><span class="lbl">登录 Windows 时自动启动<small>写入当前用户启动项，免管理员权限</small></span>
+              <input type="checkbox" class="chk"></div>
+            <div class="sr"><span class="lbl">固定到任务栏提示<small>首次启动时创建带图标 ID 的快捷方式</small></span>
+              <input type="checkbox" class="chk" checked></div>
+
+            <div class="ss">全局快捷键</div>
+            <div class="sr"><span class="lbl">启用</span><input type="checkbox" class="chk" checked></div>
+            <div class="sr"><span class="lbl">呼出 Harness</span>
+              <input type="text" class="wide" value="Ctrl+Alt+D"></div>
+
+            <div class="ss">关于</div>
+            <div class="sr"><span class="lbl">Deepseek Harness Launcher</span>
+              <span style="color:var(--text2);font-size:12px">v0.3.11</span></div>
+            <div class="sr"><span class="lbl">Deepseek Harness（dsh）</span>
+              <span style="color:var(--text2);font-size:12px">v0.2.2-rc.1</span></div>
+            <div class="sr"><span class="lbl">Node 运行时</span>
+              <span style="color:var(--text2);font-size:12px">v24.22.2（内置）</span></div>
+
+          </div>
+          <div class="sf">
+            <button class="btn">取消</button>
+            <button class="btn primary">保存</button>
+          </div>
+        </div>
+      </div>
+      <div class="cap">设置面板（夜间效果见下方切换）</div>
+    </div>
+  </div>
+
+  <!-- ══ 两条更新链路 ══ -->
+  <div class="sect-title">四 · 更新弹窗：区分 DHL 与 dsh</div>
+  <p class="sect-sub">两条链路各自独立，弹窗标题、版本对比、说明来源都不同，避免用户搞混。</p>
+
+  <div class="row">
+    <div>
+      <div class="stage">
+        <div class="card" style="width:340px;padding:0;overflow:hidden">
+          <div style="padding:13px 16px;border-bottom:1px solid var(--l1);
+            display:flex;align-items:center;gap:9px;background:var(--layer2)">
+            <span style="width:22px;height:22px;border-radius:6px;background:var(--brand);
+              color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;
+              justify-content:center">DHL</span>
+            <div style="font-size:13px;font-weight:600">启动器更新可用</div>
+            <span class="pill upd" style="margin-left:auto">正式版</span>
+          </div>
+          <div style="padding:14px 16px">
+            <div style="display:flex;align-items:center;gap:10px;font-size:13px;
+              font-family:ui-monospace,monospace">
+              <span style="color:var(--text2)">v0.3.11</span>
+              <span style="color:var(--text3)">→</span>
+              <span style="font-weight:600">v0.4.0</span>
+            </div>
+            <div style="font-size:11.5px;color:var(--text3);margin-top:5px">
+              来源：GitHub Release · 2026-11-08</div>
+            <div style="margin-top:12px;padding:10px;background:var(--layer2);
+              border-radius:7px;font-size:11.5px;color:var(--text2);line-height:1.65">
+              <b style="color:var(--text)">更新说明</b><br>
+              · 任务栏红色未读角标<br>
+              · 托盘面板替换右键菜单<br>
+              · 默认使用国内镜像源
+            </div>
+          </div>
+          <div style="padding:11px 16px;border-top:1px solid var(--l1);display:flex;
+            gap:8px;justify-content:flex-end;background:var(--layer2)">
+            <button class="btn">跳过此版本</button>
+            <button class="btn">稍后</button>
+            <button class="btn primary">下载并安装</button>
+          </div>
+        </div>
+      </div>
+      <div class="cap">① DHL 自身更新（替换 exe）</div>
+    </div>
+
+    <div>
+      <div class="stage">
+        <div class="card" style="width:340px;padding:0;overflow:hidden">
+          <div style="padding:13px 16px;border-bottom:1px solid var(--l1);
+            display:flex;align-items:center;gap:9px;background:var(--layer2)">
+            <span style="width:22px;height:22px;border-radius:6px;background:#0f766e;
+              color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;
+              justify-content:center">dsh</span>
+            <div style="font-size:13px;font-weight:600">Deepseek Harness 更新可用</div>
+            <span class="pill upd" style="margin-left:auto">候选版</span>
+          </div>
+          <div style="padding:14px 16px">
+            <div style="display:flex;align-items:center;gap:10px;font-size:13px;
+              font-family:ui-monospace,monospace">
+              <span style="color:var(--text2)">v0.2.2-rc.1</span>
+              <span style="color:var(--text3)">→</span>
+              <span style="font-weight:600">v0.2.3</span>
+            </div>
+            <div style="font-size:11.5px;color:var(--text3);margin-top:5px">
+              来源：GitHub Release · 2026-11-07　｜　npm latest</div>
+            <div style="margin-top:10px;font-size:11.5px;color:var(--text3)">
+              可更新到：<span style="color:var(--text)">v0.2.3</span> ▾
+              <span style="color:var(--text3)">（共 2 个版本）</span></div>
+            <div style="margin-top:12px;padding:10px;background:var(--layer2);
+              border-radius:7px;font-size:11.5px;color:var(--text2);line-height:1.65">
+              <b style="color:var(--text)">更新说明</b><br>
+              · 会话分叉稳定性修复<br>
+              · 插件 API 小幅变更
+            </div>
+            <div style="margin-top:10px;font-size:11px;color:var(--warn)">
+              ⚠ 更新会重启 Harness；旧运行环境保留为回退快照
+            </div>
+          </div>
+          <div style="padding:11px 16px;border-top:1px solid var(--l1);display:flex;
+            gap:8px;justify-content:flex-end;background:var(--layer2)">
+            <button class="btn">跳过此版本</button>
+            <button class="btn">稍后</button>
+            <button class="btn primary">更新到 v0.2.3</button>
+          </div>
+        </div>
+      </div>
+      <div class="cap">② dsh 运行环境更新（重装 runtime）</div>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:20px">
+    <b>两处关键区别（防止混淆）：</b><br>
+    · <b>标题</b>：DHL 用「启动器更新可用」，dsh 用「Deepseek Harness 更新可用」——不写「更新」两个字就不知道更的是谁。<br>
+    · <b>图标</b>：DHL 用品牌蓝方块，dsh 用墨绿方块，扫一眼就能分。<br>
+    · <b>动作</b>：DHL 是「下载并安装」（替换 exe 后重启）；dsh 是「更新到 vX」（重装 runtime，保留回退快照）。<br>
+    · <b>通道</b>：dsh 会标「正式版/候选版/公测版/内测版」，DHL 只有「正式版/提测」。
+  </div>
+
+</div>
+
+<script>
+function applyTheme(dark){
+  document.body.classList.toggle('dark', dark);
+  document.getElementById('themeLabel').textContent = dark ? '夜间' : '白天';
+  document.getElementById('sw').style.background = dark ? '#1e2026' : '#fff';
+  document.getElementById('sw').style.borderColor = dark ? '#5a6068' : '#cfd3d6';
+  localStorage.setItem('dhl-proto-theme', dark ? 'dark' : 'light');
+}
+function toggleTheme(){
+  applyTheme(!document.body.classList.contains('dark'));
+}
+// 默认跟随系统
+const saved = localStorage.getItem('dhl-proto-theme');
+applyTheme(saved ? saved === 'dark' : matchMedia('(prefers-color-scheme:dark)').matches);
+</script>
+</body>
+</html>

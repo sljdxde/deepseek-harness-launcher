@@ -2,7 +2,7 @@
 
 [English](./README.en.md)
 
-**Deepseek Harness Launcher** 是一款轻量级 **原生 macOS 菜单栏启动器**，用于本地运行 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（基于 `@deepseek-ai/dsh` 的 AI agent 平台）。从 Spotlight 或 Raycast 搜索 `Deepseek Harness Launcher`，也可以输入 `dsh` 或 `dhl`，应用会启动 Harness 的 `web` profile、常驻菜单栏，并在服务就绪后打开系统默认浏览器；它不内嵌浏览器，也不提供独立的桌面聊天界面。
+**Deepseek Harness Launcher** 是一款轻量级 **原生菜单栏/托盘启动器**（macOS 与 Windows），用于本地运行 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（基于 `@deepseek-ai/dsh` 的 AI agent 平台）。从 Spotlight 或 Raycast 搜索 `Deepseek Harness Launcher`，也可以输入 `dsh` 或 `dhl`，应用会启动 Harness 的 `web` profile、常驻菜单栏，并在服务就绪后打开系统默认浏览器；它不内嵌浏览器，也不提供独立的桌面聊天界面。
 
 App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协议），仅做了圆形外框等少量修改 —— 见 [THIRD_PARTY.md](./THIRD_PARTY.md)。
 
@@ -15,7 +15,20 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 1. **命令行**：手动 `npx @deepseek-ai/dsh web`，自己管进程；
 2. **官方桌面版** `deepseek-harness-desktop`：Tauri 2 外壳（Rust 后端 + WebView），跨 Windows/macOS/Linux，自带 Node 运行时与多版本内核管理，并内置完整 Tauri 插件生态。
 
-**本项目是第三种、且是 macOS 专属的轻量方案**：一个纯原生 Swift / AppKit 菜单栏 App，不套任何 WebView/Electron/Tauri 外壳，只在需要时拉起你已经装好的 `dsh`，并额外注入一个归档管理增强插件。它**不替代 Harness 内核**，而是让 Harness 在 macOS 上更好用。
+**本项目是第三种轻量方案**：macOS 上是纯原生 Swift / AppKit 菜单栏 App，Windows 上是 Go + Wails 的托盘 App（同一套功能逐项对等），都不套 Electron/Tauri 的完整外壳，只在需要时拉起你已经装好的 `dsh`，并额外注入内置增强插件。它**不替代 Harness 内核**，而是让 Harness 在桌面上更好用。
+
+两个平台的差异只在「系统机制怎么实现」，不在「有没有这个功能」：
+
+| 能力 | macOS | Windows |
+|---|---|---|
+| 常驻入口 | 菜单栏状态项（`LSUIElement`，不占 Dock） | 托盘图标 + 可固定到任务栏的 **Harness 主窗口** |
+| 点开进界面 | 点菜单栏图标 → 菜单「打开」 / 全局 ⌃⌥D | **单击任务栏图标还原 Harness 主窗口，再点最小化**（Windows 原生处理）；托盘图标单击/右键弹出启动器面板（会话 / 更新 / 设置多 tab） |
+| dsh 页面 | 系统默认浏览器 | **启动器自带窗口内嵌 dsh 页面**（与 mac/浏览器同一套注入插件，样式一致） |
+| 自启动 | `LaunchAgent` | 注册表 `HKCU\...\Run` |
+| 自更新 | 下载 DMG、替换 .app | 下载 exe、退出后替换并重启 |
+| 完成提醒 | 菜单栏红色未读角标 | 托盘/任务栏红色未读角标 + Windows Toast 通知 |
+| Node 运行时 | 用系统已装的 node/npm | **捆绑便携 Node（内嵌于 exe）**（免安装，或回退系统 node） |
+| 安装 | DMG 内双击安装器 | **exe 即安装包**：双击自装到 `%LOCALAPPDATA%`，支持控制面板卸载 |
 
 ---
 
@@ -39,7 +52,8 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 | 14 | **启动失败自动恢复（已移除）** | 启动器不再因插件导致 dsh 起不来而自动禁用插件、逐个排除或转入安全模式；dsh 启动失败时只如实报错，不改动 profile 的依赖与 bundle 列表。 |
 **边界与取舍**：
 
-- 仅支持 macOS（无 Windows / Linux）；
+- 支持 macOS 与 Windows；Linux 暂不支持；
+- macOS 版不捆绑 Node（用系统的）；**Windows 版捆绑便携 Node**，用户无需自己装；
 - 不捆绑 Node 运行时，也不管理多个 dsh 内核版本；需要用户系统中已有可用的 `node` 与 `npm`。
 - 首次启动会显示安装窗口；依赖下载可能需要几分钟，安装成功后后续启动直接复用 `~/.dsh/runtime`。
 - Deepseek Harness Launcher 只添加自己的内置插件链接（归档管理、插件管理、会话完成通知）与临时 patch；Harness 原有 profile、会话及其他插件仍由 dsh 管理。
@@ -183,6 +197,33 @@ DMG 打开后只显示一个 **「双击完成安装或更新」** App。安装�
 - dsh 若在启动过程中退出，启动器只如实记日志并报错，不再自动重启或禁用任何插件。
 - 常规启动参数不再带隔离 overlay，`dsh.profile.bundles` 里的插件全部照常加载。
 - `Sources/PluginIsolationSupport.swift` 与 `Sources/PluginSourceCheck.swift` 的纯函数及单测保留，仅为可复用与语义回归，主流程不调用。
+
+### Windows：安装、卸载与构建
+
+安装（exe 即安装包，全程用户级、无需管理员权限）：
+
+1. 从 GitHub Release 下载 `DHL-windows-amd64.exe`（已内嵌便携 Node，无需自装 Node.js）；
+2. 双击运行：启动器自动安装到 `%LOCALAPPDATA%\Programs\DHL`（复制 exe + 解出捆绑 Node），写入开始菜单快捷方式与「安装的应用」卸载项，然后自动启动；
+3. 之后双击新版安装包即可升级（版本相同则直接启动已装副本）。首次运行 SmartScreen 可能提示未知发布者，选择「更多信息 → 仍要运行」。
+
+不想触发自安装时：以 `DHL_NO_INSTALL=1` 环境变量运行，或在 exe 旁放置 `.portable` 标记文件/`data` 目录（便携模式）；构建目录里直接运行 exe 属于开发模式，同样不会自装。
+
+卸载（保留 `~/.dsh` 全部数据与运行环境），任选其一：
+
+- 启动器「设置」→「关于」→「卸载启动器」；
+- Windows「设置 → 应用 → 安装的应用」中卸载 Deepseek Harness Launcher；
+- 命令行 `DHL.exe --uninstall`。
+
+卸载会停止 dsh，删除 `%LOCALAPPDATA%\Programs\DHL`（含历史备份）、`%LOCALAPPDATA%\DHL`（日志与内置插件副本）、开始菜单/桌面/任务栏固定快捷方式、自启动注册表项与卸载项，并清理 profile 中指向内置插件的链接；**保留其他 `~/.dsh` 数据**（会话、凭据、runtime 与用户自装插件）。
+
+从源码构建（Go 1.26+）：
+
+```powershell
+cd windows
+powershell -ExecutionPolicy Bypass -File fetch-node.ps1   # 下载便携 Node 并保留 zip（exe 内嵌用）
+powershell -ExecutionPolicy Bypass -File build.ps1         # build\DHL.exe（自包含安装包）
+go test ./...                                              # 单元测试
+```
 
 ### 卸载
 

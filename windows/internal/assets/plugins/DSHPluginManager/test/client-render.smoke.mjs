@@ -1,0 +1,878 @@
+// 插件管理客户端 UI 的渲染冒烟（scripts/test.sh 会跑）：用极简 React 运行时 +
+// 假 fetch/document 把 client.js 真的渲染一遍。纯函数单测（client-updates.test.js）
+// 覆盖不到"组件接线"——工具栏按钮、行内标记、批量轮询、多选与降级路径是否真的连上，
+// 由这里兜住。断言失败会直接抛错，脚本以非 0 退出，回归即失败。
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
+
+const SOURCE = new URL('../client/client.js', import.meta.url);
+const source = await readFile(SOURCE, 'utf8');
+
+// ---------- 极简 React ----------
+function flatten(children) {
+  const out = [];
+  for (const child of children) {
+    if (Array.isArray(child)) out.push(...flatten(child));
+    else if (child !== null && child !== undefined && child !== false && child !== true) out.push(child);
+  }
+  return out;
+}
+const FRAGMENT = Symbol('fragment');
+class Runtime {
+  constructor() { this.slots = new Map(); this.dirty = false; }
+  slotFor(key) {
+    if (!this.slots.has(key)) this.slots.set(key, { order: 0, states: [], deps: [], pending: [] });
+    return this.slots.get(key);
+  }
+  component(element, parentKey, occurrence) {
+    const key = `${parentKey}|${element.type.name || 'anon'}:${occurrence}`;
+    const slot = this.slotFor(key);
+    slot.order = 0;
+    this.current = slot;
+    const rendered = element.type(element.props);
+    for (const effect of slot.pending) this.pendingEffects.push(effect);
+    slot.pending = [];
+    this.current = null;
+    return this.expand(rendered, key);
+  }
+  expand(node, parentKey) {
+    if (node === null || node === undefined || node === false || node === true) return null;
+    if (typeof node !== 'object') return node;
+    if (Array.isArray(node)) return node.map(child => this.expand(child, parentKey));
+    const children = flatten(node.children || []);
+    if (node.type === FRAGMENT) return children.map(child => this.expand(child, parentKey));
+    if (typeof node.type === 'function') return this.component({ ...node, children }, parentKey, 0);
+    const counts = new Map();
+    const rendered = children.map(child => {
+      if (child && typeof child === 'object' && typeof child.type === 'function') {
+        const n = counts.get(child.type) || 0;
+        counts.set(child.type, n + 1);
+        return this.component(child, `${parentKey}>${node.type}`, n);
+      }
+      return this.expand(child, `${parentKey}>${node.type}`);
+    });
+    return { type: node.type, props: node.props || {}, children: rendered };
+  }
+  makeReact() {
+    const runtime = this;
+    return {
+      Fragment: FRAGMENT,
+      createElement: (type, props, ...children) => ({ type, props: props || {}, children: flatten(children) }),
+      useState(initial) {
+        const slot = runtime.current;
+        const index = slot.order++;
+        if (slot.states.length <= index) slot.states[index] = typeof initial === 'function' ? initial() : initial;
+        return [slot.states[index], next => {
+          slot.states[index] = typeof next === 'function' ? next(slot.states[index]) : next;
+          runtime.dirty = true;
+        }];
+      },
+      useMemo(fn, deps = []) {
+        const slot = runtime.current;
+        const index = slot.order++;
+        const stored = slot.deps[index];
+        if (!stored || deps.length !== stored.deps.length || deps.some((d, i) => d !== stored.deps[i])) {
+          slot.deps[index] = { deps, value: fn() };
+        }
+        return slot.deps[index].value;
+      },
+      useRef(initial) {
+        const slot = runtime.current;
+        const index = slot.order++;
+        if (!slot.deps[index]) slot.deps[index] = { deps: [], value: { current: initial } };
+        return slot.deps[index].value;
+      },
+      useEffect(fn, deps = []) {
+        const slot = runtime.current;
+        const index = slot.order++;
+        const stored = slot.deps[index];
+        if (!stored || deps.length !== stored.deps.length || deps.some((d, i) => d !== stored.deps[i])) {
+          slot.deps[index] = { deps, value: true };
+          slot.pending.push(fn);
+        }
+      },
+    };
+  }
+  render(element) {
+    this.pendingEffects = [];
+    this.dirty = false;
+    this.root = element;
+    this.tree = this.expand(element, 'root');
+    for (const effect of this.pendingEffects) effect();
+    return this.tree;
+  }
+  repaint() { return this.render(this.root); }
+}
+
+const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+async function settle(runtime, rounds = 30) {
+  for (let i = 0; i < rounds; i++) {
+    await tick();
+    runtime.repaint();
+  }
+  return runtime.tree;
+}
+function findAll(node, predicate, out = []) {
+  if (!node || typeof node !== 'object') return out;
+  if (Array.isArray(node)) { for (const child of node) findAll(child, predicate, out); return out; }
+  if (typeof node.type === 'string' && predicate(node)) out.push(node);
+  for (const child of node.children || []) findAll(child, predicate, out);
+  return out;
+}
+const textOf = node => {
+  if (node === null || node === undefined || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join('');
+  return (node.children || []).map(textOf).join('');
+};
+const byClass = (tree, token) => findAll(tree, node => String(node.props.className || '').includes(token));
+const isRow = node => typeof node.type === 'string' && /(^| )dsh-pm-row( |$)/.test(String(node.props.className || ''));
+const rowsOf = tree => findAll(tree, isRow);
+const rectOf = (left, top, right, bottom) => ({ left, top, right, bottom });
+const fakeEvent = over => ({ button: 0, target: null, preventDefault() {}, ...over });
+// 真实 React 里 ref 可能是回调也可能是 {current} 对象，这里两种都照做。
+const applyRef = (element, node) => {
+  const ref = element && element.props && element.props.ref;
+  if (typeof ref === 'function') ref(node);
+  else if (ref && typeof ref === 'object') ref.current = node;
+};
+const findByText = (tree, tag, text) => findAll(tree, node => node.type === tag && textOf(node) === text)[0];
+const toasts = tree => findAll(tree, node => /dsh-pm-toast dsh-pm-toast-/.test(String(node.props.className || ''))).map(node => ({
+  kind: /toast-success/.test(node.props.className) ? 'success' : /toast-error/.test(node.props.className) ? 'error' : 'info',
+  text: textOf(node.children && node.children[1] ? node.children[1] : node),
+}));
+
+// ---------- 场景装配 ----------
+function makeDocument() {
+  const listeners = new Map();
+  return {
+    listeners,
+    addEventListener(type, fn) { listeners.set(type, fn); },
+    removeEventListener(type) { listeners.delete(type); },
+    dispatch(type, event) { const fn = listeners.get(type); if (fn) fn(event); },
+    head: { appendChild() {} },
+    getElementById: () => null,
+    createElement: () => ({ set textContent(v) {} }),
+  };
+}
+function boot({ fetchImpl, setTimeoutImpl }) {
+  const runtime = new Runtime();
+  const documentStub = makeDocument();
+  let plugin;
+  const window = { __ModuleLoader__: { load(record) { plugin = record.factory(name => {
+    if (name === 'react') return runtime.makeReact();
+    throw new Error('unexpected require ' + name);
+  }); } } };
+  vm.runInNewContext(source, {
+    window,
+    document: documentStub,
+    fetch: fetchImpl,
+    setTimeout: setTimeoutImpl || setTimeout,
+    setInterval: () => 0,
+    clearInterval: () => {},
+  });
+  let trigger;
+  plugin.apply({ slots: { inject(name, cb) { cb(); }, register(spec, component) { trigger = component; } } });
+  assert.equal(typeof trigger, 'function');
+  return { runtime, trigger, document: documentStub };
+}
+
+const installedItems = [
+  { name: 'dsh-notify', version: '0.5.1', description: '通知插件' },
+  { name: 'dsh-local', version: null, description: '本地插件' },
+  { name: 'dsh-old', version: '2.0.0', description: '领先版本' },
+  { name: 'dsh-builtin', version: '1.0.0', description: '内置', source: 'bundled' },
+];
+const entry = (name, over) => ({
+  name, kind: 'git', spec: 'github:a/b', installedVersion: '1.0.0', installedCommit: 'c1',
+  remote: { version: '1.0.0', commit: 'c1' }, status: 'up-to-date', latestVersion: '1.0.0',
+  major: false, note: null, error: null, ...over,
+});
+
+/** 场景 1：单条更新 + 检查更新 */
+{
+  let updated = false;
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    const inventory = [
+      updated
+        ? entry('dsh-notify', { installedVersion: '0.6.0', latestVersion: '0.6.0', note: '远端有新提交（版本号未变）' })
+        : entry('dsh-notify', { installedVersion: '0.5.1', status: 'update-available', latestVersion: '0.6.0' }),
+      entry('dsh-local', { kind: 'local', installedVersion: null, status: 'unknown', note: '本地来源，无法自动检测', latestVersion: null }),
+      entry('dsh-old', { installedVersion: '2.0.0', status: 'ahead', latestVersion: '1.0.0', note: '已安装版本比远端更高' }),
+    ];
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: installedItems });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({
+        checkedAt: '2026-09-22T11:00:00.000Z', refreshing: false, lastBatch: null,
+        summary: { total: inventory.length, updateAvailable: inventory.filter(item => item.status === 'update-available').length, failed: 0, unknown: 1 },
+        inventory,
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/update')) {
+      updated = true;
+      return respond({ ok: true, updatedTo: '0.6.0', restartRequired: true, note: '已更新到 v0.6.0' });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+
+  // 1. 侧边栏入口 + 角标
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  const triggerButton = findAll(runtime.tree, node => node.type === 'button')[0];
+  assert.equal(triggerButton.props['aria-label'], '插件管理（1 个可更新）', '角标数量进入无障碍标签');
+  assert.equal(textOf(byClass(runtime.tree, 'dsh-pm-trigger-badge')[0]), '1', '侧边栏入口显示可更新角标');
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: false }));
+  await settle(runtime);
+  assert.equal(byClass(runtime.tree, 'dsh-pm-trigger-badge').length, 1, '56px 窄栏也显示角标');
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+
+  // 2. 打开面板：工具栏 + 行内标记
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  let tree = runtime.tree;
+  const text = textOf(tree);
+  assert.ok(findByText(tree, 'button', '检查更新'), '工具栏有「检查更新」');
+  assert.ok(findByText(tree, 'button', '全部更新 (1)'), '工具栏有「全部更新 (1)」（按钮带数量）');
+  const clock = (() => { const d = new Date('2026-09-22T11:00:00.000Z'); const pad = v => String(v).padStart(2, '0'); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; })();
+  assert.ok(text.includes(`上次检测：${clock}`), '显示上次检测时间，期望：' + clock);
+  assert.ok(text.includes('v0.5.1'), '行内显示已安装版本');
+  assert.ok(text.includes('—'), '没有版本的插件显示 —');
+  assert.equal(byClass(tree, 'dsh-pm-update-pill').length, 1, '只有可更新的插件有胶囊');
+  assert.equal(textOf(byClass(tree, 'dsh-pm-update-pill')[0]), '可更新到 v0.6.0');
+  assert.ok(text.includes('本地来源，无法自动检测'), 'unknown 显示服务端 note');
+  assert.ok(text.includes('已安装版本比远端更高'), 'ahead 显示小字');
+  assert.equal(findByText(tree, 'button', '全部更新 (1)').props.disabled, false, '有可更新项时「全部更新」可用');
+
+  // 3. 单条更新（经队列泵发起，先等泵跑起来再断言请求体）
+  findByText(tree, 'button', '更新').props.onClick();
+  // 入队即显示「更新中…」（单任务即刻开跑）
+  assert.ok(textOf(runtime.repaint()).includes('更新中…'), '更新期间按钮显示「更新中…」');
+  await settle(runtime);
+  const updateCall = calls.find(call => call.url === '/dsh-plugin-manager/update');
+  assert.equal(updateCall.options.method, 'POST');
+  assert.deepEqual(JSON.parse(updateCall.options.body), { name: 'dsh-notify' });
+  tree = runtime.tree;
+  assert.ok(textOf(tree).includes('dsh-notify 已更新到 v0.6.0，重启 dsh 后生效'), '成功 toast 含 note 与重启提示');
+  assert.deepEqual(toasts(tree).filter(item => item.kind === 'success').map(item => item.text), ['dsh-notify 已更新到 v0.6.0，重启 dsh 后生效']);
+  assert.equal(byClass(tree, 'dsh-pm-update-pill').length, 0, '更新后胶囊消失');
+  assert.equal(byClass(tree, 'dsh-pm-trigger-badge').length, 0, '更新后角标消失');
+  assert.equal(findByText(tree, 'button', '全部更新').props.disabled, true, '没有可更新项时「全部更新」禁用');
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/installed'), '更新后刷新已安装列表');
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/updates?refresh=1'), '更新后重新检测');
+
+  // 4. 检查更新
+  findByText(runtime.tree, 'button', '检查更新').props.onClick();
+  assert.ok(findByText(runtime.repaint(), 'button', '检测中…'), '检测期间按钮显示「检测中…」');
+  await settle(runtime);
+  assert.ok(calls.filter(call => call.url === '/dsh-plugin-manager/updates?refresh=1').length >= 2, '检查更新带 refresh=1');
+  assert.ok(findByText(runtime.tree, 'button', '检查更新'), '检测结束后按钮复原');
+  console.log('场景1（单条更新 + 检查更新）通过');
+}
+
+/** 场景 2：异步批量更新（202 + lastBatch 轮询） */
+{
+  const calls = [];
+  const delays = [];
+  let batchPolls = 0;
+  let batchStarted = false;
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    const done = batchPolls >= 3;
+    const inventory = ['dsh-b1', 'dsh-b2'].map(name => entry(name, {
+      installedVersion: done ? '2.0.0' : '1.0.0',
+      status: done ? 'up-to-date' : 'update-available',
+      latestVersion: '2.0.0',
+    }));
+    if (url.startsWith('/dsh-plugin-manager/installed')) {
+      return respond({ items: [{ name: 'dsh-b1', version: '1.0.0', description: '插件一' }, { name: 'dsh-b2', version: '1.0.0', description: '插件二' }] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      let lastBatch = null;
+      if (batchStarted) {
+        batchPolls += 1;
+        lastBatch = {
+          startedAt: '2026-09-22T11:02:00.000Z',
+          finishedAt: done ? '2026-09-22T11:02:05.000Z' : null,
+          updated: done ? 2 : 0,
+          failed: 0,
+          results: done ? [{ name: 'dsh-b1', ok: true, updatedTo: '2.0.0', restartRequired: true, note: '已更新到 v2.0.0' }, { name: 'dsh-b2', ok: true, updatedTo: '2.0.0', restartRequired: true, note: '已更新到 v2.0.0' }] : [],
+        };
+      }
+      return respond({
+        checkedAt: '2026-09-22T11:00:00.000Z', refreshing: false, lastBatch,
+        summary: { total: 2, updateAvailable: inventory.filter(item => item.status === 'update-available').length, failed: 0, unknown: 0 },
+        inventory,
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/update-many')) {
+      batchStarted = true;
+      return Promise.resolve({ ok: true, status: 202, json: () => Promise.resolve({ ok: true, accepted: 2, names: JSON.parse(options.body).names }) });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({
+    fetchImpl,
+    // 记录请求的延时，但仍立刻把控制权交还给事件循环：2 秒轮询在冒烟里不能真等。
+    // 只把「轮询间隔」（<=2.5s）压成 0；toast 的 3.2s/6s 自动消失仍按真实时间走。
+    setTimeoutImpl: (fn, ms) => { delays.push(ms); return setTimeout(fn, ms <= 2500 ? 0 : ms); },
+  });
+
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill').length, 2, '两个插件都可更新');
+
+  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '全部更新 (2)')[0].props.onClick();
+  const manyCall = calls.find(call => call.url === '/dsh-plugin-manager/update-many');
+  assert.deepEqual(JSON.parse(manyCall.options.body), { names: ['dsh-b1', 'dsh-b2'] }, '提交所有 update-available 的名字');
+  assert.ok(textOf(runtime.repaint()).includes('更新中…'), '批量期间状态条显示「更新中…」');
+  await settle(runtime, 40);
+  const afterStart = toasts(runtime.tree);
+  assert.ok(afterStart.some(item => item.kind === 'info' && item.text === '已开始更新 2 个插件：dsh-b1、dsh-b2'), '受理 toast 点名清单，实际：' + JSON.stringify(afterStart));
+  assert.ok(delays.filter(ms => ms === 2000).length >= 2, '每 2 秒轮询一次 /updates，实际：' + JSON.stringify(delays));
+  const batchToast = toasts(runtime.tree).filter(item => item.kind === 'success' && item.text.includes('已更新 2 个插件'));
+  assert.equal(batchToast.length, 1, '批次结束后弹一条汇总 toast，实际：' + JSON.stringify(toasts(runtime.tree)));
+  assert.equal(textOf(runtime.tree).includes('更新中…'), false, '批次结束后状态条消失');
+  assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill').length, 0, '批次结束后胶囊消失');
+  assert.equal(byClass(runtime.tree, 'dsh-pm-trigger-badge').length, 0, '批次结束后角标消失');
+
+  // 同一批次被再次读到（检查更新）时不重复弹汇总
+  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '检查更新')[0].props.onClick();
+  await settle(runtime, 40);
+  assert.equal(toasts(runtime.tree).filter(item => item.kind === 'success' && item.text.includes('已更新 2 个插件')).length, 1, '重复读到同一批次不重复提示');
+  console.log('场景2（异步批量更新）通过，批次轮询延时：' + JSON.stringify(delays.slice(0, 4)));
+}
+
+/** 场景 3：批量更新有失败 */
+{
+  const fetchImpl = (url, options = {}) => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    const lastBatch = { startedAt: 't1', finishedAt: 't2', updated: 1, failed: 1, results: [{ name: 'a', ok: true }, { name: 'b', ok: false, error: 'git ls-remote 超时' }] };
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [{ name: 'dsh-b1', version: '1.0.0', description: '插件一' }] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({ checkedAt: '2026-09-22T11:00:00.000Z', refreshing: false, lastBatch, summary: { total: 1, updateAvailable: 1, failed: 0, unknown: 0 }, inventory: [entry('dsh-b1', { status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' })] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/update-many')) return Promise.resolve({ ok: true, status: 202, json: () => Promise.resolve({ ok: true, accepted: 1, names: ['dsh-b1'] }) });
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime, 40);
+  const failure = toasts(runtime.tree).find(item => item.kind === 'error');
+  assert.ok(failure, '失败批次要有红色汇总，实际：' + JSON.stringify(toasts(runtime.tree)));
+  assert.equal(failure.text, '1 个更新成功、1 个失败（b）：git ls-remote 超时', '失败批次红色汇总要点名失败的插件');
+  console.log('场景3（批量失败汇总）通过');
+}
+
+/** 场景 4：降级（/updates 404） */
+{
+  const calls = [];
+  const fetchImpl = url => {
+    calls.push(url);
+    if (url.startsWith('/dsh-plugin-manager/installed')) return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ items: installedItems }) });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) });
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  assert.equal(byClass(runtime.tree, 'dsh-pm-trigger-badge').length, 0, '降级时没有角标');
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  const text = textOf(runtime.tree);
+  assert.ok(text.includes('dsh-notify'), '降级时仍显示已安装列表');
+  assert.ok(text.includes('v0.5.1'), '降级时仍显示已安装版本（退回 installed.version）');
+  assert.ok(!text.includes('检查更新'), '降级时不显示更新工具栏');
+  assert.ok(!text.includes('可更新到'), '降级时没有任何更新标记');
+  assert.ok(!text.includes('检测失败'), '降级时不报错');
+  assert.equal(toasts(runtime.tree).length, 0, '降级时不弹 toast');
+  console.log('场景4（接口 404 静默降级）通过，请求：' + calls.join(', '));
+}
+
+/** 场景 5：多选、Shift 连选、橡皮筋框选、「更新选中」 */
+{
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    const inventory = ['dsh-a', 'dsh-b', 'dsh-c', 'dsh-d'].map((name, i) => entry(name, {
+      installedVersion: '1.0.0', latestVersion: '2.0.0',
+      status: i < 3 ? 'update-available' : 'up-to-date',
+    }));
+    if (url.startsWith('/dsh-plugin-manager/installed')) {
+      return respond({ items: ['dsh-a', 'dsh-b', 'dsh-c', 'dsh-d'].map(name => ({ name, version: '1.0.0', description: name })) });
+    }
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({ checkedAt: '2026-09-22T11:00:00.000Z', refreshing: false, lastBatch: null, progress: null, summary: { total: 4, updateAvailable: 3, failed: 0, unknown: 0 }, inventory });
+    }
+    if (url.startsWith('/dsh-plugin-manager/update-many')) {
+      return Promise.resolve({ ok: true, status: 202, json: () => Promise.resolve({ ok: true, accepted: JSON.parse(options.body).names.length, names: JSON.parse(options.body).names }) });
+    }
+    return respond({});
+  };
+  const { runtime, trigger, document: doc } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  let tree = runtime.tree;
+  assert.ok(textOf(tree).includes('已选 0 个'), '工具栏显示已选计数');
+  assert.equal(findByText(tree, 'button', '更新选中 (0)').props.disabled, true, '没选中时「更新选中 (0)」禁用');
+  assert.equal(findByText(tree, 'button', '取消选择').props.disabled, true);
+
+  // 复选框点击切换 + 无障碍标签
+  let rows = rowsOf(tree);
+  assert.equal(rows.length, 4, '四行已安装插件，实际：' + rows.length);
+  const checkboxes = () => findAll(runtime.tree, node => node.type === 'input' && String(node.props.className).includes('dsh-pm-check'));
+  checkboxes()[0].props.onChange({ shiftKey: false });
+  await settle(runtime);
+  assert.ok(textOf(runtime.tree).includes('已选 1 个'), '点复选框选中 1 个');
+  assert.equal(findByText(runtime.tree, 'button', '更新选中 (1)').props.disabled, false, '选中可更新项后「更新选中 (1)」可用');
+
+  // Shift 点复选框：从上次位置区间选中
+  checkboxes()[2].props.onChange({ shiftKey: true });
+  await settle(runtime);
+  assert.ok(textOf(runtime.tree).includes('已选 3 个'), 'Shift 连选 0..2 三行，实际：' + textOf(runtime.tree).slice(0, 120));
+
+  // 行点击：普通点击切换（点行标题文字）
+  rows = rowsOf(runtime.tree);
+  rows[3].props.onClick(fakeEvent({ target: null }));
+  await settle(runtime);
+  assert.ok(textOf(runtime.tree).includes('已选 4 个'), '点行也能切换选中');
+
+  // 点按钮不切换：target 命中 button 时直接返回
+  rows = rowsOf(runtime.tree);
+  rows[0].props.onClick(fakeEvent({ target: { closest: () => ({}) } }));
+  await settle(runtime);
+  assert.ok(textOf(runtime.tree).includes('已选 4 个'), '点行内按钮不改变选择');
+
+  // 取消选择
+  findByText(runtime.tree, 'button', '取消选择').props.onClick();
+  await settle(runtime);
+  assert.ok(textOf(runtime.tree).includes('已选 0 个'), '「取消选择」清空选择');
+
+  // 橡皮筋框选：接上假的 getBoundingClientRect
+  tree = runtime.tree;
+  const area = findAll(tree, node => String(node.props.className || '') === 'dsh-pm-selectarea')[0];
+  assert.ok(area, '列表区域存在');
+  applyRef(area, { getBoundingClientRect: () => rectOf(0, 0, 200, 140) });
+  const rects = [[0, 0, 200, 40], [0, 44, 200, 84], [0, 88, 200, 128], [0, 132, 200, 172]];
+  rowsOf(tree).forEach((row, i) => applyRef(row, { getBoundingClientRect: () => rectOf(...rects[i]) }));
+
+  area.props.onMouseDown(fakeEvent({ clientX: 10, clientY: 5 }));
+  doc.dispatch('mousemove', { clientX: 190, clientY: 60 });
+  let bandEl = byClass(runtime.repaint(), 'dsh-pm-band')[0];
+  assert.ok(bandEl, '拖动时出现橡皮筋覆盖层');
+  assert.deepEqual([bandEl.props.style.left, bandEl.props.style.top, bandEl.props.style.width, bandEl.props.style.height], ['10px', '5px', '180px', '55px'], '覆盖层矩形随鼠标更新');
+  assert.ok(textOf(runtime.tree).includes('已选 2 个'), '实时选中相交的前两行，实际：' + textOf(runtime.tree).slice(0, 120));
+  doc.dispatch('mouseup', {});
+  await settle(runtime);
+  assert.equal(byClass(runtime.tree, 'dsh-pm-band').length, 0, '松开后覆盖层消失');
+  assert.ok(textOf(runtime.tree).includes('已选 2 个'), '松开后保留框选结果');
+
+  // 拖动刚结束时，行的点击不应该再顺带切换（避免「开始拖动时触发行的点击」）
+  rows = rowsOf(runtime.tree);
+  rows[3].props.onClick(fakeEvent({ target: null }));
+  assert.ok(textOf(runtime.tree).includes('已选 2 个'), '拖动后的点击被抑制');
+
+  // Shift 拖动：追加而不是替换
+  findByText(runtime.tree, 'button', '取消选择').props.onClick();
+  await settle(runtime);
+  rows = rowsOf(runtime.tree);
+  rows[3].props.onClick(fakeEvent({ target: null }));
+  await settle(runtime);
+  assert.ok(textOf(runtime.tree).includes('已选 1 个'), '先只选第 4 行');
+  tree = runtime.tree;
+  const area2 = findAll(tree, node => String(node.props.className || '') === 'dsh-pm-selectarea')[0];
+  applyRef(area2, { getBoundingClientRect: () => rectOf(0, 0, 200, 140) });
+  rowsOf(tree).forEach((row, i) => applyRef(row, { getBoundingClientRect: () => rectOf(...rects[i]) }));
+  area2.props.onMouseDown(fakeEvent({ clientX: 10, clientY: 5, shiftKey: true }));
+  doc.dispatch('mousemove', { clientX: 190, clientY: 60 });
+  await settle(runtime);
+  assert.ok(textOf(runtime.tree).includes('已选 3 个'), 'Shift 框选追加到已有选择，实际：' + textOf(runtime.tree).slice(0, 120));
+  doc.dispatch('mouseup', {});
+  await settle(runtime);
+
+  // 更新选中：只提交选中且可更新的名字（第 4 行 up-to-date 不提交）
+  findByText(runtime.tree, 'button', '更新选中 (2)').props.onClick();
+  await settle(runtime, 20);
+  const selectedCall = calls.find(call => call.url === '/dsh-plugin-manager/update-many');
+  assert.deepEqual(JSON.parse(selectedCall.options.body), { names: ['dsh-a', 'dsh-b'] }, '只提交选中且可更新的插件（第 4 行 up-to-date 不提交）');
+  assert.ok(toasts(runtime.tree).some(item => item.text === '已开始更新 2 个插件：dsh-a、dsh-b'), '受理 toast 点名清单');
+  console.log('场景5（多选 + Shift 连选 + 橡皮筋框选 + 更新选中）通过');
+}
+
+/** 场景 6：服务端进程进度（progress）行内呈现 + 退出后回到普通状态 */
+{
+  let progressOn = true;
+  let progressPolls = 0;
+  const fetchImpl = url => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) {
+      return respond({ items: [{ name: 'dsh-b1', version: '1.0.0', description: '插件一' }, { name: 'dsh-b2', version: '1.0.0', description: '插件二' }] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      if (progressOn) progressPolls += 1;
+      return respond({
+        checkedAt: '2026-09-22T11:00:00.000Z', refreshing: false, lastBatch: null,
+        progress: progressOn ? { active: true, kind: 'npm', total: 2, done: 0, current: 'dsh-b1', step: '正在下载并安装' } : null,
+        summary: { total: 2, updateAvailable: 2, failed: 0, unknown: 0 },
+        inventory: [entry('dsh-b1', { status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' }), entry('dsh-b2', { status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' })],
+      });
+    }
+    return respond({});
+  };
+  const delays = [];
+  const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => { delays.push(ms); return setTimeout(fn, ms <= 2500 ? 0 : ms); } });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime, 4);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime, 4);
+  const text = textOf(runtime.tree);
+  assert.ok(text.includes('正在下载并安装 v2.0.0…'), '当前更新行显示步骤，实际：' + text.slice(0, 400));
+  assert.ok(text.includes('等待中'), '其余待更新行显示「等待中」');
+  assert.equal(byClass(runtime.tree, 'dsh-pm-row-progress').length, 2, '两行都显示进度小字');
+  // 批次进行中：进度在独立状态条上（来源 + 进度 + 当前插件），按钮只带数量。
+  const batchStrip = byClass(runtime.tree, 'dsh-pm-queue')[0];
+  assert.ok(batchStrip, '批次进行中出现进度状态条');
+  const stripText = textOf(batchStrip);
+  assert.ok(stripText.includes('更新中… 1/2'), '状态条带批次进度序号，实际：' + stripText);
+  assert.ok(stripText.includes('来源：批量更新'), '外部发起的批次标注兜底来源');
+  assert.ok(stripText.includes('dsh-b1'), '状态条显示当前正在更新的插件');
+  assert.equal(findByText(runtime.tree, 'button', '全部更新 (2)').props.disabled, true, '批次进行中「全部更新」按钮禁用');
+  assert.equal(findByText(runtime.tree, 'button', '更新选中 (0)').props.disabled, true, '批次进行中「更新选中」禁用');
+  assert.ok(progressPolls >= 2, '面板会跟随进度轮询 /updates，实际：' + progressPolls);
+  assert.ok(delays.includes(2000), '跟随进度用 2 秒间隔');
+
+  // 批次结束（progress 清空）后回到普通状态
+  progressOn = false;
+  await settle(runtime, 6);
+  const after = textOf(runtime.tree);
+  assert.equal(after.includes('等待中'), false, '批次结束后不再显示「等待中」');
+  assert.equal(after.includes('正在下载并安装'), false, '批次结束后不再显示步骤');
+  assert.equal(byClass(runtime.tree, 'dsh-pm-queue').length, 0, '批次结束后状态条消失');
+  assert.ok(findByText(runtime.tree, 'button', '全部更新 (2)'), '按钮文案复原，仍带数量');
+  console.log('场景6（progress 行内步骤 + 退出恢复）通过，跟随轮询 ' + progressPolls + ' 次');
+}
+
+/** 场景 7：忽略 / 取消忽略（行内按钮、工具栏「忽略选中」、角标随之归零） */
+{
+  const calls = [];
+  const ignoredNames = new Set();
+  let batchStarted = false;
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    const body = () => JSON.parse(options.body || '{}');
+    const inventory = ['dsh-a', 'dsh-b'].map(name => {
+      // 批次跑完后 dsh-b 变成已是最新，用来验证「全部更新」的名单排除逻辑
+      if (batchStarted && name === 'dsh-b') return entry(name, { installedVersion: '2.0.0', latestVersion: '2.0.0' });
+      return entry(name, {
+        installedVersion: '1.0.0', latestVersion: '2.0.0', status: 'update-available',
+        ...(ignoredNames.has(name) ? { ignored: true } : {}),
+      });
+    });
+    if (url.startsWith('/dsh-plugin-manager/installed')) {
+      return respond({ items: ['dsh-a', 'dsh-b'].map(name => ({ name, version: '1.0.0', description: name })) });
+    }
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      const available = inventory.filter(item => item.status === 'update-available' && !item.ignored).length;
+      return respond({
+        checkedAt: '2026-09-22T11:00:00.000Z', refreshing: false, progress: null,
+        lastBatch: batchStarted ? { startedAt: 't1', finishedAt: 't2', updated: 1, failed: 0, results: [{ name: 'dsh-b', ok: true, updatedTo: '2.0.0', note: '已更新到 v2.0.0' }] } : null,
+        summary: { total: 2, updateAvailable: available, ignored: ignoredNames.size, failed: 0, unknown: 0 },
+        inventory,
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/ignore')) {
+      for (const item of body().items || []) ignoredNames.add(item.name);
+      return respond({ ok: true, ignored: [...ignoredNames], failed: [] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/unignore')) {
+      for (const name of body().names || []) ignoredNames.delete(name);
+      return respond({ ok: true, unignored: [...ignoredNames] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/update-many')) {
+      batchStarted = true;
+      return Promise.resolve({ ok: true, status: 202, json: () => Promise.resolve({ ok: true, accepted: body().names.length, names: body().names }) });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
+  const badgeText = () => {
+    const badge = byClass(runtime.tree, 'dsh-pm-trigger-badge')[0];
+    return badge ? textOf(badge) : '';
+  };
+  const openPanel = () => findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  assert.equal(badgeText(), '2', '两条可更新 → 角标 2');
+  openPanel();
+  await settle(runtime);
+  assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill').length, 2, '两条都是可更新胶囊');
+  assert.equal(findByText(runtime.tree, 'button', '忽略选中 (0)').props.disabled, true, '没选中时「忽略选中 (0)」禁用');
+
+  // 「忽略选中」：勾选两条 → 提交 items（含各自目标版本）→ 角标归零
+  const checkboxes = () => findAll(runtime.tree, node => node.type === 'input' && String(node.props.className).includes('dsh-pm-check'));
+  checkboxes()[0].props.onChange({ shiftKey: false });
+  await settle(runtime);
+  checkboxes()[1].props.onChange({ shiftKey: false });
+  await settle(runtime);
+  assert.equal(findByText(runtime.tree, 'button', '忽略选中 (2)').props.disabled, false, '选中可更新项后「忽略选中 (2)」可用');
+  findByText(runtime.tree, 'button', '忽略选中 (2)').props.onClick();
+  await settle(runtime);
+  const firstIgnore = calls.find(call => call.url === '/dsh-plugin-manager/ignore');
+  assert.deepEqual(JSON.parse(firstIgnore.options.body), {
+    items: [{ name: 'dsh-a', version: '2.0.0' }, { name: 'dsh-b', version: '2.0.0' }],
+  }, '「忽略选中」提交选中插件与各自目标版本');
+  assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill-ignored').length, 2, '两行都变成中性「已忽略」胶囊');
+  assert.equal(textOf(byClass(runtime.tree, 'dsh-pm-update-pill-ignored')[0]), '已忽略 v2.0.0');
+  assert.ok(textOf(runtime.tree).includes('已忽略这个版本：远端出了更高的版本会再提醒'));
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  assert.equal(badgeText(), '', '两条都忽略后角标消失（这正是用户要的效果）');
+  // 可更新项全被忽略：按钮仍然可用（忽略只屏蔽提醒，不拦显式更新），
+  // 计数含已忽略项，悬停说明这一点（此前禁用无解释，被用户两轮当 bug 报）。
+  const ignoredAllButton = findByText(runtime.tree, 'button', '全部更新 (2)');
+  assert.equal(ignoredAllButton.props.disabled, false, '全部被忽略时「全部更新」仍可用，计数含已忽略');
+  assert.match(ignoredAllButton.props.title, /含已忽略的 2 个/);
+
+  // 「取消忽略」：只恢复 dsh-a，角标回到 1；「全部更新」的名单里也就只剩 dsh-a
+  openPanel();
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '取消忽略')[0].props.onClick();
+  await settle(runtime);
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/unignore'), '取消忽略要打接口');
+  assert.deepEqual(JSON.parse(calls.find(call => call.url === '/dsh-plugin-manager/unignore').options.body), { names: ['dsh-a'] });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  assert.equal(badgeText(), '1', '取消忽略一条后角标回到 1');
+  openPanel();
+  await settle(runtime);
+  assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill-ignored').length, 1, '只剩 dsh-b 还是已忽略');
+  // 新语义：显式批量包含已忽略项（b 虽被忽略但仍有更新）→ 计数 2、名单含 b
+  findByText(runtime.tree, 'button', '全部更新 (2)').props.onClick();
+  const manyCall = calls.find(call => call.url === '/dsh-plugin-manager/update-many');
+  assert.deepEqual(JSON.parse(manyCall.options.body), { names: ['dsh-a', 'dsh-b'] }, '「全部更新」包含已忽略的 dsh-b（忽略只屏蔽提醒）');
+  await settle(runtime, 20);
+  console.log('场景7（忽略 / 取消忽略 / 忽略选中 / 角标归零）通过');
+}
+
+
+/** 场景 8：「更新内容」弹窗（行内入口 → 发布说明窗口） */
+{
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [{ name: 'dsh-notes', version: '1.0.0', description: '插件' }] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({
+        checkedAt: '2026-09-22T11:00:00.000Z', refreshing: false, lastBatch: null,
+        summary: { total: 1, updateAvailable: 1, failed: 0, unknown: 0 },
+        inventory: [entry('dsh-notes', { status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' })],
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/release-notes')) {
+      return respond({ ok: true, kind: 'release', version: '2.0.0', title: 'v2.0.0', notes: '## 亮点\n- 支持 `markdown` 渲染', url: 'https://github.com/o/dsh-notes/releases/tag/v2.0.0' });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  findByText(runtime.tree, 'button', '更新内容').props.onClick({ stopPropagation() {} });
+  await settle(runtime);
+  const text = textOf(runtime.tree);
+  assert.ok(text.includes('dsh-notes v2.0.0 的更新内容'), '弹出更新内容窗口，实际：' + text.slice(0, 300));
+  assert.ok(text.includes('markdown'), '显示发布说明正文（经 markdown 渲染）');
+  const call = calls.find(item => item.url === '/dsh-plugin-manager/release-notes');
+  assert.deepEqual(JSON.parse(call.options.body), { name: 'dsh-notes', version: '2.0.0' }, '提交插件名与目标版本');
+  // markdown 渲染成结构化元素（标题/列表/行内代码），不再是 <pre> 原文
+  const headings = findAll(runtime.tree, node => String(node.props.className || '').includes('dsh-pm-md-h'));
+  assert.ok(headings.length >= 1, '标题渲染为 .dsh-pm-md-h 元素');
+  const listItems = findAll(runtime.tree, node => node.type === 'li');
+  assert.ok(listItems.length >= 1, '列表项渲染为 <li>');
+  const inlineCode = findAll(runtime.tree, node => String(node.props.className || '').includes('dsh-pm-md-code'));
+  assert.ok(inlineCode.length >= 1, '行内代码渲染为 .dsh-pm-md-code');
+  console.log('场景8（更新内容弹窗）通过');
+}
+
+console.log('== 冒烟全部通过 ==');
+
+/** 场景 9：dev-linked 插件更新 → 二选一确认块（更新本地目录 / 切换为发行版） */
+{
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [{ name: 'dsh-dev', version: '1.0.0', description: '本地开发' }] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({ checkedAt: '2026-09-22T11:00:00.000Z', refreshing: false, lastBatch: null,
+        summary: { total: 1, updateAvailable: 1, failed: 0, unknown: 0 },
+        inventory: [entry('dsh-dev', { status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' })] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/update')) {
+      const asked = JSON.parse(options.body || '{}');
+      if (!asked.mode) return respond({ ok: false, status: 'dev-linked', error: '该插件链接到本地目录，已被拒绝' });
+      return respond({ ok: true, updatedTo: '2.0.0', verified: true, restartRequired: true, note: '已更新' });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  findByText(runtime.tree, 'button', '更新').props.onClick({ stopPropagation() {} });
+  await settle(runtime);
+  assert.ok(findByText(runtime.tree, 'button', '更新本地目录'), 'dev-linked 出现「更新本地目录」选项');
+  assert.ok(findByText(runtime.tree, 'button', '切换为发行版'), 'dev-linked 出现「切换为发行版」选项');
+
+  // 选「切换为发行版」：请求带 mode，成功后确认块消失
+  findByText(runtime.tree, 'button', '切换为发行版').props.onClick();
+  await settle(runtime, 20);
+  const modeCall = calls.filter(call => call.url === '/dsh-plugin-manager/update' && call.options.body).map(call => JSON.parse(call.options.body)).find(body => body.mode);
+  assert.deepEqual(modeCall, { name: 'dsh-dev', mode: 'switch-release' }, '显式动作带 mode 透传');
+  assert.equal(findByText(runtime.tree, 'button', '更新本地目录'), undefined, '选择后确认块消失');
+  assert.ok(toasts(runtime.tree).some(item => item.kind === 'success'), '成功后弹汇总提示');
+  console.log('场景9（dev-linked 二选一）通过');
+}
+
+/** 场景 10：市场分类筛选 —「更多分类」下拉选中后必须还能退回「全部」 */
+{
+  // 12 个分类：插件多的 10 个平铺成 chip，official / a（各 1 个）落进「更多分类」下拉。
+  // 总数刻意小于分页阈值 PAGE_SIZE，「全部」时一次列完，便于用卡片数量判断筛选结果。
+  const categoryCounts = { official: 1, a: 1, b: 5, c: 5, d: 5, e: 5, f: 5, g: 5, h: 5, i: 5, j: 5, k: 5 };
+  const categories = Object.keys(categoryCounts);
+  const marketPlugins = [];
+  for (const cat of categories) {
+    for (let n = 0; n < categoryCounts[cat]; n++) {
+      marketPlugins.push({
+        id: `${cat}-${n}`, name: `p-${cat}-${n}`, repo: `owner/p-${cat}-${n}`,
+        author: cat, category: cat, descriptionEn: `插件 ${cat}-${n}`,
+        stars: 1, downloads: 0, addedDate: '2026-01-01',
+      });
+    }
+  }
+  const fetchImpl = url => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({ count: marketPlugins.length, official: 0, categories, indexedAt: '2026-09-22T11:00:00.000Z', stale: false, plugins: marketPlugins });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '插件市场')[0].props.onClick();
+  await settle(runtime, 10);
+
+  const chips = () => findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-chip( |$)/.test(String(node.props.className || '')));
+  const chipByLabel = label => chips().find(node => textOf(node) === label);
+  const chipsRow = findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '') === 'dsh-pm-chips')[0];
+  const moreSelect = () => findAll(runtime.tree, node => node.type === 'select' && String(node.props.className || '').includes('dsh-pm-cat-more'))[0];
+  const options = () => findAll(chipsRow, node => node.type === 'option');
+  const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+
+  assert.ok(moreSelect(), '尾部分类收进「更多分类」下拉');
+  assert.equal(textOf(options()[0]), '更多分类…', '下拉第一项是占位');
+  assert.equal(options()[0].props.value, '', '占位项没有值：选中它不该改动筛选');
+  assert.ok(options().some(node => node.props.value === 'all'), '下拉里有「全部分类」出口（此前缺失，选了尾部分类就退不回去）');
+  assert.equal(moreSelect().props.value, '', '筛选为全部时下拉显示占位，而不是回显某个分类');
+  assert.equal(textOf(chips()[0]), '全部', '第一颗 chip 是「全部」');
+  assert.ok(/dsh-pm-chip-active/.test(String(chips()[0].props.className)), '进市场默认选中「全部」');
+  assert.equal(cards().length, marketPlugins.length, '「全部」列出所有插件');
+
+  // 1. 从「更多分类」下拉选尾部分类 → 只看该分类
+  moreSelect().props.onChange({ target: { value: 'official' } });
+  await settle(runtime);
+  assert.equal(cards().length, categoryCounts.official, '尾部分类筛选生效');
+  assert.equal(moreSelect().props.value, 'official', '下拉回显当前分类');
+  assert.ok(/dsh-pm-cat-more-active/.test(String(moreSelect().props.className)), '下拉自带选中态');
+  assert.equal(chipByLabel('全部').props.className.includes('dsh-pm-chip-active'), false, '选了尾部分类后「全部」chip 不再高亮');
+
+  // 2. 再选占位项「更多分类…」：保持原样（它是标题不是退出口）
+  moreSelect().props.onChange({ target: { value: '' } });
+  await settle(runtime);
+  assert.equal(cards().length, categoryCounts.official, '选中占位项不改变当前筛选');
+
+  // 3. 选「全部分类」→ 退回全部（本次修复的主入口）
+  moreSelect().props.onChange({ target: { value: 'all' } });
+  await settle(runtime);
+  assert.equal(cards().length, marketPlugins.length, '「全部分类」退回所有插件');
+  assert.ok(/dsh-pm-chip-active/.test(String(chipByLabel('全部').props.className)), '退回后「全部」chip 高亮');
+  assert.equal(moreSelect().props.value, '', '退回后下拉回到占位显示');
+
+  // 4. 平铺 chip 再点一次也取消筛选（另一条退出口，避免只能去下拉里找）
+  const flatChip = chips()[1];
+  const flatLabel = textOf(flatChip);
+  flatChip.props.onClick();
+  await settle(runtime);
+  assert.equal(cards().length, categoryCounts[flatLabel], `点「${flatLabel}」chip 只看该分类`);
+  assert.ok(/dsh-pm-chip-active/.test(String(chipByLabel(flatLabel).props.className)), 'chip 选中后高亮');
+  chipByLabel(flatLabel).props.onClick();
+  await settle(runtime);
+  assert.equal(cards().length, marketPlugins.length, '再点一次已选中的 chip 回到全部');
+  console.log('场景10（分类筛选可退回「全部」）通过');
+}
+
+/** 场景 11：刷新市场进行中也能关闭面板（用户报告：刷新时点关闭关不上） */
+{
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
+    }
+    // 刷新请求一直挂起：模拟「正在联网刷新市场」，busy 停在 'refresh' 不回落。
+    if (url === '/dsh-plugin-manager/refresh') return new Promise(() => {});
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      // 首屏索引过期 → 客户端自动触发 refreshMarket()，正是用户点开市场时的路径。
+      return respond({
+        count: 2, official: 0, categories: [], indexedAt: null, stale: true,
+        plugins: [
+          { id: 'a', name: 'a-plugin', repo: 'o/a', author: 'o', category: 'x', descriptionEn: 'a', stars: 1, downloads: 0, addedDate: '2026-01-01' },
+          { id: 'b', name: 'b-plugin', repo: 'o/b', author: 'o', category: 'x', descriptionEn: 'b', stars: 1, downloads: 0, addedDate: '2026-01-01' },
+        ],
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '插件市场')[0].props.onClick();
+  await settle(runtime, 10);
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/refresh'), '过期市场索引自动触发刷新');
+  assert.ok(findByText(runtime.tree, 'button', '刷新中…'), '刷新进行中，刷新按钮显示「刷新中…」');
+  // 关闭按钮必须可用：此前 closable 漏了 refresh 分支，刷新时 × / 返回 / 背景点击全部静默失效。
+  const closeButton = findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-close( |$)/.test(String(node.props.className || '')))[0];
+  assert.ok(closeButton, '面板有关闭按钮');
+  closeButton.props.onClick();
+  await settle(runtime);
+  assert.equal(findByText(runtime.tree, 'button', '插件市场'), undefined, '刷新市场进行中点关闭能关掉面板');
+  console.log('场景11（刷新市场期间可关闭）通过');
+}

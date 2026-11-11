@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-session-notify
+      name: 'dsh-session-notify'

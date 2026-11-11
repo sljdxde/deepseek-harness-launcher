@@ -4,6 +4,6 @@
   "private": true,
   "description": "Pinned @deepseek-ai/dsh runtime specification for Deepseek Harness Launcher (lockfile-based install keeps first-install memory low)",
   "dependencies": {
-    "@deepseek-ai/dsh": "^0.1.1-rc.2"
+    "@deepseek-ai/dsh": "0.2.2-rc.1"
   }
 }

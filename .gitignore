@@ -14,3 +14,6 @@ npm-debug.log*
 # Xcode and Swift build products
 .build/
 DerivedData/
+
+# 本地编码助手会话状态（plan 等），不随仓库分发
+/.zcode/

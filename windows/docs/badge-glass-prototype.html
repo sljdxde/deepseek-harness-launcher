@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>任务栏未读浮层 · 玻璃效果（最终稿）</title>
+<style>
+:root{
+  --stage-a:#6b8cae; --stage-b:#3f5c78;
+  --glass:rgba(255,255,255,.72);
+  --glass-strong:rgba(255,255,255,.88);
+  --glass-line:rgba(255,255,255,.55);
+  --glass-hover:rgba(255,255,255,.62);
+  --glass-sunken:rgba(15,17,21,.045);
+  --text:#0f1115; --text2:#5c6270; --text3:#8a909c;
+  --brand:#2f6fed; --brand50:rgba(47,111,237,.10);
+  --danger:#d93a35; --danger50:rgba(217,58,53,.10);
+  --ok:#1f9d63;
+  --tb-bg:rgba(243,243,243,.88); --tb-btn:rgba(0,0,0,.055); --tb-active:rgba(0,0,0,.10);
+  --shadow:0 18px 48px -12px rgba(15,25,40,.42), 0 2px 8px rgba(15,25,40,.14);
+  --inner:inset 0 1px 0 rgba(255,255,255,.75);
+}
+body.dark{
+  --stage-a:#243040; --stage-b:#121820;
+  --glass:rgba(38,42,50,.72);
+  --glass-strong:rgba(44,48,57,.88);
+  --glass-line:rgba(255,255,255,.10);
+  --glass-hover:rgba(255,255,255,.07);
+  --glass-sunken:rgba(0,0,0,.22);
+  --text:#f1f3f6; --text2:#a6acb8; --text3:#7c828e;
+  --brand:#6ea8ff; --brand50:rgba(110,168,255,.14);
+  --danger:#ff7a74; --danger50:rgba(255,122,116,.14);
+  --ok:#4ecb8d;
+  --tb-bg:rgba(28,28,30,.88); --tb-btn:rgba(255,255,255,.07); --tb-active:rgba(255,255,255,.12);
+  --shadow:0 18px 48px -10px rgba(0,0,0,.68), 0 2px 8px rgba(0,0,0,.4);
+  --inner:inset 0 1px 0 rgba(255,255,255,.08);
+}
+*{box-sizing:border-box}
+body{margin:0;font:13px/1.5 "Segoe UI Variable","Segoe UI","Microsoft YaHei",sans-serif;
+  color:var(--text);background:#0b0e13;overflow:hidden;height:100vh}
+
+.desk{position:fixed;inset:0;background:
+  radial-gradient(1200px 600px at 22% 18%,rgba(255,255,255,.16),transparent 62%),
+  radial-gradient(900px 500px at 78% 82%,rgba(120,180,255,.16),transparent 60%),
+  linear-gradient(140deg,var(--stage-a),var(--stage-b))}
+body.dark .desk{background:
+  radial-gradient(1200px 600px at 22% 18%,rgba(110,168,255,.10),transparent 62%),
+  radial-gradient(900px 500px at 78% 82%,rgba(80,120,200,.10),transparent 60%),
+  linear-gradient(140deg,var(--stage-a),var(--stage-b))}
+
+.top{position:fixed;top:0;left:0;right:0;z-index:40;display:flex;align-items:center;gap:12px;
+  padding:11px 20px;background:var(--glass);backdrop-filter:blur(22px) saturate(180%);
+  -webkit-backdrop-filter:blur(22px) saturate(180%);
+  border-bottom:1px solid var(--glass-line);box-shadow:var(--inner)}
+.top h1{font-size:13.5px;margin:0;font-weight:650;letter-spacing:-.1px}
+.top .sub{font-size:11px;color:var(--text3);font-weight:400}
+.top .sp{flex:1}
+.tbtn{display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:7px;
+  border:1px solid var(--glass-line);background:var(--glass-hover);color:var(--text);
+  font:inherit;font-size:11.5px;cursor:pointer}
+.tbtn:hover{background:var(--glass-strong)}
+.tbtn .sw{width:11px;height:11px;border-radius:50%;border:1px solid var(--glass-line)}
+
+.fly{position:absolute;width:296px;
+  background:var(--glass);backdrop-filter:blur(34px) saturate(190%);
+  -webkit-backdrop-filter:blur(34px) saturate(190%);
+  border:1px solid var(--glass-line);border-radius:13px;box-shadow:var(--shadow),var(--inner);
+  overflow:hidden;animation:pop .15s cubic-bezier(.2,.9,.3,1)}
+@keyframes pop{from{opacity:0;transform:translateY(7px) scale(.97)}to{opacity:1;transform:none}}
+
+.fh{display:flex;align-items:center;gap:7px;padding:9px 11px 8px;
+  border-bottom:1px solid var(--glass-line)}
+.fh .ttl{font-size:11.5px;font-weight:650;letter-spacing:.1px}
+.fh .cnt{font-size:10px;padding:1px 6px;border-radius:8px;background:var(--danger50);
+  color:var(--danger);font-weight:700;font-family:ui-monospace,monospace;
+  letter-spacing:.2px;margin-left:auto}
+
+.fl{padding:4px}
+.fi{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;
+  cursor:pointer;position:relative;transition:background .1s;height:26px}
+.fi:hover{background:var(--glass-hover)}
+.fi .dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--ok);
+  box-shadow:0 0 0 2.5px rgba(31,157,99,.14)}
+.fi.err .dot{background:var(--danger);box-shadow:0 0 0 2.5px rgba(217,58,53,.14)}
+.fi .nm{flex:1;min-width:0;font-size:12px;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;font-weight:500}
+.fi .tail{display:grid;place-items:end;flex:none;min-width:36px}
+.fi .tm{grid-area:1/1;font-size:10px;color:var(--text3);font-variant-numeric:tabular-nums;
+  font-family:ui-monospace,monospace;transition:opacity .1s}
+.fi .go{grid-area:1/1;font-size:10px;color:var(--brand);opacity:0;font-weight:600;
+  transition:opacity .1s;white-space:nowrap}
+.fi:hover .go{opacity:1}
+.fi:hover .tm{opacity:0}
+.fi.err::before{content:"";position:absolute;left:0;top:5px;bottom:5px;width:2px;
+  border-radius:2px;background:var(--danger);opacity:.75}
+
+.fold{display:flex;align-items:center;justify-content:center;gap:4px;
+  padding:5px 10px;font-size:11px;color:var(--text2);cursor:pointer;
+  border-top:1px solid var(--glass-line);background:var(--glass-sunken);
+  transition:color .1s,background .1s;user-select:none}
+.fold:hover{color:var(--brand);background:var(--brand50)}
+.fold .arw{transition:transform .18s;font-size:8px;line-height:1;display:inline-block}
+.fold.open .arw{transform:rotate(180deg)}
+
+.fl.scroll{max-height:174px;overflow-y:auto;overscroll-behavior:contain}
+.fl.scroll::-webkit-scrollbar{width:7px}
+.fl.scroll::-webkit-scrollbar-track{background:transparent}
+.fl.scroll::-webkit-scrollbar-thumb{background:rgba(128,128,128,.32);border-radius:4px}
+.fl.scroll::-webkit-scrollbar-thumb:hover{background:rgba(128,128,128,.5)}
+
+.ff{display:flex;align-items:center;gap:4px;padding:6px 8px;
+  border-top:1px solid var(--glass-line)}
+.ff button{flex:1;padding:5px 8px;border-radius:6px;border:0;background:transparent;
+  color:var(--text2);font:inherit;font-size:11px;cursor:pointer;font-weight:500;
+  transition:background .1s,color .1s}
+.ff button:hover{background:var(--glass-hover);color:var(--text)}
+.ff button.danger:hover{background:var(--danger50);color:var(--danger)}
+.ff button.primary{background:var(--brand);color:#fff}
+.ff button.primary:hover{filter:brightness(1.08);background:var(--brand);color:#fff}
+.ff .div{width:1px;height:14px;background:var(--glass-line);flex:none}
+
+.fly .tip{position:absolute;bottom:-5px;width:10px;height:10px;background:var(--glass);
+  border-right:1px solid var(--glass-line);border-bottom:1px solid var(--glass-line);
+  transform:rotate(45deg)}
+
+.taskbar{position:fixed;left:0;right:0;bottom:0;height:42px;z-index:30;
+  display:flex;align-items:center;padding:0 7px;gap:4px;
+  background:var(--tb-bg);backdrop-filter:blur(28px) saturate(180%);
+  -webkit-backdrop-filter:blur(28px) saturate(180%);
+  border-top:1px solid var(--glass-line);box-shadow:var(--inner)}
+.tb{width:32px;height:32px;border-radius:5px;display:flex;align-items:center;
+  justify-content:center;position:relative;cursor:pointer;transition:background .1s}
+.tb:hover{background:var(--tb-btn)}
+.tb.active{background:var(--tb-active)}
+.tb .sq{width:17px;height:17px;border-radius:4px;display:flex;align-items:center;
+  justify-content:center;font-size:8.5px;font-weight:700;color:#fff}
+.tb img{width:19px;height:19px;object-fit:contain;display:block}
+body.dark .tb img{filter:brightness(1.18)}
+.tb .badge{position:absolute;right:-3px;top:-2px;min-width:15px;height:14px;padding:0 4px;
+  border-radius:7px;background:#e5342e;color:#fff;font-size:9px;font-weight:700;
+  line-height:14px;text-align:center;border:1.5px solid var(--tb-bg);
+  font-family:ui-monospace,monospace;white-space:nowrap;
+  box-shadow:0 1px 3px rgba(0,0,0,.28)}
+.tb.active::after{content:"";position:absolute;bottom:-1px;left:50%;transform:translateX(-50%);
+  width:11px;height:2.5px;border-radius:2px;background:var(--brand)}
+.tb-sep{width:1px;height:20px;background:var(--glass-line);margin:0 2px}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:9px;
+  color:var(--text2);font-size:10.5px;padding-right:3px}
+.tb-clock{line-height:1.15;text-align:right;font-size:10px;font-variant-numeric:tabular-nums}
+
+.legend{position:absolute;padding:11px 13px;border-radius:11px;
+  background:var(--glass);backdrop-filter:blur(26px) saturate(180%);
+  -webkit-backdrop-filter:blur(26px) saturate(180%);
+  border:1px solid var(--glass-line);box-shadow:var(--shadow),var(--inner);
+  font-size:11px;color:var(--text2);line-height:1.65}
+.legend h4{margin:0 0 7px;font-size:11.5px;color:var(--text);font-weight:650}
+.legend .row{display:flex;gap:6px;margin-top:3px}
+.legend .k{color:var(--text3);flex:none;width:54px}
+.legend .v{color:var(--text)}
+.legend .hl{color:var(--brand);font-weight:600}
+.legend code{font-family:ui-monospace,monospace;font-size:10px;
+  background:var(--glass-sunken);padding:1px 4px;border-radius:3px}
+.legend .sep{height:1px;background:var(--glass-line);margin:8px 0}
+.legend .foot{font-size:10.5px;color:var(--text3);line-height:1.6}
+
+.scene{position:absolute;font-size:10.5px;color:rgba(255,255,255,.92);
+  background:rgba(0,0,0,.32);backdrop-filter:blur(10px);
+  padding:3px 9px;border-radius:20px;border:1px solid rgba(255,255,255,.14);
+  font-weight:500;letter-spacing:.2px;white-space:nowrap}
+</style>
+</head>
+<body>
+
+<div class="desk"></div>
+
+<div class="top">
+  <h1>任务栏未读浮层</h1>
+  <span class="sub">玻璃效果 · 5 条折叠 · 展开滚动</span>
+  <span class="sp"></span>
+  <button class="tbtn" onclick="toggleTheme()">
+    <span class="sw" id="sw"></span><span id="tl">夜间</span>
+  </button>
+</div>
+
+<div class="scene" style="left:20px;top:58px">① 3 条 · 直接显示</div>
+<div class="fly" style="left:20px;top:88px">
+  <div class="fh"><span class="ttl">会话完成</span><span class="cnt">3 未读</span></div>
+  <div class="fl">
+    <div class="fi"><span class="dot"></span><span class="nm">dsh-launcher</span>
+      <span class="tail"><span class="tm">19:08</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">my-app</span>
+      <span class="tail"><span class="tm">18:42</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">api-server</span>
+      <span class="tail"><span class="tm">17:31</span><span class="go">打开 →</span></span></div>
+  </div>
+  <div class="ff">
+    <button class="danger">清除提醒</button><span class="div"></span>
+    <button class="primary">打开 Harness</button>
+  </div>
+  <div class="tip" style="left:128px"></div>
+</div>
+
+<div class="scene" style="left:340px;top:58px">② 99+ · 折叠（默认 5 条）</div>
+<div class="fly" style="left:340px;top:88px">
+  <div class="fh"><span class="ttl">会话完成</span><span class="cnt">99+ 未读</span></div>
+  <div class="fl">
+    <div class="fi"><span class="dot"></span><span class="nm">dsh-launcher</span>
+      <span class="tail"><span class="tm">19:08</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">my-app</span>
+      <span class="tail"><span class="tm">18:42</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">api-server</span>
+      <span class="tail"><span class="tm">17:31</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">web-frontend</span>
+      <span class="tail"><span class="tm">16:58</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">ml-training</span>
+      <span class="tail"><span class="tm">15:47</span><span class="go">打开 →</span></span></div>
+  </div>
+  <div class="fold" onclick="toggleFold(this)">还有 94 条 <span class="arw">▼</span></div>
+  <div class="ff">
+    <button class="danger">清除提醒</button><span class="div"></span>
+    <button class="primary">打开 Harness</button>
+  </div>
+  <div class="tip" style="left:128px"></div>
+</div>
+
+<div class="scene" style="left:660px;top:58px">③ 展开 → 滚动</div>
+<div class="fly" style="left:660px;top:88px">
+  <div class="fh"><span class="ttl">会话完成</span><span class="cnt">99+ 未读</span></div>
+  <div class="fl scroll">
+    <div class="fi"><span class="dot"></span><span class="nm">dsh-launcher</span>
+      <span class="tail"><span class="tm">19:08</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">my-app</span>
+      <span class="tail"><span class="tm">18:42</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">api-server</span>
+      <span class="tail"><span class="tm">17:31</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">web-frontend</span>
+      <span class="tail"><span class="tm">16:58</span><span class="go">打开 →</span></span></div>
+    <div class="fi err"><span class="dot"></span><span class="nm">ml-training</span>
+      <span class="tail"><span class="tm">15:47</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">data-pipeline</span>
+      <span class="tail"><span class="tm">16:20</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">infra-deploy</span>
+      <span class="tail"><span class="tm">15:12</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">docs-site</span>
+      <span class="tail"><span class="tm">14:38</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">api-gateway</span>
+      <span class="tail"><span class="tm">14:02</span><span class="go">打开 →</span></span></div>
+    <div class="fi"><span class="dot"></span><span class="nm">auth-service</span>
+      <span class="tail"><span class="tm">13:29</span><span class="go">打开 →</span></span></div>
+  </div>
+  <div class="fold open" onclick="toggleFold(this)">收起 <span class="arw">▼</span></div>
+  <div class="ff">
+    <button class="danger">清除提醒</button><span class="div"></span>
+    <button class="primary">打开 Harness</button>
+  </div>
+  <div class="tip" style="left:128px"></div>
+</div>
+
+<div class="legend" style="left:980px;top:58px;width:280px">
+  <h4>交互规则</h4>
+  <div class="row"><span class="k">≤ 5 条</span><span class="v">直接列出，无折叠行</span></div>
+  <div class="row"><span class="k">&gt; 5 条</span><span class="v">前 5 条 + <span class="hl">「还有 N 条」</span></span></div>
+  <div class="row"><span class="k">点折叠</span><span class="v">原地展开为滚动列表</span></div>
+  <div class="row"><span class="k">再点一次</span><span class="v">收起回 5 条</span></div>
+  <div class="row"><span class="k">点会话</span><span class="v">开浏览器 → 选标签 → 切会话</span></div>
+  <div class="sep"></div>
+  <h4>视觉规格</h4>
+  <div class="row"><span class="k">玻璃</span><span class="v"><code>blur(34px) saturate(190%)</code></span></div>
+  <div class="row"><span class="k">圆角</span><span class="v">浮层 13px · 行 7px</span></div>
+  <div class="row"><span class="k">行高</span><span class="v">26px（比旧版紧凑 30%）</span></div>
+  <div class="row"><span class="k">宽度</span><span class="v">296px 固定</span></div>
+  <div class="row"><span class="k">展开高</span><span class="v">174px 滚动区</span></div>
+  <div class="sep"></div>
+  <div class="foot">
+    时间与「打开 →」叠在同一格：悬停时时间淡出、按钮淡入，行宽不变、不抖动。
+    错误会话用左侧 2px 红条，不占额外行高。
+  </div>
+</div>
+
+<div class="taskbar">
+  <div class="tb"><div class="sq" style="background:#4b5563">⊞</div></div>
+  <div class="tb"><div class="sq" style="background:#0ea5e9">E</div></div>
+  <div class="tb"><div class="sq" style="background:#dc2626">C</div></div>
+  <div class="tb-sep"></div>
+  <div class="tb active"><img id="ic1" src=""><span class="badge">99+</span></div>
+  <div class="tb"><div class="sq" style="background:#111827">⌨</div></div>
+  <div class="tb-right">
+    <span>▲</span><span>🔊</span><span>📶</span>
+    <div class="tb-clock">10:12<br>2026/11/9</div>
+  </div>
+</div>
+
+<script data-icon="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAMx0lEQVR4nNVbD0xVVRi/7/Hi3wLCoTgUhYH8t4bFv1EtaKKzubmmDq1Rq2RZrcT+zqjZ2nLWVmn2Z4JObeksbbM2S2noHMhEQQPJP0BZhrqxMRAKEO2039n93Z13u++9+x4PzW+7XN69555zvt/3ne9833fOcWhBIofD4QgJCQm5cePGDSGE4POZM2fOLCwsLMzNzc2dM2fOnNjY2Ni0tLS06OjoaJTDdyh3/fr16+3t7e3Dw8PDTU1NTZ2dnZ2NjY2NZ8+ePYt3rM/lcrn+0Un7P5BDZ1x9VlRUVLR+/fr1R48ePTowMDAgAiSA0dbW1lZbW1u7cOHChWFhYWFsA206nU7nLWGapDIeHx8fv2LFihVg2swItAJSvKETpGfFMN+zrPk9tGHt2rVrMzIyMlSNoBbdNHI4HA6iHxMTE4NOXbly5Qo7CgbHxsbGvDFrh/At6mBdfD4yMjKydevWrenp6ens003ThhBF6uXl5eXnzp07x455klywiNrB3/39/f3V1dXVoaGhoea+TQi5XC4X7gkJCQn79+/fz45AQuORtL9EDePv06dPny4uLi6mJgR9SDgUlZ83b968S5cuXboZEvcHCNxXrVq1KuhDwqEwjwbYuKqKt5pUW7Nly5YtUVFRUUEBwaFMcZs3b978f5C6HW1obm5uhr8xLhAciuTJ/LVr167dzLEeCKGPQQEhxCR51ej838msCRCmX4bRpVt7jnmiejsR+7xnz549Kk+2JT937ty5EznFoUpevsqp90BAgKNmCwSnTlOnTp0Kz46eWKBMWjGDyeNmTiAUIASqCtir9A8cOHDAn6mOjGHo4cL/wE19ZjYheHf58mV5jY6OWtYJ6u3tFYWFhYgDZJ3+yAN1UIAQKOyBR0cpRGd+8eLFi4mcrwbIpF3q7+8XX3/9tXj88cdFWlqaiImJEU6nUzz//PNGfSQ2v2HDBoTW4uOPP5a/h4eHbQ0HtQwFuWnTpk1mLXDIPzrBgWhtbW1NTk5Oxgeepg+E+wjHWc/ly5e1pqYm7eTJk9qFCxe0vr4+bWxsTIuIiNAmT56spaamahcvXtT27dun9fT0uNU1f/587csvv9QmTZqEfsgLhPrRPN7X1dVpM2bM0Orr67Xk5GS392qf1DveIY2AYa8DIhFBbqKlpaUFvP3DnAIRgbHwJX0V2RMnTojHHntM3HXXXVJKdq6QkBDhcrnkHdKHautS+k8buKenpxvfxsfHiw8++EAMDg76tCmvvPKKyMvLgyGU5cbGxmShw4cPH6a901Tpx8XFxfX29vZ6C2H5GPi8+uqrkgkzY2SOF5/hAsMsj/8dDodoamqSdap2gO2AsdTUVKN+fpudnS26u7vdGMf3AObXX38VK1eulOUmT54sh4wClvygpKSkxBC8S58aKisrK9Xx4on5q1evCsyQaAAMoGO429UAMwD33HOP6OzsNIA1twcpquVDQ0Pl74ceeki+P3jwoFi0aJFISUkR06dPF+Hh4Ub54uJis+BkA7t27dplTItOneA1QfJWAFDVgHJJSYls4I477vCbafNF4DCEdu7c6TYUCMZTTz0ly0GDVPAiIiLEE088YVlvWFiY/Oall15yq4u5xKGhoSFM9RopPz8/n+koK+mzU1CSYDGvMsP/3333XaPD7DTSDuYhYAaR9oRawrINDQ1u/Ve1oKqqqsoAAAlM9aUV8z/88IOsVJVEsC6106+//roBAqfZgoICy7atQKFwysrKZD1mmVLDGxoaGqQNwJ9jx44dsxr/dFWh+llZWbKjqsSCDQIZfPvtt2X7IyMjsv2Ojg6BLLo6bKw0icxjtvjtt9/oCJmHszQIg4ODg4mJiYka/jB1bbb+VIhvvvnGQJwgqCo3ESC89957Bgi6xERCQoIso7Zp7kNmZqZoa2uzlD6JQ33p0qVLteXLly9XH1qp/4IFC/5jiMyqaJ7mggHCunXr3PoBnyEyMvI/IODCdAk3BrOUN+ZVTa+tra3V1umtWKk/fXGqH67Y2FiRk5Mj7r33Xjn1cNpRwfAXCH5DEFWb8Nxzz4mhoSHZl1OnThll+R4OT0tLi/j7779VCXtkXhX28ePHj2sHMZFaaADx+Omnn4yOPvzwwxIQggMv6/fffxffffedeOGFFwQ8aJWpQIcHASSTGRkZiOtlzMDnfPf9998bTKPPNuMEWWhgYGBAOwF/1gIAjv9PP/3U6JjuK8l3Vg1BUl999ZW47777vFpq8/h94403RGNjo/joo48MEPmdp+/5/Ntvv5XMB5qw0nwZQFhkNgpbQKdI/8Yt7CXh2WeffSYmTZokv/NkO2hQv/jiC2m1QdCw+++/341JTwYXv9vb2402/aV/EAx5ekmGMC+zwbvvvturihEclunq6hIPPPCARxDIUGJiokhKShLV1dVG2IxpVx0OVt9hulMDo0BI8xT4EIA333zTaPTOO+9EYsFWg/we94qKCksQ+Pvzzz8Xr732mgxyKMmTJ09Kv99K8tSM0tJSWXY8SSvNFwMffvih4V/j/uOPP7oNA2+EjhEoutFWmgAHBkwitAbR6r/88stegdOj94DHvy0AYGRUAMwBhi9SwXr00UctDRsljGEA9Sf99ddfIioqyq2M+j9D6fHkGDVPyQ+qFdxQGiE0OmPGDCMtZXfcMZcHycJTsxrb/I0ZpK6uTraLEAV+hur4cEggpcZkx3hIOwXvwmIaZMWIAyAZqirumJP9VT1KiWPbyk+w4zdQ/dXIcVwANGIC9uAKs/Inn3xSdo7DID8/340pu8T64Hx6sgeqtlkNFbyDMcYCtVWw4++6gbYBaVcPmSA+guFj59gpBEgqU55IVVHaA3SaIa43R8mT9NesWePWP3+Jwm5ra2vTViKB5kEDOM4x1uCOQgK02LAF8KHs5OrVMuw0HBhPQ8GT10hDiYBHnWH8JQp77969e7XMzMxM7LnxVJgS3r59uyExSq28vFy+82aMYMmVht3qfP/99716iqrqs0x9fb1bXYEQhV1ZWVmpYX9NB0yuBy3Qn8tO08dn+KsmL9T4gNVg+xBieCQtm5ub3YAgA/Pnz/cJAgEHYCqA4yEIPSsrK0umxGpqamrM+27MAIBaW1vlEFDDV3TsnXfecWOO5f/44w83JuDtUdmoNfD9zQGQFfPPPvus8d14iELGvqJQfXOVtgBRjhcNIGMgBDmq98YOPv3004a6oxowijueqxqDNDcDGIKB38gzmEHgnA8XWVX58ag/hYw8qMaFkYiIiIju7u5uX6vBVBAkIai2KgjI8XOMkn755ReDGfoR8O4QNoM4bJDy4gqT6iRx+kUghjTZn3/+GTDzensy9W+ov0tfGLG7LEb0q6qq3OZtVXIPPvigeOutt+SYLSoqcnNy1HKoo6+vz6j/4sWLciWYM4PVilJcXJyMEeBV+uONgsA4ADh06NAhY2XIqa+RpaSkpMAw+NrdqYJAK05tsDunq9llGMlnnnlGfPLJJzL1jtwANMRXWg1ggfxxhDj9IQ+qCl/j4uh2zHU2lsZVEJBR4/odgYCq4/KVKPUEWE1Njfj5559lLIBQGqk4JElgql588UUscBr9sEsc2ufPnz8fHh4e7rZHwKlvGkhNTU1FhsjuHl/ihAgOiROs95s9N28LpmYAsOaohyZBJ0p/yZIlS8x7BDT1wRrdz7S7K0y1yBcuXJAxOrLGdt1bqPsjjzwi9u3b51YnfQ+uEKmpN39nATKPnS8qryCHeV8gXmKOnDVr1ixogZ09duYNE/gfbjayzh0dHXJTRH9/vywXHR2txcXFaUlJSdrs2bO13Nxcbfr06UY9uIK58RuMcyNEdnZ2NoYAeLU8cOHUW8YuCqDm7w6xQLOz/m618YeoydxH7HNHeYheYDx7BBmmmjdNmTdOqV7jRDLPvYK2t9O79Olh27Zt227XjZIc9wh5ve4OsyLag8jIyEhsnLjdtspyyuvr6+ubDUMTyGEKp24PgB5BuB00gZIH83l5eXkBMX+7gkAtVZm3vUfYDgi7d+/ejQa8bae5FaSG8tjniDOKQWGepPoCDJpuxVkhK1JzmRAQzwgE/QCVw3RuqKenp8eqEzeLVC0cHR0dVc8LTejpMZeuVlOmTJmycePGjbQJPNI2kRrBWF4FHKfXcnJycibsxJgVqQgXFBQUcJOFOjSCBYZ6eFJ9jnPGy5YtW2bVp1tyZrisrKxsx44dO65yk45O6lFYu4BQvc2GFr/r6urqKioqKpjP40ZP7VaR06R206ZNm7Z69erVR44cOTKeg9MkJGngzSGHR6cmmFJ3jLcCEjsDKfFZUlJSEoZIaWlpKaYmnPU1H5s3E1Qd6t3V1dVVX19fj8PYZ86cOcMj9J6O6QdK/wLH8oDi14E/xwAAAABJRU5ErkJggg==">
+const ICON = document.currentScript.getAttribute('data-icon');
+document.getElementById('ic1').src = ICON;
+
+document.querySelectorAll('.fold').forEach(f => { f.dataset.collapsed = f.innerHTML; });
+function toggleFold(el){
+  const fly = el.parentElement;
+  const list = fly.querySelector('.fl');
+  const open = list.classList.toggle('scroll');
+  el.classList.toggle('open', open);
+  el.innerHTML = open ? '收起 <span class="arw">▼</span>' : el.dataset.collapsed;
+}
+
+function applyTheme(dark){
+  document.body.classList.toggle('dark', dark);
+  document.getElementById('tl').textContent = dark ? '夜间' : '白天';
+  document.getElementById('sw').style.background = dark ? '#262a32' : '#fff';
+  document.getElementById('sw').style.borderColor = dark ? 'rgba(255,255,255,.2)' : 'rgba(0,0,0,.15)';
+  localStorage.setItem('dhl-glass-theme', dark ? 'dark' : 'light');
+}
+function toggleTheme(){ applyTheme(!document.body.classList.contains('dark')); }
+const saved = localStorage.getItem('dhl-glass-theme');
+applyTheme(saved ? saved === 'dark' : matchMedia('(prefers-color-scheme:dark)').matches);
+</script>
+</body>
+</html>

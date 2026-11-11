@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>任务栏未读交互 · 两套方案原型</title>
+<style>
+:root{
+  --bg:#f9fafb; --stage:#ebeef2; --layer1:#fff; --layer2:#f5f7fa; --layer3:#e9ecf2;
+  --l1:#e1e5ee; --l2:#cfd3d6; --l3:#adb2b8;
+  --text:#0f1115; --text2:#81858c; --text3:#979da6;
+  --brand:#3b82f6; --brandHover:#4d93f8; --brand50:#eff6ff; --brand100:#dbeafe;
+  --danger:#dc322f; --danger50:#fdecec; --danger100:#f8d4d3;
+  --ok:#22a06b; --ok50:#e8f6ef;
+  --shadow:0 14px 40px rgba(15,17,21,.18);
+  --shadow-sm:0 2px 8px rgba(15,17,21,.08);
+  /* Windows 任务栏配色 */
+  --tb-bg:#f3f3f3; --tb-btn:#eaeaea; --tb-btn-active:#e0e0e0;
+}
+body.dark{
+  --bg:#12141a; --stage:#1a1d24; --layer1:#1e2026; --layer2:#24272e; --layer3:#2c3038;
+  --l1:#33373f; --l2:#3d424b; --l3:#5a6068;
+  --text:#f2f4f7; --text2:#9aa0a8; --text3:#7a808a;
+  --brand:#4d93f8; --brandHover:#60a5fa; --brand50:#1a2432; --brand100:#23324a;
+  --danger:#f0655f; --danger50:#3a2020; --danger100:#542c2c;
+  --ok:#3fbf87; --ok50:#1c2f26;
+  --shadow:0 14px 40px rgba(0,0,0,.55);
+  --shadow-sm:0 2px 8px rgba(0,0,0,.35);
+  --tb-bg:#1c1c1c; --tb-btn:#2d2d2d; --tb-btn-active:#3a3a3a;
+}
+*{box-sizing:border-box}
+body{margin:0;font:13px/1.55 "Segoe UI","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--text)}
+.top{position:sticky;top:0;z-index:99;display:flex;align-items:center;gap:14px;
+  padding:14px 26px;background:var(--layer1);border-bottom:1px solid var(--l1)}
+.top h1{font-size:16px;margin:0;font-weight:600}
+.top .sp{flex:1}
+.themebtn{display:flex;align-items:center;gap:7px;padding:6px 14px;border-radius:8px;
+  border:1px solid var(--l2);background:var(--layer1);color:var(--text);
+  font:inherit;font-size:12.5px;cursor:pointer}
+.themebtn:hover{background:var(--layer2)}
+.themebtn .sw{width:14px;height:14px;border-radius:50%;border:1px solid var(--l2)}
+.wrap{padding:24px 26px 80px;max-width:1600px;margin:0 auto}
+.grid{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+.col{flex:1 1 520px;min-width:480px}
+.col h2{font-size:14px;margin:0 0 3px;font-weight:600}
+.col h2 .tag{font-size:10.5px;font-weight:500;padding:2px 7px;border-radius:20px;
+  background:var(--brand50);color:var(--brand);border:1px solid var(--brand100);
+  margin-left:7px;vertical-align:2px}
+.col .why{color:var(--text2);font-size:12px;margin:0 0 14px;min-height:36px}
+.stage{background:var(--stage);border:1px solid var(--l1);border-radius:12px;
+  padding:0;overflow:hidden;position:relative;height:560px}
+
+/* ══ 模拟桌面 + 任务栏 ═══════════════════════════════════════ */
+.desk{position:absolute;inset:0;background:linear-gradient(135deg,#5b7c99,#3d5a73);}
+body.dark .desk{background:linear-gradient(135deg,#1e2a35,#12181f)}
+/* 一个假的浏览器窗口，示意“跳转到会话” */
+.browser{position:absolute;left:40px;top:38px;right:40px;height:330px;
+  background:var(--layer1);border:1px solid var(--l1);border-radius:8px;
+  box-shadow:0 10px 30px rgba(0,0,0,.25);overflow:hidden}
+.br-bar{height:30px;background:var(--layer2);border-bottom:1px solid var(--l1);
+  display:flex;align-items:center;padding:0 10px;gap:7px;font-size:11px;color:var(--text2)}
+.br-bar .dots{display:flex;gap:5px}
+.br-bar .dots i{width:9px;height:9px;border-radius:50%;background:var(--l3);display:block}
+.br-bar .url{flex:1;background:var(--layer1);border:1px solid var(--l1);
+  border-radius:10px;padding:2px 9px;font-family:ui-monospace,monospace;font-size:10px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.br-body{padding:16px;font-size:12px}
+.br-body .h{font-weight:600;margin-bottom:10px;font-size:13px}
+.br-body .line{height:8px;background:var(--layer3);border-radius:4px;margin-bottom:8px}
+.br-body .line.s{width:62%}
+.br-body .line.m{width:84%}
+.br-body .hl{background:var(--brand50);border:1px solid var(--brand100);
+  border-radius:6px;padding:8px 10px;font-size:11px;color:var(--brand);margin-top:10px}
+
+/* 任务栏 */
+.taskbar{position:absolute;left:0;right:0;bottom:0;height:44px;background:var(--tb-bg);
+  border-top:1px solid var(--l1);display:flex;align-items:center;padding:0 8px;gap:5px;
+  backdrop-filter:blur(20px)}
+body.dark .taskbar{border-top-color:#2a2a2a}
+.tb{width:34px;height:34px;border-radius:5px;display:flex;align-items:center;
+  justify-content:center;position:relative;cursor:pointer;transition:background .12s}
+.tb:hover{background:var(--tb-btn)}
+.tb.active{background:var(--tb-btn-active)}
+.tb .sq{width:18px;height:18px;border-radius:4px;display:flex;align-items:center;
+  justify-content:center;font-size:9px;font-weight:700;color:#fff}
+.tb img{width:20px;height:20px;object-fit:contain;display:block}
+body.dark .tb img{filter:brightness(1.15)}
+.tb .badge{position:absolute;right:-2px;top:-2px;min-width:14px;height:14px;padding:0 4px;
+  border-radius:7px;background:#e53e3e;color:#fff;font-size:9px;font-weight:700;
+  line-height:14px;text-align:center;border:1.5px solid var(--tb-bg);
+  font-family:ui-monospace,monospace}
+.tb-sep{width:1px;height:22px;background:var(--l1);margin:0 3px}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:10px;
+  color:var(--text2);font-size:11px;padding-right:4px}
+.tb-clock{line-height:1.2;text-align:right;font-size:10.5px}
+/* 运行指示条 */
+.tb.active::after{content:"";position:absolute;bottom:-1px;left:50%;transform:translateX(-50%);
+  width:12px;height:2.5px;border-radius:2px;background:var(--brand)}
+
+/* ══ 方案 A：图标上方浮层 ═══════════════════════════════════ */
+.flyout{position:absolute;bottom:50px;left:120px;width:308px;background:var(--layer1);
+  border:1px solid var(--l1);border-radius:10px;box-shadow:var(--shadow);overflow:hidden;
+  animation:pop .16s ease-out}
+@keyframes pop{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
+.fly-head{padding:10px 13px;border-bottom:1px solid var(--l1);display:flex;
+  align-items:center;gap:8px;background:var(--layer2)}
+.fly-head .t{font-size:12.5px;font-weight:600}
+.fly-head .cnt{font-size:10.5px;padding:1px 6px;border-radius:9px;
+  background:var(--danger50);color:var(--danger);font-weight:600;margin-left:auto}
+.fly-list{padding:5px}
+.fly-item{display:flex;gap:9px;padding:8px 9px;border-radius:7px;cursor:pointer;
+  align-items:flex-start}
+.fly-item:hover{background:var(--layer2)}
+.fly-item .dotc{width:7px;height:7px;border-radius:50%;flex:none;margin-top:5px;
+  background:var(--ok)}
+.fly-item.err .dotc{background:var(--danger)}
+.fly-item .body{flex:1;min-width:0}
+.fly-item .nm{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fly-item .meta{font-size:10.5px;color:var(--text3);margin-top:2px}
+.fly-item .go{font-size:10.5px;color:var(--brand);opacity:0;transition:opacity .12s;
+  flex:none;align-self:center}
+.fly-item:hover .go{opacity:1}
+.fly-foot{padding:8px 13px;border-top:1px solid var(--l1);display:flex;
+  justify-content:space-between;align-items:center;background:var(--layer2)}
+.fly-foot .clr{font-size:11.5px;color:var(--text2);cursor:pointer}
+.fly-foot .clr:hover{color:var(--danger)}
+.fly-foot .all{font-size:11.5px;color:var(--brand);cursor:pointer}
+/* 浮层小尾巴指向图标 */
+.flyout::after{content:"";position:absolute;bottom:-6px;left:132px;width:12px;height:12px;
+  background:var(--layer1);border-right:1px solid var(--l1);border-bottom:1px solid var(--l1);
+  transform:rotate(45deg)}
+
+/* ══ 方案 B：缩略图工具栏 ═══════════════════════════════════ */
+.thumbwrap{position:absolute;bottom:50px;left:96px;width:300px;background:var(--layer1);
+  border:1px solid var(--l1);border-radius:10px;box-shadow:var(--shadow);overflow:hidden;
+  animation:pop .16s ease-out}
+.thumb-title{padding:8px 11px;font-size:11.5px;font-weight:600;border-bottom:1px solid var(--l1);
+  background:var(--layer2);display:flex;align-items:center;gap:7px}
+.thumb-preview{height:132px;background:linear-gradient(160deg,var(--layer2),var(--layer3));
+  display:flex;align-items:center;justify-content:center;position:relative;
+  border-bottom:1px solid var(--l1)}
+.thumb-preview .mini{width:210px;background:var(--layer1);border:1px solid var(--l1);
+  border-radius:5px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.12)}
+.thumb-preview .mini .mb{height:16px;background:var(--layer2);border-bottom:1px solid var(--l1)}
+.thumb-preview .mini .mbody{padding:7px;display:flex;gap:6px}
+.thumb-preview .mini .mside{width:44px;height:52px;background:var(--layer3);border-radius:3px}
+.thumb-preview .mini .mmain{flex:1}
+.thumb-preview .mini .ml{height:5px;background:var(--layer3);border-radius:3px;margin-bottom:4px}
+.thumb-preview .mini .ml.s{width:55%}
+/* 缩略图工具栏：一排小按钮 */
+.thumb-tools{display:flex;gap:4px;padding:8px;background:var(--layer2);
+  border-bottom:1px solid var(--l1);overflow-x:auto}
+.tt{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 8px;
+  border-radius:6px;cursor:pointer;border:1px solid transparent;flex:none;min-width:56px}
+.tt:hover{background:var(--layer1);border-color:var(--l1)}
+.tt .tic{width:18px;height:18px;border-radius:50%;background:var(--ok);
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;font-weight:700}
+.tt.err .tic{background:var(--danger)}
+.tt .tlb{font-size:9.5px;color:var(--text2);max-width:54px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.tt:hover .tlb{color:var(--text)}
+.thumb-note{padding:7px 11px;font-size:10.5px;color:var(--text3);
+  display:flex;align-items:center;gap:6px}
+
+/* 说明区 */
+.notes{margin-top:16px;font-size:11.5px;color:var(--text2);line-height:1.7}
+.notes h4{font-size:12px;margin:0 0 7px;color:var(--text);font-weight:600}
+.notes .kv{display:flex;gap:8px;margin-top:4px}
+.notes .k{color:var(--text3);flex:none;width:62px}
+.notes .v{color:var(--text)}
+.notes .warn{background:var(--danger50);border-left:2.5px solid var(--danger);
+  padding:8px 10px;border-radius:0 6px 6px 0;margin-top:9px;color:var(--text2)}
+.notes .ok{background:var(--ok50);border-left:2.5px solid var(--ok);
+  padding:8px 10px;border-radius:0 6px 6px 0;margin-top:9px;color:var(--text2)}
+code{font-family:ui-monospace,monospace;font-size:10.5px;background:var(--layer3);
+  padding:1px 5px;border-radius:4px}
+.clickhint{position:absolute;left:50%;top:14px;transform:translateX(-50%);
+  background:rgba(0,0,0,.62);color:#fff;font-size:10.5px;padding:4px 11px;
+  border-radius:20px;pointer-events:none;backdrop-filter:blur(6px)}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>任务栏未读交互 · 两套方案</h1>
+  <span class="sp"></span>
+  <button class="themebtn" onclick="toggleTheme()">
+    <span class="sw" id="sw"></span><span id="themeLabel">夜间</span>
+  </button>
+</div>
+
+<div class="wrap">
+<div class="grid">
+
+  <!-- ══════════ 方案 A ══════════ -->
+  <div class="col">
+    <h2>方案 A<span class="tag">推荐</span></h2>
+    <p class="why">点任务栏图标 → 图标正上方弹出未读列表。点其中一条 → 浏览器打开并跳到该会话。最接近 mac 菜单栏的体验。</p>
+
+    <div class="stage">
+      <div class="desk"></div>
+      <div class="clickhint">点任务栏 🐳 图标试试</div>
+
+      <!-- 假浏览器窗口 -->
+      <div class="browser">
+        <div class="br-bar">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span class="url">127.0.0.1:3080/#/session/…</span>
+        </div>
+        <div class="br-body">
+          <div class="h">DeepSeek Harness</div>
+          <div class="line m"></div>
+          <div class="line"></div>
+          <div class="line s"></div>
+          <div class="hl">跳转目标：19:08 ·「dsh-launcher」已完成</div>
+        </div>
+      </div>
+
+      <!-- 浮层 -->
+      <div class="flyout" id="flyA">
+        <div class="fly-head">
+          <span class="t">会话完成</span>
+          <span class="cnt">3 个未读</span>
+        </div>
+        <div class="fly-list">
+          <div class="fly-item" onclick="jump('dsh-launcher')">
+            <span class="dotc"></span>
+            <div class="body"><div class="nm">dsh-launcher</div>
+              <div class="meta">19:08 · 已完成</div></div>
+            <span class="go">打开 →</span>
+          </div>
+          <div class="fly-item err" onclick="jump('my-app')">
+            <span class="dotc"></span>
+            <div class="body"><div class="nm">my-app</div>
+              <div class="meta">18:42 · 出错</div></div>
+            <span class="go">打开 →</span>
+          </div>
+          <div class="fly-item" onclick="jump('api-server')">
+            <span class="dotc"></span>
+            <div class="body"><div class="nm">api-server</div>
+              <div class="meta">17:31 · 已完成</div></div>
+            <span class="go">打开 →</span>
+          </div>
+        </div>
+        <div class="fly-foot">
+          <span class="clr" onclick="clearAll()">清除完成提醒</span>
+          <span class="all" onclick="openHarness()">打开 Harness</span>
+        </div>
+      </div>
+
+      <!-- 任务栏 -->
+      <div class="taskbar">
+        <div class="tb"><div class="sq" style="background:#4b5563">⊞</div></div>
+        <div class="tb"><div class="sq" style="background:#0ea5e9">E</div></div>
+        <div class="tb"><div class="sq" style="background:#dc2626">C</div></div>
+        <div class="tb-sep"></div>
+        <div class="tb active" id="tbA" onclick="toggleA()">
+          <img id="imgA" src="" alt="">
+          <span class="badge" id="badgeA">3</span>
+        </div>
+        <div class="tb"><div class="sq" style="background:#111827">⌨</div></div>
+        <div class="tb-right">
+          <span>▲</span><span>🔊</span><span>📶</span>
+          <div class="tb-clock">10:12<br>2026/11/9</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <h4>实现方式</h4>
+      <div class="kv"><span class="k">触发</span><span class="v">点击任务栏按钮（不是右键）→ 弹出浮层</span></div>
+      <div class="kv"><span class="k">定位</span><span class="v">用 <code>SHAppBarMessage(ABM_GETTASKBARPOS)</code> 拿到任务栏位置，浮层贴在图标正上方</span></div>
+      <div class="kv"><span class="k">内容</span><span class="v">未读会话列表（时间 · 工作区名 · 结果），最多 6 条</span></div>
+      <div class="kv"><span class="k">点击条目</span><span class="v">打开浏览器 → 选中已有标签 → POST <code>/dsh-session-notify/open</code> 切会话 → 清该条未读</span></div>
+      <div class="kv"><span class="k">关闭</span><span class="v">点浮层外 / Esc / 再次点图标</span></div>
+      <div class="ok">
+        <b>优点：</b>与 mac 菜单栏几乎一致——点图标看列表、点条目跳会话。
+        文字能完整显示工作区名与结果，条目数不受限（可滚动）。
+      </div>
+      <div class="warn">
+        <b>难点：</b>需要自己做一个无边框浮层窗口，并处理「点外部关闭」「跟随任务栏位置/自动隐藏」。
+        这是 Windows 上 <b>唯一</b> 能做到「点图标弹出带文字的列表」的方式——系统原生 API 给不了。
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 方案 B ══════════ -->
+  <div class="col">
+    <h2>方案 B</h2>
+    <p class="why">用 Windows 原生缩略图工具栏：悬停图标时，缩略图上方出现一排小按钮。系统原生、代码少，但只能放图标和极短标签。</p>
+
+    <div class="stage">
+      <div class="desk"></div>
+
+      <div class="browser">
+        <div class="br-bar">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span class="url">127.0.0.1:3080/#/session/…</span>
+        </div>
+        <div class="br-body">
+          <div class="h">DeepSeek Harness</div>
+          <div class="line m"></div>
+          <div class="line"></div>
+          <div class="line s"></div>
+          <div class="hl">跳转目标：19:08 ·「dsh-launcher」已完成</div>
+        </div>
+      </div>
+
+      <!-- 缩略图工具栏 -->
+      <div class="thumbwrap">
+        <div class="thumb-title">
+          <img id="imgB" src="" style="width:14px;height:14px;object-fit:contain">
+          Deepseek Harness Launcher
+        </div>
+        <div class="thumb-preview">
+          <div class="mini">
+            <div class="mb"></div>
+            <div class="mbody">
+              <div class="mside"></div>
+              <div class="mmain">
+                <div class="ml"></div><div class="ml s"></div>
+                <div class="ml"></div><div class="ml s"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="thumb-tools">
+          <div class="tt" onclick="jump('dsh-launcher')">
+            <span class="tic">✓</span><span class="tlb">dsh-launcher</span>
+          </div>
+          <div class="tt err" onclick="jump('my-app')">
+            <span class="tic">!</span><span class="tlb">my-app</span>
+          </div>
+          <div class="tt" onclick="jump('api-server')">
+            <span class="tic">✓</span><span class="tlb">api-server</span>
+          </div>
+          <div class="tt" onclick="clearAll()">
+            <span class="tic" style="background:var(--l3)">✕</span><span class="tlb">清除</span>
+          </div>
+        </div>
+        <div class="thumb-note">缩略图工具栏 · 悬停图标时出现</div>
+      </div>
+
+      <div class="taskbar">
+        <div class="tb"><div class="sq" style="background:#4b5563">⊞</div></div>
+        <div class="tb"><div class="sq" style="background:#0ea5e9">E</div></div>
+        <div class="tb"><div class="sq" style="background:#dc2626">C</div></div>
+        <div class="tb-sep"></div>
+        <div class="tb active">
+          <img id="imgC" src="" alt="">
+          <span class="badge">3</span>
+        </div>
+        <div class="tb"><div class="sq" style="background:#111827">⌨</div></div>
+        <div class="tb-right">
+          <span>▲</span><span>🔊</span><span>📶</span>
+          <div class="tb-clock">10:12<br>2026/11/9</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <h4>实现方式</h4>
+      <div class="kv"><span class="k">触发</span><span class="v">鼠标悬停任务栏图标 → 系统显示缩略图 + 工具栏</span></div>
+      <div class="kv"><span class="k">API</span><span class="v"><code>ITaskbarList3::ThumbBarAddButtons</code> / <code>ThumbBarUpdateButtons</code></span></div>
+      <div class="kv"><span class="k">限制</span><span class="v">最多 7 个按钮；按钮只能放 16×16 图标 + 极短 tooltip，<b>不能放文字列表</b></span></div>
+      <div class="kv"><span class="k">点击</span><span class="v">收到 <code>WM_COMMAND</code> → 打开浏览器并跳会话</span></div>
+      <div class="ok">
+        <b>优点：</b>纯系统原生，行为符合 Windows 习惯；不用自己做浮层窗口，代码量小得多；
+        任务栏缩略图是 Explorer 管理的，位置永远正确。
+      </div>
+      <div class="warn">
+        <b>缺点：</b>只能显示图标按钮，<b>看不到工作区名字与时间</b>；
+        最多 7 个（未读超过 7 个要分页或只显示前几个）；
+        必须悬停才出现，不像点击那样直观。
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="notes" style="margin-top:26px;max-width:1100px">
+  <h4>两套方案的关键差别</h4>
+  <div class="kv"><span class="k">发现方式</span><span class="v">A：点图标；B：悬停图标</span></div>
+  <div class="kv"><span class="k">能显示什么</span><span class="v">A：时间 + 工作区名 + 结果（完整）；B：只有图标 + 极短 tooltip</span></div>
+  <div class="kv"><span class="k">条目上限</span><span class="v">A：不限（可滚动）；B：7 个</span></div>
+  <div class="kv"><span class="k">实现成本</span><span class="v">A：中（自绘浮层 + 定位 + 失焦关闭）；B：低（原生 API）</span></div>
+  <div class="kv"><span class="k">与 mac 相似度</span><span class="v">A：高（点图标看列表）；B：中（悬停看图标按钮）</span></div>
+  <div class="ok" style="margin-top:14px">
+    <b>我的建议：方案 A。</b>你的目标是「和 mac 一样的效果」——mac 的菜单栏点下去就是一个带文字的列表，
+    点某一条直接跳会话。方案 B 做不到这一点（只能图标按钮），而且未读多时会被截断。
+    A 的实现成本高一些，但换来的是完全对等的体验。
+  </div>
+</div>
+</div>
+
+<script>
+const ICON = "data:image/png;base64,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";
+document.getElementById('imgA').src = ICON;
+document.getElementById('imgB').src = ICON;
+document.getElementById('imgC').src = ICON;
+
+function toggleTheme(){
+  const dark = !document.body.classList.contains('dark');
+  document.body.classList.toggle('dark', dark);
+  document.getElementById('themeLabel').textContent = dark ? '夜间' : '白天';
+  document.getElementById('sw').style.background = dark ? '#1e2026' : '#fff';
+  document.getElementById('sw').style.borderColor = dark ? '#5a6068' : '#cfd3d6';
+  localStorage.setItem('dhl-tb-theme', dark ? 'dark' : 'light');
+}
+const saved = localStorage.getItem('dhl-tb-theme');
+(function(){
+  const dark = saved ? saved === 'dark' : matchMedia('(prefers-color-scheme:dark)').matches;
+  document.body.classList.toggle('dark', dark);
+  document.getElementById('themeLabel').textContent = dark ? '夜间' : '白天';
+  document.getElementById('sw').style.background = dark ? '#1e2026' : '#fff';
+  document.getElementById('sw').style.borderColor = dark ? '#5a6068' : '#cfd3d6';
+})();
+
+// 方案 A 的浮层开合
+let flyOpen = true;
+function toggleA(){
+  flyOpen = !flyOpen;
+  document.getElementById('flyA').style.display = flyOpen ? '' : 'none';
+}
+function jump(name){
+  const hl = document.querySelector('.browser .hl');
+  if (hl) hl.textContent = '正在跳转 →「' + name + '」';
+  const badge = document.getElementById('badgeA');
+  if (badge) {
+    const n = Math.max(0, parseInt(badge.textContent || '0', 10) - 1);
+    if (n === 0) badge.style.display = 'none'; else badge.textContent = n;
+  }
+  const b2 = document.querySelectorAll('.tb .badge');
+  b2.forEach(b => { if (b.id !== 'badgeA') { const n = Math.max(0, parseInt(b.textContent||'0',10)-1); if (n===0) b.style.display='none'; else b.textContent=n; } });
+}
+function clearAll(){
+  document.getElementById('flyA').style.display = 'none';
+  document.querySelectorAll('.tb .badge').forEach(b => b.style.display = 'none');
+  const hl = document.querySelector('.browser .hl');
+  if (hl) hl.textContent = '未读已清空，角标消失';
+}
+function openHarness(){
+  const hl = document.querySelector('.browser .hl');
+  if (hl) hl.textContent = '打开 Harness 首页';
+}
+</script>
+</body>
+</html>
