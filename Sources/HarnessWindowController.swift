@@ -32,6 +32,8 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
     /// 命令：命令的「焦点优先领取」窗口只有 2.5 秒，页面还没加载完就入队，会被
     /// 别处残留的浏览器页面先领走——那正是这次要修掉的现象）。
     private var pageReadyCallbacks: [() -> Void] = []
+    /// 要画在 Harness 侧栏会话行上的「任务已完成」红点（session id）。
+    private var sidebarCompletionMarks: [String] = []
 
     /// 窗口尺寸来自 `HarnessWindowSupport`，方便和单测共用同一套边界。
     init(logger: @escaping (String) -> Void = { _ in }, onClose: @escaping () -> Void = {}) {
@@ -100,6 +102,93 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
 
     func closeWindow() {
         window?.performClose(nil)
+    }
+
+    /// 把「最近完成」的会话同步到 Harness 侧栏：对应会话行右侧画一颗红点。
+    ///
+    /// DSH 自带的 `completionUnread` 只在「会话不在主视图」时显示已完成状态；
+    /// 用户正看着当前会话收尾时，侧栏不会出现任何提示。启动器单独维护一份
+    /// 「最近完成」集合（viewed 不撤销，只有再次开跑或点过该行才消失），
+    /// 通过 DOM 标记补上这颗红点——不改 DSH 源码，也不影响它自己的状态点。
+    func updateSidebarCompletionMarks(_ sessionIds: [String]) {
+        sidebarCompletionMarks = sessionIds
+        applySidebarCompletionMarks()
+    }
+
+    private func applySidebarCompletionMarks() {
+        guard let webView else { return }
+        let idsJSON: String
+        if let data = try? JSONSerialization.data(withJSONObject: sidebarCompletionMarks),
+           let text = String(data: data, encoding: .utf8) {
+            idsJSON = text
+        } else {
+            idsJSON = "[]"
+        }
+        let js = """
+        (() => {
+          const ids = new Set(\(idsJSON));
+          const previous = window.__dhlCompletedIds || new Set();
+          const DISMISS_KEY = 'dhl-completed-dismissed';
+          if (!window.__dhlCompletionDismissed) {
+            try { window.__dhlCompletionDismissed = new Set(JSON.parse(sessionStorage.getItem(DISMISS_KEY) || '[]')); }
+            catch (_) { window.__dhlCompletionDismissed = new Set(); }
+          }
+          const dismissed = window.__dhlCompletionDismissed;
+          // 新完成（上一轮不在集合里）的会话要清掉之前的「点过」记录，否则同一
+          // 会话第二次完成时红点不会出现。
+          let dismissedChanged = false;
+          for (const id of ids) {
+            if (!previous.has(id) && dismissed.delete(id)) dismissedChanged = true;
+          }
+          if (dismissedChanged) {
+            try { sessionStorage.setItem(DISMISS_KEY, JSON.stringify([...dismissed])); } catch (_) {}
+          }
+          window.__dhlCompletedIds = ids;
+          const ensure = () => {
+            document.querySelectorAll('[data-row-key]').forEach(row => {
+              const key = row.getAttribute('data-row-key') || '';
+              if (!key.startsWith('session:')) return;
+              const id = key.slice(8);
+              const dot = row.querySelector('.dhl-completed-dot');
+              const nativeDone = Array.from(row.querySelectorAll('span')).some(el => el.textContent === '已完成' || el.textContent === 'Completed');
+              const want = ids.has(id) && !dismissed.has(id) && !nativeDone;
+              if (want && !dot) {
+                const mark = document.createElement('span');
+                mark.className = 'dhl-completed-dot';
+                mark.title = '任务已完成';
+                mark.setAttribute('aria-label', '任务已完成');
+                mark.style.cssText = 'display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:#ff3b30;margin-inline-start:6px;';
+                row.appendChild(mark);
+              } else if (!want && dot) {
+                dot.remove();
+              }
+            });
+          };
+          window.__dhlEnsureCompletionMarks = ensure;
+          if (!window.__dhlCompletionObserver) {
+            const observer = new MutationObserver(() => { if (window.__dhlEnsureCompletionMarks) window.__dhlEnsureCompletionMarks(); });
+            observer.observe(document.body, { childList: true, subtree: true });
+            window.__dhlCompletionObserver = observer;
+            document.addEventListener('click', event => {
+              const target = event.target;
+              const row = target && target.closest ? target.closest('[data-row-key]') : null;
+              if (!row) return;
+              const key = row.getAttribute('data-row-key') || '';
+              if (!key.startsWith('session:')) return;
+              const id = key.slice(8);
+              if (!window.__dhlCompletedIds || !window.__dhlCompletedIds.has(id)) return;
+              window.__dhlCompletionDismissed.add(id);
+              try { sessionStorage.setItem(DISMISS_KEY, JSON.stringify([...window.__dhlCompletionDismissed])); } catch (_) {}
+              const dot = row.querySelector('.dhl-completed-dot');
+              if (dot) dot.remove();
+            }, true);
+          }
+          ensure();
+        })();
+        """
+        webView.evaluateJavaScript(js) { [weak self] _, error in
+            if let error { self?.logger("侧栏完成标记注入失败：\(error.localizedDescription)") }
+        }
     }
 
     private func present() {
@@ -199,6 +288,7 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard !showingFailurePage else { return }
         logger("内置窗口页面加载完成（端口 \(loadedPort.map(String.init) ?? "?")）")
+        applySidebarCompletionMarks()
         let callbacks = pageReadyCallbacks
         pageReadyCallbacks = []
         callbacks.forEach { $0() }

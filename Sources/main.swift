@@ -694,6 +694,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return
             }
             let window = self.ensureHarnessWindow()
+            self.refreshSidebarCompletionMarks()
             let context = HarnessWindowSupport.Context(
                 isRunning: true,
                 targetPort: port,
@@ -2340,6 +2341,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return NSImage(size: NSSize(width: 18, height: 18))
         }
         let unread = sessionNotifyStore.unreadCount
+        // Dock 图标红色数字：与菜单栏未读角标同口径（按会话计数）。窗口关掉后
+        // 用户低头看 Dock 也能看到「有任务完成」。
+        let dockBadge = unread > 0 ? SessionNotifyStore.badgeText(for: unread) : nil
+        if NSApp.dockTile.badgeLabel != dockBadge {
+            NSApp.dockTile.badgeLabel = dockBadge
+            NSApp.dockTile.display()
+        }
         let plan = StatusBadgeSupport.plan(
             unreadText: unread > 0 ? SessionNotifyStore.badgeText(for: unread) : nil,
             updateAvailable: updateAvailable
@@ -2436,6 +2444,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             sessionNotifyMenuItems.append(item)
         }
         statusItem.button?.image = makeStatusImage()
+        refreshSidebarCompletionMarks()
+    }
+
+    /// 把「最近完成」的会话 id 同步给内置窗口，在 Harness 侧栏对应行画红点。
+    private func refreshSidebarCompletionMarks() {
+        harnessWindow?.updateSidebarCompletionMarks(sessionNotifyStore.completedSessionIds)
     }
 
     /// 轮询内置 dsh-session-notify 插件：仅在本启动器管理的 Harness 上存在；

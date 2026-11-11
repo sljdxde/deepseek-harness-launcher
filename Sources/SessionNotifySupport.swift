@@ -77,6 +77,10 @@ final class SessionNotifyStore {
     /// 还没被点过/清过的会话。角标与菜单标题按它计数——点开某一条只清那一条，
     /// 其余条目留在列表里还能再点（对齐 codex：列表是「最近完成」，未读是另一维）。
     private var unread: Set<String> = []
+    /// 最近完成的会话（用于内置窗口侧栏的「已完成」红点）。和 `unread` 不同：
+    /// 即使用户正在看该会话（completion 后紧跟 viewed），侧栏红点仍然保留到
+    /// 用户点击那一行或该会话再次开跑——这正是「任务完成后侧栏要有提示」。
+    private var completed: [String: SessionNotifyEvent] = [:]
     private var bootId: String?
     private var lastSeq = 0
     private let capacity: Int
@@ -135,8 +139,15 @@ final class SessionNotifyStore {
     /// 未读」这种明显不对的角标。
     var unreadCount: Int { unread.count }
 
+    /// 侧栏「已完成」红点用的会话 id（按完成时间倒序）。与 unread 分开：
+    /// 同一会话在眼前收尾时 unread 会被 viewed 撤销，但侧栏仍应能看见完成标记。
+    var completedSessionIds: [String] {
+        completed.values.sorted { $0.at > $1.at }.map(\.sessionId)
+    }
+
     /// 某条会话的完成提醒已读（点开它时只清这一条，不动其它条目）。
     func markRead(_ sessionId: String) {
+        completed.removeValue(forKey: sessionId)
         guard unread.remove(sessionId) != nil else { return }
         persistUnread()
     }
@@ -206,6 +217,7 @@ final class SessionNotifyStore {
             events.removeAll { $0.sessionId == event.sessionId }
             if event.isResume {
                 unread.remove(event.sessionId)
+                completed.removeValue(forKey: event.sessionId)
                 resumed.append(event)
             } else if event.isView {
                 // 用户正在会话里看结果（或它就在他眼前收尾）：撤销未读而不是记一条
@@ -214,12 +226,14 @@ final class SessionNotifyStore {
                 if unread.remove(event.sessionId) != nil { viewed.append(event.sessionId) }
             } else if event.reason == "aborted" {
                 unread.remove(event.sessionId)
+                completed.removeValue(forKey: event.sessionId)
                 // 防御旧插件/旧缓冲：被打断的回合不是完成（用户插话、排队消息、
                 // 按停止都会以 aborted 收尾），会话通常在继续跑，不该亮角标。
                 resumed.append(event)
             } else {
                 events.append(event)
                 unread.insert(event.sessionId)
+                completed[event.sessionId] = event
                 completions.append(event)
             }
         }
@@ -233,6 +247,7 @@ final class SessionNotifyStore {
     func markAllRead() {
         events.removeAll()
         unread.removeAll()
+        completed.removeAll()
         persistUnread()
     }
 

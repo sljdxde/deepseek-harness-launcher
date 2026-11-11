@@ -106,6 +106,21 @@ struct SessionNotifyChecks {
         precondition(repeatView.viewed.isEmpty)
         precondition(repeatView.isEmpty)                                     // 整批无事发生 → 不重建菜单
 
+        // 3.7c 侧栏完成标记：completion 后即使立刻 viewed，侧栏红点数据仍保留；
+        // 用户点击（markRead）、会话再次开跑（resumed）或清空时才移除。
+        let marks = SessionNotifyStore()
+        _ = marks.ingest(SessionNotifyFeed(bootId: "m", seq: 2, items: [
+            event(1, session: "m1", at: 100),
+            event(2, session: "m1", reason: "", at: 101, kind: "viewed")
+        ]))
+        precondition(marks.completedSessionIds == ["m1"], "viewed 不应撤销侧栏完成标记")
+        _ = marks.ingest(SessionNotifyFeed(bootId: "m", seq: 3, items: [event(3, session: "m2", at: 200)]))
+        precondition(marks.completedSessionIds == ["m2", "m1"], "侧栏完成标记按完成时间倒序")
+        marks.markRead("m1")
+        precondition(marks.completedSessionIds == ["m2"], "点击后应移除该会话的侧栏完成标记")
+        _ = marks.ingest(SessionNotifyFeed(bootId: "m", seq: 4, items: [event(4, session: "m2", reason: "", kind: "resumed")]))
+        precondition(marks.completedSessionIds.isEmpty, "会话重新开跑应移除侧栏完成标记")
+
         // 后台会话收尾（角标该亮）→ 用户把它点开 → viewed 撤销并如实报告。
         _ = viewed.ingest(SessionNotifyFeed(bootId: "v", seq: 4, items: [event(4, session: "other", reason: "completed")]))
         precondition(viewed.unreadCount == 1)
