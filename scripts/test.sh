@@ -782,6 +782,10 @@ swiftc "$ROOT/scripts/test-plugin-compatibility.swift" "$ROOT/Sources/PluginComp
 swiftc "$ROOT/scripts/test-release-notes.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" -o "$ROOT/build/test-release-notes"
 "$ROOT/build/test-release-notes"
 swiftc "$ROOT/scripts/test-session-notify.swift" "$ROOT/Sources/SessionNotifySupport.swift" -o "$ROOT/build/test-session-notify"
+# Web 入口解析：dsh 打印的公开地址（--public-url，如 Tailscale 域名）必须 rebase
+# 回本机 loopback；否则内置窗口拿公开域名换 cookie，任何网络波动都会落到 401 页。
+swiftc "$ROOT/scripts/test-harness-web-compat.swift" "$ROOT/Sources/HarnessWebCompatibility.swift" -o "$ROOT/build/test-harness-web-compat"
+"$ROOT/build/test-harness-web-compat"
 swiftc "$ROOT/scripts/test-plugin-isolation.swift" "$ROOT/Sources/PluginIsolationSupport.swift" "$ROOT/Sources/PluginSourceCheck.swift" -o "$ROOT/build/test-plugin-isolation"
 "$ROOT/build/test-plugin-isolation"
 swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupport.swift" -o "$ROOT/build/test-plugin-updates"

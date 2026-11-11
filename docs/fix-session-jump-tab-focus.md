@@ -351,6 +351,28 @@ Harness 标签」这一步，也不会再多开标签/窗口；浏览器回退�
 **四之四至四之六的 AppleScript 逻辑、降级路径与单测全部保留**，作为回退。回退模式下
 「已知的平台限制」仍然适用。
 
+### 四之八、2026-11-11：配置了 --public-url 时内置窗口拿到 401
+
+现象：安装内置窗口版本后，窗口第一次打开显示「Harness 页面要求认证」。日志：
+
+```console
+[11:51:16] [stdout] dsh web: http://yuzhoumac-mini.tail1b9935.ts.net/?token=…
+[11:51:17] 内置窗口页面加载失败：Harness 页面要求认证
+```
+
+根因不在认证本身，而在入口 URL 的选取：这台机器的 web profile 配置了 Tailscale 的
+`--public-url`，dsh 打印的是公开域名入口（没有显式端口）。旧逻辑要求
+`webEntryURL` 的端口等于启动器监听端口，否则拒绝——公开地址因此被丢弃，
+`authenticatedWebURL` 始终为空，内置窗口只能加载裸的 `http://127.0.0.1:3080/`，
+而 WKWebView 是全新的 cookie 库（不像用户浏览器里早有旧 cookie），于是稳定 401。
+
+修复：`HarnessWebCompatibility.localEntryURL` 把**非 loopback 的公开地址 rebase 回
+`http://127.0.0.1:<port>/`**，保留 query 里的 token；loopback 地址仍保留端口校验
+（防止同端口段其他实例的日志混入）。这样不改用户现有 profile/public-url 配置，
+也不依赖 Tailscale 网络是否稳定——token 换 cookie 的 authority 固定落在本机 loopback。
+回归：`scripts/test-harness-web-compat.swift` 新增公开地址/带路径前缀地址用例，
+并接入 `scripts/test.sh`（此前该单测文件未进回归）。
+
 ### 已知的平台限制
 
 - 按 PID 定向的 Apple Event **可行**（实测 `GURL` 事件能精确投递到指定实例），
