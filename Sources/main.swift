@@ -650,6 +650,18 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - 浏览器打开与连接探测
 
     @objc private func openDHL() {
+        // 菜单项/全局快捷键的二次触发：已在前台的窗口收起到 Dock。
+        // Dock 图标点击不在这里处理（避免和 macOS 的 reopen/激活流程互相打架）。
+        if settings.embeddedHarnessWindow, let window = harnessWindow?.window,
+           HarnessWindowSupport.shouldMinimizeOnToggle(
+               visible: window.isVisible,
+               miniaturized: window.isMiniaturized,
+               keyWindow: window.isKeyWindow
+           ) {
+            appendLogString("再次点击 Harness 窗口入口，最小化内置窗口\n")
+            window.miniaturize(nil)
+            return
+        }
         openDHLForSession(nil)
     }
 
