@@ -705,7 +705,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         // 外部复用的实例永远不会打印 token：少等两拍，尽快给出可理解的失败页。
-        let maxAttempts = process == nil ? 2 : 20
+        // 自己拉起的实例必须等：dsh 0.2.2-rc.1 在这台机器上从「HTTP 就绪」到
+        // 打印 token 实测要 22 秒，只等 5 秒会把 401 兜底页提前盖上来。
+        let maxAttempts = process == nil ? 2 : 240
         guard attempt < maxAttempts else {
             completion(BrowserConnectionSupport.pageURL(port: port))
             return
@@ -911,6 +913,20 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         authenticatedWebURL = url
         webURLLock.unlock()
         appendLogString("捕获 Web 认证入口 URL\n")
+        // dsh 打印 token 可能晚于 HTTP 就绪（本机实测 22 秒）：内置窗口若已经落到
+        // 401 兜底页，拿到 token 后自动重载，用户不用再点一次菜单。
+        DispatchQueue.main.async { [weak self] in self?.recoverEmbeddedWindowWaitingForAuth() }
+    }
+
+    /// 兜底页 → 真实页面的自动恢复（只处理「启动器自己拉起、token 晚到」这一种）。
+    private func recoverEmbeddedWindowWaitingForAuth() {
+        guard settings.embeddedHarnessWindow,
+              state == .running,
+              let port = selectedPort,
+              let window = harnessWindow,
+              window.showingFailurePage else { return }
+        appendLogString("已拿到 Harness 认证入口，自动重载内置窗口\n")
+        presentHarnessWindow(port: port, forceReload: true) {}
     }
 
     /// 查询注入客户端的页面心跳原始响应。nil = 接口不存在（外部 Harness /

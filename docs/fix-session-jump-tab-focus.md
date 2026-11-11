@@ -370,6 +370,12 @@ Harness 标签」这一步，也不会再多开标签/窗口；浏览器回退�
 `http://127.0.0.1:<port>/`**，保留 query 里的 token；loopback 地址仍保留端口校验
 （防止同端口段其他实例的日志混入）。这样不改用户现有 profile/public-url 配置，
 也不依赖 Tailscale 网络是否稳定——token 换 cookie 的 authority 固定落在本机 loopback。
+
+同批修复：dsh 从「HTTP 就绪」到打印 token 在这台机器上实测要 22 秒，启动器原先把
+等待上限设为 5 秒，会把 401 兜底页提前盖上来。现在等待上限放宽到 60 秒，并且 token
+到达时如果窗口还停在兜底页会自动重载一次（`recoverEmbeddedWindowWaitingForAuth`），
+用户不需要再点菜单。
+
 回归：`scripts/test-harness-web-compat.swift` 新增公开地址/带路径前缀地址用例，
 并接入 `scripts/test.sh`（此前该单测文件未进回归）。
 
