@@ -2,7 +2,7 @@
 
 [中文](./README.md)
 
-**Deepseek Harness Launcher** is a lightweight, native macOS menu-bar launcher for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), the AI-agent platform distributed as `@deepseek-ai/dsh`. Launch it from Spotlight or Raycast by searching `Deepseek Harness Launcher`; `dsh` and `dhl` remain valid shortcuts. It starts the Harness `web` profile, stays in the menu bar, and opens the system default browser once the service is ready. It does not embed a browser or provide a separate desktop chat UI.
+**Deepseek Harness Launcher** is a lightweight, native macOS launcher for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), the AI-agent platform distributed as `@deepseek-ai/dsh`. Launch it from Spotlight or Raycast by searching `Deepseek Harness Launcher`; `dsh` and `dhl` remain valid shortcuts. It starts the Harness `web` profile and presents the Harness UI in a **built-in native window** (`NSWindow` + `WKWebView`); the menu-bar and Dock icons stay present, and the built-in window opens by default once the service is ready instead of the system browser. You can switch back to the system browser in Settings (fallback mode).
 
 The app and menu-bar icons are derived from the official `deepseek-harness-desktop` artwork under the MIT license, with limited changes such as the circular app-icon border. See [THIRD_PARTY.md](./THIRD_PARTY.md).
 
@@ -12,7 +12,7 @@ The app and menu-bar icons are derived from the official `deepseek-harness-deskt
 
 `@deepseek-ai/dsh` is the upstream Harness runtime. It can be used directly from the command line, and the upstream project also provides `deepseek-harness-desktop`, a Tauri 2 desktop shell.
 
-Deepseek Harness Launcher is a third, macOS-only option: a Swift/AppKit menu-bar app with no WebView, Electron, or Tauri wrapper. It launches the dsh runtime available on the host and injects an archive-management enhancement. It does not replace the Harness runtime.
+Deepseek Harness Launcher is a third, macOS-only option: a native Swift/AppKit app that hosts the Harness UI in an embedded `WKWebView` window (the default UI, with a browser fallback in Settings). It is not an Electron or Tauri shell, does not bundle Node, and does not manage multiple dsh runtime versions; it launches the dsh runtime already installed on the host and injects bundled plugins such as the archive manager, plugin manager, and session notifications. It does not replace the Harness runtime.
 
 ---
 
@@ -20,24 +20,25 @@ Deepseek Harness Launcher is a third, macOS-only option: a Swift/AppKit menu-bar
 
 | # | Feature | Details |
 |---|---|---|
-| 1 | **Native menu-bar shell, no WebView** | Built with AppKit and Swift as an `LSUIElement` app, so it stays out of the Dock and follows the system appearance. |
+| 1 | **Native shell + built-in Harness window** | Built with AppKit and Swift; the launcher owns an `NSWindow` + `WKWebView` window that hosts the Harness UI (the default UI, with a browser fallback in Settings). `LSUIElement=false`, so the menu-bar and Dock icons stay present. Compared with Tauri/Electron it bundles no Node runtime: smaller on disk, lower memory, and it follows the system appearance. |
 | 2 | **Built-in archive manager** | A Cordis patch adds an Archive Manager panel to Harness Web. It lists archived sessions, supports one-at-a-time and batch deletion with a confirmation step, and shows the workspace and descendant count. |
 | 3 | **Port management (3080-3099)** | Deepseek Harness Launcher scans ports starting from 3080. It reuses a responding Harness instance when found; otherwise it launches dsh on the first bindable port. If a reused instance has no archive plugin, Harness remains usable and the launcher records basic mode in the log. |
 | 4 | **Reliable first install, stable subsequent starts** | On first start it installs `@deepseek-ai/dsh` completely into `~/.dsh/runtime`, keeps peer-dependency resolution enabled, stages into a temporary directory, and swaps atomically. It tries a faster npm mirror first and falls back to the official registry. Later starts run the fixed runtime directly instead of relying on a half-installed npx cache. |
 | 5 | **In-app updating** | The menu can check this repository's GitHub Releases, download `Deepseek.Harness.Launcher.dmg` (GitHub stores spaces as dots), replace the app, and restart it. A background timer checks automatically on the configured interval (6 hours by default). |
 | 6 | **Launch at login** | A `LaunchAgent` named `com.local.dhl-launcher` can open Deepseek Harness Launcher when you log in. |
 | 7 | **Managed process lifecycle** | Stop and update paths send `SIGTERM` to the managed Harness process group and fall back to `SIGKILL` after a timeout. Matching is restricted to the launcher and npm/node processes using its patch. |
-| 8 | **Native settings window** | Configure the update-check interval, plugin-update checking, browser opening after readiness, and launch at login. |
+| 8 | **Native settings window** | Configure the update-check interval, plugin-update checking, showing Harness in the built-in window (without opening a browser), opening the Harness UI when ready, launch at login, and the global quick-summon shortcut. |
 | 9 | **Live state and logs** | The current port is shown in the menu. stdout, stderr, and lifecycle records are written to `~/Library/Logs/Deepseek Harness Launcher/dhl.log`. |
-| 10 | **Global quick summon** | Press `Control-Option-D` (record a custom combination in Settings) from any app to summon the Deepseek Harness browser window, focusing the existing tab instead of opening a new one. Every web entry point (menu, hotkey, session-notification click) reuses an open Harness tab (127.0.0.1 or localhost) and only opens a new one when none exists; a one-time browser-automation permission is requested on first use. When the same browser runs multiple instances (e.g. a resident automation browser such as `agent-browser` or `chrome-devtools-mcp`), macOS only sends AppleScript events to the most recently launched instance — when that instance is **not** the one actually connected to Harness, the launcher leaves its tabs alone (they may hold an old process's 401 page): if the Harness tab is already in front it just brings the browser forward, and if you switched to another tab it opens a **new tab in the connected instance** (addressed by pid) and switches to the target session, writing the instance count and the "quit the background instance to restore in-tab switching" hint to the log. |
+| 10 | **Global quick summon** | Press `Control-Option-D` (record a custom combination in Settings) from any app to open and bring forward the built-in Harness window; dsh is started first if needed. The default path has no browser instance, AppleScript, or tab matching, and never opens extra tabs or windows. Browser fallback mode keeps the original tab-reuse and degradation logic (the macOS multi-instance addressing limit is described under "Browser fallback mode"). |
 | 11 | **Scheduled update checks (dsh + launcher)** | A background timer — always on, one round every 6 hours by default, the first 8 seconds after launch — checks npm for a newer `@deepseek-ai/dsh` and this repository's Releases for a newer launcher, without blocking startup. When something is available the menu row says so and the menu-bar icon gains a blue up-arrow badge, so you see it without opening the menu. |
 | 12 | **Built-in plugin manager** | Adds a Plugin Manager entry to the Harness Web sidebar with Installed and Marketplace pages: view/uninstall installed plugins, update them to the latest version, or **ignore one version** (the badge stops nagging; a higher remote version brings it back), and browse a marketplace built from two sources: the community `awesome-dsh-plugin` list and **DeepSeek's official plugins** (npm `@deepseek-ai` packages that declare `dsh.bundle`, pinned first in the category list; DeepSeek maintains no third-party list repo and ships no index source), with categories, search, sort by stars/downloads and one-click install. Before updating, the row's "更新内容" action shows that version's GitHub Release notes or the matching CHANGELOG section; after an update only that plugin's cached check result is patched, so other plugins keep their update markers and the sidebar badge. Install/uninstall run through `dsh plugin --profile web`, bootstrapping pnpm via corepack when missing. |
-| 13 | **Session-completion notifications** (menu rows are labelled with the **workspace name**, resolved from the session id via `~/.dsh/storages/workspace.json`, falling back to the session title and then a short id; clicking one row marks only that row read and jumps to its session/workspace while the others stay clickable; `清除完成提醒` still clears everything) | A bundled server plugin watches root-session `turn/end` events (the same approach as the community dsh-notify plugin, but without OS popups). When a turn finishes, the menu-bar icon gains a Foxmail-style red unread badge (**counted per session**: a session that ends several turns still counts once) and the menu lists recent completions/errors (time · title · outcome); clicking an entry opens Harness and clears the badge, or clear everything with one click. **Interrupted turns and queued messages do not raise the badge**: a turn cancelled by the user (`reason.kind === 'user'`, which is what a queued/interjected message leaves behind) is not a completion, and every `turn/start` posts a `resumed` record that retracts that session's unread reminder — so a session that runs again right after finishing never shows as "finished". **Seeing it counts as reading it**: having that session open in the visible, focused Harness tab also retracts its reminder (the injected client piggybacks "which session am I showing" on its 750 ms poll; the plugin posts a `viewed` record only when that target changes, and a turn that ends in front of the user is followed by one immediately), so the badge drops within one poll cycle. A background or unfocused tab never reports, so it cannot pin other sessions as read. |
+| 13 | **Session-completion notifications** (menu rows are labelled with the **workspace name**, resolved from the session id via `~/.dsh/storages/workspace.json`, falling back to the session title and then a short id; clicking one row marks only that row read and jumps to its session/workspace while the others stay clickable; `清除完成提醒` still clears everything) | A bundled server plugin watches root-session `turn/end` events (the same approach as the community dsh-notify plugin, but without OS popups). When a turn finishes, the menu-bar icon gains a Foxmail-style red unread badge (**counted per session**: a session that ends several turns still counts once) and the menu lists recent completions/errors (time · title · outcome); clicking an entry brings the built-in Harness window forward and switches it to that session (there is no browser-tab selection step), then clears that entry's unread mark; clear everything with one click. **Interrupted turns and queued messages do not raise the badge**: a turn cancelled by the user (`reason.kind === 'user'`, which is what a queued/interjected message leaves behind) is not a completion, and every `turn/start` posts a `resumed` record that retracts that session's unread reminder — so a session that runs again right after finishing never shows as "finished". **Seeing it counts as reading it**: having that session open in the visible, focused Harness page (the built-in window, or a tab in browser fallback mode) also retracts its reminder (the injected client piggybacks "which session am I showing" on its 750 ms poll; the plugin posts a `viewed` record only when that target changes, and a turn that ends in front of the user is followed by one immediately), so the badge drops within one poll cycle. A background or unfocused page never reports, so it cannot pin other sessions as read. |
 | 14 | **Automatic recovery from startup failures (removed)** | The launcher no longer disables plugins, bisects, or falls back to safe mode when dsh fails to start; it reports the failure as-is and leaves the profile's dependencies and bundle list untouched. |
 
 **Scope and trade-offs**
 
 - macOS only; Windows and Linux are not supported.
+- The built-in window only hosts the Harness page (a loopback host and the current port): external and documentation links go to the system browser, and it is not a general-purpose browser with an address bar. Turning off the built-in-window switch restores the complete browser path (fallback mode).
 - Node and npm must already be usable on the host. Deepseek Harness Launcher does not manage multiple dsh runtime versions.
 - The first start shows an installation window and can take several minutes; later starts reuse `~/.dsh/runtime`.
 - Deepseek Harness Launcher only adds its own bundled-plugin links (archive manager, plugin manager, session notifications) and temporary patches. Existing Harness profiles, sessions, and other plugins remain managed by dsh.
@@ -84,8 +85,8 @@ Leave the terminal process running, then reopen Deepseek Harness Launcher; it wi
 
 1. Deepseek Harness Launcher checks ports 3080-3099.
 2. If a port returns a Harness home page, it reuses that process; otherwise it starts dsh on the first available port.
-3. When the Harness home page is ready, Deepseek Harness Launcher enters the running state and, depending on the setting, opens the system default browser once.
-4. **Quit Deepseek Harness** exits the menu-bar UI and terminates the Harness backend managed by Deepseek Harness Launcher.
+3. When the Harness home page is ready, Deepseek Harness Launcher enters the running state and, depending on the settings, opens the Harness UI automatically (on by default): the built-in window when the built-in-window switch is on, or the system default browser once in fallback mode.
+4. **Quit Deepseek Harness** exits the launcher (menu-bar icon, Dock icon, and the built-in window together) and terminates the Harness backend managed by Deepseek Harness Launcher. Closing the window is not quitting: dsh keeps running in the background, and clicking the Dock icon, pressing Command-O, or choosing **Open Deepseek Harness** brings the window back.
 
 If no port can be reused or bound, or if npm, dsh, or the plugin fails to start, Deepseek Harness Launcher shows a failure alert. The first install can be cancelled and its temporary directory is cleaned automatically. Use **Open Log** for the command and its stdout/stderr.
 
@@ -131,28 +132,56 @@ Default builds are ad-hoc signed for local use. A directly downloaded copy can s
 
 | Menu item | Shortcut | Behavior |
 |---|---|---|
-| Session completions (N unread) | - | Only present while there are unread completion reminders: lists recently finished sessions (time · title · outcome), and clicking one entry selects the existing Harness tab, opens that session, and clears the badge; `清除完成提醒` clears them all |
-| Open Deepseek Harness | Command-O | Opens Harness at the current port; starts it if needed. |
-| Global quick summon | Control-Option-D | Summons Harness from any app; customizable in Settings. |
+| Session completions (N unread) | - | Only present while there are unread completion reminders: lists recently finished sessions (time · title · outcome), and clicking one entry brings the built-in Harness window forward, opens that session, and clears that entry's unread mark; `清除完成提醒` clears them all |
+| Open Deepseek Harness | Command-O | Opens/presents the built-in Harness window; starts dsh if needed. In browser fallback mode it reuses or opens a Harness tab instead. |
+| Global quick summon | Control-Option-D | Brings the built-in Harness window forward from any app; customizable in Settings. |
 | Port: xxxx | - | Shows the active port, or Not Running. |
 | Check for Updates | - | Checks GitHub Releases manually; background checks run on the configured interval and raise a blue up-arrow badge on the menu-bar icon. |
-| Settings... | Command-Comma | Opens update, plugin, browser, and login settings. |
+| Settings... | Command-Comma | Opens update, built-in window, browser fallback, and login settings. |
 | Open Log | Command-L | Opens `~/Library/Logs/Deepseek Harness Launcher/dhl.log`. |
-| Quit Deepseek Harness | Command-Q | Quits the menu-bar UI and terminates the Harness backend. |
+| Quit Deepseek Harness | Command-Q | Quits the launcher and terminates the Harness backend. |
+
+### Main menu and window
+
+The launcher is now a regular app (`LSUIElement=false`) with a permanent Dock icon and a full main menu:
+
+| Menu | Items and shortcuts |
+|---|---|
+| Application | About Deepseek Harness Launcher, Settings… Command-Comma, Quit Deepseek Harness Command-Q |
+| Edit | Undo Command-Z, Redo Shift-Command-Z, Cut Command-X, Copy Command-C, Paste Command-V, Delete, Select All Command-A (copy/paste inside WKWebView depends on it) |
+| View | Reload Harness Page Command-R, Open Log Command-L |
+| Window | Minimize Command-M, Close Command-W, Open Harness Window Command-O |
+
+- The main-menu Command-R only reloads the built-in window's page; it does not restart dsh. It does not conflict with the menu-bar **Restart Deepseek Harness** Command-R: menu-bar shortcuts only apply while that menu is open.
+- Closing the window (Command-W or the red close button) does not quit: dsh keeps running in the background, and the menu-bar icon, unread badge, and completion reminders keep working. Clicking the Dock icon, pressing Command-O, or choosing **Open Deepseek Harness** brings the window back.
+- Quit still uses Command-Q or the **Quit Deepseek Harness** menu entry, which ends the built-in window and the managed dsh backend together.
+- After a dsh restart the built-in window reloads automatically with the new process's token entry (the old token is dead; without the reload it would sit on a 401 page); the menu bar still shows "已重启 ✓".
+- The window title is "Deepseek Harness", the default size is 1280×860, the minimum is 960×600, and the last position/size is restored; if the WebKit content process crashes, the page reloads automatically.
+- Inside the window: external links (not `127.0.0.1`/`localhost`/`::1` or the current port) go to the system browser; `<input type=file>` uses the native file picker (attachment uploads work); downloads go to `~/Downloads` (duplicate names get a number instead of overwriting); JS alert/confirm/prompt use native dialogs.
 
 ### Settings and updates
 
-- Settings include the update-check interval, plugin-update checking, opening the browser when Harness is ready, launching Deepseek Harness Launcher at macOS login, and the global quick-summon shortcut.
-- Defaults: **background checks are always on**, one round every 6 hours, with the first one about 8 seconds after launch; plugin-update checking is on; opening the browser is enabled; launch at login is disabled; the global shortcut is enabled as Control-Option-D. The minimum interval is one hour.
+- Settings include the update-check interval, plugin-update checking, showing Harness in the built-in window (without opening a browser), opening the Harness UI when ready, launching Deepseek Harness Launcher at macOS login, and the global quick-summon shortcut.
+- Defaults: **background checks are always on**, one round every 6 hours, with the first one about 8 seconds after launch; plugin-update checking is on; **the built-in window is on**; opening the Harness UI when ready is enabled; launch at login is disabled; the global shortcut is enabled as Control-Option-D. The minimum interval is one hour.
+- Turning off **Show Harness in the built-in window (without opening a browser)** returns to the old browser path (fallback mode): the old code and behavior are kept intact, for cases where the built-in window cannot be used or you need browser extensions. See **Browser fallback mode** below.
 - **Both update paths can be ignored ("skip this version")**: the launcher's own dialog and the dsh dialog both end with *Skip this version* / *Un-skip this version*. A skipped version never titles the menu and never raises the badge — the row returns to its plain "检测启动器（DHL）更新" / "检查 Deepseek Harness 更新" text instead of parking a long title in the most prominent slot. The record persists across restarts, a higher remote version notifies again, and clicking the row still opens the dialog where the skip can be undone.
 - Background checks are always on, report only, and never install silently: neither the launcher's own update check nor the dsh check has an on/off switch (historically that switch turned the launcher check into a manual-only click, which made it look like there was no background timer at all while dsh checks kept running). When a newer version exists, the menu-bar icon shows a **blue up-arrow badge** at its top-right (the red pill at the bottom-right is still the unread-session count) and hovering explains whether it is the launcher or Deepseek Harness that can be updated; the actual update still starts only from the menu entry.
-- The update source is fixed to GitHub Releases for `sljdxde/deepseek-harness-launcher`; users never need to enter a URL. The current App version is `0.3.11-1.3`, and only a higher Release version is offered.
+- The update source is fixed to GitHub Releases for `sljdxde/deepseek-harness-launcher`; users never need to enter a URL. The current App version is `0.3.12-1.1-SNAPSHOT`, and only a higher Release version is offered.
 - Launcher updates and `@deepseek-ai/dsh` updates are separate paths. The dsh check reads both the **npm dist-tags** (`latest` / `next` / `beta` / `alpha`) and the **GitHub Releases feed** for `deepseek-ai/deepseek-harness` (the anonymous API is rate-limited with `403` often enough that the Atom feed is the reliable source), then takes the newest version that is actually published to npm. It only reports; it never modifies the npm cache. Menu and dialog both label the channel (stable / release candidate / beta / alpha), because npm's `latest` regularly lags behind a freshly published Release.
 - Whether dsh is updated is entirely the user's call: the dialog offers **Update to vX / Later / Skip this version**, a pre-release makes *Later* the default button (pressing Return never installs an alpha by accident), and the dialog shows the source (GitHub Release or an npm tag), the publish date, and the Markdown release notes. **When more than one version is newer than the installed one, the dialog adds an "Update to: [version ▾]" picker** listing them all (newest first, at most 10, newest preselected); switching refreshes that version's source, date and notes, and retitles the button to *Update to vX*. With a single candidate the dialog stays the plain one-version prompt. *Skip this version* skips the selected entry and is remembered: that version no longer titles the menu or raises the badge (the row goes back to its plain title), while a manual menu click still opens the dialog, where the skip can be undone. Automatic checks only update the menu title and the menu-bar badge — they **never install silently**.
 - A dsh Release tag looks like `dsh-v0.1.7-alpha.1` and is treated as the same version as the npm version `0.1.7-alpha.1`; GitHub Releases are preferred when both name a version (they carry the date and notes). Only candidates present in npm's version list are offered: when a mirror lags, a Release tag that npm does not serve yet would fail with `ETARGET`, so it is dropped and explained in the log.
 - dsh versions are compared with npm (semver) semantics: a pre-release sorts below the matching official version, and `alpha.1 < alpha.2` / `rc.2 < rc.3` are distinguished. The launcher's own `compareVersions` (for `x.y.z-a.b[-SNAPSHOT]`) does not distinguish the latter, which is why dsh has its own `compareDSHVersions`.
 - If GitHub's API returns `403`, commonly an unauthenticated rate limit, Deepseek Harness Launcher falls back to the Releases Atom feed for version comparison. When no Release is published, a manual check reports that no update is available.
 - A usable Release must contain an asset named `Deepseek.Harness.Launcher.dmg` (GitHub replaces spaces in asset names with dots). Deepseek Harness Launcher saves it as `~/Downloads/Deepseek Harness Launcher-<version>.dmg` and asks for confirmation before **Install and Restart**. That action terminates the backend, replaces the current App, and starts Deepseek Harness again.
+
+### Browser fallback mode
+
+Turning off **Show Harness in the built-in window (without opening a browser)** in Settings returns the launcher to the original browser path. That code and behavior are kept intact and are meant for fallback cases (the built-in window cannot be used, you need a browser extension, or you simply prefer Harness in your browser).
+
+- Harness opens in the system default browser; **Open Deepseek Harness**, the global shortcut, and session-completion clicks all go through the browser path.
+- An existing Harness tab is reused/brought forward; tab matching is by origin (`scheme://host:port`). On first use macOS asks whether the launcher may control Chrome/Safari.
+- When the same browser runs multiple instances (resident automation browsers such as `agent-browser` or `chrome-devtools-mcp`), macOS only sends AppleScript events to the most recently launched instance. When the instance actually connected to Harness is not the addressed one, the launcher leaves the other instance's tabs alone: if the Harness page is already visible it only brings the browser forward; if you switched to another tab it opens a new tab in the connected instance (addressed by pid) and switches to the target session, logging the hint that quitting the background instance restores in-tab switching. This is a platform limit, not something the launcher can fix (see [`docs/fix-session-jump-tab-focus.md`](docs/fix-session-jump-tab-focus.md)).
+- Browser fallback mode also keeps the focus-priority command claiming and all degradation paths.
 
 ### Plugin version detection and updates
 
@@ -210,11 +239,11 @@ Older DSH/DHL installations can leave `~/.dsh/profiles/web/node_modules/dsh-arch
 
 - Location: `Plugins/DSHSessionNotify/` (a server plugin in `lib/index.js` plus its `cordis.patch.yml` injection), shipped together with the archive plugin's patch.
 - Detection is the same approach as the community `dsh-notify` plugin: it subscribes to Harness's server-side `session/event` stream and records a completion when a root (non-subagent) session finishes a turn. The difference is that it never raises OS notifications — it exposes the events to the launcher for polling through `GET /dsh-session-notify/events?after=<seq>` (127.0.0.1 only, nothing leaves the machine).
-- Presentation: the menu-bar icon gains a Foxmail-style red unread badge (capped at `99+`, counted per session), and a **Session completions** group at the top of the menu lists the latest 6 entries (time · session title · outcome: completed / failed / aborted / token limit / blocked). Clicking an entry selects the already-open Harness tab and opens that session; `清除完成提醒` clears everything. Unread state is persisted, so a launcher restart (update, crash, manual relaunch) keeps both the badge and the list. On first use macOS asks whether the launcher may control Chrome/Safari; refusing, an external instance, or an unsupported browser degrades to the previous open/bring-forward behavior.
+- Presentation: the menu-bar icon gains a Foxmail-style red unread badge (capped at `99+`, counted per session), and a **Session completions** group at the top of the menu lists the latest 6 entries (time · session title · outcome: completed / failed / aborted / token limit / blocked). Clicking an entry brings the built-in Harness window forward and opens that session (the UI is shown first, then the plugin command switches sessions); `清除完成提醒` clears everything. Unread state is persisted, so a launcher restart (update, crash, manual relaunch) keeps both the badge and the list. Only browser fallback mode selects an already-open Harness tab and asks for macOS automation permission on first use; refusing, an external instance, or an unsupported browser degrades to the previous open/bring-forward behavior.
 - Queued-message (interjection) case: when the user sends another message while a turn is running, that turn may end as `aborted` (`reason.kind === 'user'`), or may `completed` and immediately start the next one — neither should raise a "session finished" badge. The plugin therefore **does not record interrupted turns** and writes a `resumed` record on every `turn/start`; the launcher retracts that session's unread reminder on `resumed` (recording and retracting inside the same poll is a net zero, so the badge never flashes). `aborted` events from older plugin versions or older buffers are treated as retractions on the launcher side too.
 - Menu rows are labelled with the **workspace name** (reverse-resolved from the sessionIds of each workspace in `~/.dsh/storages/workspace.json`), falling back to the session title and then a short id — no more a column of indistinguishable `session-` entries.
 - Clicking an entry marks **only that entry** read and jumps to its session (switching the workspace with it); the other entries stay listed and remain clickable. Unread rows are shown in semibold, and only `清除完成提醒` clears everything.
-- **Seeing it counts as reading it**: having that session open in the current tab (page visible and focused) also counts as read — the injected client's 750 ms poll reports which session it is showing, the plugin writes a `viewed` record only when that target changes, and the launcher retracts the unread state for it (within one poll cycle, about 3.5 seconds). A session that ends in front of the user is followed immediately by a `viewed` record, so its badge never lights up; a background or unfocused tab does not report, so it cannot pin other sessions as read.
+- **Seeing it counts as reading it**: having that session open in a visible, focused Harness page (the built-in window, or a tab in browser fallback mode) also counts as read — the injected client's 750 ms poll reports which session it is showing, the plugin writes a `viewed` record only when that target changes, and the launcher retracts the unread state for it (within one poll cycle, about 3.5 seconds). A session that ends in front of the user is followed immediately by a `viewed` record, so its badge never lights up; a background or unfocused page does not report, so it cannot pin other sessions as read.
 - Semantics: the badge counts **unread sessions**, not turns — a long session writes one `turn/end` per turn, and counting events produces obviously wrong numbers such as "1 session, 9 unread"; a later completion of the same session overwrites the previous entry (only the newest time and reason survive). The number drops to zero only when the user clicks, opens that session in Harness, or clears the reminders; a dsh restart (sequence numbers reset) does not double-count. Harness keeps only the latest 50 events, so the memory cost is negligible.
 - Title: the session's own `session/title` event is preferred; titles are generated asynchronously, so an early turn without a title falls back to the conversation id with the `session-` prefix stripped (8 characters), which keeps every entry from reading `session-`.
 - Availability: only when the launcher itself started or restarted dsh (with the bundled patch). When an external Harness is reused, or dsh was not restarted after an upgrade, the route does not exist — the launcher degrades silently and logs it once, the menu-bar badge simply never appears, and nothing else is affected.
@@ -234,8 +263,10 @@ Older DSH/DHL installations can leave `~/.dsh/profiles/web/node_modules/dsh-arch
 
 ```text
 ┌────────────────────────────────────────────────┐
-│ Deepseek Harness Launcher menu-bar app         │
-│   state icon · settings · updates · login      │
+│ Deepseek Harness Launcher (macOS app)          │
+│   menu-bar icon · Dock icon · Settings window  │
+│   ├─ built-in Harness window (WKWebView)       │
+│   └─ self-update · login item · reminders      │
 └───────────────┬────────────────────────────────┘
                 │ launch: ~/.dsh/runtime/node_modules/.bin/dsh
                 │         web --patch <cordis.patch.yml>
@@ -244,11 +275,13 @@ Older DSH/DHL installations can leave `~/.dsh/profiles/web/node_modules/dsh-arch
 ┌────────────────────────────────────────────────┐
 │ dsh web profile (localhost, background)        │
 │   ├─ Harness UI  http://127.0.0.1:<port>/      │
-│   └─ Archive plugin  /dsh-archive-manager/*    │   <- injected by this project
+│   └─ archive plugin  /dsh-archive-manager/*    │
 └────────────────────────────────────────────────┘
-                │
+                │ WebSocket / HTTP (loopback only)
                 ▼
-       The system default browser opens Harness
+  The built-in window loads the Harness page directly
+  (turn the built-in window off = browser fallback mode:
+   the system default browser opens Harness instead)
 ```
 
 The dsh data directory is `~/.dsh`; dsh manages its profiles, sessions, and archives.
@@ -258,6 +291,7 @@ The dsh data directory is `~/.dsh`; dsh manages its profiles, sessions, and arch
 - Log file: `~/Library/Logs/Deepseek Harness Launcher/dhl.log`; choose **Open Log** from the menu to reveal it.
 - New log entries use the local time zone in `yyyy-MM-dd HH:mm:ss Z` format. Existing UTC log entries are not rewritten.
 - For a startup error, first inspect the logged launch command and the following npm/dsh stderr. Common causes are Node/npm outside the discoverable paths, registry network failures, a non-Harness program occupying a port, or an archive-plugin link pointing to a removed old App.
+- If the built-in window shows **Harness page requires authentication**, the current dsh was started externally (or just restarted) and the launcher has no token entry for it. Click **Open Deepseek Harness** in the menu bar to retry; for an external instance, switch back to browser opening in Settings, or use **Restart Deepseek Harness** so the launcher takes it over.
 
 ---
 
@@ -267,6 +301,7 @@ The dsh data directory is `~/.dsh`; dsh manages its profiles, sessions, and arch
 - `./scripts/test.sh` is still the full regression: plugin syntax and archive-deletion tests, launcher helper tests, update-check tests, installer-replacement tests, and builds/checks both Universal 2 Apps.
 - `./scripts/test.sh --fast` skips packaging (Universal 2 build, installer, DMG) and runs only the assertions, for quick iteration.
 - `./scripts/test-one.sh <suite>` runs a single Swift test, where `<suite>` is the middle of `scripts/test-<suite>.swift` (e.g. `update-support`, `status-badge`).
+- `scripts/test-harness-window.swift` locks the built-in window's decision layer: open/reload/present-only, external-link routing, non-overwriting downloads, the 401 fallback page, and main-menu shortcuts; `./scripts/test-one.sh harness-window` runs just that suite. The full suite remains `./scripts/test.sh`.
 
 ```sh
 ./scripts/test.sh

@@ -148,6 +148,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 标签页导航到新 token 入口。旧标签持有的是旧进程的认证，仅前置会
     /// 留下一张死页面，用户看来就像「重启没有生效」。
     private var relaunchingAfterRestart = false
+    /// 内置 Harness 窗口（WKWebView）。替代系统浏览器成为默认界面：窗口是启动器
+    /// 自己的，点「会话完成」只需要前置窗口 + 投递跳转命令，不再依赖 AppleScript
+    /// 选中标签页（多浏览器实例下那条路必然落空，正是「又开了一个窗口」的来源）。
+    /// 延迟创建：只有真正打开过一次界面才建窗口。
+    private var harnessWindow: HarnessWindowController?
     /// 菜单栏图标旁的短暂状态文案（如「正在重启…」/「已重启 ✓」）。
     /// 点击菜单项后菜单即关闭，反馈必须出现在菜单栏本身才能被看见；
     /// makeStatusImage 重建图标时按此保持 variableLength 不裁剪文案。
@@ -257,8 +262,35 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - 生命周期
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory); configureStatusItem(); applyGlobalHotKey(showAlert: false); start(); scheduleAutoUpdateChecks(initialCheck: true); scheduleDSHUpdateCheck()
+        // 内置 Harness 窗口是常规窗口：程序坞要一直有图标，点击图标能回到界面
+        // （以前是 LSUIElement 纯菜单栏 App，没有主窗口、也不在 Dock 占格）。
+        // 应用菜单必须一起装上：WKWebView 里的输入框要靠「编辑」菜单的 ⌘C/⌘V/⌘Z
+        // 才能工作，没有主菜单的常规 App 复制粘贴会静默失效。
+        NSApp.setActivationPolicy(.regular)
+        NSApp.mainMenu = AppMenuSupport.makeMainMenu(
+            appName: LauncherBrand.fullName,
+            actions: AppMenuActions(
+                quit: #selector(quit),
+                settings: #selector(openSettings),
+                openLogs: #selector(openLogs),
+                reloadPage: #selector(reloadHarnessWindow),
+                openHarnessWindow: #selector(openDHL)
+            ),
+            target: self
+        )
+        configureStatusItem(); applyGlobalHotKey(showAlert: false); start(); scheduleAutoUpdateChecks(initialCheck: true); scheduleDSHUpdateCheck()
         removeStaleInstallerRelaunchJobs()
+    }
+
+    /// 点程序坞图标（或从 Finder 再次打开）时：没有可见窗口就把 Harness 界面拿回来。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { openDHL() }
+        return true
+    }
+
+    /// 关掉窗口不等于退出：dsh 要继续在后台跑，菜单栏角标/完成提醒照常工作。
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     /// 清掉 `com.local.dhl-install-*` 的 launchd keepalive 任务（外部 launchctl submit
@@ -603,9 +635,106 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let target = pendingSessionId
         pendingSessionId = nil
+        if settings.embeddedHarnessWindow {
+            presentHarnessWindow(port: port, forceReload: false) { [weak self] in
+                guard let target else { return }
+                self?.requestSessionOpen(sessionId: target, port: port)
+            }
+            return
+        }
         openWebPage(on: port) { [weak self] in
             guard let target else { return }
             self?.requestSessionOpen(sessionId: target, port: port)
+        }
+    }
+
+    // MARK: - 内置 Harness 窗口
+
+    /// 内置窗口的唯一入口：确保窗口存在/页面属于当前端口，再把它拿到前面。
+    ///
+    /// `whenShown` 在窗口真正可见之后执行——会话跳转必须「先让人看见界面，再投递
+    /// 命令」，顺序反了命令可能被别处残留的浏览器页面先领走（2026-11-09 复现）。
+    private func presentHarnessWindow(port: Int, forceReload: Bool, whenShown: @escaping () -> Void) {
+        resolveHarnessEntryURL(port: port) { [weak self] url in
+            guard let self else { return }
+            guard self.state == .running, self.selectedPort == port, let url else {
+                self.openWhenReady = true
+                return
+            }
+            let window = self.ensureHarnessWindow()
+            let context = HarnessWindowSupport.Context(
+                isRunning: true,
+                targetPort: port,
+                windowExists: true,
+                loadedPort: window.loadedPort,
+                loadedEntryURL: window.loadedEntryURL
+            )
+            switch HarnessWindowSupport.action(context: context, entryURL: url, forceReload: forceReload) {
+            case .openAndLoad(let entry), .showAndLoad(let entry):
+                // 等页面真正加载完再投递会话命令：焦点优先领取窗口只有 2.5 秒，
+                // 页面还在加载就入队会被别处残留的浏览器页面抢走。
+                window.show(entryURL: entry, reload: true, whenReady: whenShown)
+            case .showOnly:
+                window.show(entryURL: nil, reload: false, whenReady: whenShown)
+            case .waitForRuntime:
+                self.openWhenReady = true
+                return
+            }
+        }
+    }
+
+    private func ensureHarnessWindow() -> HarnessWindowController {
+        if let harnessWindow { return harnessWindow }
+        let window = HarnessWindowController(
+            logger: { [weak self] message in self?.appendLogString("\(message)\n") },
+            onClose: {}
+        )
+        harnessWindow = window
+        return window
+    }
+
+    /// 取内置窗口要加载的入口 URL。
+    ///
+    /// token 由 dsh 在 stdout 异步打印，进程刚就绪的第一拍可能还没到；直接退到裸
+    /// 地址会让窗口停在 401 文案页。所以先等几拍（启动器自己拉起实例时最多 5 秒），
+    /// 仍拿不到再退回裸地址——旧版 dsh 没有 token，外部实例则只能显示认证失败页
+    /// 并提示改用浏览器。
+    private func resolveHarnessEntryURL(port: Int, attempt: Int = 0, completion: @escaping (URL?) -> Void) {
+        if let authenticated = authenticatedWebURLSnapshot(), authenticated.port == port {
+            completion(authenticated)
+            return
+        }
+        // 外部复用的实例永远不会打印 token：少等两拍，尽快给出可理解的失败页。
+        let maxAttempts = process == nil ? 2 : 20
+        guard attempt < maxAttempts else {
+            completion(BrowserConnectionSupport.pageURL(port: port))
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self, self.state == .running, self.selectedPort == port else {
+                completion(nil)
+                return
+            }
+            self.resolveHarnessEntryURL(port: port, attempt: attempt + 1, completion: completion)
+        }
+    }
+
+    private func authenticatedWebURLSnapshot() -> URL? {
+        webURLLock.lock()
+        defer { webURLLock.unlock() }
+        return authenticatedWebURL
+    }
+
+    /// 主菜单「重新载入 Harness 页面」（⌘R）。只重载页面，不重启 dsh。
+    @objc private func reloadHarnessWindow() {
+        guard state == .running, let port = selectedPort else {
+            openDHL()
+            return
+        }
+        if settings.embeddedHarnessWindow {
+            presentHarnessWindow(port: port, forceReload: true) {}
+        } else {
+            openWebPage(on: port)
         }
     }
 
@@ -644,6 +773,16 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard let self, self.state == .running, self.selectedPort == port else { return }
                 self.setPortMenuTitle("端口：\(port)")
             }
+        }
+        if settings.embeddedHarnessWindow {
+            // 重启接管：forceReload 让窗口用新进程的 token 入口重载，而不是把
+            // 旧进程的 401 页面留在眼前。「先退出再打开」的可见反馈由菜单栏
+            // 「已重启 ✓」承担，与浏览器路径一致。
+            presentHarnessWindow(port: port, forceReload: restartTakeover) { [weak self] in
+                guard let target else { return }
+                self?.requestSessionOpen(sessionId: target, port: port)
+            }
+            return
         }
         openWebPage(on: port, intent: .automatic, restartTakeover: restartTakeover) { [weak self] in
             guard let target else { return }
@@ -1427,6 +1566,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             cancelDSHInstall()
             return
         }
+        harnessWindow?.closeWindow()
         stopDHL { NSApp.terminate(nil) }
     }
 
@@ -2417,6 +2557,16 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ) {
         case .jumpInPlace:
             guard let port = selectedPort else { return }
+            if settings.embeddedHarnessWindow {
+                // 内置窗口：先前置窗口（页面因此拿到焦点，命令不会被别处残留的
+                // 浏览器页面抢走），再投递「打开会话」命令。标签页匹配整条链路
+                // 在这条路上不存在，也就没有「新开一个窗口」的退化。
+                presentHarnessWindow(port: port, forceReload: false) { [weak self] in
+                    guard let sessionId else { return }
+                    self?.requestSessionOpen(sessionId: sessionId, port: port)
+                }
+                return
+            }
             openWebPage(on: port) { [weak self] in
                 guard let sessionId else { return }
                 self?.requestSessionOpen(sessionId: sessionId, port: port)

@@ -55,8 +55,8 @@
    - `./scripts/test.sh` 全量回归必须全绿（含 JS/Swift 语法检查、单元测试、
      双架构构建、安装器构建、DMG 生成与校验）；
    - 从 `dist/` 挂载 DMG，用 `install-from-app.sh` 安装到 /Applications 做
-     真机验证：dsh 启动、菜单栏状态、会话完成通知、浏览器标签复用等核心
-     功能；
+     真机验证：dsh 启动、菜单栏状态、内置 Harness 窗口、会话完成跳转等核心
+     功能（浏览器标签复用只在回退模式下验证）；
    - 改动涉及安装/升级/卸载路径时，额外验证 `scripts/uninstall.sh` 与应用内
      更新流程。
 3. **提测**：开发完成后 `./scripts/bump-version.sh x.y.z-1.1`（去掉 SNAPSHOT），重新跑通
@@ -87,7 +87,10 @@
   （生命周期 / 菜单 / dsh 更新 / 启动器自更新 / 运行环境安装 / 会话提醒与角标）。
   定位先 `rg -n '^// MARK' Sources/main.swift`，别从头翻。评审规则见
   `CODING_STANDARDS.md`（给 review 阶段用，实现阶段不必读）。
-- 浏览器标签复用：禁止用 AppleScript 做"发现浏览器"的第一步（会触发自动化
-  授权）；仅允许在 lsof 连接检测确认浏览器已连接后，用 AppleScript 精确选中
+- 默认界面是启动器自己的内置 Harness 窗口（`Sources/HarnessWindowController.swift`，
+  NSWindow + WKWebView）：会话跳转只走「前置窗口 + 投递插件命令」，不涉及浏览器实例
+  与标签匹配。以下浏览器规则只适用于设置里关闭内置窗口后的**回退模式**。
+- 浏览器标签复用（仅回退模式）：禁止用 AppleScript 做"发现浏览器"的第一步（会触发
+  自动化授权）；仅允许在 lsof 连接检测确认浏览器已连接后，用 AppleScript 精确选中
   标签，且必须保留降级路径（详见 `Sources/BrowserConnectionSupport.swift` 与
   `Sources/BrowserAutomationSupport.swift` 的注释）。

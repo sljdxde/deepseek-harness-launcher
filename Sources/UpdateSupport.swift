@@ -157,6 +157,7 @@ final class LauncherSettings {
             "autoCheckPluginUpdates": true,
             "updateIntervalHours": 6.0,
             "openBrowserOnReady": true,
+            "embeddedHarnessWindow": true,
             "launchAtLogin": false,
             "globalHotKeyEnabled": true,
             "globalHotKeyModifiers": 0x1800,
@@ -182,6 +183,21 @@ final class LauncherSettings {
     var openBrowserOnReady: Bool {
         get { defaults.bool(forKey: "openBrowserOnReady") }
         set { defaults.set(newValue, forKey: "openBrowserOnReady") }
+    }
+
+    /// 用内置窗口（WKWebView）显示 Harness 界面，而不是打开系统浏览器。
+    ///
+    /// 默认开：浏览器方案在多实例环境里无法精确选中标签页（macOS 只把 AppleScript
+    /// 发给最近启动的同 bundle 实例），点「已完成任务」经常退化成「又开一个窗口」。
+    /// 关掉它回到旧行为，用于「内置窗口打不开 / 想用浏览器扩展」等回退场景。
+    var embeddedHarnessWindow: Bool {
+        get {
+            // 键不存在时 bool(forKey:) 返回 false，会把老用户直接判成「用浏览器」；
+            // 用 object(forKey:) 区分「没设置过」（跟随默认值 true）。
+            if defaults.object(forKey: "embeddedHarnessWindow") == nil { return true }
+            return defaults.bool(forKey: "embeddedHarnessWindow")
+        }
+        set { defaults.set(newValue, forKey: "embeddedHarnessWindow") }
     }
 
     /// 用户选择「跳过此版本」的 dsh 版本：不再写进菜单标题，也不亮菜单栏角标；

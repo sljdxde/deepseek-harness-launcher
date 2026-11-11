@@ -387,6 +387,11 @@ rg -q 'selectAllRef\.current\.indeterminate' "$ROOT/Plugins/DSHArchiveManager/cl
 plutil -lint "$ROOT/Resources/Info.plist"
 plutil -extract CFBundleExecutable raw "$ROOT/Resources/Info.plist" | grep -qx 'DHL'
 plutil -extract CFBundleDisplayName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
+# 内置窗口是常规 App：Dock 要常驻图标，LSUIElement=true 会把它重新变成纯菜单栏 App。
+if [[ "$(plutil -extract LSUIElement raw "$ROOT/Resources/Info.plist" 2>/dev/null)" != "false" ]]; then
+  echo "Resources/Info.plist 的 LSUIElement 必须为 false（Dock 图标 + 主菜单）" >&2
+  exit 1
+fi
 plutil -extract CFBundleName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
 # 版本号规则见 AGENTS.md：正式 x.y.z；提测 x.y.z-a.b；开发 x.y.z-a.b-SNAPSHOT。
 # 门禁只校验格式规则与两处 plist 一致性，不锁定具体版本号。
@@ -548,6 +553,27 @@ rg -Fq 'unreachablePresentation' "$ROOT/Sources/main.swift" "$ROOT/Sources/Sessi
 rg -Fq 'presenceVisible' "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/main.swift"
 rg -Fq 'openURL' "$ROOT/Sources/BrowserAutomationSupport.swift" "$ROOT/Sources/main.swift"
 rg -Fq 'newTabOpened' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
+# 内置窗口是默认界面：Dock 常驻、主菜单装上、跳转走「前置窗口 + 投递命令」，
+# 不再依赖 AppleScript 选中浏览器标签页。回退到浏览器只能通过设置显式开启。
+rg -Fq 'HarnessWindowController' "$ROOT/Sources/main.swift" "$ROOT/Sources/HarnessWindowController.swift"
+rg -Fq 'HarnessWindowSupport.action' "$ROOT/Sources/main.swift" "$ROOT/Sources/HarnessWindowSupport.swift"
+rg -Fq 'NSApp.setActivationPolicy(.regular)' "$ROOT/Sources/main.swift"
+if rg -q 'setActivationPolicy(.accessory)' "$ROOT/Sources/main.swift"; then
+  echo "启动器必须是常规 App（Dock 图标 + 主菜单），不能退回 LSUIElement" >&2
+  exit 1
+fi
+rg -Fq 'AppMenuSupport.makeMainMenu' "$ROOT/Sources/main.swift" "$ROOT/Sources/AppMenuSupport.swift"
+rg -Fq 'settings.embeddedHarnessWindow' "$ROOT/Sources/main.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/UpdateSupport.swift"
+rg -Fq 'presentHarnessWindow' "$ROOT/Sources/main.swift"
+rg -Fq 'window.setFrameAutosaveName' "$ROOT/Sources/HarnessWindowController.swift"
+rg -Fq 'runOpenPanelWith' "$ROOT/Sources/HarnessWindowController.swift"
+rg -Fq 'WKDownloadDelegate' "$ROOT/Sources/HarnessWindowController.swift"
+# 只有 HarnessWindowController 能碰 WebKit：页面代码散回 main.swift 就不可测了。
+# 只查 import（注释里提到 WKWebView 是正常的架构说明，不能拿它当违规）。
+if rg -q '^import WebKit' "$ROOT/Sources/main.swift"; then
+  echo "WebKit 只许出现在 Sources/HarnessWindowController.swift" >&2
+  exit 1
+fi
 # 反例守卫：标签定位失败的文案与分支只许在 SessionJumpSupport 里定义，回退到
 # main.swift 的 switch 就是把可测逻辑又塞回不可测的地方。
 if rg -q '未找到匹配标签页' "$ROOT/Sources/main.swift"; then
@@ -764,6 +790,10 @@ swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupp
 # 点击「会话完成」→ 跳转：点击处置 / 页面计划 / 失败诊断 / 降级顺序 / 会话投递不变式。
 swiftc "$ROOT/scripts/test-session-jump.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/BrowserAutomationSupport.swift" -o "$ROOT/build/test-session-jump" -framework AppKit
 "$ROOT/build/test-session-jump"
+# 内置 Harness 窗口（WKWebView）的决策：打开/重载/只前置、外链外开、下载落点、
+# 失败页与主菜单（没有编辑菜单，WKWebView 的 ⌘C/⌘V 会静默失效）。
+swiftc "$ROOT/scripts/test-harness-window.swift" "$ROOT/Sources/HarnessWindowSupport.swift" "$ROOT/Sources/AppMenuSupport.swift" -o "$ROOT/build/test-harness-window" -framework AppKit
+"$ROOT/build/test-harness-window"
 # 提示框外观与版本选择器：纯 AppKit 视图，直接构造/量尺寸/触发动作来断言。
 swiftc "$ROOT/scripts/test-alert-design.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/AlertBoundary.swift" "$ROOT/Sources/DSHUpdateVersionPicker.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-alert-design" -framework AppKit
 "$ROOT/build/test-alert-design"

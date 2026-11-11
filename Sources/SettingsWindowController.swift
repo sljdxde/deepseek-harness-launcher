@@ -16,7 +16,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let settings = LauncherSettings.shared
 
     private let pluginUpdateCheckbox = NSButton(checkboxWithTitle: "自动检测插件更新", target: nil, action: nil)
-    private let openBrowserCheckbox = NSButton(checkboxWithTitle: "就绪后自动打开浏览器", target: nil, action: nil)
+    private let embeddedWindowCheckbox = NSButton(checkboxWithTitle: "用内置窗口显示 Harness（不打开浏览器）", target: nil, action: nil)
+    private let openBrowserCheckbox = NSButton(checkboxWithTitle: "就绪后自动打开 Harness 界面", target: nil, action: nil)
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动", target: nil, action: nil)
     private let globalHotKeyCheckbox = NSButton(checkboxWithTitle: "启用全局快捷键呼出", target: nil, action: nil)
     private let globalHotKeyButton = NSButton(title: "", target: nil, action: nil)
@@ -133,7 +134,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             makeHeader(),
             makeCard(
                 title: "启动行为",
-                rows: [configureCheckbox(openBrowserCheckbox), configureCheckbox(launchAtLoginCheckbox)]
+                rows: [configureCheckbox(embeddedWindowCheckbox), configureCheckbox(openBrowserCheckbox), configureCheckbox(launchAtLoginCheckbox)]
             ),
             makeCard(
                 title: "快捷呼出",
@@ -410,6 +411,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     private func loadSettings() {
         pluginUpdateCheckbox.state = settings.autoCheckPluginUpdates ? .on : .off
+        embeddedWindowCheckbox.state = settings.embeddedHarnessWindow ? .on : .off
         openBrowserCheckbox.state = settings.openBrowserOnReady ? .on : .off
         launchAtLoginCheckbox.state = settings.launchAtLogin ? .on : .off
         globalHotKeyCheckbox.state = settings.globalHotKeyEnabled ? .on : .off
@@ -500,6 +502,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let previousHotKeyDisplay = settings.globalHotKeyDisplay
 
         settings.autoCheckPluginUpdates = pluginUpdateCheckbox.state == .on
+        settings.embeddedHarnessWindow = embeddedWindowCheckbox.state == .on
         settings.openBrowserOnReady = openBrowserCheckbox.state == .on
         settings.launchAtLogin = launchAtLoginCheckbox.state == .on
         settings.updateIntervalHours = max(intervalField.doubleValue, 1)
