@@ -100,6 +100,9 @@ struct HarnessWindowChecks {
         check(!HarnessWindowSupport.isWindowPresented(visible: true, miniaturized: true, onActiveSpace: true), "最小化窗口不算已呈现（Dock 点击要能拿回来）")
         check(!HarnessWindowSupport.isWindowPresented(visible: true, miniaturized: false, onActiveSpace: false), "窗口在别的 Space 不算已呈现（Dock 点击要能切回来）")
         check(!HarnessWindowSupport.isWindowPresented(visible: false, miniaturized: false, onActiveSpace: true), "关闭的窗口不算已呈现")
+        check(HarnessWindowSupport.shouldMinimizeOnToggle(visible: true, miniaturized: false, keyWindow: true), "前台窗口二次点击应最小化")
+        check(!HarnessWindowSupport.shouldMinimizeOnToggle(visible: true, miniaturized: false, keyWindow: false), "在别的应用后面时二次点击应先拿到前面，不是最小化")
+        check(!HarnessWindowSupport.shouldMinimizeOnToggle(visible: true, miniaturized: true, keyWindow: true), "已经最小化时不应再 toggle")
 
         // MARK: - 2. 链接与导航
         checkEqual(
@@ -192,6 +195,21 @@ struct HarnessWindowChecks {
         check(failure.contains("浏览器"), "失败页必须给出「改用浏览器」的下一步")
         check(failure.contains("重启 Deepseek Harness"), "失败页必须给出让启动器接管的下一步")
         checkEqual(HarnessWindowSupport.authenticationFailureMessage, "Harness 页面要求认证", "401 文案稳定")
+
+        // MARK: - 4b. 侧栏「已完成」红点脚本
+        // 用户报过「我在会话里操作完了，红点还挂着」：选中即已看、选择变化要能感知，
+        // 这两条是本脚本的核心语义，下面用脚本内容做回归护栏（JS 实际执行在 WKWebView）。
+        let dotScript = HarnessWindowSupport.sidebarCompletionScript(sessionIds: ["s-1", "s-2"])
+        check(dotScript.contains("new Set([\"s-1\",\"s-2\"])"), "完成集合要序列化进脚本")
+        check(dotScript.contains("aria-selected"), "选中态必须参与判断（否则当前会话也会挂红点）")
+        check(dotScript.contains("attributeFilter: ['aria-selected']"), "选择变化必须被 MutationObserver 监听（属性变化默认不触发）")
+        check(dotScript.contains("dhl-completed-dismissed"), "已看状态要持久化")
+        check(dotScript.contains("dhl-completed-dot"), "红点节点类名保持稳定")
+        check(dotScript.contains("已完成"), "DSH 原生「已完成」状态时不得重复画点")
+        check(dotScript.contains("persistDismissed"), "点击/选中都要落盘已看状态")
+        check(dotScript.contains("session:"), "只处理会话行")
+        let emptyDotScript = HarnessWindowSupport.sidebarCompletionScript(sessionIds: [])
+        check(emptyDotScript.contains("new Set([])"), "空集合也要生成合法脚本")
 
         // MARK: - 5. 主菜单
         let actions = AppMenuActions(

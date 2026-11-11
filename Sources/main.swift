@@ -153,6 +153,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 选中标签页（多浏览器实例下那条路必然落空，正是「又开了一个窗口」的来源）。
     /// 延迟创建：只有真正打开过一次界面才建窗口。
     private var harnessWindow: HarnessWindowController?
+    /// 最近一次应用被激活的时刻：用来区分「Dock 点击把后台应用带到前台」与
+    /// 「应用已经在前台、用户再次点 Dock 想收窗口」。两者都可能让窗口变成 key，
+    /// 只靠 isKeyWindow 会在前者误最小化。
+    private var lastBecameActiveAt = Date.distantPast
     /// 菜单栏图标旁的短暂状态文案（如「正在重启…」/「已重启 ✓」）。
     /// 点击菜单项后菜单即关闭，反馈必须出现在菜单栏本身才能被看见；
     /// makeStatusImage 重建图标时按此保持 variableLength 不裁剪文案。
@@ -239,14 +243,20 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
     private var pluginManagerURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHPluginManager") ?? rootURL.appendingPathComponent("Plugins/DSHPluginManager") }
     private var sessionNotifyPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSessionNotify") ?? rootURL.appendingPathComponent("Plugins/DSHSessionNotify") }
+    private var sidebarDeckPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSidebarDeck") ?? rootURL.appendingPathComponent("Plugins/DSHSidebarDeck") }
     private var bundledPlugins: [BundledPlugin] {
         [
             BundledPlugin(linkName: "dsh-archive-manager", bundleMarker: "DSHArchiveManager", url: pluginURL),
             BundledPlugin(linkName: "dsh-plugin-manager", bundleMarker: "DSHPluginManager", url: pluginManagerURL),
-            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL)
+            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL),
+            BundledPlugin(linkName: "dsh-sidebar-deck", bundleMarker: "DSHSidebarDeck", url: sidebarDeckPluginURL)
         ]
     }
     private var patchPath: String { pluginURL.appendingPathComponent("cordis.patch.yml").path }
+    /// 用户在插件管理面板里停用的插件（面板写状态、启动器读；与崩溃隔离状态分开）。
+    private var pluginDisabledStateURL: URL {
+        PluginIsolationSupport.disabledStateURL(home: DSHRuntimeSupport.dshHomeURL)
+    }
     private var logURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let logs = home.appendingPathComponent("Library/Logs/Deepseek Harness Launcher", isDirectory: true)
@@ -302,6 +312,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 状态项本身也持有一个 AppKit 窗口，系统会把它算成「有可见窗口」，于是点
     /// Dock 图标时 flag=true、旧逻辑直接什么都不做——表现就是「窗口不会回来」。
     @objc private func applicationDidBecomeActive() {
+        lastBecameActiveAt = Date()
         guard settings.embeddedHarnessWindow, state == .running, selectedPort != nil else { return }
         if isHarnessWindowPresented { return }
         // 设置窗口在前台时不要抢：用户点 Dock 可能就是想回到设置。
@@ -313,7 +324,19 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 点程序坞图标（或从 Finder 再次打开）时：Harness 窗口不可见就把它拿回来。
     /// `flag` 会把菜单栏状态项的窗口也算进去，不能作为判断依据（见 applicationDidBecomeActive）。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !isHarnessWindowPresented, settingsWindow?.window?.isVisible != true {
+        guard settingsWindow?.window?.isVisible != true else { return true }
+        if let window = harnessWindow?.window,
+           Date().timeIntervalSince(lastBecameActiveAt) > 0.5,
+           HarnessWindowSupport.shouldMinimizeOnToggle(
+               visible: window.isVisible,
+               miniaturized: window.isMiniaturized,
+               keyWindow: window.isKeyWindow
+           ) {
+            appendLogString("再次点击 Dock 图标，最小化 Harness 窗口\n")
+            window.miniaturize(nil)
+            return true
+        }
+        if !isHarnessWindowPresented {
             appendLogString("收到重新打开请求（hasVisibleWindows=\(flag)），恢复 Harness 窗口\n")
             openDHL()
         }
@@ -650,6 +673,18 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - 浏览器打开与连接探测
 
     @objc private func openDHL() {
+        // 用户第二次点「打开 Deepseek Harness」/Dock 图标时，已经在前台的窗口
+        // 应该收起到 Dock，而不是原样再前置一次。
+        if settings.embeddedHarnessWindow, let window = harnessWindow?.window,
+           HarnessWindowSupport.shouldMinimizeOnToggle(
+               visible: window.isVisible,
+               miniaturized: window.isMiniaturized,
+               keyWindow: window.isKeyWindow
+           ) {
+            appendLogString("再次点击 Harness 窗口入口，最小化内置窗口\n")
+            window.miniaturize(nil)
+            return
+        }
         openDHLForSession(nil)
     }
 
@@ -2016,12 +2051,53 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if state == .checking { setState(.stopped) }
     }
 
+    /// 把面板写入的「用户停用」状态渲染成启动器自己的 --patch overlay。
+    /// 没有停用项或写不进去时返回 nil：dsh 对空/不存在的 patch 文件都是致命错误，
+    /// 宁可回到“一个插件都不停用”的原始行为，也不能让启动失败。
+    private func stagedPluginDisabledPatchPath() -> String? {
+        let entries = PluginIsolationSupport.readDisabledState(url: pluginDisabledStateURL)
+        guard !entries.isEmpty else { return nil }
+        let directory = PluginIsolationSupport.disabledPatchDirectory(home: DSHRuntimeSupport.dshHomeURL)
+        guard let patch = PluginIsolationSupport.stagedDisabledPatchFile(disabled: entries, directory: directory) else {
+            appendLogString("读取到 \(entries.count) 个已停用插件，但停用覆盖层写入失败；本次启动不会停用任何插件（可重试）\n")
+            return nil
+        }
+        appendLogString("插件停用覆盖层：\(patch.path)（\(entries.map(\.bundle).joined(separator: "、"))）\n")
+        return patch.path
+    }
+
+    /// 侧栏 Deck 接管补丁：停用官方侧栏 + 插入 Deck 行。
+    /// 任何一环不满足（资源缺失 / 用户停用 / 写盘失败）都返回 nil，退回官方侧栏——
+    /// Deck 是“增强”，绝不能因为它的补丁缺失把侧栏弄没。
+    private func stagedSidebarDeckPatchPath() -> String? {
+        let patchSource = sidebarDeckPluginURL.appendingPathComponent("cordis.patch.yml")
+        guard FileManager.default.fileExists(atPath: patchSource.path) else {
+            appendLogString("未找到侧栏 Deck 资源，本次使用官方侧栏\n")
+            return nil
+        }
+        let disabled = PluginIsolationSupport.readDisabledState(url: pluginDisabledStateURL)
+        if PluginIsolationSupport.isSidebarDeckDisabled(in: disabled) {
+            appendLogString("侧栏 Deck 已被用户停用，本次使用官方侧栏\n")
+            return nil
+        }
+        let directory = PluginIsolationSupport.disabledPatchDirectory(home: DSHRuntimeSupport.dshHomeURL)
+        guard let patch = PluginIsolationSupport.stagedSidebarDeckPatchFile(directory: directory) else {
+            appendLogString("侧栏 Deck 接管补丁写入失败，本次使用官方侧栏\n")
+            return nil
+        }
+        appendLogString("侧栏 Deck 接管补丁：\(patch.path)\n")
+        return patch.path
+    }
+
     private func launchInstalledDSH(port: Int, executableURL: URL, environment: [String: String]) {
         let task = Process(); task.executableURL = executableURL
         let arguments = PluginIsolationSupport.bootArguments(
             port: port,
             basePatch: FileManager.default.isReadableFile(atPath: patchPath) ? patchPath : nil,
-            isolationPatch: nil
+            deckPatch: stagedSidebarDeckPatchPath(),
+            isolationPatch: nil,
+            // 用户停用层排在最后：最后应用的覆盖优先级最高，确保用户意图生效。
+            disabledPatch: stagedPluginDisabledPatchPath()
         )
         task.arguments = arguments
         task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
