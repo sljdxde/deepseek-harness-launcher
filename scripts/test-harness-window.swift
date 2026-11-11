@@ -95,6 +95,11 @@ struct HarnessWindowChecks {
             .showAndLoad(entry), "不知道旧页面用的哪个入口：宁可重载一次，也不留 401 页"
         )
 
+        // MARK: - 1b. 窗口是否「在眼前」（Dock 点击恢复窗口的依据）
+        check(HarnessWindowSupport.isWindowPresented(visible: true, miniaturized: false), "正常可见窗口算已呈现")
+        check(!HarnessWindowSupport.isWindowPresented(visible: true, miniaturized: true), "最小化窗口不算已呈现（Dock 点击要能拿回来）")
+        check(!HarnessWindowSupport.isWindowPresented(visible: false, miniaturized: false), "关闭的窗口不算已呈现")
+
         // MARK: - 2. 链接与导航
         checkEqual(
             HarnessWindowSupport.linkAction(url: url("http://127.0.0.1:3080/#/session/1"), harnessPort: 3080),

@@ -22,6 +22,12 @@ enum HarnessWindowSupport {
     /// 窗口标题栏文案。页面自己的 `<title>` 是 "DeepSeek Harness"，窗口统一用品牌名。
     static let windowTitle = "Deepseek Harness"
 
+    /// 窗口是否真的在用户眼前。最小化不算「已呈现」——点 Dock 图标应该把它
+    /// 拿回来，而不是被「isVisible 仍为 true」骗过去什么都不做。
+    static func isWindowPresented(visible: Bool, miniaturized: Bool) -> Bool {
+        visible && !miniaturized
+    }
+
     /// macOS 窗口默认尺寸：Harness 界面在 1280×860 下是完整三栏布局，再小侧栏会挤。
     static let defaultWindowSize = CGSize(width: 1280, height: 860)
     static let minimumWindowSize = CGSize(width: 960, height: 600)

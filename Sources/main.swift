@@ -278,13 +278,41 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ),
             target: self
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(applicationDidBecomeActive),
+            name: NSApplication.didBecomeActiveNotification, object: nil
+        )
         configureStatusItem(); applyGlobalHotKey(showAlert: false); start(); scheduleAutoUpdateChecks(initialCheck: true); scheduleDSHUpdateCheck()
         removeStaleInstallerRelaunchJobs()
     }
 
-    /// 点程序坞图标（或从 Finder 再次打开）时：没有可见窗口就把 Harness 界面拿回来。
+    /// Harness 窗口是否真的在用户眼前（最小化不算——Dock 点击应该能把它拿回来）。
+    private var isHarnessWindowPresented: Bool {
+        guard let window = harnessWindow?.window else { return false }
+        return HarnessWindowSupport.isWindowPresented(visible: window.isVisible, miniaturized: window.isMiniaturized)
+    }
+
+    /// 应用被激活（点 Dock / Cmd-Tab / 从 Finder 再次打开）时恢复 Harness 窗口。
+    ///
+    /// 不能依赖 `applicationShouldHandleReopen` 的 `hasVisibleWindows`：菜单栏
+    /// 状态项本身也持有一个 AppKit 窗口，系统会把它算成「有可见窗口」，于是点
+    /// Dock 图标时 flag=true、旧逻辑直接什么都不做——表现就是「窗口不会回来」。
+    @objc private func applicationDidBecomeActive() {
+        guard settings.embeddedHarnessWindow, state == .running, selectedPort != nil else { return }
+        if isHarnessWindowPresented { return }
+        // 设置窗口在前台时不要抢：用户点 Dock 可能就是想回到设置。
+        if settingsWindow?.window?.isVisible == true { return }
+        appendLogString("应用被激活且内置窗口不可见，恢复 Harness 窗口\n")
+        openDHL()
+    }
+
+    /// 点程序坞图标（或从 Finder 再次打开）时：Harness 窗口不可见就把它拿回来。
+    /// `flag` 会把菜单栏状态项的窗口也算进去，不能作为判断依据（见 applicationDidBecomeActive）。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { openDHL() }
+        if !isHarnessWindowPresented, settingsWindow?.window?.isVisible != true {
+            appendLogString("收到重新打开请求（hasVisibleWindows=\(flag)），恢复 Harness 窗口\n")
+            openDHL()
+        }
         return true
     }
 
