@@ -836,6 +836,14 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         restartTakeover: Bool = false,
         completion: @escaping () -> Void = {}
     ) {
+        // 单一闸门：嵌入式模式下任何「打开页面」请求都改走内置窗口，绝不允许
+        // 某个分支漏判后把 Harness 页面交给系统浏览器（用户会看到浏览器窗口被
+        // 偶尔拉起）。浏览器回退模式（设置显式关闭内置窗口）才继续往下走。
+        if settings.embeddedHarnessWindow, state == .running, selectedPort == port {
+            appendLogString("嵌入式模式拦截浏览器打开请求（端口 \(port)），转内置窗口\n")
+            presentHarnessWindow(port: port, forceReload: false) { completion() }
+            return
+        }
         guard let url = webRootURL(for: port, path: path) else {
             completion()
             return
@@ -1099,6 +1107,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         port: Int,
         completion: @escaping () -> Void
     ) {
+        // 这条路径只应出现在浏览器回退模式；嵌入式模式有 openWebPage 的单一闸门
+        // 拦截。留下日志，万一还有调用方绕过闸门，能从 dhl.log 直接定位。
+        appendLogString("用系统浏览器打开 Harness 页面（浏览器回退路径）\n")
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         configuration.createsNewApplicationInstance = false
