@@ -28,13 +28,6 @@ enum HarnessWindowSupport {
         visible && !miniaturized && onActiveSpace
     }
 
-    /// 菜单「打开 Deepseek Harness」/ 全局快捷键的二次触发：窗口已在前台时
-    /// 最小化到 Dock。Dock 图标点击不走这里（macOS 会自己负责恢复窗口，
-    /// 在 reopen 回调里强行 hide/minimize 会和系统激活流程打架）。
-    static func shouldMinimizeOnToggle(visible: Bool, miniaturized: Bool, keyWindow: Bool) -> Bool {
-        visible && !miniaturized && keyWindow
-    }
-
     /// macOS 窗口默认尺寸：Harness 界面在 1280×860 下是完整三栏布局，再小侧栏会挤。
     static let defaultWindowSize = CGSize(width: 1280, height: 860)
     static let minimumWindowSize = CGSize(width: 960, height: 600)
