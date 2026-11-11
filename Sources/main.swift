@@ -157,6 +157,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 「应用已经在前台、用户再次点 Dock 想收窗口」。两者都可能让窗口变成 key，
     /// 只靠 isKeyWindow 会在前者误最小化。
     private var lastBecameActiveAt = Date.distantPast
+    /// 上次因「二次点击」主动收起窗口的时刻：紧接着的 Dock 点击是「恢复」，
+    /// 不能又当成二次点击收起来，否则窗口会在收起/恢复之间反复。
+    private var lastHiddenAt = Date.distantPast
     /// 菜单栏图标旁的短暂状态文案（如「正在重启…」/「已重启 ✓」）。
     /// 点击菜单项后菜单即关闭，反馈必须出现在菜单栏本身才能被看见；
     /// makeStatusImage 重建图标时按此保持 variableLength 不裁剪文案。
@@ -319,6 +322,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// `flag` 会把菜单栏状态项的窗口也算进去，不能作为判断依据（见 applicationDidBecomeActive）。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard settingsWindow?.window?.isVisible != true else { return true }
+        // 刚被「二次点击」收起的窗口，下一次 Dock 点击是恢复，不是再次收起。
+        if Date().timeIntervalSince(lastHiddenAt) < 2 {
+            openDHL()
+            return true
+        }
         if let window = harnessWindow?.window,
            Date().timeIntervalSince(lastBecameActiveAt) > 0.5,
            HarnessWindowSupport.shouldMinimizeOnToggle(
@@ -327,6 +335,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                keyWindow: window.isKeyWindow
            ) {
             appendLogString("再次点击 Dock 图标，收起 Harness 窗口\n")
+            lastHiddenAt = Date()
             NSApp.hide(nil)
             return true
         }
@@ -676,6 +685,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                keyWindow: window.isKeyWindow
            ) {
             appendLogString("再次点击 Harness 窗口入口，收起内置窗口\n")
+            lastHiddenAt = Date()
             NSApp.hide(nil)
             return
         }
