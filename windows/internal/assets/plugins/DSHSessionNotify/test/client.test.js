@@ -97,7 +97,36 @@ test('前台页面领取命令后通过 uiWorkspace 打开目标会话并确认'
   assert.match(String(commandsPoll[0]), /visible=1/);
   const claim = requests.find(([url]) => String(url).split('?')[0].endsWith('/commands/claim'));
   assert.equal(JSON.parse(claim[1].body).visible, true);
+  // 同时上报焦点：命令入队后的一小段窗口里服务端只让焦点页面领取——
+  // 另一个浏览器实例里的 Harness 页面可能也「可见」（窗口在后面），让它
+  // 先领走会把会话切在用户看不见的窗口里（浏览器前置了却还是旧会话）。
+  assert.equal(JSON.parse(claim[1].body).focused, true);
   assert.equal(requests.filter(([url]) => url.endsWith('/commands/ack')).length, 1);
+  ctx.cleanup?.();
+});
+
+test('没有焦点的页面 claim 带 focused=false，被拒时不 ack（不抢可见页面的命令）', async () => {
+  const opened = [];
+  const requests = [];
+  const { plugin, ctx, context } = await loadClient({
+    sessions: { list: sessionList(['target-session']) },
+    services: { uiWorkspace: { openSession: sessionId => opened.push(sessionId) } },
+    // 另一个浏览器实例里的页面：标签页在它的窗口里是「可见」的，但那个窗口
+    // 在后面，没有焦点。服务端在入队窗口内会拒绝它。
+    visibility: 'visible',
+    focus: false,
+  });
+  context.fetch = feedFetch({ commandId: 'c4', sessionId: 'target-session', requests, claimed: false });
+
+  plugin.apply(ctx);
+  await settle();
+  await settle();
+
+  const claim = requests.find(([url]) => String(url).split('?')[0].endsWith('/commands/claim'));
+  assert.equal(JSON.parse(claim[1].body).focused, false);
+  assert.equal(JSON.parse(claim[1].body).visible, true);
+  assert.deepEqual(opened, []);
+  assert.equal(requests.filter(([url]) => url.endsWith('/commands/ack')).length, 0);
   ctx.cleanup?.();
 });
 

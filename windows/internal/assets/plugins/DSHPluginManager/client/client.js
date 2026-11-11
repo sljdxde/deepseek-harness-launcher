@@ -602,6 +602,19 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     return blocks
   }
 
+  /// 市场刷新是**后台任务**：请求发出后 UI 不等它，进行中也不占 busy。
+  /// 放在模块级（而不是组件里）是因为面板关掉再打开是新的组件实例；同一页面里
+  /// 仍只该有一个在途请求——否则两个请求会同时删/clone 市场仓库
+  ///（服务端 refreshMarketRepo 先 rm 再 clone，并发必然互相踩）。
+  let marketRefreshFlight = null
+  function startMarketRefresh() {
+    if (marketRefreshFlight === null) {
+      marketRefreshFlight = fetch('/dsh-plugin-manager/refresh', { method: 'POST' })
+        .finally(() => { marketRefreshFlight = null })
+    }
+    return marketRefreshFlight
+  }
+
   /// Sidebar entry: a button that opens the plugin manager page on click.
   /// The slot renders this component in the sidebar footer, so the page itself
   /// must NOT be registered directly (it would render the full-screen modal on
@@ -643,6 +656,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const [sort, setSort] = React.useState('stars')
     const [detail, setDetail] = React.useState(null)
     const [busy, setBusy] = React.useState('')
+    // 市场刷新是后台任务，独立于 busy：进行中只锁「刷新市场」按钮本身，不锁关闭、
+    // 不锁安装/卸载等其它操作（用户报告：刷新期间点关闭关不上，只能干等）。
+    const [refreshing, setRefreshing] = React.useState(false)
+    const refreshingRef = React.useRef(false)
+    // 面板可能在刷新途中被关掉：卸载后的 setState / toast 一律跳过，让刷新真正只
+    // 依赖后台请求，不要求面板还活着。
+    const aliveRef = React.useRef(true)
+    React.useEffect(() => () => { aliveRef.current = false }, [])
     const [confirmUninstall, setConfirmUninstall] = React.useState(null)
     const [selected, setSelected] = React.useState(new Set())
     const [confirmBatch, setConfirmBatch] = React.useState(false)
@@ -703,11 +724,25 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     // 关掉面板时结束可能还挂着的拖拽监听。
     React.useEffect(() => () => { if (bandRef.current && bandRef.current.stop) bandRef.current.stop() }, [])
 
+    /// 刷新市场：后台任务。不占用 busy，因此刷新期间面板能关、安装/卸载/切 tab
+    /// 照常可用；只有「刷新市场」按钮本身置灰并显示「刷新中…」。面板在途中被关掉
+    /// 也不取消请求——结果照常落到本地索引，下次打开就是新的。
     const refreshMarket = () => {
-      setBusy('refresh')
-      fetch('/dsh-plugin-manager/refresh', { method: 'POST' })
-        .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); toast('success', v.official > 0 ? `市场已刷新：${v.count} 个插件（含 ${v.official} 个 DeepSeek 官方）` : `市场已刷新：${v.count} 个插件`); return loadMarket() })
-        .catch(e => toast('error', `刷新市场失败：${String(e.message || e)}`)).finally(() => setBusy(''))
+      if (refreshingRef.current) return
+      refreshingRef.current = true
+      if (aliveRef.current) setRefreshing(true)
+      startMarketRefresh()
+        .then(r => r.json()).then(v => {
+          if (v.error) throw Error(v.error)
+          if (!aliveRef.current) return
+          toast('success', v.official > 0 ? `市场已刷新：${v.count} 个插件（含 ${v.official} 个 DeepSeek 官方）` : `市场已刷新：${v.count} 个插件`)
+          loadMarket()
+        })
+        .catch(e => { if (aliveRef.current) toast('error', `刷新市场失败：${String(e.message || e)}`) })
+        .finally(() => {
+          refreshingRef.current = false
+          if (aliveRef.current) setRefreshing(false)
+        })
     }
     // 安装队列：点按立即入队、顺序执行（magpie 式——进度是一条安静的
     // 状态条，全部结束后才给一条汇总 toast）。installStatus 记录每个
@@ -1392,10 +1427,11 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const checking = busy === 'check-updates'
     const selectedUpdatable = selectedUpdatableNames(updates, selected)
     const selectedIgnorable = ignorableEntries(updates, selected)
-    // 检测/批量更新/刷新市场都在后台跑，面板要能关掉（批量更新、刷新市场都可能几分钟）；
+    // 检测/批量更新/忽略都在后台跑，面板要能关掉（批量更新可能几分钟）；
     // 安装/卸载仍锁住。忽略只是写一次本地记录，不该把「关闭」也锁上。
-    // 刷新市场此前后台进行时被误锁住：× / 返回 / 点背景全部静默失效（用户实测点关闭关不上）。
-    const closable = !busy || checking || updatingAll || busy === 'ignore' || busy === 'refresh'
+    // 市场刷新是后台任务（见 refreshMarket），根本不进 busy，所以不会锁关闭；
+    // 此前它占 busy 时 × / 返回 / 点背景会静默失效（用户实测点关闭关不上）。
+    const closable = !busy || checking || updatingAll || busy === 'ignore'
     // 批量进度条：进度独立于按钮展示（magpie 式——按钮只表达「下一步动作」，
     // 进行中的事由一条状态条说明）。来源 + 进度 + 当前插件一起给出，
     // 杜绝「选中 2 个却更新 3 个」的来源歧义。
@@ -1457,7 +1493,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             h('button', { className: `dsh-pm-tab${tab === 'installed' ? ' dsh-pm-tab-active' : ''}`, onClick: () => setTab('installed') }, `已安装${installed.length ? ` (${installed.length})` : ''}`),
             h('button', { className: `dsh-pm-tab${tab === 'market' ? ' dsh-pm-tab-active' : ''}`, onClick: () => setTab('market') }, '插件市场')),
           h('div', { className: 'dsh-pm-header-spacer' }),
-          tab === 'market' ? h('button', { className: 'dsh-pm-tool', disabled: busy === 'refresh', onClick: refreshMarket }, busy === 'refresh' ? '刷新中…' : '刷新市场') : null,
+          tab === 'market' ? h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket }, refreshing ? '刷新中…' : '刷新市场') : null,
           h('button', { className: 'dsh-pm-tool dsh-pm-close', onClick: () => { if (closable) onClose() }, 'aria-label': '关闭' }, '×')),
         h('div', { className: 'dsh-pm-body' },
           error && h('div', { className: 'dsh-pm-error' }, error),

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { name, apply, summarizeTurnEnd, summarizeTurnStart, sessionLabelFromId, createPresenceTracker, PRESENCE_TTL_MS } from '../lib/index.js';
+import { name, apply, summarizeTurnEnd, summarizeTurnStart, sessionLabelFromId, createPresenceTracker, createCommandQueue, PRESENCE_TTL_MS, FOCUSED_CLIENT_GRACE_MS } from '../lib/index.js';
 
 /** A session whose event log ends with a `session/title`. */
 function makeSession({ id = 'sess-1234-abcd', origin = undefined, title = null, events = [] } = {}) {
@@ -198,23 +198,34 @@ test('open 命令可被浏览器 client 领取并确认，且同一会话去重'
   const listed = await harness.call('/dsh-session-notify/commands');
   assert.deepEqual(listed.json().items.map(item => item.commandId), [command.commandId]);
 
+  // 入队窗口内：另一个浏览器实例里的页面虽然「可见」（窗口在后面）但没有
+  // 焦点，服务端必须拒绝——让它先领走，会话就切在用户看不见的窗口里。
+  const noFocus = await harness.call('/dsh-session-notify/commands/claim', {
+    method: 'POST',
+    body: JSON.stringify({ commandId: command.commandId, clientId: 'automation-browser', visible: true, focused: false }),
+  });
+  assert.equal(noFocus.status, 409);
+  assert.match(noFocus.json().error, /focused Harness tab/);
+
+  // 有焦点但标签页不可见：仍受「可见优先」窗口约束（后台标签不该先领）。
   const deferred = await harness.call('/dsh-session-notify/commands/claim', {
     method: 'POST',
-    body: JSON.stringify({ commandId: command.commandId, clientId: 'background-browser', visible: false }),
+    body: JSON.stringify({ commandId: command.commandId, clientId: 'background-browser', visible: false, focused: true }),
   });
   assert.equal(deferred.status, 409);
   assert.match(deferred.json().error, /visible Harness tab/);
 
+  // 连着的浏览器里、用户正在看的标签才有焦点 → 立刻能领。
   const claimed = await harness.call('/dsh-session-notify/commands/claim', {
     method: 'POST',
-    body: JSON.stringify({ commandId: command.commandId, clientId: 'browser-a', visible: true }),
+    body: JSON.stringify({ commandId: command.commandId, clientId: 'browser-a', visible: true, focused: true }),
   });
   assert.equal(claimed.status, 200);
   assert.equal(claimed.json().command.sessionId, 'root-1');
 
   const busy = await harness.call('/dsh-session-notify/commands/claim', {
     method: 'POST',
-    body: JSON.stringify({ commandId: command.commandId, clientId: 'browser-b', visible: true }),
+    body: JSON.stringify({ commandId: command.commandId, clientId: 'browser-b', visible: true, focused: true }),
   });
   assert.equal(busy.status, 409);
 
@@ -230,6 +241,26 @@ test('open 命令可被浏览器 client 领取并确认，且同一会话去重'
   });
   assert.equal(ack.status, 200);
   assert.deepEqual((await harness.call('/dsh-session-notify/commands')).json().items, []);
+});
+
+test('打开会话命令：入队窗口内只允许焦点页面领取（多实例下不让后台浏览器抢走）', () => {
+  const queue = createCommandQueue();
+  const command = queue.enqueue('session-x', 1000);
+  // 自动化浏览器里的 Harness 页面：标签页「可见」但没有焦点（窗口在后面）。
+  assert.deepEqual(queue.claim(command.commandId, 'automation-browser', true, false, 1000), { kind: 'deferred-focused' });
+  // 真正连着 Harness 的浏览器里、用户正在看的标签：有焦点，立刻能领。
+  const claimed = queue.claim(command.commandId, 'visible-browser', true, true, 1000);
+  assert.equal(claimed.kind, 'claimed');
+  assert.equal(claimed.command.sessionId, 'session-x');
+
+  // 焦点窗口过去后回到原规则：没焦点的可见页面也能领——否则用户没把浏览器
+  // 切到前台时，命令会永远没人领。
+  const later = queue.enqueue('session-y', 2000);
+  assert.deepEqual(queue.claim(later.commandId, 'no-focus-browser', true, false, 2000), { kind: 'deferred-focused' });
+  assert.equal(
+    queue.claim(later.commandId, 'no-focus-browser', true, false, 2000 + FOCUSED_CLIENT_GRACE_MS).kind,
+    'claimed'
+  );
 });
 
 test('命令路由拒绝缺失 sessionId 和非 POST 请求', async () => {

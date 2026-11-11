@@ -2058,11 +2058,32 @@ function sortMarketCategories(categories) {
 }
 
 /**
+ * 把「同一时刻只跑一次」的异步任务收成一个共享 promise：并发调用复用同一次执行，
+ * 结束后（成功或失败）释放，下一次调用重新执行。
+ * 市场刷新会先删除再 clone 市场仓库目录，两个请求同时进来会互相踩（一个刚 clone
+ * 出来的目录被另一个 rm 掉），所以必须单飞；这也是「刷新是后台任务」的前提——
+ * 用户可以关掉面板再打开、或多个标签页同时点刷新，都不该让服务端打起来。
+ */
+export function createSingleFlight(task) {
+  let inFlight = null;
+  return function singleFlight(...args) {
+    if (inFlight === null) {
+      inFlight = Promise.resolve().then(() => task(...args)).finally(() => { inFlight = null; });
+    }
+    return inFlight;
+  };
+}
+
+/**
  * Rebuild the local marketplace index from awesome-dsh-plugin's data/ plus the
  * official `@deepseek-ai` plugin bundles published on npm.
  * @returns {Promise<{count:number,official:number,categories:string[],indexedAt:string}>}
  */
 export async function refreshMarketplace() {
+  return refreshMarketplaceOnce();
+}
+
+async function rebuildMarketplace() {
   const repoDir = await refreshMarketRepo();
   const pluginsDir = join(repoDir, 'data', 'plugins');
   const downloads = await readJsonIfExists(join(repoDir, 'data', 'downloads.json'));
@@ -2114,6 +2135,9 @@ export async function refreshMarketplace() {
   }
   return { count: plugins.length, official: official.length, categories, indexedAt: index.indexedAt };
 }
+
+/** 市场重建单飞实例（见 createSingleFlight）。 */
+const refreshMarketplaceOnce = createSingleFlight(rebuildMarketplace);
 
 export async function readMarketplace() {
   try {
