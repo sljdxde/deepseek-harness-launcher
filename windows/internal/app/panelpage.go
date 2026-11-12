@@ -457,6 +457,18 @@ document.addEventListener('click', function (e) {
   }
   if ((el = t.closest('#restartBtn'))) { doRestart(el); return; }
   if ((el = t.closest('[data-act="quit"]'))) { post('act', { id: 'quit' }); return; }
+  // 更新行按钮：之前没有任何处理器，点了没反应（更新 tab 的全部动作）。
+  if ((el = t.closest('[data-act="update-launcher"]'))) {
+    say('正在检查启动器更新…');
+    post('act', { id: 'update-launcher' });
+    return;
+  }
+  if ((el = t.closest('[data-act="update-dsh"]'))) {
+    say('正在检查 DeepSeek Harness 更新…');
+    post('act', { id: 'update-dsh' });
+    return;
+  }
+  if ((el = t.closest('[data-act="open"]'))) { post('act', { id: 'open' }); return; }
   if ((el = t.closest('[data-expand]'))) {
     const id = el.getAttribute('data-expand');
     const note = el.querySelector('.unote');
