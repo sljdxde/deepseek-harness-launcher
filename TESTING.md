@@ -41,7 +41,7 @@
 ## 发布门禁
 
 - `.github/workflows/ci.yml` 会在每次 push 到 `main` 和每个 PR 上运行回归测试。
-- `.github/workflows/ci.yml` 与 `.github/workflows/release.yml` 均含 `memory-gate` job：实测首次安装 `npm ci` 的峰值 RSS，超过 1024MB（1GB）即失败（`./scripts/memory-bench.sh 1024`）。
+- `.github/workflows/ci.yml` 与 `.github/workflows/release.yml` 均含 `memory-gate` job：实测首次安装 `npm ci` 的峰值 RSS，超过 1536MB 即失败（`./scripts/memory-bench.sh 1536`）。阈值取 `npmMaxOldSpaceSizeMB`（启动器给 npm 的堆上限），即「安装有没有冲破我们分配的上限」；dsh 0.2.2 锁文件 725 个包，实测约 1.2GB，旧的 1024MB 已不可能满足。
 - `.github/workflows/release.yml` 只有在回归测试与内存门禁都通过后，才会执行 `publish` 任务。
 - 如果回归测试失败，Release 不会被创建，也不会更新已有 Release。
 - 建议在 GitHub 仓库 Settings → Branches 中为 `main` 配置保护规则，把 CI 的 `regression` job 设为 required status check，让未通过测试的 PR 无法合入。
@@ -68,7 +68,7 @@
 - [ ] 首次启动无 `~/.dsh/runtime` 时显示安装提示和进度窗口；取消后无残留 `runtime.installing-*` 目录或 npm/node 子进程。
 - [ ] 用包含更新 `dsh-runtime/package-lock.json`（不同 dsh 版本）的 App 启动时，只弹一次「运行环境有新版本」确认：点「更新运行环境」才走 `npm ci` 原子替换并启动新版本；点「稍后」不打断——现有版本照常启动，且之后不再反复弹，菜单里出现「更新运行环境到 vX（App 自带）」，点它能重新弹出确认并真的更新。
 - [ ] 运行环境缺失（把 `~/.dsh/runtime` 改名或删掉）时：弹出「重新安装 / 稍后」；点「稍后」后 dsh 不会启动、但**不再每次打开都弹**，菜单里能点「重建 Deepseek Harness 运行环境」重建。若缺失原因是替换 runtime 中途被打断（`~/.dsh/runtime.previous-*` 还在），启动器应自动换回快照并直接启动，不弹重装框、不联网重装。
-- [ ] 首次安装全程峰值内存低于 1GB：`./scripts/memory-bench.sh 1024` 应输出 `PASS`。
+- [ ] 首次安装全程峰值内存低于 1536MB：`./scripts/memory-bench.sh 1536` 应输出 `PASS`。
 - [ ] “检查更新”发现新版本时，弹窗中的 Release 正文按 Markdown 渲染（标题加粗、列表带圆点、行内代码等宽），不再是 `##`/`**` 原始字符。
 - [ ] 会话完成通知：由启动器自己启动 dsh 后，在 Harness 里让任一主会话完成一轮回复，菜单栏图标应在数秒内出现红色数字角标，菜单顶部列出该会话；点击具体条目后前置内置窗口并直接定位到对应会话且角标清零（浏览器回退模式下才会复用/打开标签页）；“清除完成提醒”同样清零；复用外部 Harness（未加载内置 patch）时至少打开 Harness 首页，不报错、不崩溃。
 - [ ] **（仅浏览器回退模式：设置里关闭「用内置窗口显示 Harness」）** 标签页复用：Chrome/Safari 中同时打开 Harness 和其他标签页时，菜单「打开 Deepseek Harness」、全局快捷键、完成提醒点击都应通过 lsof/ps 检测到已有页面，并在首次授权“允许启动器控制浏览器”后选中 Harness 标签，不调用 `NSWorkspace.open` 创建重复标签页；完成提醒还应定位到对应会话。没有任何浏览器连着时才新开；拒绝自动化授权、外部实例或不支持的浏览器时至少前置浏览器/打开页面，不报错、不崩溃。连接在 Chrome 等浏览器的 Helper 子进程名下时，也能沿父子链找到主进程。

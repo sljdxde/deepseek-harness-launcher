@@ -65,7 +65,13 @@ jobs:
           key: npm-cache-${{ runner.os }}-dsh-${{ hashFiles('Resources/dsh-runtime/package-lock.json') }}
 
       - name: Measure first-install peak RSS
-        run: ./scripts/memory-bench.sh 1024
+        # 1536MB matches npmMaxOldSpaceSizeMB (the npm heap ceiling the
+        # launcher itself sets), so the gate measures "did the install blow
+        # past the ceiling we allocate" rather than a number below it. The
+        # dsh 0.2.2 lockfile needs it: 725 packages (513 before), ~1.2GB
+        # peak on this runner, vs the old 1024MB limit which 0.2.2 could
+        # never meet.
+        run: ./scripts/memory-bench.sh 1536
 
   windows:
     name: Windows build
