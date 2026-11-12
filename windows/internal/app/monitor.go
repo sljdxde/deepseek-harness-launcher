@@ -114,7 +114,12 @@ func (c *controller) applySessionIngest(ingest session.Ingest) {
 		label := session.MenuLabel(index[event.SessionID], event.Title, event.SessionID)
 		title := session.MenuTitle(event, label, time.Now())
 		applog.Logf("session completion: %s", title)
-		c.notify("会话完成", label, session.ReasonLabel(event.Reason)+" · 点击打开 DeepSeek Harness")
+		c.mu.Lock()
+		wantToast := c.notifyOnComplete
+		c.mu.Unlock()
+		if wantToast {
+			c.notify("会话完成", label, session.ReasonLabel(event.Reason)+" · 点击打开 DeepSeek Harness")
+		}
 	}
 	c.refreshBadgeAndMenu()
 }

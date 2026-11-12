@@ -113,6 +113,22 @@ Write-Host "==> node.zip synced into windows/internal/selfinstall/assets"
 if ($LASTEXITCODE -ne 0) { throw "build.ps1: genico failed" }
 Write-Host "==> tray.ico built"
 
+# The exe's icon resource gets the same full ladder the tray.ico carries:
+# Windows asks for 20/24/40/48 too (125%/150% displays), and a group
+# missing those makes the shell rescale the nearest entry — the soft,
+# stair-stepped icon the user sees in Explorer and Start-menu search.
+# genico fills the ladder and can also emit it as PNGs, because winres
+# reads PNGs rather than .ico.
+$exeIcons = Join-Path $assetsDir "exe-icons"
+& $go run ./tools/genico -out (Join-Path $assetsDir "app-full.ico") -pngdir $exeIcons `
+    (Join-Path $iconsOut "icon-16.png") `
+    (Join-Path $iconsOut "icon-32.png") `
+    (Join-Path $iconsOut "icon-64.png") `
+    (Join-Path $iconsOut "icon-128.png") `
+    (Join-Path $iconsOut "icon-256.png")
+if ($LASTEXITCODE -ne 0) { throw "build.ps1: genico failed for the exe icon" }
+Write-Host "==> exe icon ladder built"
+
 # --- 3. winres -----------------------------------------------------------------
 
 $winres = @{
@@ -121,16 +137,21 @@ $winres = @{
         # service looks for group id 3 instead, so the same art is
         # published under both ids — otherwise the notification backend
         # logs "cannot load icon from resource with id 3" on every start.
+        #
+        # One entry per image, largest first: the full ladder genico wrote,
+        # so the exe answers an exact size for every box Windows asks for.
         "#1" = @{
             "0000" = @(
-                "icons\icon-256.png", "icons\icon-128.png", "icons\icon-64.png",
-                "icons\icon-32.png", "icons\icon-16.png"
+                "exe-icons\icon-256.png", "exe-icons\icon-128.png", "exe-icons\icon-64.png",
+                "exe-icons\icon-48.png", "exe-icons\icon-40.png", "exe-icons\icon-32.png",
+                "exe-icons\icon-24.png", "exe-icons\icon-20.png", "exe-icons\icon-16.png"
             )
         }
         "#3" = @{
             "0000" = @(
-                "icons\icon-256.png", "icons\icon-128.png", "icons\icon-64.png",
-                "icons\icon-32.png", "icons\icon-16.png"
+                "exe-icons\icon-256.png", "exe-icons\icon-128.png", "exe-icons\icon-64.png",
+                "exe-icons\icon-48.png", "exe-icons\icon-40.png", "exe-icons\icon-32.png",
+                "exe-icons\icon-24.png", "exe-icons\icon-20.png", "exe-icons\icon-16.png"
             )
         }
     }

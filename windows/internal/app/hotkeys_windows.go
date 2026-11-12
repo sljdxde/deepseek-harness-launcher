@@ -17,6 +17,7 @@ package app
 import (
 	"fmt"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/applog"
@@ -54,6 +55,16 @@ var (
 	hotkeyActions = map[int]func(){}
 	// hotkeyThreadStarted guards the one pump goroutine
 	hotkeyThreadStarted bool
+	// hotkeyThreadID is the OS thread the pump runs on. RegisterHotKey
+	// binds a chord to the CALLING thread and Windows posts WM_HOTKEY to
+	// that thread only, so every registration must be executed there —
+	// calling it from the Wails goroutine registered the chords against a
+	// thread nobody pumps, and no global shortcut ever fired.
+	hotkeyThreadID uint32
+	// hotkeyRequests carries work from callers to the pump thread.
+	hotkeyRequests chan func()
+	// hotkeyReady is closed once the pump thread has published its id.
+	hotkeyReady = make(chan struct{})
 )
 
 // setHotkeyActions installs what each id should do. Called once at start.
@@ -63,42 +74,76 @@ func setHotkeyActions(actions map[int]func()) {
 	hotkeyActions = actions
 }
 
+// onHotkeyThread runs fn on the hotkey pump thread, which is the only
+// thread Windows will deliver WM_HOTKEY to. It blocks until fn has run so
+// callers keep the old synchronous contract (a refused chord is logged
+// before the caller returns).
+func onHotkeyThread(fn func()) {
+	startHotkeyPump()
+	<-hotkeyReady
+	hotkeyMu.Lock()
+	tid := hotkeyThreadID
+	ch := hotkeyRequests
+	hotkeyMu.Unlock()
+	done := make(chan struct{})
+	select {
+	case ch <- func() { fn(); close(done) }:
+	case <-time.After(2 * time.Second):
+		applog.Logf("hotkey: request queue full")
+		return
+	}
+	// The pump is parked in GetMessage; a channel send alone does not wake
+	// it, so post the wake message to its thread.
+	procPostThreadMessage.Call(uintptr(tid), wmHotkeyWake, 0, 0)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		applog.Logf("hotkey: pump thread did not answer within 2s")
+	}
+}
+
 // registerHotkey binds one chord to an id, replacing any earlier binding.
+// The RegisterHotKey call itself happens on the pump thread (see
+// hotkeyThreadID); this function may be called from any goroutine.
 func registerHotkey(id int, chord string) {
 	mods, vk, ok := parseHotkey(chord)
 	if !ok {
 		applog.Logf("hotkey %d: cannot parse %q", id, chord)
 		return
 	}
-	hotkeyMu.Lock()
-	if _, held := registered[id]; held {
-		procUnregisterHotKey.Call(0, uintptr(id))
-		delete(registered, id)
-	}
-	hotkeyMu.Unlock()
+	onHotkeyThread(func() {
+		hotkeyMu.Lock()
+		if _, held := registered[id]; held {
+			procUnregisterHotKey.Call(0, uintptr(id))
+			delete(registered, id)
+		}
+		hotkeyMu.Unlock()
 
-	ret, _, _ := procRegisterHotKey.Call(0, uintptr(id), uintptr(mods), uintptr(vk))
-	if ret == 0 {
-		// another app owns the chord; say which one failed rather than
-		// silently losing it
-		applog.Logf("hotkey %d: RegisterHotKey(%s) refused (already taken)", id, chord)
-		return
-	}
-	hotkeyMu.Lock()
-	registered[id] = chord
-	hotkeyMu.Unlock()
-	applog.Logf("hotkey %d registered: %s", id, chord)
+		ret, _, _ := procRegisterHotKey.Call(0, uintptr(id), uintptr(mods), uintptr(vk))
+		if ret == 0 {
+			// another app owns the chord; say which one failed rather than
+			// silently losing it
+			applog.Logf("hotkey %d: RegisterHotKey(%s) refused (already taken)", id, chord)
+			return
+		}
+		hotkeyMu.Lock()
+		registered[id] = chord
+		hotkeyMu.Unlock()
+		applog.Logf("hotkey %d registered: %s", id, chord)
+	})
 }
 
 // unregisterHotkey releases one id.
 func unregisterHotkey(id int) {
-	hotkeyMu.Lock()
-	_, held := registered[id]
-	delete(registered, id)
-	hotkeyMu.Unlock()
-	if held {
-		procUnregisterHotKey.Call(0, uintptr(id))
-	}
+	onHotkeyThread(func() {
+		hotkeyMu.Lock()
+		_, held := registered[id]
+		delete(registered, id)
+		hotkeyMu.Unlock()
+		if held {
+			procUnregisterHotKey.Call(0, uintptr(id))
+		}
+	})
 }
 
 // applyGlobalHotKey registers the user's summon chord and the panel's
@@ -130,13 +175,35 @@ func startHotkeyPump() {
 		return
 	}
 	hotkeyThreadStarted = true
+	hotkeyRequests = make(chan func(), 8)
 	hotkeyMu.Unlock()
 	go hotkeyLoop()
 }
 
-// hotkeyLoop drains this thread's queue and dispatches WM_HOTKEY.
+// wmHotkeyWake wakes the pump thread so it drains queued registrations.
+// It has to be a posted thread message rather than a channel select: the
+// pump blocks in GetMessage, and GetMessage returns only for messages.
+const wmHotkeyWake = 0x0400 + 17 // WM_APP + 17
+
+// hotkeyLoop drains this thread's queue and dispatches WM_HOTKEY. It is
+// the only thread allowed to call RegisterHotKey — Windows binds a chord
+// to the registering thread and posts WM_HOTKEY there, so a registration
+// made anywhere else is a chord nothing will ever hear.
 func hotkeyLoop() {
 	runtimeLockOSThread()
+	// GetCurrentThreadId, not the goroutine: the Win32 thread is what
+	// RegisterHotKey and PostThreadMessage care about.
+	tid, _, _ := procGetCurrentThreadId.Call()
+	// A thread's message queue does not exist until something asks for it,
+	// and PostThreadMessage to a queue-less thread fails outright. PeekMessage
+	// with PM_NOREMOVE creates the queue, so the id published below is one
+	// wake messages can actually reach.
+	const pmNoRemove = 0x0000
+	procPeekMessage.Call(0, 0, 0, 0, pmNoRemove)
+	hotkeyMu.Lock()
+	hotkeyThreadID = uint32(tid)
+	hotkeyMu.Unlock()
+	close(hotkeyReady)
 	applog.Logf("hotkey pump: running on its own thread")
 
 	var msg msgStruct
@@ -144,6 +211,10 @@ func hotkeyLoop() {
 		ret, _, _ := procGetMessage.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
 		if ret == 0 || ret == ^uintptr(0) {
 			return // WM_QUIT or error
+		}
+		if msg.message == wmHotkeyWake {
+			drainHotkeyRequests()
+			continue
 		}
 		if msg.message == wmHotkey {
 			hotkeyMu.Lock()
@@ -155,6 +226,21 @@ func hotkeyLoop() {
 		}
 		procTransMsg.Call(uintptr(unsafe.Pointer(&msg)))
 		procDispatch.Call(uintptr(unsafe.Pointer(&msg)))
+	}
+}
+
+// drainHotkeyRequests runs everything queued for the pump thread.
+func drainHotkeyRequests() {
+	for {
+		hotkeyMu.Lock()
+		ch := hotkeyRequests
+		hotkeyMu.Unlock()
+		select {
+		case fn := <-ch:
+			fn()
+		default:
+			return
+		}
 	}
 }
 

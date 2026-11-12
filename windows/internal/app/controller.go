@@ -86,6 +86,14 @@ type controller struct {
 	// restartGuard is set while a user-initiated restart is in flight,
 	// so the exit watcher does not double-launch.
 	restarting bool
+	// starting is the "a Start() is in flight" latch. It is deliberately
+	// NOT derived from state == stateChecking: the update, restart and
+	// relaunch flows all put the launcher into stateChecking *before*
+	// calling Start, so using the state as the mutex made those flows a
+	// no-op — the launcher sat on "正在停止…" forever and no later click
+	// could start dsh again (2026-11-12: dsh update to 0.2.2-rc.2 wedged
+	// the app until it was restarted).
+	starting bool
 	// rebuildDeclined is the user's "no" to a runtime rebuild, this run.
 	rebuildDeclined bool
 	// installCancel stops a running install (the progress window's 取消
@@ -105,13 +113,16 @@ type controller struct {
 	autoCheckUpdates bool
 	// autoUpdate downloads and installs launcher updates without asking.
 	autoUpdate bool
+	// notifyOnComplete shows a Windows toast when a session finishes.
+	notifyOnComplete bool
 	// lastAutoVersion remembers which launcher version was already
 	// auto-installed, so one release is installed exactly once.
 	lastAutoVersion string
 }
 
 func newController(a *application.App) *controller {
-	return &controller{app: a, autoCheckUpdates: true}
+	// notifyOnComplete defaults to on; the settings file can turn it off.
+	return &controller{app: a, autoCheckUpdates: true, notifyOnComplete: true}
 }
 
 // setState updates the port row (disabled, the informational line) —
@@ -239,17 +250,48 @@ func (c *controller) installedDSHVersion(env map[string]string) string {
 	return dshupdate.VersionFromOutput(string(output))
 }
 
+// startDecision is what Start does when it is entered.
+type startDecision int
+
+const (
+	startProceed     startDecision = iota // go on and bring dsh up
+	startShowBrowser                      // already up: just show the page
+	startInFlight                         // another Start owns the launch
+)
+
+// beginStart claims the launch latch. The latch is `starting`, never the
+// state: every flow that restarts dsh (update, 重启, exit-0 relaunch)
+// sets stateChecking *before* calling Start, so a state-based mutex made
+// those flows return immediately and the launcher never came back up.
+func (c *controller) beginStart() startDecision {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state == stateRunning || c.restarting {
+		return startShowBrowser
+	}
+	if c.starting {
+		return startInFlight
+	}
+	c.starting = true
+	return startProceed
+}
+
 // Start is the 打开/启动 flow. Everything runs on this goroutine; UI
 // touches go through InvokeSync.
 func (c *controller) Start() {
-	if c.currentState() == stateRunning || c.restarting {
+	switch c.beginStart() {
+	case startShowBrowser:
 		// already up: 打开 just brings the browser forward (below)
 		c.openBrowserForCurrent()
 		return
-	}
-	if c.currentState() == stateChecking {
+	case startInFlight:
 		return
 	}
+	defer func() {
+		c.mu.Lock()
+		c.starting = false
+		c.mu.Unlock()
+	}()
 	c.setState(stateChecking, "检测端口…")
 
 	// bundled plugins land on disk and into the profile node_modules
@@ -517,7 +559,21 @@ func (c *controller) launchInstalled(port int, env map[string]string) {
 		applog.Logf("dsh exited: %v", err)
 	}()
 
-	c.prepareHarnessURL(port, launcher)
+	c.prepareHarnessURLFor(port, launcher)
+}
+
+// prepareHarnessURLFor points the main window at this launcher's page,
+// waiting briefly for the token entry line first. Start returns as soon
+// as the port answers, but the `dsh web: <url>` line is captured by the
+// stdout pump a moment later; loading the window before that happened
+// left it on the bare port URL (401) or on the previous process's token.
+// The wait is bounded and harmless: an older dsh that never prints the
+// line just gets the bare URL, which is what it needs.
+func (c *controller) prepareHarnessURLFor(port int, l *launch.Launcher) {
+	if l != nil {
+		l.WaitEntryURL(3 * time.Second)
+	}
+	c.prepareHarnessURL(port, l)
 }
 
 // waitLauncher blocks until the launcher's dsh process exits.
@@ -533,14 +589,18 @@ func (c *controller) waitLauncher(l *launch.Launcher) error {
 // token entry when this launcher captured one, the last saved token URL
 // for an adopted instance (dsh's front page answers 401 without a token,
 // and an adopted instance never printed its token to us).
+//
+// The saved URL is ONLY an adopted-instance credential. For a dsh this
+// launcher started, falling back to it would load the previous process's
+// token and render a 401 page — dsh mints a new token on every boot.
 func harnessTargetURL(port int, l *launch.Launcher) string {
-	target := launch.OpenURLForEntry(l, port)
-	if l == nil || l.EntryURL() == nil {
+	if l == nil {
 		if saved := harnessweb.LoadLastURL(); saved != "" {
-			target = saved
+			return saved
 		}
+		return fmt.Sprintf("http://127.0.0.1:%d/", port)
 	}
-	return target
+	return launch.OpenURLForEntry(l, port)
 }
 
 func (c *controller) prepareHarnessURL(port int, l *launch.Launcher) {
@@ -735,6 +795,14 @@ func (c *controller) setAutoCheckUpdates(on bool) {
 func (c *controller) setAutoUpdate(on bool) {
 	c.mu.Lock()
 	c.autoUpdate = on
+	c.mu.Unlock()
+	saveSettings()
+}
+
+// setNotifyOnComplete turns the session-finished toast on or off.
+func (c *controller) setNotifyOnComplete(on bool) {
+	c.mu.Lock()
+	c.notifyOnComplete = on
 	c.mu.Unlock()
 	saveSettings()
 }

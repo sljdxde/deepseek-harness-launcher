@@ -150,6 +150,25 @@ func writeShortcut(link, exe string) {
 		return
 	}
 	applog.Logf("shortcut written: %s", link)
+	// Tell the shell the icon may have changed. Without this Explorer keeps
+	// serving the cached bitmap for that .lnk — the reason a rebuilt app
+	// with a corrected icon still showed the old art (a stale unread count
+	// burned into it) in Start-menu search.
+	notifyShellIconChanged(link)
+}
+
+// shcneAssocChanged / shcnfPathW: "this file's icon is out of date".
+const (
+	shcneAssocChanged = 0x08000000
+	shcnfPathW        = 0x0005
+)
+
+// notifyShellIconChanged asks Explorer to re-read link's icon.
+func notifyShellIconChanged(link string) {
+	ptr := mustUTF16(link)
+	shell32.NewProc("SHChangeNotify").Call(
+		uintptr(shcneAssocChanged), uintptr(shcnfPathW),
+		uintptr(unsafe.Pointer(&ptr[0])), 0)
 }
 
 // shortcutIcon reads a .lnk's IconLocation, or "".

@@ -84,6 +84,9 @@ func handlePanelAction(action, id string, w http.ResponseWriter, r *http.Request
 		case "autoCheckPluginUpdates":
 			panel.ctl.setAutoCheckPluginUpdates(on)
 			eff = on
+		case "notifyOnComplete":
+			panel.ctl.setNotifyOnComplete(on)
+			eff = on
 		default:
 			applog.Logf("panel setting: unknown key %q", key)
 			return

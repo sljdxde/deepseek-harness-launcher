@@ -30,12 +30,13 @@ func (c *controller) Open() {
 	state := c.state
 	port := c.port
 	launcher := c.launcher
+	starting := c.starting
 	c.mu.Unlock()
 
 	switch {
 	case state == stateRunning && port != 0:
 		c.openBrowser(port, launcher)
-	case state == stateChecking:
+	case starting:
 		// a start is already in flight; its ready path opens the page
 	default:
 		c.Start()
@@ -106,14 +107,23 @@ func (c *controller) updateDSHTo(version string) {
 	// stop the running instance: npm replaces the runtime it is using
 	c.mu.Lock()
 	launcher := c.launcher
+	wasActive := c.state == stateRunning || c.state == stateChecking
 	c.mu.Unlock()
+	// state goes to checking unconditionally, and before Start is ever
+	// reached again: the update is followed by a relaunch, and a launcher
+	// still claiming stateRunning would make that relaunch a no-op. An
+	// adopted instance has no launcher, so the Running() test alone missed
+	// exactly that case.
+	c.setState(stateChecking, "正在停止…")
 	if launcher != nil && launcher.Running() {
-		c.setState(stateChecking, "正在停止…")
 		launcher.Stop()
 		c.mu.Lock()
 		c.launcher = nil
 		c.mu.Unlock()
 	}
+	c.mu.Lock()
+	c.port = 0
+	c.mu.Unlock()
 	c.stopSessionMonitor()
 
 	env := nodeEnvironment()
@@ -158,6 +168,15 @@ func (c *controller) updateDSHTo(version string) {
 	c.mu.Unlock()
 	saveSettings()
 	applog.Logf("dsh updated to %s", version)
+	if !wasActive {
+		// dsh was not running when the user asked for the update, so it
+		// stays stopped: starting a server the user had shut down is not
+		// what 更新 means (macOS keeps the same distinction through
+		// relaunchAfterInstall).
+		c.setState(stateStopped, "未运行")
+		applog.Logf("dsh not running before the update; leaving it stopped")
+		return
+	}
 	c.Start()
 }
 
@@ -376,6 +395,10 @@ type settingsFile struct {
 	Theme string `json:"theme,omitempty"`
 	// AutoUpdate downloads and installs launcher updates without asking.
 	AutoUpdate bool `json:"autoUpdate,omitempty"`
+	// NotifyOnComplete shows a Windows toast when a session finishes.
+	// Default on: the pointer keeps an explicit "off" distinguishable from
+	// a settings file written before the switch existed.
+	NotifyOnComplete *bool `json:"notifyOnComplete,omitempty"`
 	// AutoCheckUpdates gates the periodic launcher/dsh update checks. A
 	// pointer so a stored explicit "off" survives the zero-value problem:
 	// nil means the default (on).
@@ -421,6 +444,7 @@ func saveSettings() {
 		Theme:                  c.theme,
 		AutoUpdate:             c.autoUpdate,
 		AutoCheckUpdates:       &c.autoCheckUpdates,
+		NotifyOnComplete:       &c.notifyOnComplete,
 	}
 	c.mu.Unlock()
 	data, err := marshalJSON(settings)
@@ -489,6 +513,11 @@ func restoreSessionUnread() {
 		h.ectx.autoUpdate = settings.AutoUpdate
 		if settings.AutoCheckUpdates != nil {
 			h.ectx.autoCheckUpdates = *settings.AutoCheckUpdates
+		}
+		// absent (an older settings file) means on: the toast is the
+		// feature users expect from a tray launcher.
+		if settings.NotifyOnComplete != nil {
+			h.ectx.notifyOnComplete = *settings.NotifyOnComplete
 		}
 		h.ectx.mu.Unlock()
 	}

@@ -95,6 +95,25 @@ func (l *Launcher) EntryURL() *url.URL {
 	return l.entryURL
 }
 
+// WaitEntryURL waits up to timeout for the token-bearing entry line to be
+// captured. Readiness and the entry line are two different signals: the
+// port answers as soon as the server binds, while `dsh web: <url>` is
+// read off stdout by the pump goroutine a moment later. A caller that
+// builds the window URL straight after Start would otherwise miss it and
+// fall back to a stale token from a previous process.
+func (l *Launcher) WaitEntryURL(timeout time.Duration) *url.URL {
+	deadline := time.Now().Add(timeout)
+	for {
+		if u := l.EntryURL(); u != nil {
+			return u
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
 // Port is the port this launcher started (0 when not started).
 func (l *Launcher) Port() int {
 	l.mu.Lock()

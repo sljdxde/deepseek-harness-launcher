@@ -7,6 +7,8 @@ package app
 
 import (
 	"encoding/json"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -332,6 +334,94 @@ func TestLauncherReleaseAction(t *testing.T) {
 		if newer != c.wantNewer || skipped != c.wantSkipped {
 			t.Errorf("release %s vs installed %s (skipped %q) = newer:%v skipped:%v, want %v/%v",
 				c.release, c.installed, c.skipped, newer, skipped, c.wantNewer, c.wantSkipped)
+		}
+	}
+}
+
+// TestPanelPageSelectorsMatchMarkup is the regression test for "设置里的按钮
+// 都点不动": the page's click delegation matched `.dhl-sw` while the markup
+// rendered `class="sw"`, so every switch was inert with no request and no
+// log line. It caught the refresh icon too (id=refreshBtn, selector
+// [data-refresh]). Both are checked here against the real rendered page.
+func TestPanelPageSelectorsMatchMarkup(t *testing.T) {
+	ctl := &controller{version: "0.3.12", autoCheckUpdates: true}
+	page := panelHTML(ctl.buildPanelModel())
+
+	// every switch the page renders must be reachable by the selector the
+	// delegation uses
+	if !strings.Contains(page, `t.closest('.sw')`) {
+		t.Error("click delegation no longer matches the .sw switch selector")
+	}
+	for _, key := range []string{"autoCheckUpdates", "autoUpdate", "mirror",
+		"launchAtLogin", "openOnReady", "notifyOnComplete"} {
+		if !strings.Contains(page, `data-key="`+key+`"`) {
+			t.Errorf("switch %q missing from the rendered page", key)
+		}
+	}
+	if !strings.Contains(page, `class="sw`) {
+		t.Error("switches must carry the .sw class the delegation matches")
+	}
+
+	// the header refresh button must be selectable by [data-refresh]
+	if !strings.Contains(page, `id="refreshBtn" data-refresh`) {
+		t.Error("refresh button is not matched by the [data-refresh] handler")
+	}
+
+	// doRestart must not look the status dot up by id: it has no id, and
+	// the null dereference made 重启 a silent no-op.
+	if strings.Contains(page, `getElementById('dot')`) {
+		t.Error("doRestart still reads the status dot by id; it has no id")
+	}
+	if !strings.Contains(page, `querySelector('.hd .dot')`) {
+		t.Error("doRestart must locate the status dot by its class")
+	}
+}
+
+// The removed experiment must be gone from the page: 侧栏 Deck was an
+// experimental toggle the user asked to drop, and a leftover switch would
+// render a control whose action no longer exists.
+func TestPanelPageDropsExperimentalSwitches(t *testing.T) {
+	ctl := &controller{version: "0.3.12", autoCheckUpdates: true}
+	page := panelHTML(ctl.buildPanelModel())
+	for _, gone := range []string{"sidebarDeck", "侧栏 Deck", "autoCheckPluginUpdates"} {
+		if strings.Contains(page, gone) {
+			t.Errorf("removed setting %q still renders", gone)
+		}
+	}
+	// 刷新页面 button was removed too — Ctrl+R in the page does the job
+	if strings.Contains(page, "refresh-page") {
+		t.Error("the 刷新页面 button must be gone; Ctrl+R reloads the page")
+	}
+}
+
+// The switch endpoint must accept every key the page renders. This is the
+// HTTP half of the "设置里的按钮都点不动" bug: the page never sent the
+// request because its selector did not match, and a key the router did not
+// know would have died in the default case with only a log line.
+func TestPanelSwitchRouteHandlesEveryRenderedKey(t *testing.T) {
+	ctl := &controller{version: "0.3.12", autoCheckUpdates: true, notifyOnComplete: true}
+	panel.ctl = ctl
+	defer func() { panel.ctl = nil }()
+
+	for _, key := range []string{
+		"autoCheckUpdates", "autoUpdate", "mirror",
+		"launchAtLogin", "openOnReady", "notifyOnComplete",
+	} {
+		form := url.Values{"key": {key}, "on": {"0"}}
+		r := httptest.NewRequest("POST", "/dhl-action", strings.NewReader(form.Encode()))
+		r.Header.Set("content-type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		handlePanelAction("sw", "", w, r)
+
+		body := w.Body.String()
+		if !strings.Contains(body, `"ok":true`) {
+			t.Errorf("switch %q: response %q, want an ok JSON answer", key, body)
+		}
+		// an unknown key returns early with no body, which is the failure
+		// this test exists to catch
+		if !strings.Contains(body, `"on":`) {
+			t.Errorf("switch %q: response %q carries no effective state", key, body)
 		}
 	}
 }

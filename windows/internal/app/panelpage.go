@@ -170,7 +170,7 @@ body{
   <div class="hd">
     <div class="t"><span class="dot__DOT_ON__"></span>Deepseek Harness Launcher
       <span class="tools">
-        <button type="button" class="icon" id="refreshBtn" aria-label="刷新信息" data-tooltip="刷新信息"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M13 8a5 5 0 1 1-1.5-3.5"/><path d="M13 2.5V5h-2.5"/></svg></button>
+        <button type="button" class="icon" id="refreshBtn" data-refresh aria-label="刷新信息" data-tooltip="刷新信息"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M13 8a5 5 0 1 1-1.5-3.5"/><path d="M13 2.5V5h-2.5"/></svg></button>
         <button type="button" class="icon" id="themeBtn" aria-label="切换白天夜间" data-tooltip="白天 / 夜晚">__THEME_ICON__</button>
       </span>
     </div>
@@ -194,16 +194,16 @@ body{
       <div class="setrow"><span class="setlabel">自动检查更新</span><button type="button" class="sw__SW_AUTOCHK__" role="switch" aria-checked="__SW_AUTOCHK_ARIA__" data-key="autoCheckUpdates"></button></div>
       <div class="setrow"><span class="setlabel">检查频率</span><span class="step"><button type="button" class="stbtn" data-step="-1" aria-label="减小">−</button><span class="val" id="freq">__FREQ__</span><button type="button" class="stbtn" data-step="1" aria-label="增大">＋</button></span></div>
       <div class="setrow"><span class="setlabel">自动下载并安装更新</span><button type="button" class="sw__SW_AUTOUPD__" role="switch" aria-checked="__SW_AUTOUPD_ARIA__" data-key="autoUpdate"></button></div>
-      <div class="setrow"><span class="setlabel">自动检测插件更新</span><button type="button" class="sw__SW_PLUGINCHK__" role="switch" aria-checked="__SW_PLUGINCHK_ARIA__" data-key="autoCheckPluginUpdates"></button></div>
       <div class="setrow"><span class="setlabel">国内镜像源<span class="host">registry.npmmirror.com</span></span><button type="button" class="sw__SW_MIRROR__" role="switch" aria-checked="__SW_MIRROR_ARIA__" data-key="mirror"></button></div>
     </div>
     <div class="pane" id="pane3" role="tabpanel" hidden>
       <div class="sec">外观</div>
       <div class="setrow"><span class="setlabel">主题</span><span class="themeseg" role="radiogroup" aria-label="主题">__THEME_SEG__</span></div>
       <div class="sec">启动</div>
-      <div class="setrow"><span class="setlabel">就绪后自动打开主窗口</span><button type="button" class="sw__SW_OPENREADY__" role="switch" aria-checked="__SW_OPENREADY_ARIA__" data-key="openOnReady"></button></div>
-      <div class="setrow"><span class="setlabel">侧栏 Deck（实验性，重启后生效）</span><button type="button" class="sw__SW_SIDEBARDECK__" role="switch" aria-checked="__SW_SIDEBARDECK_ARIA__" data-key="sidebarDeck"></button></div>
       <div class="setrow"><span class="setlabel">登录 Windows 时自动启动</span><button type="button" class="sw__SW_AUTOSTART__" role="switch" aria-checked="__SW_AUTOSTART_ARIA__" data-key="launchAtLogin"></button></div>
+      <div class="setrow"><span class="setlabel">就绪后自动打开主窗口</span><button type="button" class="sw__SW_OPENREADY__" role="switch" aria-checked="__SW_OPENREADY_ARIA__" data-key="openOnReady"></button></div>
+      <div class="sec">提醒</div>
+      <div class="setrow"><span class="setlabel">会话完成时弹出通知</span><button type="button" class="sw__SW_NOTIFY__" role="switch" aria-checked="__SW_NOTIFY_ARIA__" data-key="notifyOnComplete"></button></div>
       <div class="sec">关于</div>
       <div class="setrow"><span class="setlabel">Deepseek Harness Launcher</span><span class="muted">__VER__</span></div>
     </div>
@@ -212,7 +212,6 @@ body{
     <span class="stamp" id="stamp" role="status" aria-live="polite">刚刚更新</span>
     <span class="acts">
       <button type="button" class="act primary" id="openBtn" data-act="open">打开主窗口</button>
-      <button type="button" class="act" id="refreshPageBtn" data-act="refresh-page">刷新页面</button>
       <button type="button" class="act" id="restartBtn" data-act="restart">重启</button>
       <button type="button" class="act" data-act="quit">退出</button>
     </span>
@@ -324,8 +323,14 @@ function say(text) {
 }
 
 let restartArmed = false, restartTimer = null;
+// 运行状态看的是标题栏那个状态点：它是 <span class="dot on">，没有 id
+// （之前按 id 取，取到 null 就抛异常，重启按钮点了完全没反应）。
+function isRunning() {
+  const d = document.querySelector('.hd .dot');
+  return !!(d && d.classList.contains('on'));
+}
 function doRestart(btn) {
-  const running = document.getElementById('dot').classList.contains('on');
+  const running = isRunning();
   if (running && !restartArmed) {
     restartArmed = true;
     btn.classList.add('confirm');
@@ -437,7 +442,7 @@ document.addEventListener('click', function (e) {
   if ((el = t.closest('#themeBtn'))) { toggleTheme(); return; }
   if ((el = t.closest('[data-theme-set]'))) { setTheme(el.getAttribute('data-theme-set')); return; }
   if ((el = t.closest('[data-refresh]'))) { doRefresh(el); return; }
-  if ((el = t.closest('.dhl-sw'))) { toggleSw(el); return; }
+  if ((el = t.closest('.sw'))) { toggleSw(el); return; }
   if ((el = t.closest('[data-step]'))) { stepFreq(el.getAttribute('data-step')); return; }
   if ((el = t.closest('#clearAll'))) {
     post('act', { id: 'clear-unread' }).then(function () { say('已清除完成提醒'); });
@@ -450,11 +455,6 @@ document.addEventListener('click', function (e) {
   }
   if ((el = t.closest('[data-jump]'))) { post('jump', { id: el.getAttribute('data-jump') }); return; }
   if ((el = t.closest('#openBtn'))) { post('act', { id: 'open' }); return; }
-  if ((el = t.closest('#refreshPageBtn'))) {
-    post('act', { id: 'refresh-page' });
-    say('正在刷新 Harness 页面…');
-    return;
-  }
   if ((el = t.closest('#restartBtn'))) { doRestart(el); return; }
   if ((el = t.closest('[data-act="quit"]'))) { post('act', { id: 'quit' }); return; }
   // 更新行按钮：之前没有任何处理器，点了没反应（更新 tab 的全部动作）。
@@ -543,14 +543,12 @@ func panelHTML(model panelModel) string {
 		"__SW_AUTOCHK_ARIA__", aria(model.Settings.AutoCheckUpdates),
 		"__SW_AUTOUPD__", swOn(model.Settings.AutoUpdate),
 		"__SW_AUTOUPD_ARIA__", aria(model.Settings.AutoUpdate),
-		"__SW_PLUGINCHK__", swOn(model.Settings.AutoCheckPluginUpdates),
-		"__SW_PLUGINCHK_ARIA__", aria(model.Settings.AutoCheckPluginUpdates),
 		"__SW_MIRROR__", swOn(model.Settings.Mirror),
 		"__SW_MIRROR_ARIA__", aria(model.Settings.Mirror),
 		"__SW_OPENREADY__", swOn(model.Settings.OpenOnReady),
 		"__SW_OPENREADY_ARIA__", aria(model.Settings.OpenOnReady),
-		"__SW_SIDEBARDECK__", swOn(model.Settings.SidebarDeck),
-		"__SW_SIDEBARDECK_ARIA__", aria(model.Settings.SidebarDeck),
+		"__SW_NOTIFY__", swOn(model.Settings.NotifyOnComplete),
+		"__SW_NOTIFY_ARIA__", aria(model.Settings.NotifyOnComplete),
 		"__SW_AUTOSTART__", swOn(model.Settings.LaunchAtLogin),
 		"__SW_AUTOSTART_ARIA__", aria(model.Settings.LaunchAtLogin),
 		"__THEME_SEG__", themeSegHTML(model.Settings.Theme),

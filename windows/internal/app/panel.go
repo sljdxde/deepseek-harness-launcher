@@ -103,6 +103,7 @@ type settingsModel struct {
 	OpenOnReady            bool // show the main window when dsh is ready
 	SidebarDeck            bool // experimental takeover sidebar, default off
 	LaunchAtLogin          bool
+	NotifyOnComplete       bool // toast when a session finishes
 }
 
 // panelModel is everything the panel renders.
@@ -138,6 +139,7 @@ func (c *controller) buildPanelModel() panelModel {
 	autoUpdate := c.autoUpdate
 	autoCheckUpdates := c.autoCheckUpdates
 	autoCheckPluginUpdates := c.autoCheckPluginUpdates
+	notifyOnComplete := c.notifyOnComplete
 	registry := c.npmRegistry
 	c.mu.Unlock()
 	launchAtLogin := launchAtLoginEnabled()
@@ -198,6 +200,7 @@ func (c *controller) buildPanelModel() panelModel {
 		OpenOnReady:            autoOpen,
 		SidebarDeck:            sidebarDeck,
 		LaunchAtLogin:          launchAtLogin,
+		NotifyOnComplete:       notifyOnComplete,
 	}
 	return model
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/harnessweb"
+	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/launch"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/session"
 )
 
@@ -165,6 +167,51 @@ func TestSettingsRoundTrip(t *testing.T) {
 // A taskbar button pinned before the action flags existed carries no
 // arguments; clicking it must still take the user straight to Harness —
 // one click, the page, no menu in between. The panel lives on the tray.
+// TestStartLatchIgnoresCheckingState is the regression test for the
+// 2026-11-12 wedge: updating dsh put the launcher into stateChecking and
+// then called Start, which used the state as its "already starting"
+// mutex and returned immediately. dsh never came back, and because Open
+// also skipped on stateChecking the app was dead until it was restarted
+// by hand.
+func TestStartLatchIgnoresCheckingState(t *testing.T) {
+	// an update/restart flow has already parked the launcher in checking
+	c := &controller{state: stateChecking}
+	if got := c.beginStart(); got != startProceed {
+		t.Fatalf("state=checking, no start in flight: decision = %v, want startProceed", got)
+	}
+	if !c.starting {
+		t.Fatal("beginStart did not claim the latch")
+	}
+
+	// a real launch in flight still wins over a second caller
+	if got := c.beginStart(); got != startInFlight {
+		t.Fatalf("second call while starting: decision = %v, want startInFlight", got)
+	}
+
+	// once the launch finishes, Start is callable again
+	c.starting = false
+	if got := c.beginStart(); got != startProceed {
+		t.Fatalf("after the launch finished: decision = %v, want startProceed", got)
+	}
+}
+
+// A launcher that already serves dsh must not start a second one; the
+// same is true while a user-initiated restart owns the transition.
+func TestStartLatchShowsPageWhenUp(t *testing.T) {
+	running := &controller{state: stateRunning}
+	if got := running.beginStart(); got != startShowBrowser {
+		t.Fatalf("state=running: decision = %v, want startShowBrowser", got)
+	}
+	if running.starting {
+		t.Error("state=running must not claim the latch")
+	}
+
+	restarting := &controller{state: stateStopped, restarting: true}
+	if got := restarting.beginStart(); got != startShowBrowser {
+		t.Fatalf("restart in flight: decision = %v, want startShowBrowser", got)
+	}
+}
+
 func TestStartupActionDefaultsToOpen(t *testing.T) {
 	// a plain start records nothing; the second-instance fallback is what
 	// makes an argument-less taskbar click open Harness
@@ -233,5 +280,66 @@ func TestFlattenEnvDedupesCaseInsensitiveKeys(t *testing.T) {
 	}
 	if len(otherLines) != 1 {
 		t.Errorf("unrelated key lost: %v", otherLines)
+	}
+}
+
+// A dsh this launcher started must never fall back to the token URL saved
+// by a previous process: dsh mints a new token on every boot, so the old
+// one renders a 401 page and the user reads it as "dsh 打不开". The saved
+// URL is only an adopted-instance credential.
+func TestHarnessTargetURLNeverUsesStaleTokenForOwnLaunch(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	harnessweb.SaveLastURL("http://127.0.0.1:3080/?token=stale")
+
+	// an adopted instance has no launcher and relies on the saved URL
+	if got := harnessTargetURL(3080, nil); got != "http://127.0.0.1:3080/?token=stale" {
+		t.Errorf("adopted target = %q, want the saved token URL", got)
+	}
+
+	// our own launcher before the entry line: bare port, NOT the stale token
+	l := &launch.Launcher{}
+	if got := harnessTargetURL(3080, l); got != "http://127.0.0.1:3080/" {
+		t.Errorf("own launcher before entry line = %q, want the bare port URL", got)
+	}
+}
+
+// No saved URL and an adopted instance still has to produce something
+// loadable rather than an empty window URL.
+func TestHarnessTargetURLAdoptedWithoutSavedURL(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	if got := harnessTargetURL(3081, nil); got != "http://127.0.0.1:3081/" {
+		t.Errorf("adopted target = %q, want the bare port URL", got)
+	}
+}
+
+// The notification switch must survive a round trip, and an older settings
+// file (written before the switch existed) must read as ON: a launcher
+// that silently stopped toasting would look broken.
+func TestNotifyOnCompleteDefaultsOnAndPersists(t *testing.T) {
+	// absent field = older file = default on
+	var old settingsFile
+	if err := unmarshalJSON([]byte(`{"updateIntervalHours":6}`), &old); err != nil {
+		t.Fatalf("unmarshal legacy settings: %v", err)
+	}
+	if old.NotifyOnComplete != nil {
+		t.Error("a legacy settings file must leave the switch unset (nil = default on)")
+	}
+
+	// an explicit off survives
+	off := false
+	saved := settingsFile{NotifyOnComplete: &off}
+	data, err := marshalJSON(saved)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var restored settingsFile
+	if err := unmarshalJSON(data, &restored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if restored.NotifyOnComplete == nil {
+		t.Fatal("an explicit off was lost; the launcher would start toasting again")
+	}
+	if *restored.NotifyOnComplete {
+		t.Error("an explicit off came back on")
 	}
 }

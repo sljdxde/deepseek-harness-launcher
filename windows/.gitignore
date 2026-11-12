@@ -5,6 +5,9 @@ rsrc_*.syso
 # generated from build.ps1 (the icon list and version come from
 # Resources/Info.plist and the repo's shared icons)
 assets/winres.json
+# the icon ladder genico derives from assets/icons on every build
+assets/app-full.ico
+assets/exe-icons/
 
 # the Node zip the exe embeds (build output; fetch-node.ps1 downloads it,
 # build.ps1 copies it here — a fresh clone gets it from fetch-node)

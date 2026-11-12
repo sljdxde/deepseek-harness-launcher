@@ -14,6 +14,7 @@ package app
 
 import (
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -35,7 +36,14 @@ type dshHost struct {
 	mu      sync.Mutex
 	win     *application.WebviewWindow
 	lastURL string
+	// lastReload debounces the reload chord: holding Ctrl+R makes Windows
+	// repeat WM_HOTKEY every few tens of milliseconds, and eleven
+	// navigations in three seconds leaves the page thrashing.
+	lastReload time.Time
 }
+
+// reloadDebounce is the minimum gap between two page reloads.
+const reloadDebounce = 700 * time.Millisecond
 
 var dshWin = &dshHost{}
 
@@ -141,15 +149,44 @@ func (d *dshHost) Show(app *application.App, url string) {
 }
 
 // Reload refreshes the loaded page without touching dsh — the counterpart
-// of the macOS launcher's ⌘R「刷新 Harness 页面」. ForceReload bypasses the
-// webview cache, so the reload always picks up the current server state.
+// of the macOS launcher's ⌘R「刷新 Harness 页面」.
+//
+// Wails cannot do this on Windows: WebviewWindow.ForceReload() is a noop
+// there, and Reload() goes through window.location.reload() via ExecJS,
+// which does nothing on a dsh-served page (the same reason the launcher
+// stopped injecting scripts into it). What does work is a real WebView2
+// navigation, so reload re-navigates to the URL the window is already on —
+// and re-navigates unconditionally, because SetURL's "same URL, skip"
+// shortcut would swallow exactly this case.
 func (d *dshHost) Reload(app *application.App) {
 	w := d.ensure(app)
 	if w == nil {
 		return
 	}
-	w.ForceReload()
-	applog.Logf("dsh window: page reloaded")
+	url, ok := d.claimReload(time.Now())
+	if !ok {
+		return
+	}
+	w.SetURL(url)
+	applog.Logf("dsh window: page reloaded (%s)", url)
+}
+
+// claimReload decides whether a reload should run now, and records it.
+// It returns the URL to navigate to, and false when the request is either
+// too early (a key-repeat while Ctrl+R is held) or there is no page yet.
+// Split out from Reload so the debounce and the "nothing loaded" guard are
+// testable without a real window.
+func (d *dshHost) claimReload(now time.Time) (string, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.lastURL == "" {
+		return "", false
+	}
+	if now.Sub(d.lastReload) < reloadDebounce {
+		return "", false // a key-repeat, not a new request
+	}
+	d.lastReload = now
+	return d.lastURL, true
 }
 
 // FailurePage points the EXISTING main window at the readable failure
