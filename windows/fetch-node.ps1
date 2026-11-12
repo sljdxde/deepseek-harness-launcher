@@ -48,6 +48,15 @@ if (-not (Test-Path $zipKeep)) {
     Move-Item $zipPath $zipKeep -Force
 }
 
+# The go:embed directive in internal/selfinstall reads the zip from INSIDE
+# the package (assets/node.zip) — go:embed cannot reference files outside
+# the package directory. Mirror the cached zip there on every run, so
+# `go vet` / `go build` work right after this script (ci.yml fetches node
+# before vet for exactly this reason; build.ps1 re-syncs the same file).
+$zipEmbed = Join-Path $winDir (Join-Path "internal" (Join-Path "selfinstall" (Join-Path "assets" "node.zip")))
+New-Item (Split-Path $zipEmbed -Parent) -ItemType Directory -Force | Out-Null
+Copy-Item $zipKeep $zipEmbed -Force
+
 if (Test-Path (Join-Path $nodeDir "node.exe")) {
     Write-Host "==> node already at $nodeDir (zip kept at $zipKeep)"
     & (Join-Path $nodeDir "node.exe") --version
