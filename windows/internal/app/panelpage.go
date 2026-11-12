@@ -202,6 +202,7 @@ body{
       <div class="setrow"><span class="setlabel">主题</span><span class="themeseg" role="radiogroup" aria-label="主题">__THEME_SEG__</span></div>
       <div class="sec">启动</div>
       <div class="setrow"><span class="setlabel">就绪后自动打开主窗口</span><button type="button" class="sw__SW_OPENREADY__" role="switch" aria-checked="__SW_OPENREADY_ARIA__" data-key="openOnReady"></button></div>
+      <div class="setrow"><span class="setlabel">侧栏 Deck（实验性，重启后生效）</span><button type="button" class="sw__SW_SIDEBARDECK__" role="switch" aria-checked="__SW_SIDEBARDECK_ARIA__" data-key="sidebarDeck"></button></div>
       <div class="setrow"><span class="setlabel">登录 Windows 时自动启动</span><button type="button" class="sw__SW_AUTOSTART__" role="switch" aria-checked="__SW_AUTOSTART_ARIA__" data-key="launchAtLogin"></button></div>
       <div class="sec">关于</div>
       <div class="setrow"><span class="setlabel">Deepseek Harness Launcher</span><span class="muted">__VER__</span></div>
@@ -536,6 +537,8 @@ func panelHTML(model panelModel) string {
 		"__SW_MIRROR_ARIA__", aria(model.Settings.Mirror),
 		"__SW_OPENREADY__", swOn(model.Settings.OpenOnReady),
 		"__SW_OPENREADY_ARIA__", aria(model.Settings.OpenOnReady),
+		"__SW_SIDEBARDECK__", swOn(model.Settings.SidebarDeck),
+		"__SW_SIDEBARDECK_ARIA__", aria(model.Settings.SidebarDeck),
 		"__SW_AUTOSTART__", swOn(model.Settings.LaunchAtLogin),
 		"__SW_AUTOSTART_ARIA__", aria(model.Settings.LaunchAtLogin),
 		"__THEME_SEG__", themeSegHTML(model.Settings.Theme),

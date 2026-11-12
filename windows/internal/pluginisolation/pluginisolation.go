@@ -257,16 +257,17 @@ func StagedSidebarDeckPatchFile(dir string) (string, error) {
 // StageBootPatches computes the three --patch slots for one boot.
 //
 //   - base: the bundled plugins' cordis.patch.yml, only when readable;
-//   - deck: the staged takeover patch, only when the deck resources
-//     shipped, the user has not disabled it, and the write succeeded —
-//     any missing link falls back to the official sidebar (the deck is
-//     an enhancement and must never blank out the sidebar);
+//   - deck: the staged takeover patch, only when the user turned the
+//     experimental deck ON, the deck resources shipped, they have not
+//     disabled it via the panel, and the write succeeded — the deck is
+//     still being tuned, so default OFF keeps the official sidebar;
+//     any missing link fails open the same way;
 //   - disabled: the staged user-disable overlay ("" when nothing is
 //     disabled or the write failed).
 //
 // notes carries the human-readable log lines the macOS launcher appends
 // for every degradation and success.
-func StageBootPatches(pluginsRoot, home string) (base, deck, disabled string, notes []string) {
+func StageBootPatches(pluginsRoot, home string, deckWanted bool) (base, deck, disabled string, notes []string) {
 	basePath := filepath.Join(pluginsRoot, "DSHArchiveManager", "cordis.patch.yml")
 	if readable(basePath) {
 		base = basePath
@@ -277,6 +278,8 @@ func StageBootPatches(pluginsRoot, home string) (base, deck, disabled string, no
 
 	deckSource := filepath.Join(pluginsRoot, "DSHSidebarDeck", "cordis.patch.yml")
 	switch {
+	case !deckWanted:
+		notes = append(notes, "侧栏 Deck 未启用（实验性），本次使用官方侧栏")
 	case !readable(deckSource):
 		notes = append(notes, "未找到侧栏 Deck 资源，本次使用官方侧栏")
 	case IsSidebarDeckDisabled(ReadDisabledState(statePath)):

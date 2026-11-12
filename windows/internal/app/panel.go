@@ -101,6 +101,7 @@ type settingsModel struct {
 	AutoCheckUpdates       bool    // the periodic launcher/dsh checks run
 	AutoCheckPluginUpdates bool
 	OpenOnReady            bool // show the main window when dsh is ready
+	SidebarDeck            bool // experimental takeover sidebar, default off
 	LaunchAtLogin          bool
 }
 
@@ -129,6 +130,7 @@ func (c *controller) buildPanelModel() panelModel {
 	launcherPending := c.pendingLauncherUpdate
 	version := c.version
 	autoOpen := c.openBrowserOnReady
+	sidebarDeck := c.sidebarDeck
 	interval := c.updateIntervalHours
 	dshCurrent := c.dshVersion
 	plugins := c.pluginUpdates
@@ -194,6 +196,7 @@ func (c *controller) buildPanelModel() panelModel {
 		AutoCheckUpdates:       autoCheckUpdates,
 		AutoCheckPluginUpdates: autoCheckPluginUpdates,
 		OpenOnReady:            autoOpen,
+		SidebarDeck:            sidebarDeck,
 		LaunchAtLogin:          launchAtLogin,
 	}
 	return model
@@ -432,6 +435,7 @@ func panelModelMap(model panelModel) map[string]any {
 			"autoCheckUpdates":       model.Settings.AutoCheckUpdates,
 			"autoCheckPluginUpdates": model.Settings.AutoCheckPluginUpdates,
 			"openOnReady":            model.Settings.OpenOnReady,
+			"sidebarDeck":            model.Settings.SidebarDeck,
 			"launchAtLogin":          model.Settings.LaunchAtLogin,
 		},
 	}
@@ -453,7 +457,7 @@ func panelPayload(model panelModel) string {
 			`"plugins":%d,`+
 			`"settings":{"theme":%q,"freq":%v,"autoUpdate":%v,"mirror":%v,`+
 			`"autoCheckUpdates":%v,"autoCheckPluginUpdates":%v,`+
-			`"openOnReady":%v,"launchAtLogin":%v}}`,
+			`"openOnReady":%v,"sidebarDeck":%v,"launchAtLogin":%v}}`,
 		model.Status, model.Running, model.Version,
 		joinStrings(rows, ","), model.UnreadAll,
 		model.Launcher.Current, model.Launcher.Pending, model.Launcher.Label,
@@ -462,7 +466,7 @@ func panelPayload(model panelModel) string {
 		model.Settings.Theme, model.Settings.Freq, model.Settings.AutoUpdate,
 		model.Settings.Mirror, model.Settings.AutoCheckUpdates,
 		model.Settings.AutoCheckPluginUpdates, model.Settings.OpenOnReady,
-		model.Settings.LaunchAtLogin)
+		model.Settings.SidebarDeck, model.Settings.LaunchAtLogin)
 }
 
 func joinStrings(parts []string, sep string) string {

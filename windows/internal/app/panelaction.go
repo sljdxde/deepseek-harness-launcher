@@ -67,6 +67,9 @@ func handlePanelAction(action, id string, w http.ResponseWriter, r *http.Request
 		case "openOnReady":
 			panel.ctl.setOpenOnReady(on)
 			eff = on
+		case "sidebarDeck":
+			panel.ctl.setSidebarDeck(on)
+			eff = on
 		case "launchAtLogin":
 			eff = panel.ctl.setLaunchAtLoginSetting(on)
 		case "autoCheckUpdates":

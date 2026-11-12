@@ -2067,6 +2067,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 任何一环不满足（资源缺失 / 用户停用 / 写盘失败）都返回 nil，退回官方侧栏——
     /// Deck 是“增强”，绝不能因为它的补丁缺失把侧栏弄没。
     private func stagedSidebarDeckPatchPath() -> String? {
+        // Deck 还在优化期：默认关，不进设置界面。只有显式改过 UserDefaults
+        // （sidebarDeckEnabled）才 staging 接管补丁，普通安装始终是官方侧栏。
+        guard settings.sidebarDeckEnabled else {
+            appendLogString("侧栏 Deck 未启用（实验性），本次使用官方侧栏\n")
+            return nil
+        }
         let patchSource = sidebarDeckPluginURL.appendingPathComponent("cordis.patch.yml")
         guard FileManager.default.fileExists(atPath: patchSource.path) else {
             appendLogString("未找到侧栏 Deck 资源，本次使用官方侧栏\n")

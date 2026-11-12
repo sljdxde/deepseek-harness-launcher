@@ -77,10 +77,12 @@ type controller struct {
 	updateIntervalHours    float64
 	autoCheckPluginUpdates bool
 	openBrowserOnReady     bool
-	globalHotKeyEnabled    bool
-	globalHotKey           string
-	desktopShortcut        bool
-	npmRegistry            string
+	// sidebarDeck 是实验性的接管型侧栏（DSHSidebarDeck）：默认关，还在优化。
+	sidebarDeck         bool
+	globalHotKeyEnabled bool
+	globalHotKey        string
+	desktopShortcut     bool
+	npmRegistry         string
 	// restartGuard is set while a user-initiated restart is in flight,
 	// so the exit watcher does not double-launch.
 	restarting bool
@@ -435,6 +437,9 @@ func (c *controller) launchInstalled(port int, env map[string]string) {
 	c.setState(stateChecking, fmt.Sprintf("正在启动（端口 %d）…", port))
 
 	launcher := &launch.Launcher{}
+	c.mu.Lock()
+	launcher.DeckWanted = c.sidebarDeck
+	c.mu.Unlock()
 	launcher.Stdout = func(line string) {
 		applog.Logf("dsh: %s", strings.TrimRight(line, "\r\n"))
 	}
@@ -659,6 +664,15 @@ func (c *controller) setTheme(mode string) {
 func (c *controller) setOpenOnReady(on bool) {
 	c.mu.Lock()
 	c.openBrowserOnReady = on
+	c.mu.Unlock()
+	saveSettings()
+}
+
+// setSidebarDeck toggles the experimental takeover sidebar. It only takes
+// effect on the NEXT dsh launch: the takeover patch is staged per boot.
+func (c *controller) setSidebarDeck(on bool) {
+	c.mu.Lock()
+	c.sidebarDeck = on
 	c.mu.Unlock()
 	saveSettings()
 }

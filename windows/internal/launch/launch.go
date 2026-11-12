@@ -81,6 +81,10 @@ type Launcher struct {
 	port     int
 	entryURL *url.URL // the token-bearing URL captured from stdout
 	Stdout   func(string)
+	// DeckWanted turns the experimental takeover sidebar (DSHSidebarDeck)
+	// on for this boot. The caller reads it from settings before Start;
+	// default zero value false keeps the official sidebar.
+	DeckWanted bool
 }
 
 // EntryURL is the token-bearing URL dsh printed, or nil before it
@@ -152,7 +156,7 @@ func (l *Launcher) Start(ctx context.Context, exePath string, port int, env []st
 	l.entryURL = nil
 	l.mu.Unlock()
 
-	patchBase, patchDeck, patchDisabled, notes := pluginisolation.StageBootPatches(filepath.Join(dataDir(), "plugins"), paths.DSHHome())
+	patchBase, patchDeck, patchDisabled, notes := pluginisolation.StageBootPatches(filepath.Join(dataDir(), "plugins"), paths.DSHHome(), l.DeckWanted)
 	for _, note := range notes {
 		l.emit(note + "\n")
 	}

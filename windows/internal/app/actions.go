@@ -359,10 +359,13 @@ type settingsFile struct {
 	UpdateIntervalHours    float64 `json:"updateIntervalHours,omitempty"`
 	AutoCheckPluginUpdates bool    `json:"autoCheckPluginUpdates"`
 	OpenBrowserOnReady     bool    `json:"openBrowserOnReady"`
-	LaunchAtLogin          bool    `json:"launchAtLogin"`
-	GlobalHotKeyEnabled    bool    `json:"globalHotKeyEnabled"`
-	GlobalHotKey           string  `json:"globalHotKey,omitempty"`
-	DesktopShortcut        bool    `json:"desktopShortcut,omitempty"`
+	// SidebarDeck enables the experimental takeover sidebar (DSHSidebarDeck).
+	// Zero value false = default off while the deck is still being tuned.
+	SidebarDeck         bool   `json:"sidebarDeck,omitempty"`
+	LaunchAtLogin       bool   `json:"launchAtLogin"`
+	GlobalHotKeyEnabled bool   `json:"globalHotKeyEnabled"`
+	GlobalHotKey        string `json:"globalHotKey,omitempty"`
+	DesktopShortcut     bool   `json:"desktopShortcut,omitempty"`
 	// NpmRegistry is the chosen install source; empty means "use the
 	// default chain" (China mirror first, official second).
 	NpmRegistry            string          `json:"npmRegistry,omitempty"`
@@ -406,6 +409,7 @@ func saveSettings() {
 		UpdateIntervalHours:    c.updateIntervalHours,
 		AutoCheckPluginUpdates: c.autoCheckPluginUpdates,
 		OpenBrowserOnReady:     c.openBrowserOnReady,
+		SidebarDeck:            c.sidebarDeck,
 		LaunchAtLogin:          launchAtLoginEnabled(),
 		GlobalHotKeyEnabled:    c.globalHotKeyEnabled,
 		GlobalHotKey:           c.globalHotKey,
@@ -476,6 +480,7 @@ func restoreSessionUnread() {
 		}
 		h.ectx.autoCheckPluginUpdates = settings.AutoCheckPluginUpdates
 		h.ectx.openBrowserOnReady = settings.OpenBrowserOnReady
+		h.ectx.sidebarDeck = settings.SidebarDeck
 		h.ectx.globalHotKeyEnabled = settings.GlobalHotKeyEnabled
 		h.ectx.globalHotKey = settings.GlobalHotKey
 		h.ectx.desktopShortcut = settings.DesktopShortcut

@@ -215,12 +215,12 @@ func TestStagedDisabledPatchFile(t *testing.T) {
 // disabled overlay's empty-vs-staged outcomes.
 func TestStageBootPatches(t *testing.T) {
 	t.Run("没有任何资源时全部退回", func(t *testing.T) {
-		base, deck, disabledPatch, notes := StageBootPatches(filepath.Join(t.TempDir(), "plugins"), t.TempDir())
+		base, deck, disabledPatch, notes := StageBootPatches(filepath.Join(t.TempDir(), "plugins"), t.TempDir(), false)
 		if base != "" || deck != "" || disabledPatch != "" {
 			t.Errorf("空资源应全空: got (%q, %q, %q)", base, deck, disabledPatch)
 		}
-		if len(notes) != 1 || !strings.Contains(notes[0], "未找到侧栏 Deck 资源") {
-			t.Errorf("缺 Deck 资源要有日志: %v", notes)
+		if len(notes) != 1 || !strings.Contains(notes[0], "侧栏 Deck 未启用") {
+			t.Errorf("默认关闭要有日志: %v", notes)
 		}
 	})
 
@@ -229,7 +229,7 @@ func TestStageBootPatches(t *testing.T) {
 		write(t, filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml"), "- insert:\n")
 		write(t, filepath.Join(plugins, "DSHSidebarDeck", "cordis.patch.yml"), RenderSidebarDeckPatch())
 
-		base, deck, disabledPatch, notes := StageBootPatches(plugins, home)
+		base, deck, disabledPatch, notes := StageBootPatches(plugins, home, true)
 		if base != filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml") {
 			t.Errorf("base = %q", base)
 		}
@@ -254,7 +254,7 @@ func TestStageBootPatches(t *testing.T) {
 		write(t, filepath.Join(plugins, "DSHSidebarDeck", "cordis.patch.yml"), RenderSidebarDeckPatch())
 		write(t, DisabledStatePath(home), `{"version":1,"disabled":[{"bundle":"dsh-sidebar-deck","rowIds":["dsh-sidebar-deck"],"disabledAt":"t"},{"bundle":"dsh-context","rowIds":["dsh-context"],"disabledAt":"t"}]}`)
 
-		base, deck, disabledPatch, notes := StageBootPatches(plugins, home)
+		base, deck, disabledPatch, notes := StageBootPatches(plugins, home, true)
 		if base == "" || deck != "" {
 			t.Errorf("Deck 停用后应退回官方侧栏: got (%q, %q)", base, deck)
 		}
@@ -281,7 +281,7 @@ func TestStageBootPatches(t *testing.T) {
 		plugins, home := t.TempDir(), t.TempDir()
 		write(t, filepath.Join(plugins, "DSHSidebarDeck", "cordis.patch.yml"), RenderSidebarDeckPatch())
 
-		base, deck, _, notes := StageBootPatches(plugins, home)
+		base, deck, _, notes := StageBootPatches(plugins, home, true)
 		if base != "" {
 			t.Errorf("base = %q", base)
 		}
@@ -300,7 +300,7 @@ func TestStageBootPatches(t *testing.T) {
 		// plugin-manager 被同名文件占用：MkdirAll 失败，Deck 补丁落不了盘。
 		write(t, DisabledPatchDir(home), "not a directory")
 
-		base, deck, _, notes := StageBootPatches(plugins, home)
+		base, deck, _, notes := StageBootPatches(plugins, home, true)
 		if base != filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml") {
 			t.Errorf("base = %q", base)
 		}
@@ -322,7 +322,7 @@ func TestStageBootPatches(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		base, deck, disabledPatch, notes := StageBootPatches(plugins, home)
+		base, deck, disabledPatch, notes := StageBootPatches(plugins, home, true)
 		if base != filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml") {
 			t.Errorf("base = %q", base)
 		}
@@ -344,7 +344,7 @@ func TestStageBootPatches(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, _, disabledPatch, notes := StageBootPatches(plugins, home)
+		_, _, disabledPatch, notes := StageBootPatches(plugins, home, true)
 		if disabledPatch != "" {
 			t.Errorf("改名失败必须退回: got %q", disabledPatch)
 		}
@@ -354,6 +354,68 @@ func TestStageBootPatches(t *testing.T) {
 		leftovers, err := filepath.Glob(filepath.Join(DisabledPatchDir(home), "*.tmp"))
 		if err != nil || len(leftovers) != 0 {
 			t.Errorf("失败后不得留下临时文件: %v (%v)", leftovers, err)
+		}
+	})
+
+	// Deck 还在优化期：默认关——资源就绪也不接管，官方侧栏原样。
+	t.Run("默认关闭：资源就绪也不接管官方侧栏", func(t *testing.T) {
+		plugins, home := t.TempDir(), t.TempDir()
+		write(t, filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml"), "- insert:\n")
+		write(t, filepath.Join(plugins, "DSHSidebarDeck", "cordis.patch.yml"), RenderSidebarDeckPatch())
+
+		base, deck, _, notes := StageBootPatches(plugins, home, false)
+		if base != filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml") {
+			t.Errorf("base = %q", base)
+		}
+		if deck != "" {
+			t.Errorf("默认必须使用官方侧栏: deck = %q", deck)
+		}
+		if len(notes) != 1 || !strings.Contains(notes[0], "侧栏 Deck 未启用") {
+			t.Errorf("默认关闭要有日志: %v", notes)
+		}
+		// 接管补丁文件也不得落盘（staging 只发生在启用时）。
+		if _, err := os.Stat(filepath.Join(DisabledPatchDir(home), SidebarDeckPatchFileName)); !os.IsNotExist(err) {
+			t.Errorf("未启用时不得写接管补丁: %v", err)
+		}
+	})
+
+	// 开了设置但 Deck 资源缺失：同样退回官方侧栏（fail open）。
+	t.Run("启用但资源缺失退回官方侧栏", func(t *testing.T) {
+		plugins, home := t.TempDir(), t.TempDir()
+		write(t, filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml"), "- insert:\n")
+
+		base, deck, _, notes := StageBootPatches(plugins, home, true)
+		if base == "" || deck != "" {
+			t.Errorf("资源缺失应保留 base、退回 deck: got (%q, %q)", base, deck)
+		}
+		if len(notes) != 1 || !strings.Contains(notes[0], "未找到侧栏 Deck 资源") {
+			t.Errorf("缺资源要有日志: %v", notes)
+		}
+	})
+
+	// 开了设置但用户在面板里明确停用：仍退回官方侧栏，停用层含回启行。
+	t.Run("启用但面板停用仍退回官方侧栏", func(t *testing.T) {
+		plugins, home := t.TempDir(), t.TempDir()
+		write(t, filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml"), "- insert:\n")
+		write(t, filepath.Join(plugins, "DSHSidebarDeck", "cordis.patch.yml"), RenderSidebarDeckPatch())
+		write(t, DisabledStatePath(home), `{"disabled":[{"bundle":"dsh-sidebar-deck","rowIds":["dsh-sidebar-deck"],"disabledAt":"t"}]}`)
+
+		_, deck, disabledPatch, notes := StageBootPatches(plugins, home, true)
+		if deck != "" {
+			t.Errorf("面板停用后退回官方侧栏: deck = %q", deck)
+		}
+		if disabledPatch == "" {
+			t.Fatal("停用层应当落盘")
+		}
+		data, err := os.ReadFile(disabledPatch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "- id: dsh-sidebar-deck\n  disabled: true\n- id: ui-sidebar\n  disabled: false\n"; string(data) != want {
+			t.Errorf("停用层内容: got %q want %q", string(data), want)
+		}
+		if !strings.Contains(notes[0], "侧栏 Deck 已被用户停用") {
+			t.Errorf("停用日志: %v", notes)
 		}
 	})
 }
