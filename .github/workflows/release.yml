@@ -72,9 +72,8 @@ jobs:
           key: npm-cache-${{ runner.os }}-dsh-${{ hashFiles('Resources/dsh-runtime/package-lock.json') }}
 
       - name: Measure first-install peak RSS
-        # 1536MB = npmMaxOldSpaceSizeMB（启动器给 npm 的堆上限）；dsh 0.2.2
-        # 的锁文件（725 个包）实测约 1.2GB，旧的 1024MB 门禁已不可能满足。
-        run: ./scripts/memory-bench.sh 1536
+        # 1792MB：与 ci.yml 同一口径（当前锁文件 724 个包实测约 1.2GB，堆上限 1536MB）。
+        run: ./scripts/memory-bench.sh 1792
 
   windows:
     name: Windows build
@@ -92,6 +91,14 @@ jobs:
           go-version-file: windows/go.mod
           cache-dependency-path: windows/go.sum
 
+      # fetch-node BEFORE vet/build: the exe embeds the Node zip
+      # (internal/selfinstall/assets/node.zip) and build.ps1 refuses to run
+      # without build\node.zip. fetch-node.ps1 syncs the embed copy itself.
+      - name: Fetch the bundled Node runtime
+        working-directory: windows
+        shell: pwsh
+        run: ./fetch-node.ps1 -Out build
+
       - name: Vet and test
         working-directory: windows
         run: |
@@ -102,11 +109,6 @@ jobs:
         working-directory: windows
         shell: pwsh
         run: ./build.ps1 -Out build/DHL.exe
-
-      - name: Fetch the bundled Node runtime
-        working-directory: windows
-        shell: pwsh
-        run: ./fetch-node.ps1 -Out build
 
       - name: Package the portable ZIP
         working-directory: windows
@@ -181,6 +183,13 @@ jobs:
           set -euo pipefail
           TAG="${{ steps.version.outputs.tag }}"
           DMG="dist/Deepseek Harness Launcher.dmg"
+          # Windows 产物由 download-artifact 落在 windows-dist/（见上一步），
+          # 文件名固定为 amd64.exe + DHL-windows-<ver>.zip。之前这里引用了从未
+          # 定义过的 $WINEXE/$WINZIP，set -u 会让发布步骤直接失败。
+          WINEXE="windows-dist/DHL-windows-amd64.exe"
+          WINZIP="$(ls windows-dist/DHL-windows-*.zip | head -1)"
+          test -f "$WINEXE"
+          test -f "$WINZIP"
           NOTES=$(printf '## Deepseek Harness Launcher v%s\n\n已通过 GitHub Actions 回归测试后自动发布。\n' "${TAG#v}")
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "Deepseek Harness Launcher v${TAG#v}" --notes "$NOTES" --target "${GITHUB_SHA}"

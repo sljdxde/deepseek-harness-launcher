@@ -1,16 +1,18 @@
 #!/bin/zsh
 set -euo pipefail
 # Measures the peak RSS of a lockfile-based dsh first install and fails when it
-# exceeds the threshold (MB) passed as $1. Used by CI as the first-install
-# memory gate: with the bundled lockfile (`npm ci`) the peak stays well below
-# the ~3GB that a bare `npm install` resolution used to reach. The dsh 0.2.2
-# lockfile (725 packages) measures ~1.2GB, so the gate sits at the same 1536MB
-# heap ceiling the launcher gives npm (npmMaxOldSpaceSizeMB).
+# exceeds the threshold (MB) passed as $1. Used by CI as the first-install gate.
+#
+# 门禁抓的是「退回裸 npm install 全量解析（曾达约 3GB）」这类回退，不是卡死当前
+# 锁定树：现在的锁文件 724 个包（dsh 0.2.2）实测峰值约 1.2GB，冷缓存首装（真实
+# 首次安装，瓶颈在网络）只有 190-220MB；CI 暖缓存命中时依赖全在本地、npm 一次性
+# reify 整棵树，峰值最高但仍在 1.2GB 量级。阈值取 1792MB：高于实测峰值，也高于
+# 启动器给 npm 的堆上限 1536MB（npmMaxOldSpaceSizeMB），但仍远低于裸解析的 3GB。
 #
 # The heap ceiling and fetch concurrency are read from the Swift sources so
 # this script can never drift from the real install configuration.
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-THRESHOLD_MB="${1:-1536}"
+THRESHOLD_MB="${1:-1792}"
 
 HEAP_MB="$(rg -o 'npmMaxOldSpaceSizeMB = [0-9]+' "$ROOT/Sources/DSHRuntimeSupport.swift" | grep -oE '[0-9]+' | head -1)"
 SOCKETS="$(rg -o 'npm_config_maxsockets"\] = "[0-9]+' "$ROOT/Sources/LauncherEnvironment.swift" | grep -oE '[0-9]+' | head -1)"

@@ -23,6 +23,10 @@ $ErrorActionPreference = "Stop"
 $winDir = $PSScriptRoot
 $nodeDir = Join-Path $winDir "$Out\node"
 $zipKeep = Join-Path $winDir "$Out\node.zip"
+# the copy go:embed compiles in (internal/selfinstall/assets/node.zip).
+# Synced here, not only in build.ps1, so `go vet` / `go test` work right
+# after fetch-node without running a full build first.
+$zipEmbed = Join-Path $winDir "internal\selfinstall\assets\node.zip"
 
 if (-not (Test-Path $zipKeep)) {
     $zipName = "node-$Version-win-x64.zip"
@@ -56,6 +60,7 @@ if (-not (Test-Path $zipKeep)) {
 $zipEmbed = Join-Path $winDir (Join-Path "internal" (Join-Path "selfinstall" (Join-Path "assets" "node.zip")))
 New-Item (Split-Path $zipEmbed -Parent) -ItemType Directory -Force | Out-Null
 Copy-Item $zipKeep $zipEmbed -Force
+Write-Host "==> node.zip synced into internal/selfinstall/assets"
 
 if (Test-Path (Join-Path $nodeDir "node.exe")) {
     Write-Host "==> node already at $nodeDir (zip kept at $zipKeep)"

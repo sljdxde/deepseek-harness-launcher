@@ -67,7 +67,7 @@ App 图标与菜单栏图标派生自官方 `deepseek-harness-desktop`（MIT 协
 - 已安装可从终端使用的 Node.js（建议 Node 22 或与当前 dsh 兼容的 LTS）及 npm。Deepseek Harness Launcher 不携带 Node 运行时。
 - 网络仅在首次安装/更新 `@deepseek-ai/dsh` 或检查/下载 Deepseek Harness Launcher 更新时需要。
 
-首次启动会先执行安装。App 内置锁定版本的 `dsh-runtime/package-lock.json`，安装走低内存的 `npm ci`（复放已解析的依赖集，峰值约 0.3-0.6GB，避免裸 `npm install` 全量解析导致的约 3GB 内存占用）：
+首次启动会先执行安装。App 内置锁定版本的 `dsh-runtime/package-lock.json`，安装走低内存的 `npm ci`（复放已解析的依赖集，避免裸 `npm install` 全量解析导致的约 3GB 内存占用）。实测峰值：冷缓存首装约 190-220MB；npm 缓存已命中时约 1.2-1.3GB（依赖全在本地，npm 一次性 reify 整棵树），对应 V8 上限 1536MB：
 
 ```sh
 npm ci --prefix ~/.dsh/runtime --no-audit --no-fund --prefer-offline \

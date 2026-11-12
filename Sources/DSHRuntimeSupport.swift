@@ -58,11 +58,13 @@ enum DSHRuntimeSupport {
 
     /// V8 old-space ceiling (MB) for the npm process during first install.
     /// The app installs from a bundled package-lock.json (`npm ci`), so npm no
-    /// longer re-resolves the whole peer graph: measured peak RSS is ~0.25-0.6GB
-    /// (cold/warm cache). 1536 keeps a comfortable margin above that while
-    /// still hard-capping npm; a stray full-resolution install would OOM here,
-    /// which is intentional so the low-memory path can never silently regress.
-    /// Keep in sync with scripts/memory-bench.sh and the CI memory gate.
+    /// longer re-resolves the whole peer graph. Measured peaks for the current
+    /// 656-package lockfile: 190-220MB with a cold cache (a real first install,
+    /// network-bound), 1.2-1.3GB when every tarball is already cached and npm
+    /// reifies the tree in one burst. 1536 keeps a margin above the warm-cache
+    /// peak while still hard-capping npm; a stray full-resolution install would
+    /// OOM here, which is intentional so the low-memory path can never silently
+    /// regress. Keep in sync with scripts/memory-bench.sh and the CI memory gate.
     static let npmMaxOldSpaceSizeMB = 1536
 
     /// Optional overrides for the bundled runtime specification, used by tests

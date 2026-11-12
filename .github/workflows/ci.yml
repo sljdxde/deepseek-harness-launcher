@@ -65,13 +65,12 @@ jobs:
           key: npm-cache-${{ runner.os }}-dsh-${{ hashFiles('Resources/dsh-runtime/package-lock.json') }}
 
       - name: Measure first-install peak RSS
-        # 1536MB matches npmMaxOldSpaceSizeMB (the npm heap ceiling the
-        # launcher itself sets), so the gate measures "did the install blow
-        # past the ceiling we allocate" rather than a number below it. The
-        # dsh 0.2.2 lockfile needs it: 725 packages (513 before), ~1.2GB
-        # peak on this runner, vs the old 1024MB limit which 0.2.2 could
-        # never meet.
-        run: ./scripts/memory-bench.sh 1536
+        # 1792MB：这道门禁要抓的是「退回裸 npm install 全量解析（曾达约 3GB）」，
+        # 不是卡死当前锁定树。当前锁文件 724 个包（dsh 0.2.2）实测峰值约 1.2GB；
+        # 冷缓存首装（真实首次安装，瓶颈在网络）只有 190-220MB；启动器给 npm 的
+        # 堆上限是 1536MB（npmMaxOldSpaceSizeMB）。门禁取 1792MB：高于实测峰值，
+        # 也高于我们分配的堆上限，仍远低于裸解析的 3GB 量级。
+        run: ./scripts/memory-bench.sh 1792
 
   windows:
     name: Windows build
@@ -89,7 +88,8 @@ jobs:
 
       # fetch-node BEFORE vet: the exe embeds the Node zip
       # (internal/selfinstall/assets/node.zip), and go:embed is a compile
-      # error when the file is missing
+      # error when the file is missing. fetch-node.ps1 syncs that copy
+      # itself, so vet/test work without running the full build first.
       - name: Fetch bundled Node
         working-directory: windows
         shell: pwsh

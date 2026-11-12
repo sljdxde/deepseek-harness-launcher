@@ -71,7 +71,7 @@ npm ci --prefix ~/.dsh/runtime --no-audit --no-fund --prefer-offline \
   --registry <registry>
 ```
 
-The app ships a pinned `dsh-runtime/package-lock.json`, so the install replays an already-resolved dependency set through `npm ci` (peak RSS around 0.3-0.6 GB instead of the about 3 GB a bare `npm install` can need while re-resolving the whole graph).
+The app ships a pinned `dsh-runtime/package-lock.json`, so the install replays an already-resolved dependency set through `npm ci` instead of the about 3 GB a bare `npm install` can need while re-resolving the whole graph. Measured peaks: about 190-220 MB with a cold cache, about 1.2-1.3 GB once every tarball is cached (npm reifies the whole tree in one burst); the V8 ceiling is 1536 MB.
 
 Updating dsh never re-resolves the graph either: when a new app version ships a newer lockfile, the launcher **asks once** on start (**Update runtime** / **Later**). Choosing **Later** does not block anything — the current runtime starts as usual and the menu keeps an **Update runtime to vX (bundled)** entry you can use at any time. The launcher never starts an install just because an update exists.
 

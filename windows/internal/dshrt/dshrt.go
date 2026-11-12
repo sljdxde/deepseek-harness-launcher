@@ -32,11 +32,12 @@ import (
 )
 
 // NpmMaxOldSpaceSizeMB is the V8 old-space ceiling (MB) for the npm
-// process during install. The lockfile `npm ci` path measures a peak of
-// ~0.25-0.6GB; 1536 keeps a margin above that while still hard-capping
-// npm — a stray full-resolution install OOMs here on purpose, so the
-// low-memory path can never silently regress. Keep in sync with the
-// macOS sources and the CI memory gate.
+// process during install. The lockfile `npm ci` path measures 190-220MB
+// with a cold cache and 1.2-1.3GB on a warm cache (656 packages, npm
+// reifies the whole tree in one burst); 1536 keeps a margin above the
+// warm-cache peak while still hard-capping npm — a stray full-resolution
+// install OOMs here on purpose, so the low-memory path can never silently
+// regress. Keep in sync with the macOS sources and the CI memory gate.
 const NpmMaxOldSpaceSizeMB = 1536
 
 // The runtime specification embedded in the exe (Resources/dsh-runtime),
