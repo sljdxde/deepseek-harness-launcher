@@ -198,9 +198,9 @@ func setTaskbarBadge(count int) {
 	// available when the overlay interface is missing, and it doubles as
 	// the tooltip on shells that do have it
 	if text == "" {
-		setTaskbarTitle("DeepSeek Harness")
+		setTaskbarTitle("Deepseek Harness")
 	} else {
-		setTaskbarTitle("(" + text + ") DeepSeek Harness")
+		setTaskbarTitle("(" + text + ") Deepseek Harness")
 	}
 
 	// the icon itself carries the count. This is the PRIMARY path, not a

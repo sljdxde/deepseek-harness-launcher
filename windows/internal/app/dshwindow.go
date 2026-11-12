@@ -19,11 +19,15 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/applog"
+	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/harnessweb"
 )
 
 const (
-	dshWindowName  = "dsh-main"
-	dshWindowTitle = "DeepSeek Harness"
+	dshWindowName = "dsh-main"
+	// Brand casing matches the macOS launcher's HarnessWindowSupport
+	// windowTitle ("Deepseek Harness") — the window title is the shared
+	// brand surface across platforms.
+	dshWindowTitle = "Deepseek Harness"
 )
 
 // dshHost keeps the main window.
@@ -59,6 +63,11 @@ func (d *dshHost) ensure(app *application.App) *application.WebviewWindow {
 			Title:  dshWindowTitle,
 			Width:  1440,
 			Height: 900,
+			// The macOS launcher refuses to shrink below 960×600
+			// (minimumWindowSize): the Harness layout is a three-column
+			// design that collapses below that.
+			MinWidth:  960,
+			MinHeight: 600,
 			// A normal framed window: it owns the taskbar button, can be
 			// pinned, and Windows handles activate/restore/minimise for us.
 			Frameless:       false,
@@ -141,6 +150,29 @@ func (d *dshHost) Reload(app *application.App) {
 	}
 	w.ForceReload()
 	applog.Logf("dsh window: page reloaded")
+}
+
+// FailurePage points the EXISTING main window at the readable failure
+// card (the macOS failureHTML design). A window that was never opened
+// stays untouched: a dead dsh must not pop a window up on its own. The
+// next successful prepareHarnessURL replaces the card with the live page.
+func (d *dshHost) FailurePage(message, detail string) {
+	d.mu.Lock()
+	w := d.win
+	if w == nil {
+		d.mu.Unlock()
+		return
+	}
+	url := harnessweb.FailureDataURL(message, detail)
+	same := url == d.lastURL
+	if !same {
+		d.lastURL = url
+	}
+	d.mu.Unlock()
+	if !same {
+		w.SetURL(url)
+		applog.Logf("dsh window: failure page shown (%s)", message)
+	}
 }
 
 // Hide minimises the main window (the shell does this itself too).

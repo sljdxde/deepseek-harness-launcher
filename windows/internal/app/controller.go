@@ -456,6 +456,7 @@ func (c *controller) launchInstalled(port int, env map[string]string) {
 		}
 		c.setState(stateFailed, "启动失败")
 		applog.Logf("launch failed: %v", err)
+		dshWin.FailurePage("Harness 启动失败", err.Error())
 		bringToFront()
 		warn("Deepseek Harness Launcher", "dsh 启动失败："+err.Error())
 		return
@@ -491,7 +492,13 @@ func (c *controller) launchInstalled(port int, env map[string]string) {
 			c.Start()
 			return
 		}
+		c.mu.Lock()
+		c.port = 0 // the served port died with it; refresh/open must not target a corpse
+		c.mu.Unlock()
 		c.setState(stateFailed, "已退出")
+		// the macOS launcher's failure card: a readable page in the
+		// window instead of a stale interactive-looking page
+		dshWin.FailurePage("Harness 服务已退出", err.Error())
 		applog.Logf("dsh exited: %v", err)
 	}()
 

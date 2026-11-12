@@ -30,11 +30,11 @@ import (
 // own bundled plugins — disabling them disables the project.
 // (Renderer parity with the Swift source; unused by the user-disable path.)
 var protectedBundles = map[string]bool{
-	"@deepseek-ai/dsh-base":  true,
+	"@deepseek-ai/dsh-base":    true,
 	"@deepseek-ai/dsh-web-app": true,
-	"dsh-archive-manager":    true,
-	"dsh-plugin-manager":     true,
-	"dsh-session-notify":     true,
+	"dsh-archive-manager":      true,
+	"dsh-plugin-manager":       true,
+	"dsh-session-notify":       true,
 }
 
 // Bundles the panel refuses to disable: the core layers and the plugin
