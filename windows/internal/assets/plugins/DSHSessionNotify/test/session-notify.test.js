@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { name, apply, summarizeTurnEnd, summarizeTurnStart, sessionLabelFromId, createPresenceTracker, createCommandQueue, PRESENCE_TTL_MS, FOCUSED_CLIENT_GRACE_MS } from '../lib/index.js';
+import { name, apply, summarizeTurnEnd, summarizeTurnStart, sessionLabelFromId, createPresenceTracker, createCommandQueue, createCompletionIndex, PRESENCE_TTL_MS, FOCUSED_CLIENT_GRACE_MS } from '../lib/index.js';
 
 /** A session whose event log ends with a `session/title`. */
 function makeSession({ id = 'sess-1234-abcd', origin = undefined, title = null, events = [] } = {}) {
@@ -547,4 +547,71 @@ test('requireEmbedded 命令走真实路由：/open 带标记，列表按 embedd
   });
   assert.equal(embeddedClaim.status, 200);
   assert.equal(embeddedClaim.json().command.sessionId, 'session-route');
+});
+
+test('createCompletionIndex 记录完成、再完成移到最新、超限淘汰最老', () => {
+  const index = createCompletionIndex(2);
+  index.record('a', 1, 'A');
+  index.record('b', 2, 'B');
+  assert.deepEqual(index.ids(), ['a', 'b']);
+  // 同一会话再次完成：移到最新，淘汰时留下的是最老的那些。
+  index.record('a', 3, 'A2');
+  assert.deepEqual(index.ids(), ['b', 'a']);
+  index.record('c', 4, 'C');
+  assert.deepEqual(index.ids(), ['a', 'c']);
+  // 空 id 忽略；at 非数字退化为当前时间（不炸）。
+  index.record('', 5);
+  assert.deepEqual(index.ids(), ['a', 'c']);
+  // 上限 2：record('d') 淘汰最老的 a。
+  index.record('d');
+  assert.deepEqual(index.ids(), ['c', 'd']);
+  assert.equal(index.size(), 2);
+});
+
+test('launcher-config 打开红点开关后，命令轮询携带 completedIds', async () => {
+  const harness = makeHarness();
+  apply(harness.ctx);
+  harness.emit('session/event', makeSession({ id: 's1', title: 'T' }), turnEnd('completed'));
+
+  // 开关未开：轮询响应没有 completedIds（mac 启动器从不 POST，红点保持休眠）。
+  const before = await harness.call('/dsh-session-notify/commands', {
+    url: '/dsh-session-notify/commands?clientId=c1',
+  });
+  assert.equal('completedIds' in before.json(), false);
+
+  // GET 不允许。
+  const wrongMethod = await harness.call('/dsh-session-notify/launcher-config', { method: 'GET' });
+  assert.equal(wrongMethod.status, 405);
+
+  // 打开开关。
+  const config = await harness.call('/dsh-session-notify/launcher-config', {
+    method: 'POST',
+    body: JSON.stringify({ sidebarDots: true }),
+  });
+  assert.deepEqual(config.json(), { ok: true, sidebarDots: true });
+
+  const feed = await harness.call('/dsh-session-notify/commands', {
+    url: '/dsh-session-notify/commands?clientId=c1',
+  });
+  assert.deepEqual(feed.json().completedIds, ['s1']);
+
+  // 「看过即已读」只撤销未读，不撤销完成标记：viewed 之后红点数据源仍在。
+  harness.emit('session/event', makeSession({ id: 's2', title: 'U' }), turnEnd('completed'));
+  await harness.call('/dsh-session-notify/commands', {
+    url: '/dsh-session-notify/commands?clientId=c1&viewing=s2',
+  });
+  const afterViewed = await harness.call('/dsh-session-notify/commands', {
+    url: '/dsh-session-notify/commands?clientId=c1',
+  });
+  assert.deepEqual(afterViewed.json().completedIds, ['s1', 's2']);
+
+  // 关掉开关（其它部署形态）→ 字段再次消失。
+  await harness.call('/dsh-session-notify/launcher-config', {
+    method: 'POST',
+    body: JSON.stringify({ sidebarDots: false }),
+  });
+  const afterOff = await harness.call('/dsh-session-notify/commands', {
+    url: '/dsh-session-notify/commands?clientId=c1',
+  });
+  assert.equal('completedIds' in afterOff.json(), false);
 });

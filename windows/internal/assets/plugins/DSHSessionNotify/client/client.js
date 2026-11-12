@@ -148,6 +148,185 @@ window.__ModuleLoader__.load({ id: "dsh-session-notify", factory: () => {
     return true
   }
 
+  // ---------------------------------------------------------------------------
+  // 侧栏「已完成」红点（内置窗口）。
+  //
+  // macOS 启动器从窗口侧注入同语义脚本（HarnessWindowSupport.sidebarCompletionScript）；
+  // Windows 的 WebView2 注不进去（ExecJS 对 dsh 页面无效），改走插件通道：
+  // 启动器 POST launcher-config 打开开关后，服务端把完成过的会话 id 挂在
+  // 命令轮询的响应上（feed.completedIds）。开关不开（mac 的启动器从不 POST）
+  // 时这段代码完全不激活，两个平台的红点互不打架。
+  //
+  // 用户可见语义（按优先级，与 macOS 版一致）：
+  // 1. 当前选中的会话不画：人已经在里面，选中即视为已看并记住（sessionStorage）；
+  // 2. 点击该行 → 视为已看，本次完成不再复发；
+  // 3. 同一会话再次完成（id 从集合里消失后重新出现）→ 清掉旧「已看」记录，红点重现；
+  // 4. dsh 自己已经显示「已完成」状态时不重复画。
+  // ---------------------------------------------------------------------------
+
+  const DOT_CLASS = 'dhl-completed-dot';
+  const DISMISS_KEY = 'dhl-completed-dismissed';
+
+  function sessionStorageAPI() {
+    try {
+      if (typeof sessionStorage !== 'undefined' && sessionStorage) return sessionStorage;
+    } catch { /* 取不到（隐私模式等）就当作没有 */ }
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) return window.sessionStorage;
+    } catch { /* 同上 */ }
+    return null;
+  }
+
+  function loadDismissed() {
+    const store = sessionStorageAPI();
+    if (!store) return new Set();
+    try {
+      const raw = store.getItem(DISMISS_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(list) ? list.filter(item => typeof item === 'string') : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  function persistDismissed(dismissed) {
+    const store = sessionStorageAPI();
+    if (!store) return;
+    try { store.setItem(DISMISS_KEY, JSON.stringify([...dismissed])); } catch { /* 存不下就只活在本页 */ }
+  }
+
+  function rowKey(row) {
+    try { return (row.getAttribute && row.getAttribute('data-row-key')) || ''; } catch { return ''; }
+  }
+
+  function rowIsSelected(row) {
+    try {
+      if (row.getAttribute && row.getAttribute('aria-selected') === 'true') return true;
+      const cls = typeof row.className === 'string' ? row.className : '';
+      return /(^|[_-])selected([_-]|$)/.test(cls);
+    } catch {
+      return false;
+    }
+  }
+
+  function rowHasNativeDoneMark(row) {
+    try {
+      return Array.from(typeof row.querySelectorAll === 'function' ? row.querySelectorAll('span') : [])
+        .some(el => el.textContent === '已完成' || el.textContent === 'Completed');
+    } catch {
+      return false;
+    }
+  }
+
+  function rowDot(row) {
+    try { return typeof row.querySelector === 'function' ? row.querySelector(`.${DOT_CLASS}`) : null; } catch { return null; }
+  }
+
+  function makeDot() {
+    const mark = document.createElement('span');
+    mark.className = DOT_CLASS;
+    mark.title = '任务已完成';
+    try { mark.setAttribute('aria-label', '任务已完成'); } catch { /* 标注是尽力而为 */ }
+    mark.style = mark.style || {};
+    mark.style.cssText = 'display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:#ff3b30;margin-inline-start:6px;';
+    return mark;
+  }
+
+  function removeDot(row) {
+    const dot = rowDot(row);
+    if (dot && typeof row.removeChild === 'function') row.removeChild(dot);
+  }
+
+  /** 一轮红点维护。rows/ids/dismissed 都显式传入，便于在测试替身里驱动。 */
+  function ensureCompletionDots(rows, ids, dismissed) {
+    for (const row of rows) {
+      const key = rowKey(row);
+      if (!key.startsWith('session:')) continue;
+      const id = key.slice(8);
+      if (!ids.has(id)) { removeDot(row); continue; }
+      // 当前选中的会话：人已经在里面，完成提示视为已看。
+      if (rowIsSelected(row) && !dismissed.has(id)) {
+        dismissed.add(id);
+        persistDismissed(dismissed);
+      }
+      const want = ids.has(id) && !dismissed.has(id) && !rowHasNativeDoneMark(row);
+      const dot = rowDot(row);
+      if (want && !dot) {
+        try { row.appendChild(makeDot()); } catch { /* 画不出就这轮不画 */ }
+      } else if (!want && dot) {
+        removeDot(row);
+      }
+    }
+  }
+
+  function documentRows() {
+    try {
+      if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return [];
+      return Array.from(document.querySelectorAll('[data-row-key]') || []);
+    } catch {
+      return [];
+    }
+  }
+
+  let completionWatchersInstalled = false;
+  function installCompletionWatchers(dismissed) {
+    if (completionWatchersInstalled || typeof document === 'undefined') return;
+    completionWatchersInstalled = true;
+    // MutationObserver 默认不监听属性变化，attributes 必须显式开：键盘/程序
+    // 切会话不改子节点，只改 aria-selected。没有 MutationObserver（测试沙箱、
+    // 老内核）就退化为每次轮询维护一次。
+    if (typeof MutationObserver === 'function' && document.body) {
+      try {
+        const observer = new MutationObserver(() => {
+          const ids = window.__dhlCompletedIds;
+          if (ids) ensureCompletionDots(documentRows(), ids, window.__dhlCompletionDismissed || dismissed);
+        });
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['aria-selected'],
+        });
+      } catch { /* 观察不了就靠轮询兜底 */ }
+    }
+    // 点击该行 → 视为已看，红点消失且本次完成不再复发。
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('click', event => {
+        const target = event && event.target;
+        const row = target && typeof target.closest === 'function' ? target.closest('[data-row-key]') : null;
+        if (!row) return;
+        const key = rowKey(row);
+        if (!key.startsWith('session:')) return;
+        const id = key.slice(8);
+        const ids = window.__dhlCompletedIds;
+        if (!ids || !ids.has(id)) return;
+        const current = window.__dhlCompletionDismissed || dismissed;
+        current.add(id);
+        persistDismissed(current);
+        removeDot(row);
+      }, true);
+    }
+  }
+
+  /** 服务端下发的完成集合变化 → 维护红点。list 不是数组时（开关没开）是空操作。 */
+  function updateCompletionDots(list) {
+    if (!Array.isArray(list)) return;
+    const ids = new Set(list.filter(item => typeof item === 'string'));
+    const previous = window.__dhlCompletedIds || new Set();
+    if (!window.__dhlCompletionDismissed) window.__dhlCompletionDismissed = loadDismissed();
+    const dismissed = window.__dhlCompletionDismissed;
+    // 新完成（上一轮不在集合里）的会话要清掉之前的「已看」记录，否则同一
+    // 会话第二次完成时红点不会出现。
+    let dismissedChanged = false;
+    for (const id of ids) {
+      if (!previous.has(id) && dismissed.delete(id)) dismissedChanged = true;
+    }
+    if (dismissedChanged) persistDismissed(dismissed);
+    window.__dhlCompletedIds = ids;
+    ensureCompletionDots(documentRows(), ids, dismissed);
+    installCompletionWatchers(dismissed);
+  }
+
   function apply(ctx) {
     const id = clientId()
     ctx.effect(() => {
@@ -174,6 +353,9 @@ window.__ModuleLoader__.load({ id: "dsh-session-notify", factory: () => {
           const visibility = pageIsVisible() ? 1 : 0
           const feed = await readJSON(`${COMMANDS_URL}?clientId=${encodeURIComponent(id)}&viewing=${encodeURIComponent(viewingSession(snapshot))}&visible=${visibility}&embedded=${pageLooksEmbedded() ? 1 : 0}`)
           if (disposed || !Array.isArray(feed?.items)) return
+          // 侧栏「已完成」红点：纯展示，放在领取闸门之前——不该被「这个页面
+          // 能不能领命令」挡住。开关没开时 feed 里没有 completedIds，这里是空操作。
+          if (Array.isArray(feed.completedIds)) updateCompletionDots(feed.completedIds)
           // 不是用户正在操作的外部 Chrome 页面：不要领取跳转命令，留给内置窗口。
           if (!canClaimCommands()) return
           for (const item of feed.items) {

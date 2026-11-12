@@ -15,6 +15,11 @@
  *       opening a new tab when AppleScript cannot address the right instance)
  *   POST /dsh-session-notify/open { sessionId }
  *     → queues a short-lived browser navigation command
+ *   POST /dsh-session-notify/launcher-config { sidebarDots }
+ *     → the embedded-window launcher turns the sidebar completion dots on
+ *       (Windows: its WebView2 cannot have scripts injected, so the dots are
+ *       rendered by this plugin's client fed through the commands poll;
+ *       macOS never POSTs and keeps its injected script)
  *   GET /dsh-session-notify/presence
  *     → { active, clients, visible }: is an injected Harness page polling right
  *       now, and is any of its tabs visible?
@@ -320,6 +325,36 @@ export function createCommandQueue() {
 }
 
 /**
+ * 已完成会话索引：侧栏「已完成」红点的数据源（launcher-config 开关打开后
+ * 随命令轮询以 `completedIds` 下发）。与轮询缓冲区分开——viewed/resumed 不
+ * 撤销完成标记，红点要一直亮到用户看过（选中/点击，客户端记 sessionStorage）
+ * 或同一会话再次完成。超过上限时按完成时间淘汰最老的。
+ * @param {number} limit - 保留多少个会话的完成记录。
+ */
+export function createCompletionIndex(limit = 100) {
+  /** sessionId → 最近一次完成（{at, title}），插入顺序即完成顺序。 */
+  const completions = new Map();
+  return {
+    record(sessionId, at = Date.now(), title = '') {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return;
+      // 先删再插：同一会话再次完成要移到最新（淘汰时留下的是最老的那些）。
+      completions.delete(sessionId);
+      completions.set(sessionId, { at: typeof at === 'number' ? at : Date.now(), title });
+      while (completions.size > limit) {
+        completions.delete(completions.keys().next().value);
+      }
+    },
+    /** 完成过的会话 id（完成时间升序；客户端只当集合用）。 */
+    ids() {
+      return [...completions.keys()];
+    },
+    size() {
+      return completions.size;
+    },
+  };
+}
+
+/**
  * Plugin entry: buffer root-session turn ends and serve them to the launcher.
  * @param {import("@deepseek-ai/cordis").Context} ctx - host plugin context.
  */
@@ -329,6 +364,13 @@ export function apply(ctx) {
   const items = [];
   const commands = createCommandQueue();
   const presence = createPresenceTracker();
+  const completions = createCompletionIndex(100);
+  /**
+   * 侧栏「已完成」红点开关：只有内置窗口启动器会打开。macOS 的启动器从不
+   * POST（它的红点由窗口注入脚本负责），外部环境拿不到 completedIds，
+   * 客户端的红点逻辑保持休眠——两个平台的红点互不打架。
+   */
+  let sidebarDots = false;
   /** sessionId → 这个会话最后一条记录的种类（启动器据此判断「有没有未读」）。 */
   const lastKindBySession = new Map();
 
@@ -336,6 +378,7 @@ export function apply(ctx) {
     seq += 1;
     items.push({ seq, ...record });
     lastKindBySession.set(record.sessionId, record.kind);
+    if (record.kind === 'completion') completions.record(record.sessionId, record.at, record.title);
     if (items.length > BUFFER_LIMIT) items.splice(0, items.length - BUFFER_LIMIT);
   }
 
@@ -417,6 +460,20 @@ export function apply(ctx) {
           }
         },
       });
+      const configDispose = host.webServer.register({
+        kind: 'exact',
+        path: '/dsh-session-notify/launcher-config',
+        handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            sidebarDots = value.sidebarDots === true;
+            json(res, { ok: true, sidebarDots });
+          } catch (error) {
+            jsonStatus(res, 400, { error: String(error?.message || error) });
+          }
+        },
+      });
       const listDispose = host.webServer.register({
         kind: 'exact',
         path: '/dsh-session-notify/commands',
@@ -444,7 +501,11 @@ export function apply(ctx) {
               if (viewing && pendingCompletion(viewing)) pushViewed(viewing, titleFor(viewing));
             }
           } catch { /* a poll without clientId still gets the queue */ }
-          json(res, { items: commands.list(Date.now(), { embedded }) });
+          const payload = { items: commands.list(Date.now(), { embedded }) };
+          // 开关开着才带完成集合：页面没有这个字段时，红点逻辑保持休眠。
+          // 挂在命令轮询上（750ms 一次）下发，不为红点单开一条轮询。
+          if (sidebarDots) payload.completedIds = completions.ids();
+          json(res, payload);
         },
       });
       const claimDispose = host.webServer.register({
@@ -525,7 +586,7 @@ export function apply(ctx) {
           }
         },
       });
-      return () => [healthDispose, dispose, openDispose, listDispose, claimDispose, ackDispose, presenceDispose, byeDispose].forEach(disposeRoute => disposeRoute());
+      return () => [healthDispose, dispose, openDispose, configDispose, listDispose, claimDispose, ackDispose, presenceDispose, byeDispose].forEach(disposeRoute => disposeRoute());
     }, 'dsh-session-notify: routes');
   });
 }
