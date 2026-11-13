@@ -17,7 +17,7 @@ const marketRepoDir = () => join(marketRoot(), 'repo');
 
 const MARKET_REPO_URL = 'https://github.com/awesome-dsh-plugin/awesome-dsh-plugin.git';
 /** Bundle the launcher ships with; symlink targets contain one of these names. */
-const BUNDLED_MARKERS = ['DSHArchiveManager', 'DSHPluginManager', 'DSHSessionNotify', 'DSHSidebarDeck'];
+const BUNDLED_MARKERS = ['DSHArchiveManager', 'DSHPluginManager', 'DSHSessionNotify', 'DSHInterruptedDot', 'DSHSidebarDeck'];
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -1747,7 +1747,7 @@ async function verifyUpdateApplied(name, target) {
  * 不再被更新、安装或启动流程调用：插件兼容性检测已整体移除。保留实现仅供区间语义
  * 单测锁住 npm 规则，将来若要恢复检测可以直接复用；不要在主流程里重新接上。
  *
- * 区间求值：与 `Sources/PluginCompatibilitySupport.swift` 共用同一套规则，两边各自解释。
+ * 区间求值：这套规则现在只有这里一份实现（启动器侧的 Swift 副本因主流程 0 调用已删除）。
  *
  * 支持 `*`/`x`-range、`^`、`~`、`>= 0.1.0`（操作符后有空格）、`||` 分支，比较用
  * `comparePluginVersions`（npm 语义，`rc.1 < rc.6`）。刻意**不**照搬 npm 默认的预发布

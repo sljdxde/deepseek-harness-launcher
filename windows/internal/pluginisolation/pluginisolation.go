@@ -35,6 +35,7 @@ var protectedBundles = map[string]bool{
 	"dsh-archive-manager":      true,
 	"dsh-plugin-manager":       true,
 	"dsh-session-notify":       true,
+	"dsh-interrupted-dot":      true,
 }
 
 // Bundles the panel refuses to disable: the core layers and the plugin
@@ -64,6 +65,9 @@ const (
 	DisabledStateFileName = "disabled.json"
 	// DisabledPatchFileName is the rendered overlay (YAML).
 	DisabledPatchFileName = "plugin-disabled.yml"
+	// BundledBasePatchFileName is the composed base patch (shared bundled
+	// rows + Windows-only plugin inserts).
+	BundledBasePatchFileName = "bundled-base.yml"
 	// DisabledStateDirName is where both live under $DSH_HOME.
 	DisabledStateDirName = "plugin-manager"
 )
@@ -254,6 +258,42 @@ func StagedSidebarDeckPatchFile(dir string) (string, error) {
 	return writePatch(dir, SidebarDeckPatchFileName, RenderSidebarDeckPatch())
 }
 
+// ComposeBundledBasePatch appends one plugin's insert rows to the shared
+// bundled base patch. Pure so the composition can be tested without a
+// filesystem.
+func ComposeBundledBasePatch(base, extra string) string {
+	if strings.TrimSpace(base) == "" {
+		return extra
+	}
+	if strings.TrimSpace(extra) == "" {
+		return base
+	}
+	if !strings.HasSuffix(base, "\n") {
+		base += "\n"
+	}
+	return base + extra
+}
+
+// StagedBundledBasePatchFile writes the composed base patch (shared base +
+// Windows-only plugin inserts) and returns its path. Empty when there is
+// nothing to compose; a write failure is returned so the caller can fall
+// back to the unmodified base.
+func StagedBundledBasePatchFile(basePath, extraPath, dir string) (string, error) {
+	base, err := os.ReadFile(basePath)
+	if err != nil {
+		return "", err
+	}
+	extra, err := os.ReadFile(extraPath)
+	if err != nil {
+		return "", err
+	}
+	text := ComposeBundledBasePatch(string(base), string(extra))
+	if strings.TrimSpace(text) == "" {
+		return "", nil
+	}
+	return writePatch(dir, BundledBasePatchFileName, text)
+}
+
 // StageBootPatches computes the three --patch slots for one boot.
 //
 //   - base: the bundled plugins' cordis.patch.yml, only when readable;
@@ -268,13 +308,24 @@ func StagedSidebarDeckPatchFile(dir string) (string, error) {
 // notes carries the human-readable log lines the macOS launcher appends
 // for every degradation and success.
 func StageBootPatches(pluginsRoot, home string, deckWanted bool) (base, deck, disabled string, notes []string) {
+	dir := DisabledPatchDir(home)
 	basePath := filepath.Join(pluginsRoot, "DSHArchiveManager", "cordis.patch.yml")
+	// Windows-only plugins (the interrupted-dot marker) are inserted by
+	// composing them into the base patch instead of editing the shared
+	// Plugins/DSHArchiveManager/cordis.patch.yml, which macOS ships as-is.
+	extraBasePath := filepath.Join(pluginsRoot, "DSHInterruptedDot", "cordis.patch.yml")
 	if readable(basePath) {
 		base = basePath
+		if readable(extraBasePath) {
+			if staged, err := StagedBundledBasePatchFile(basePath, extraBasePath, dir); err != nil {
+				notes = append(notes, "异常结束状态点插件补丁合并失败，本次不启用（侧栏仍用 DSH 自带状态点）")
+			} else if staged != "" {
+				base = staged
+			}
+		}
 	}
 
 	statePath := DisabledStatePath(home)
-	dir := DisabledPatchDir(home)
 
 	deckSource := filepath.Join(pluginsRoot, "DSHSidebarDeck", "cordis.patch.yml")
 	switch {

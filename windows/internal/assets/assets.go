@@ -36,6 +36,7 @@ var Plugins = []Plugin{
 	{"dsh-archive-manager", "DSHArchiveManager"},
 	{"dsh-plugin-manager", "DSHPluginManager"},
 	{"dsh-session-notify", "DSHSessionNotify"},
+	{"dsh-interrupted-dot", "DSHInterruptedDot"},
 	{"dsh-sidebar-deck", "DSHSidebarDeck"},
 }
 

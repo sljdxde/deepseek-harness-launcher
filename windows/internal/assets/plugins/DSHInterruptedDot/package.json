@@ -1,0 +1,19 @@
+{
+  "name": "dsh-interrupted-dot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "把 Harness 侧栏里「本轮异常结束」的会话状态点染红（绿点=正常完成，红点=崩溃或本轮报错）",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-runtime"]
+    }
+  }
+}

@@ -84,7 +84,7 @@ Push-Location $winDir
 # instead of syncing it from Plugins/ — until the Windows side follows suit.
 $pluginsOut = Join-Path $winDir "internal\assets\plugins"
 New-Item $pluginsOut -ItemType Directory -Force | Out-Null
-foreach ($name in @("DSHArchiveManager", "DSHPluginManager", "DSHSessionNotify")) {
+foreach ($name in @("DSHArchiveManager", "DSHPluginManager", "DSHSessionNotify", "DSHInterruptedDot")) {
     Remove-Item (Join-Path $pluginsOut $name) -Recurse -Force -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $repoRoot "Plugins\$name") $pluginsOut -Recurse -Force
 }

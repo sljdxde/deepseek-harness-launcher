@@ -45,6 +45,9 @@ node --check "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/client/client.js"
 node --test "$ROOT/Plugins/DSHSessionNotify/test/session-notify.test.js"
 node --test "$ROOT/Plugins/DSHSessionNotify/test/client.test.js"
+node --check "$ROOT/Plugins/DSHInterruptedDot/lib/index.js"
+node --check "$ROOT/Plugins/DSHInterruptedDot/client/client.js"
+node --test "$ROOT/Plugins/DSHInterruptedDot/test/host.test.js" "$ROOT/Plugins/DSHInterruptedDot/test/client.test.js"
 # 真实浏览器端到端：后台 Chrome 页面不得抢「打开会话」命令（无 Playwright 时自动 SKIP）。
 node "$ROOT/scripts/test-session-jump-browser.mjs"
 if rg -q 'stopRunningAgents|需要二次确认删除|只能删除已归档' "$ROOT/Plugins/DSHArchiveManager/lib/index.js"; then
@@ -191,9 +194,10 @@ rg -Fq 'monitorSessionNotify' "$ROOT/Sources/main.swift"
 rg -Fq 'SessionNotifyStore' "$ROOT/Sources/main.swift"
 rg -Fq 'NSApp.dockTile.badgeLabel' "$ROOT/Sources/main.swift"
 rg -Fq 'rebuildSessionNotifyMenuSection' "$ROOT/Sources/main.swift"
-# 侧栏红点在所有平台都明确不要：统计只出数字（菜单栏 / Dock / 托盘 / 任务栏），
-# 不改 Harness 侧栏的展示。macOS 曾用注入脚本，Windows 曾用 launcher-config 开关，
-# 两条路都已删除；这里连插件端点一起拦，防止某一边偷偷长回来。
+# 「完成提醒」的侧栏红点不要：统计只出数字（菜单栏 / Dock / 托盘 / 任务栏）。
+# macOS 曾用注入脚本，Windows 曾用 launcher-config 开关，两条路都已删除。
+# 注意区分：dsh-interrupted-dot 是把 DSH 自带的「已完成」点按异常结局染红
+# （不新增第二个点），不在本守卫的范围里。
 if rg -q 'dhl-completed-dot|sidebarCompletionScript|updateSidebarCompletionMarks|sidebarDots|completedIds|launcher-config' "$ROOT/Sources" "$ROOT/Plugins/DSHSessionNotify" "$ROOT/windows/internal/app" "$ROOT/windows/internal/assets/plugins/DSHSessionNotify"; then
   echo "启动器不得再往 Harness 侧栏注入红点（统计只出菜单栏/Dock/托盘/任务栏数字）" >&2
   exit 1
@@ -202,6 +206,22 @@ fi
 rg -Fq 'startSessionMonitor' "$ROOT/windows/internal/app/controller.go"
 rg -Fq 'sessionStore.UnreadCount()' "$ROOT/windows/internal/app/monitor.go"
 rg -Fq 'setTaskbarBadge(unread)' "$ROOT/windows/internal/app/monitor.go"
+# Windows 内置的异常结束状态点插件：资源列表 / 构建同步 / base patch 合成缺一不可。
+rg -Fq 'DSHInterruptedDot' "$ROOT/windows/build.ps1" "$ROOT/windows/internal/assets/assets.go"
+# 内置插件在面板里必须被认成 bundled（不参与更新检测、UI 不给卸载入口）。
+rg -Fq "'DSHInterruptedDot'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'StagedBundledBasePatchFile' "$ROOT/windows/internal/pluginisolation/pluginisolation.go"
+rg -Fq 'dsh-interrupted-dot' "$ROOT/Plugins/DSHInterruptedDot/cordis.patch.yml"
+# 它是 Windows-only：写进共享 base patch 会让没有该包的 macOS 启动失败。
+if rg -q 'dsh-interrupted-dot' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"; then
+  echo "dsh-interrupted-dot 只能在 Windows 侧合成进 base patch，不能进 macOS 共享补丁" >&2
+  exit 1
+fi
+# 提交的 Windows 内嵌副本必须与 Plugins/ 源一致（build.ps1 在构建时同步）。
+if ! diff -rq "$ROOT/Plugins/DSHInterruptedDot" "$ROOT/windows/internal/assets/plugins/DSHInterruptedDot" >/dev/null; then
+  echo "windows/internal/assets/plugins/DSHInterruptedDot 与 Plugins/DSHInterruptedDot 不同步" >&2
+  exit 1
+fi
 # 页面存活心跳：标签页全关后 keep-alive 连接仍在，必须靠注入客户端的
 # presence（轮询心跳 + pagehide bye）判断是否需要新开页面。
 rg -q '/dsh-session-notify/presence' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Plugins/DSHSessionNotify/client/client.js" "$ROOT/Sources/main.swift"

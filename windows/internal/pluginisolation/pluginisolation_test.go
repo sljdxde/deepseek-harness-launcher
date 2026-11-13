@@ -429,3 +429,62 @@ func write(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+func TestComposeBundledBasePatch(t *testing.T) {
+	base := "- insert:\n    - id: dsh-archive-manager\n"
+	extra := "- insert:\n    - id: dsh-interrupted-dot\n"
+	got := ComposeBundledBasePatch(base, extra)
+	if got != base+extra {
+		t.Errorf("combine = %q", got)
+	}
+	// 缺行尾换行时必须补上，否则两条 YAML 会粘成一行。
+	if got := ComposeBundledBasePatch("- insert:\n", extra); got != "- insert:\n"+extra {
+		t.Errorf("missing newline not normalized: %q", got)
+	}
+	if got := ComposeBundledBasePatch("", extra); got != extra {
+		t.Errorf("empty base = %q", got)
+	}
+	if got := ComposeBundledBasePatch(base, ""); got != base {
+		t.Errorf("empty extra = %q", got)
+	}
+}
+
+func TestStageBootPatchesComposesInterruptedDot(t *testing.T) {
+	plugins, home := t.TempDir(), t.TempDir()
+	basePath := filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml")
+	extraPath := filepath.Join(plugins, "DSHInterruptedDot", "cordis.patch.yml")
+	write(t, basePath, "- insert:\n    - id: dsh-archive-manager\n")
+	write(t, extraPath, "- insert:\n    - id: dsh-interrupted-dot\n")
+
+	base, _, _, _ := StageBootPatches(plugins, home, false)
+	if base != filepath.Join(DisabledPatchDir(home), BundledBasePatchFileName) {
+		t.Fatalf("base = %q", base)
+	}
+	data, err := os.ReadFile(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{"dsh-archive-manager", "dsh-interrupted-dot"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("composed base missing %q: %q", want, text)
+		}
+	}
+}
+
+func TestStageBootPatchesFallsBackWhenExtraPatchCannotStage(t *testing.T) {
+	plugins, home := t.TempDir(), t.TempDir()
+	basePath := filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml")
+	write(t, basePath, "- insert:\n    - id: dsh-archive-manager\n")
+	write(t, filepath.Join(plugins, "DSHInterruptedDot", "cordis.patch.yml"), "- insert:\n    - id: dsh-interrupted-dot\n")
+	// plugin-manager 被同名文件占用：合成 base 写不出去，必须退回原 base。
+	write(t, DisabledPatchDir(home), "not a directory")
+
+	base, _, _, notes := StageBootPatches(plugins, home, false)
+	if base != basePath {
+		t.Errorf("write failure must fall back to the shared base: %q", base)
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), "异常结束状态点插件补丁合并失败") {
+		t.Errorf("missing fallback note: %v", notes)
+	}
+}
