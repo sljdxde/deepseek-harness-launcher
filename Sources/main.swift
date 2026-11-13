@@ -354,15 +354,16 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         false
     }
 
-    /// 清掉 `com.local.dhl-install-*` 的 launchd keepalive 任务（外部 launchctl submit
+    /// 清掉所有 label 含 `dhl-install` 的 launchd keepalive 任务（外部 launchctl submit
     /// 的遗留物：命令一退出 launchd 就重跑它，表现为安装器被反复拉起、DHL 反复重装
-    /// 重启——2026-11-03 事故的根源）。正常流程不会产生这个前缀的任务，启动时异步
-    /// 清一次，残余循环最多再走一轮就被掐断。与 Installer/main.swift 的同名逻辑保持
-    /// 一致（安装器是独立编译目标，无法共享代码）。
+    /// 重启——2026-11-03 与 2026-11-12 两次事故的根源）。label 前缀不固定（出现过
+    /// `com.local.dhl-install-*`、`com.yuzhou.dhl-install-manual`），所以按关键词匹配，
+    /// 正常流程不会产生这类任务。启动时异步清一次，残余循环最多再走一轮就被掐断；
+    /// submitted 任务用 remove 才能卸载，bootout 仅作兜底。
     private func removeStaleInstallerRelaunchJobs() {
         let script = """
-        launchctl list 2>/dev/null | awk '$3 ~ /^com\\.local\\.dhl-install-/ {print $3}' | while IFS= read -r label; do
-          launchctl bootout "gui/\(getuid())/$label" >/dev/null 2>&1 || true
+        launchctl list 2>/dev/null | awk '$3 ~ /dhl-install/ {print $3}' | while IFS= read -r label; do
+          launchctl remove "$label" >/dev/null 2>&1 || launchctl bootout "gui/\(getuid())/$label" >/dev/null 2>&1 || true
         done
         """
         DispatchQueue.global(qos: .utility).async {

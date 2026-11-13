@@ -20,6 +20,16 @@ if [[ ! -d "$SOURCE_APP" ]]; then
   exit 66
 fi
 
+# 幂等保护：源与目标内容完全一致时不要重装。
+# 安装流程会 stop 正在运行的 launcher/dsh、替换 .app、再 open 一次；如果外部
+# 有脚本/任务反复调用本脚本（曾出现过每 20 秒一轮的循环），用户端表现就是
+# 菜单栏应用不断被杀掉重启、内置窗口刚加载就消失。内容一致时这一轮本来就
+# 没有更新可装，直接跳过，既不打断会话也不产生一次无谓的替换。
+if [[ -d "$TARGET_APP" ]] && /usr/bin/diff -qr "$SOURCE_APP" "$TARGET_APP" >/dev/null 2>&1; then
+  print "Target app is identical to source; skipping install (no restart)."
+  exit 0
+fi
+
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 unregister_legacy_paths() {
