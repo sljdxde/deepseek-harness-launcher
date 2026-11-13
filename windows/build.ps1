@@ -75,10 +75,16 @@ Write-Host "==> icons synced into windows/assets/icons"
 Push-Location $winDir
 
 # the bundled dsh plugins are embedded into the exe; sync them from the
-# repo's shared Plugins/ so both platforms ship the same code
+# repo's shared Plugins/ so both platforms ship the same code.
+#
+# DSHSidebarDeck is NOT in this list any more: macOS removed the takeover
+# sidebar in 0.4.0 (Plugins/DSHSidebarDeck is gone), while the Windows port
+# still ships it as an experimental, default-off option. So the Windows build
+# keeps using the copy already committed under internal/assets/plugins/
+# instead of syncing it from Plugins/ — until the Windows side follows suit.
 $pluginsOut = Join-Path $winDir "internal\assets\plugins"
 New-Item $pluginsOut -ItemType Directory -Force | Out-Null
-foreach ($name in @("DSHArchiveManager", "DSHPluginManager", "DSHSessionNotify", "DSHSidebarDeck")) {
+foreach ($name in @("DSHArchiveManager", "DSHPluginManager", "DSHSessionNotify")) {
     Remove-Item (Join-Path $pluginsOut $name) -Recurse -Force -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $repoRoot "Plugins\$name") $pluginsOut -Recurse -Force
 }
