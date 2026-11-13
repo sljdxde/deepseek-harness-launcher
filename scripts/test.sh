@@ -178,16 +178,30 @@ rg -q 'ensurePnpmPath' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'corepack' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'pnpm-bin' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'dsh-plugin-manager' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"
-# 会话完成通知插件仍随启动器打包（会话跳转命令 / 页面存活心跳还要用），但启动器
-# 不再轮询完成事件：完成状态完全以 DSH 自己的侧栏状态点为准，启动器不另算未读。
+# 会话完成通知插件随启动器打包，启动器仍轮询它的事件流来维护「未读会话数」：
+# 这个数字驱动菜单栏角标与 Dock 数字（用户靠它知道任务完成）。侧栏红点不再由
+# 启动器注入——展示归 DSH 自己，统计归启动器，两者不要混。
 rg -q 'dsh-session-notify' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"
 rg -Fq 'DSHSessionNotify' "$ROOT/scripts/build-app.sh" "$ROOT/scripts/build-universal.sh" "$ROOT/Sources/main.swift"
 rg -Fq 'BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL)' "$ROOT/Sources/main.swift"
 rg -q '/dsh-session-notify/events' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
-if rg -q '/dsh-session-notify/events\?after=' "$ROOT/Sources/main.swift"; then
-  echo "启动器不得再轮询完成事件：完成状态以 DSH 侧栏状态点为准" >&2
+# 统计链路必须在：轮询 / 未读落盘 / 菜单栏角标 / Dock 数字 / 菜单区块一个都不能少。
+rg -Fq '/dsh-session-notify/events?after=' "$ROOT/Sources/main.swift"
+rg -Fq 'monitorSessionNotify' "$ROOT/Sources/main.swift"
+rg -Fq 'SessionNotifyStore' "$ROOT/Sources/main.swift"
+rg -Fq 'NSApp.dockTile.badgeLabel' "$ROOT/Sources/main.swift"
+rg -Fq 'rebuildSessionNotifyMenuSection' "$ROOT/Sources/main.swift"
+# 侧栏红点在所有平台都明确不要：统计只出数字（菜单栏 / Dock / 托盘 / 任务栏），
+# 不改 Harness 侧栏的展示。macOS 曾用注入脚本，Windows 曾用 launcher-config 开关，
+# 两条路都已删除；这里连插件端点一起拦，防止某一边偷偷长回来。
+if rg -q 'dhl-completed-dot|sidebarCompletionScript|updateSidebarCompletionMarks|sidebarDots|completedIds|launcher-config' "$ROOT/Sources" "$ROOT/Plugins/DSHSessionNotify" "$ROOT/windows/internal/app" "$ROOT/windows/internal/assets/plugins/DSHSessionNotify"; then
+  echo "启动器不得再往 Harness 侧栏注入红点（统计只出菜单栏/Dock/托盘/任务栏数字）" >&2
   exit 1
 fi
+# Windows 的完成统计链路必须在（与 macOS 同口径）：轮询 / 未读计数 / 任务栏数字。
+rg -Fq 'startSessionMonitor' "$ROOT/windows/internal/app/controller.go"
+rg -Fq 'sessionStore.UnreadCount()' "$ROOT/windows/internal/app/monitor.go"
+rg -Fq 'setTaskbarBadge(unread)' "$ROOT/windows/internal/app/monitor.go"
 # 页面存活心跳：标签页全关后 keep-alive 连接仍在，必须靠注入客户端的
 # presence（轮询心跳 + pagehide bye）判断是否需要新开页面。
 rg -q '/dsh-session-notify/presence' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Plugins/DSHSessionNotify/client/client.js" "$ROOT/Sources/main.swift"
@@ -315,11 +329,12 @@ rg -Fq 'readRemoteJSON' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -Fq 'raw 卡住/超时时用 api.github.com 兜底' "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
 rg -q '"\./client": "\./client/client.js"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q '"client"' "$ROOT/Plugins/DSHSessionNotify/package.json"
-# 菜单栏角标只画「有可用更新」（蓝箭头圆盘）。会话完成状态归 DSH 自己的侧栏
-# 状态点，启动器不再维护未读数字（菜单栏 / Dock / 侧栏三处曾各说各话）。
+# 菜单栏角标画两种内容：未读会话数（红胶囊 + 数字）与「有可用更新」（蓝箭头圆盘）。
+# 未读数字必须来自 SessionNotifyStore 的会话级统计，并同步到 Dock 数字。
 # 角标是「画」出来的，符号/坐标写错不会崩、只会画歪或看不见，
 # 所以除源码不变量外还有 scripts/test-status-badge.swift 逐像素验证。
 rg -q 'StatusBadgeSupport' "$ROOT/Sources/main.swift"
+rg -Fq 'StatusBadgeSupport.plan(' "$ROOT/Sources/main.swift"
 rg -Fq 'private var updateAvailable: Bool' "$ROOT/Sources/main.swift"
 rg -Fq 'pendingUpdate != nil || (dshUpdateBadgeVisible' "$ROOT/Sources/main.swift"
 # 标题 / 角标 / tooltip 必须来自同一个判断：跳过记录之外的最高版本（bestAnnounceable）。
@@ -563,13 +578,12 @@ rg -Fq 'presenceVisible' "$ROOT/Sources/BrowserConnectionSupport.swift"
 rg -Fq 'presenceVisible' "$ROOT/Sources/main.swift"
 rg -Fq 'openURL' "$ROOT/Sources/BrowserAutomationSupport.swift"
 rg -Fq 'openURL' "$ROOT/Sources/main.swift"
-# 「点完成提醒 → 投递打开会话命令」的触发点已连同启动器侧的发送链路删除，
-# 这些实现不许再长回来。插件侧的 /dsh-session-notify/open 端点留给 Windows 托盘，
-# 不在这条守卫的范围内（守卫只看启动器的 Swift 源码）。
-if rg -q 'enum ClickDisposition|static func clickDisposition|static func openSessionPayload|func requestSessionOpen|let sendsSessionOpen|static func postJSON' "$ROOT/Sources"; then
-  echo "会话跳转死代码不许回到启动器（插件侧 /open 仍由 Windows 使用）" >&2
-  exit 1
-fi
+# 「点完成提醒 → 投递打开会话命令」是可用功能，不许再被当成死代码删掉：
+# 决策在 SessionJumpSupport（可单测），HTTP 投递在 ServiceProbe.postJSON。
+rg -Fq 'static func clickDisposition' "$ROOT/Sources/SessionJumpSupport.swift"
+rg -Fq 'static func openSessionPayload' "$ROOT/Sources/SessionJumpSupport.swift"
+rg -Fq 'func requestSessionOpen' "$ROOT/Sources/main.swift"
+rg -Fq 'static func postJSON' "$ROOT/Sources/ServiceProbe.swift"
 # 内置窗口是默认界面：Dock 常驻、主菜单装上。回退到浏览器只能通过设置显式开启。
 rg -Fq 'HarnessWindowController' "$ROOT/Sources/main.swift" "$ROOT/Sources/HarnessWindowController.swift"
 rg -Fq 'HarnessWindowSupport.action' "$ROOT/Sources/main.swift" "$ROOT/Sources/HarnessWindowSupport.swift"
@@ -792,8 +806,12 @@ swiftc "$ROOT/scripts/test-plugin-isolation.swift" "$ROOT/Sources/PluginIsolatio
 "$ROOT/build/test-plugin-isolation"
 swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupport.swift" -o "$ROOT/build/test-plugin-updates"
 "$ROOT/build/test-plugin-updates"
-# 浏览器回退模式打开页面：页面计划 / 失败诊断 / 降级顺序 / 多实例寻址。
-# （「点完成提醒 → 投递会话命令」已下线，点击处置与请求体的用例随之删除。）
+# 会话完成统计：未读按会话去重、bootId 重启重置、resumed/viewed/aborted 撤销、
+# 落盘恢复、菜单文案与角标文本。这是菜单栏 / Dock 数字的唯一数据源。
+swiftc "$ROOT/scripts/test-session-notify.swift" "$ROOT/Sources/SessionNotifySupport.swift" -o "$ROOT/build/test-session-notify"
+"$ROOT/build/test-session-notify"
+# 浏览器回退模式打开页面与完成提醒跳转：点击处置 / 请求体 / 页面计划 /
+# 失败诊断 / 降级顺序 / 多实例寻址。
 swiftc "$ROOT/scripts/test-session-jump.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/BrowserAutomationSupport.swift" -o "$ROOT/build/test-session-jump" -framework AppKit
 "$ROOT/build/test-session-jump"
 # 内置 Harness 窗口（WKWebView）的决策：打开/重载/只前置、外链外开、下载落点、

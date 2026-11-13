@@ -187,6 +187,22 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var rebuildDeclinedThisRun = false
     private var runtimeMenuItem: NSMenuItem?
     private var runtimeMenuRow: MenuRowView?
+    // 会话完成提醒：内置 dsh-session-notify 插件把主会话 turn/end 记录在
+    // Harness 侧，启动器轮询后以菜单栏数字角标 + Dock 数字 + 菜单区块呈现。
+    // 未读落 UserDefaults：启动器重启（更新 / 崩溃 / 手动重开）不该把角标清零。
+    // 只做统计与数字提示，**不再**往 Harness 侧栏注入红点（侧栏是 DSH 自己的展示）。
+    private let sessionNotifyStore = SessionNotifyStore(defaults: .standard)
+    private var sessionNotifyMenuItems: [NSMenuItem] = []
+    /// 菜单是否正在屏幕上（追踪中）；追踪期间不增删条目，只记下待重建。
+    private var sessionNotifyMenuOpen = false
+    private var sessionNotifyMenuRebuildPending = false
+    private var sessionNotifyFailureStreak = 0
+    private var sessionNotifyUnavailableLogged = false
+    // dsh 重启瞬间（stop → start）可能同端口先后起两条轮询链，代际号让旧链自灭。
+    private var sessionNotifyLoopID = 0
+    // A notification can be clicked while dsh is still starting. Keep the
+    // target until the Harness page and its client are ready.
+    private var pendingSessionId: String?
     // 插件更新提醒：内置 dsh-plugin-manager 提供 /dsh-plugin-manager/updates，
     // 启动器周期性读回可更新数量（只写日志并驱动更新进度窗口，不再写菜单）；
     // 外部/旧实例没有该接口，静默降级。
@@ -669,6 +685,14 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - 浏览器打开与连接探测
 
     @objc private func openDHL() {
+        openDHLForSession(nil)
+    }
+
+    /// 打开 Harness 界面；`sessionId` 非空时页面就绪后投递「切到该会话」命令
+    /// （点菜单里的完成提醒走这条路）。实例没在跑时先把目标记进
+    /// `pendingSessionId`，启动完成后再跳，不能因为晚了几秒把这次点击丢掉。
+    private func openDHLForSession(_ sessionId: String?) {
+        pendingSessionId = sessionId.flatMap { $0.isEmpty ? nil : $0 }
         if let installWindow = dshInstallWindow {
             openWhenReady = true
             installWindow.present()
@@ -679,11 +703,19 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if state == .stopped || state == .failed { start() }
             return
         }
+        let target = pendingSessionId
+        pendingSessionId = nil
         if settings.embeddedHarnessWindow {
-            presentHarnessWindow(port: port, forceReload: false) {}
+            presentHarnessWindow(port: port, forceReload: false) { [weak self] in
+                guard let target else { return }
+                self?.requestSessionOpen(sessionId: target, port: port, embeddedOnly: true)
+            }
             return
         }
-        openWebPage(on: port)
+        openWebPage(on: port) { [weak self] in
+            guard let target else { return }
+            self?.requestSessionOpen(sessionId: target, port: port)
+        }
     }
 
     // MARK: - 内置 Harness 窗口
@@ -777,6 +809,22 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Hand a target session to the Harness client. This is best-effort: an
+    /// external Harness may not have the bundled plugin, in which case the
+    /// caller still opens the normal Harness home page.
+    private func requestSessionOpen(sessionId: String, port: Int, embeddedOnly: Bool = false) {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/dsh-session-notify/open"),
+              let payload = SessionJumpSupport.openSessionPayload(sessionId: sessionId, embeddedOnly: embeddedOnly),
+              let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        ServiceProbe.postJSON(at: url, body: body, timeout: 1) { [weak self] status in
+            // 命令通道不存在（外部 Harness / 旧插件）时页面不会换会话：只有首页被
+            // 打开。记一行日志，别让「点了没跳」没有任何痕迹。
+            guard let self, status != 200 else { return }
+            let reason = status.map { "HTTP \($0)" } ?? "无响应"
+            self.appendLogString("会话跳转请求未被页面接收（\(reason)），当前 Harness 未加载 dsh-session-notify 内置插件\n")
+        }
+    }
+
     private func openBrowserWhenReadyIfNeeded() {
         guard !didAutoOpenBrowser, settings.openBrowserOnReady || openWhenReady || relaunchingAfterRestart else { return }
         didAutoOpenBrowser = true
@@ -786,6 +834,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let restartTakeover = relaunchingAfterRestart
         relaunchingAfterRestart = false
         guard state == .running, let port = selectedPort else { return }
+        let target = pendingSessionId
+        pendingSessionId = nil
         if restartTakeover {
             let stamp = String(formatLogTimestamp().dropFirst(11).prefix(8)) // HH:mm:ss
             setPortMenuTitle("端口：\(port) · 已重启 \(stamp)")
@@ -799,10 +849,16 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // 重启接管：forceReload 让窗口用新进程的 token 入口重载，而不是把
             // 旧进程的 401 页面留在眼前。「先退出再打开」的可见反馈由菜单栏
             // 「已重启 ✓」承担，与浏览器路径一致。
-            presentHarnessWindow(port: port, forceReload: restartTakeover) {}
+            presentHarnessWindow(port: port, forceReload: restartTakeover) { [weak self] in
+                guard let target else { return }
+                self?.requestSessionOpen(sessionId: target, port: port, embeddedOnly: true)
+            }
             return
         }
-        openWebPage(on: port, intent: .automatic, restartTakeover: restartTakeover)
+        openWebPage(on: port, intent: .automatic, restartTakeover: restartTakeover) { [weak self] in
+            guard let target else { return }
+            self?.requestSessionOpen(sessionId: target, port: port)
+        }
     }
 
     /// 打开 Harness 页面。`intent` 决定节流策略：菜单点击/热键永远生效，
@@ -1206,7 +1262,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func stopDHL(completion: (() -> Void)? = nil) {
         cancelDSHInstall()
         let trackedPID = process?.processIdentifier ?? 0
-        process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false
+        process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false; pendingSessionId = nil
         // 旧进程的 token 随进程失效，重开后必须用新进程打印的入口 URL。
         webURLLock.lock(); authenticatedWebURL = nil; webURLLock.unlock()
         setState(.stopped)
@@ -2195,6 +2251,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func startHealthMonitors(port: Int) {
         openBrowserWhenReadyIfNeeded()
         monitorArchivePlugin(port: port)
+        monitorSessionNotify(port: port)
         monitorPluginUpdates(port: port)
     }
 
@@ -2346,9 +2403,19 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return NSImage(size: NSSize(width: 18, height: 18))
         }
 
-        // 菜单栏只保留「有更新」角标：会话完成状态完全交给 DSH 自己的侧栏状态点，
-        // 启动器不再另算一套未读数字（菜单栏、Dock、侧栏三处曾经各说各话）。
-        let plan = StatusBadgeSupport.plan(updateAvailable: updateAvailable)
+        let unread = sessionNotifyStore.unreadCount
+        // Dock 图标数字：与菜单栏未读角标同口径（按会话计数）。窗口关掉后
+        // 用户低头看 Dock 也能看到「有任务完成」。侧栏红点不再由启动器注入，
+        // 这里只提供数字统计。
+        let dockBadge = unread > 0 ? SessionNotifyStore.badgeText(for: unread) : nil
+        if NSApp.dockTile.badgeLabel != dockBadge {
+            NSApp.dockTile.badgeLabel = dockBadge
+            NSApp.dockTile.display()
+        }
+        let plan = StatusBadgeSupport.plan(
+            unreadText: unread > 0 ? SessionNotifyStore.badgeText(for: unread) : nil,
+            updateAvailable: updateAvailable
+        )
         // 有角标或状态文案时菜单栏占位必须可变长，否则标题会被裁剪。
         statusItem.length = StatusBadgeSupport.needsVariableLength(plan, hasTitle: statusTitleOverride != nil)
             ? NSStatusItem.variableLength : NSStatusItem.squareLength
@@ -2387,6 +2454,111 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + dismissAfter) { [weak self] in
             guard let self, self.statusTitleOverride == title else { return }
             self.showStatusTitle(nil)
+        }
+    }
+
+    // MARK: - 会话完成提醒
+
+    /// 每次轮询有新完成事件时重建菜单顶部的「会话完成」区块；打开菜单
+    /// (menuNeedsUpdate) 时也刷新一次，保证区块与角标和当前外观一致。
+    ///
+    /// `deferWhileMenuOpen`：菜单正在屏幕上（追踪中）时**不许**增删它的条目。
+    /// 轮询每 3.5 秒就可能带来一条新完成提醒，而用户点开菜单后会盯着看几秒——
+    /// 期间把鼠标下那一行摘掉换成新对象，点击就可能落到已摘除的条目上（表现成
+    /// 「点了没反应」）或误触刚好挪到光标下的另一行。这时只记下待重建（角标照旧
+    /// 即时更新），等菜单关闭再补一次；`menuNeedsUpdate` 那条路永远立刻重建，
+    /// 所以菜单被打开时内容一定是最新的。
+    private func rebuildSessionNotifyMenuSection(deferWhileMenuOpen: Bool = true) {
+        if deferWhileMenuOpen, sessionNotifyMenuOpen {
+            sessionNotifyMenuRebuildPending = true
+            statusItem.button?.image = makeStatusImage()
+            return
+        }
+        sessionNotifyMenuRebuildPending = false
+        guard let menu = statusItem.menu else { return }
+        for item in sessionNotifyMenuItems { menu.removeItem(item) }
+        sessionNotifyMenuItems = []
+        let entries = sessionNotifyStore.recent(limit: 6)
+        guard !entries.isEmpty else {
+            statusItem.button?.image = makeStatusImage()
+            return
+        }
+        // 工作区名让用户一眼分清是哪个项目完成的（会话 id/标题都太短，分不清）。
+        let workspaces = SessionNotifyWorkspaceIndex.load()
+        var items: [NSMenuItem] = [NSMenuItem.separator()]
+        let header = menuRowItem(title: "会话完成（\(sessionNotifyStore.unreadCount) 个未读）", action: nil, enabled: { false })
+        items.append(header)
+        for event in entries {
+            let label = SessionNotifyStore.menuLabel(
+                workspace: workspaces.title(for: event.sessionId),
+                title: event.title,
+                sessionId: event.sessionId
+            )
+            let row = menuRowItem(
+                title: SessionNotifyStore.menuTitle(for: event, label: label),
+                action: #selector(openSessionFromNotify(_:))
+            )
+            row.representedObject = event.sessionId
+            items.append(row)
+        }
+        items.append(menuRowItem(title: "清除完成提醒", action: #selector(clearSessionNotify)))
+        items.append(NSMenuItem.separator())
+        for (offset, item) in items.enumerated() {
+            menu.insertItem(item, at: offset)
+            sessionNotifyMenuItems.append(item)
+        }
+        statusItem.button?.image = makeStatusImage()
+    }
+
+    /// 轮询内置 dsh-session-notify 插件：仅在本启动器管理的 Harness 上存在；
+    /// 复用外部实例时接口 404，静默降级（与归档插件的基础模式一致）。
+    private func monitorSessionNotify(port: Int) {
+        sessionNotifyLoopID += 1
+        sessionNotifyFailureStreak = 0
+        // 未读是落盘的：重启启动器后把上次没看的提醒接回来，并在日志里留痕
+        // （否则「角标突然归零」又会像这次一样查不出原因）。
+        if sessionNotifyStore.unreadCount > 0 {
+            appendLogString("启动器重启，已恢复 \(sessionNotifyStore.unreadCount) 个会话的未读提醒\n")
+        }
+        pollSessionNotify(port: port, loopID: sessionNotifyLoopID)
+    }
+
+    private func pollSessionNotify(port: Int, loopID: Int) {
+        guard loopID == sessionNotifyLoopID, state == .running, selectedPort == port,
+              let url = URL(string: "http://127.0.0.1:\(port)/dsh-session-notify/events?after=\(sessionNotifyStore.pollAfterSeq)") else { return }
+        ServiceProbe.body(at: url, timeout: 2) { [weak self] body in
+            guard let self, loopID == self.sessionNotifyLoopID, self.state == .running, self.selectedPort == port else { return }
+            if let feed = body.flatMap(SessionNotifyFeed.parse) {
+                self.sessionNotifyFailureStreak = 0
+                let ingested = self.sessionNotifyStore.ingest(feed)
+                if !ingested.isEmpty {
+                    // completions 是这一轮新增的 turn/end 数；角标按会话去重，所以同一
+                    // 会话连跑多轮时数字不会跟着涨。resumed 是「用户又在该会话里发消息」，
+                    // viewed 是「用户正在 Harness 里看这个会话」——两者都是撤销信号：
+                    // 会话在跑、或者他正看着结果，角标都不该亮。
+                    if !ingested.completions.isEmpty {
+                        self.appendLogString("收到 \(ingested.completions.count) 条会话完成提醒，\(self.sessionNotifyStore.unreadCount) 个会话未读（\(SessionNotifyStore.reasonLabel(ingested.completions.last?.reason ?? ""))）\n")
+                    }
+                    if !ingested.resumed.isEmpty {
+                        self.appendLogString("会话收到新消息，已撤销其完成提醒（\(ingested.resumed.count) 个会话）\n")
+                    }
+                    if !ingested.viewed.isEmpty {
+                        self.appendLogString("会话已在 Harness 中查看，已撤销其完成提醒（\(ingested.viewed.count) 个会话）\n")
+                    }
+                    self.rebuildSessionNotifyMenuSection()
+                }
+            } else {
+                self.sessionNotifyFailureStreak += 1
+                if self.sessionNotifyFailureStreak == 40 && !self.sessionNotifyUnavailableLogged {
+                    self.sessionNotifyUnavailableLogged = true
+                    self.appendLogString("会话完成通知插件不可用（当前 Harness 未加载内置插件），重启 dsh 后可用\n")
+                }
+            }
+            // 轮询顺带重绘角标，外观切换后最多滞后一个轮询周期。
+            statusItem.button?.image = makeStatusImage()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                self.pollSessionNotify(port: port, loopID: loopID)
+            }
         }
     }
 
@@ -2488,8 +2660,63 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ServiceProbe.body(at: url, timeout: 2) { _ in }
     }
 
+    @objc private func openSessionFromNotify(_ sender: NSMenuItem) {
+        let sessionId = sender.representedObject as? String
+        // 只清掉点中的这一条：其它工作区的完成提醒还得留着，用户想跳别的随时可以点
+        // （「清除完成提醒」才是清空）。
+        if let sessionId { sessionNotifyStore.markRead(sessionId) }
+        rebuildSessionNotifyMenuSection()
+        appendLogString("用户查看会话完成提醒：\(sessionId ?? "")\n")
+        // 处置分支由 SessionJumpSupport 判定（可单测）：实例在跑就直接跳；
+        // 没在跑 / 正在装运行环境都交给 openDHLForSession——它会把这次点击记进
+        // pendingSessionId，就绪后照常跳过去，不能因为「晚了几秒」把点击丢掉。
+        switch SessionJumpSupport.clickDisposition(
+            isRunning: state == .running,
+            hasPort: selectedPort != nil,
+            isInstalling: dshInstallWindow != nil
+        ) {
+        case .jumpInPlace:
+            guard let port = selectedPort else { return }
+            if settings.embeddedHarnessWindow {
+                // 内置窗口：先前置窗口（页面因此拿到焦点，命令不会被别处残留的
+                // 浏览器页面抢走），再投递「打开会话」命令。标签页匹配整条链路
+                // 在这条路上不存在，也就没有「新开一个窗口」的退化。
+                presentHarnessWindow(port: port, forceReload: false) { [weak self] in
+                    guard let sessionId else { return }
+                    self?.requestSessionOpen(sessionId: sessionId, port: port, embeddedOnly: true)
+                }
+                return
+            }
+            openWebPage(on: port) { [weak self] in
+                guard let sessionId else { return }
+                self?.requestSessionOpen(sessionId: sessionId, port: port)
+            }
+        case .startThenJump, .waitForInstall:
+            openDHLForSession(sessionId)
+        }
+    }
+
+    @objc private func clearSessionNotify() {
+        sessionNotifyStore.markAllRead()
+        rebuildSessionNotifyMenuSection()
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
+        // 菜单即将显示：内容必须是最新的，所以这一路不受「追踪中」限制。
+        rebuildSessionNotifyMenuSection(deferWhileMenuOpen: false)
         refreshRuntimeMenuRow()
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        sessionNotifyMenuOpen = true
+    }
+
+    /// 菜单关闭（含 tracking 被 cancelTracking 取消）：把追踪期间压下来的重建补上，
+    /// 保证下次打开前菜单区块与角标、未读集合一致。
+    func menuDidClose(_ menu: NSMenu) {
+        sessionNotifyMenuOpen = false
+        guard sessionNotifyMenuRebuildPending else { return }
+        rebuildSessionNotifyMenuSection(deferWhileMenuOpen: false)
     }
 }
 

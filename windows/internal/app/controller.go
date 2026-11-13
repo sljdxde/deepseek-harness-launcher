@@ -516,16 +516,6 @@ func (c *controller) launchInstalled(port int, env map[string]string) {
 	c.setState(stateRunning, fmt.Sprintf("端口：%d", port))
 	c.startSessionMonitor()
 
-	// 侧栏「已完成」红点开关：告诉插件本机是内置窗口启动器，让它随命令
-	// 轮询下发完成会话 id。Windows 的 WebView2 注不进脚本（ExecJS 对 dsh
-	// 页面无效），红点改走插件通道；mac 的启动器从不发这个开关，它的注入
-	// 脚本照旧。失败只记日志：红点这一轮不出现，dsh 照常工作。
-	go func() {
-		if status := postJSON(port, "/dsh-session-notify/launcher-config", `{"sidebarDots":true}`); status != 200 {
-			applog.Logf("launcher-config -> HTTP %d（侧栏红点本轮不可用）", status)
-		}
-	}()
-
 	// exit watcher: dsh exiting 0 while it served (the plugin manager's
 	// restart endpoint) means "start me again", not "I am dead"
 	go func() {

@@ -88,8 +88,9 @@
   定位先 `rg -n '^// MARK' Sources/main.swift`，别从头翻。评审规则见
   `CODING_STANDARDS.md`（给 review 阶段用，实现阶段不必读）。
 - 默认界面是启动器自己的内置 Harness 窗口（`Sources/HarnessWindowController.swift`，
-  NSWindow + WKWebView）：会话跳转（入口已随「会话完成提醒」下线，通道保留）只走「前置窗口 + 投递插件命令」，
-  不涉及浏览器实例与标签匹配。以下浏览器规则只适用于设置里关闭内置窗口后的**回退模式**。
+  NSWindow + WKWebView）：会话跳转（菜单「会话完成」点一条 → 前置窗口 + 投递插件命令）
+  只走这条内置窗口链路，不涉及浏览器实例与标签匹配。完成统计只出菜单栏 / Dock 数字，
+  **不往 DSH 侧栏注入红点**。以下浏览器规则只适用于设置里关闭内置窗口后的**回退模式**。
 - 浏览器标签复用（仅回退模式）：禁止用 AppleScript 做"发现浏览器"的第一步（会触发
   自动化授权）；仅允许在 lsof 连接检测确认浏览器已连接后，用 AppleScript 精确选中
   标签，且必须保留降级路径（详见 `Sources/BrowserConnectionSupport.swift` 与

@@ -15,7 +15,7 @@ import Foundation
 //   4. 不可达时的呈现选择：页面可见 → 只前置；不可见/未知 → 按 pid 定向在正确
 //      实例里新开标签（只前置对「用户切到别的标签」无效，等于点了没反应）；
 //   5. 标签选中失败：单实例 vs 多实例的诊断不同、降级动作不同、日志必须留证据；
-//   6. 不变式：任何分支都必须投递「打开会话」命令 + 必须收尾（否则后续点击被吞）。
+//   6. 跳转请求体：内置窗口模式必须带 requireEmbedded（否则后台 Chrome 会抢命令）。
 //
 // 编译：swiftc scripts/test-session-jump.swift Sources/SessionJumpSupport.swift \
 //        Sources/BrowserConnectionSupport.swift Sources/BrowserAutomationSupport.swift \
@@ -37,6 +37,21 @@ struct SessionJumpChecks {
         let chrome = SessionJumpSupport.BrowserInfo(name: "Google Chrome", bundleIdentifier: "com.google.Chrome", instanceCount: 1)
         let chromeMulti = SessionJumpSupport.BrowserInfo(name: "Google Chrome", bundleIdentifier: "com.google.Chrome", instanceCount: 2)
         let safari = SessionJumpSupport.BrowserInfo(name: "Safari", bundleIdentifier: "com.apple.Safari", instanceCount: 1)
+
+        // MARK: - 1. 点击处置（菜单点击 / 提醒点击）
+        // 实例在跑：立刻开页面并投递会话，不该先重启。
+        checkEqual(SessionJumpSupport.clickDisposition(isRunning: true, hasPort: true, isInstalling: false),
+                   .jumpInPlace, "实例在跑应直接跳")
+        // 没在跑（或还没拿到端口）：先启动，再把这次点击补上——不能因为「晚了几秒」丢掉点击。
+        checkEqual(SessionJumpSupport.clickDisposition(isRunning: false, hasPort: false, isInstalling: false),
+                   .startThenJump, "没在跑应先启动再跳")
+        checkEqual(SessionJumpSupport.clickDisposition(isRunning: true, hasPort: false, isInstalling: false),
+                   .startThenJump, "没有端口等同没就绪，应先启动再跳")
+        // 正在装/更新运行环境：等装完，别在安装中途去开一个旧进程的页面。
+        checkEqual(SessionJumpSupport.clickDisposition(isRunning: false, hasPort: false, isInstalling: true),
+                   .waitForInstall, "安装运行环境时应等安装完成")
+        checkEqual(SessionJumpSupport.clickDisposition(isRunning: true, hasPort: true, isInstalling: true),
+                   .waitForInstall, "安装优先于直接跳")
 
         // MARK: - 2. 页面阶段计划
         // 每条用例：presence 心跳、有没有已连接的浏览器、是不是重启接管。
@@ -401,11 +416,26 @@ struct SessionJumpChecks {
             bundleIdentifier: "com.google.Chrome", targetURL: target
         )?.contains("matchesHarnessOrigin") == true, "标签脚本必须用 origin 匹配")
 
+        // MARK: - 7. 跳转请求体：内置窗口模式必须带 requireEmbedded
+        let embeddedPayload = SessionJumpSupport.openSessionPayload(
+            sessionId: "session-embedded", embeddedOnly: true
+        )
+        check(embeddedPayload?["sessionId"] as? String == "session-embedded", "请求体必须带 sessionId")
+        check(embeddedPayload?["requireEmbedded"] as? Bool == true,
+              "内置窗口模式必须带 requireEmbedded=true，否则后台 Chrome 会抢跳转命令")
+        let browserPayload = SessionJumpSupport.openSessionPayload(
+            sessionId: "session-browser", embeddedOnly: false
+        )
+        check(browserPayload?["requireEmbedded"] == nil,
+              "外部浏览器模式不能带 requireEmbedded，否则 Chrome 页面永远领不到命令")
+        check(SessionJumpSupport.openSessionPayload(sessionId: "   ", embeddedOnly: true) == nil,
+              "空 sessionId 不应生成请求体")
+
         if !failures.isEmpty {
             for failure in failures { print("FAIL: \(failure)") }
             exit(1)
         }
-        print("PASS: page plan, focus diagnosis (single/multi instance), "
+        print("PASS: click disposition, page plan, focus diagnosis (single/multi instance), "
               + "multi-instance addressing guard, unreachable presentation (activate/new tab), "
               + "fallback order, close-then-open takeover, origin-based jump")
     }

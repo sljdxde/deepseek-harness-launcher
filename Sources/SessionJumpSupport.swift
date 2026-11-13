@@ -11,10 +11,10 @@ import Foundation
 /// 1. `pagePlan`：页面要不要重开、重启接管要不要先关旧标签、要不要选中已有标签；
 /// 2. `focusPlan` + 日志：AppleScript 的结果怎么解释、失败时怎么降级、日志怎么写。
 ///
-/// 历史上这里还有「点击会话完成提醒 → 投递打开会话命令」的处置与请求体
-/// （`clickDisposition` / `openSessionPayload`）。那个触发点已下线，启动器不再
-/// POST `/dsh-session-notify/open`，相关实现与常量已删除；插件侧的 `/open`
-/// 端点仍由 Windows 托盘的未读列表使用，不要在共享插件里删。
+/// 「点击会话完成提醒 → 投递打开会话命令」的处置（`clickDisposition`）与请求体
+/// （`openSessionPayload`）也在这里：触发点在 `main.swift` 的菜单区块，决策不外泄。
+/// 启动器的未读统计只驱动菜单栏 / Dock 数字与菜单列表，**不再**往 Harness 侧栏
+/// 注入红点；插件侧的 `/open` 端点同时由 Windows 托盘的未读列表使用。
 enum SessionJumpSupport {
     /// 已连接 Harness 的浏览器（lsof 连接 + ps 父子链找到的那个进程）。
     /// `instanceCount` 是同一 bundle 正在运行的实例数：macOS 只把 AppleScript
@@ -60,6 +60,23 @@ enum SessionJumpSupport {
             if startedAt >= connectedStartedAt { return false }
         }
         return true
+    }
+
+    // MARK: - 点击处置
+
+    /// 点击一条完成提醒时该走哪条路。
+    enum ClickDisposition: Equatable {
+        /// 实例在跑：直接开页面（或前置）并投递会话。
+        case jumpInPlace
+        /// 实例没在跑：先启动，就绪后再开页面并投递会话（不能丢这次点击）。
+        case startThenJump
+        /// 正在安装/更新运行环境：等安装结束、页面可打开时再跳。
+        case waitForInstall
+    }
+
+    static func clickDisposition(isRunning: Bool, hasPort: Bool, isInstalling: Bool) -> ClickDisposition {
+        if isInstalling { return .waitForInstall }
+        return (isRunning && hasPort) ? .jumpInPlace : .startThenJump
     }
 
     // MARK: - 页面阶段
@@ -191,6 +208,21 @@ enum SessionJumpSupport {
     /// 宁肯多开一张标签，也不要不响应。
     static func unreachablePresentation(pageVisible: Bool?) -> UnreachablePresentation {
         pageVisible == true ? .activateOnly : .openNewTabInConnectedInstance
+    }
+
+    // MARK: - 跳转请求
+
+    /// 「打开会话」POST `/dsh-session-notify/open` 的请求体。
+    ///
+    /// `embeddedOnly` 为 true（内置窗口模式）时带 `requireEmbedded`：服务端只允许
+    /// WKWebView 页面领取。外部 Chrome 标签页的 `document.hasFocus()` 会谎报 true，
+    /// 光靠焦点优先挡不住它抢命令——抢走后会话切在看不见的窗口里，表现成「点了没反应」。
+    static func openSessionPayload(sessionId: String, embeddedOnly: Bool) -> [String: Any]? {
+        let trimmed = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var payload: [String: Any] = ["sessionId": trimmed]
+        if embeddedOnly { payload["requireEmbedded"] = true }
+        return payload
     }
 
     // MARK: - 日志文案
