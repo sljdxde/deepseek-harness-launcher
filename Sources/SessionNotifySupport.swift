@@ -150,14 +150,19 @@ final class SessionNotifyStore {
         Array(events.filter { unread.contains($0.sessionId) }.suffix(max(0, limit)).reversed())
     }
 
-    /// 菜单行标签：工作区名 → 会话标题 → 短 id。插件在拿不到标题时会给出
-    /// `session-`/`session-1335…` 这类没信息量的值，这里统一挡掉——否则一列
-    /// `session-` 根本分不清是哪个工作区。
+    /// 菜单行标签：会话标题 → 工作区名 → 短 id。
+    ///
+    /// 标题优先于工作区名：工作区是会话所在的文件夹，同一个项目下所有会话
+    /// 都会渲染成同一个字符串，一列「deepseek-harness-launcher」看不出是哪
+    /// 个对话结束了。工作区名保留为插件没给标题时的兜底。
+    ///
+    /// 插件在拿不到标题时会给出 `session-`/`session-1335…` 这类没信息量的
+    /// 值，这里统一挡掉——否则一列 `session-` 同样分不清。
     static func menuLabel(workspace: String?, title: String?, sessionId: String) -> String {
-        let workspaceName = workspace?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !workspaceName.isEmpty { return workspaceName }
         let sessionTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !sessionTitle.isEmpty && !isPlaceholderTitle(sessionTitle, sessionId: sessionId) { return sessionTitle }
+        let workspaceName = workspace?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !workspaceName.isEmpty { return workspaceName }
         return shortIdentifier(sessionId)
     }
 
