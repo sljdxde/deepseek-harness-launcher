@@ -270,8 +270,8 @@ final class SessionNotifyStore {
         menuTitle(for: event, label: event.title, timeZone: timeZone, now: now)
     }
 
-    /// 菜单行文案：`19:08 ·「dsh-launcher」已完成`。`label` 由调用方决定
-    /// （优先工作区名，见 `menuLabel`），超长截断，避免菜单被撑宽。
+    /// 菜单行文案：`19:08 ·「修复侧边栏」已完成`。`label` 由调用方决定
+    /// （优先会话标题，见 `menuLabel`），超长截断，避免菜单被撑宽。
     static func menuTitle(for event: SessionNotifyEvent, label: String, timeZone: TimeZone = .current, now: Date = Date()) -> String {
         let title = label.count > 24 ? String(label.prefix(24)) + "…" : label
         return "\(timeLabel(event.at, timeZone: timeZone, now: now)) · 「\(title)」 \(reasonLabel(event.reason))"

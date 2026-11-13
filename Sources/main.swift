@@ -2517,7 +2517,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             statusItem.button?.image = makeStatusImage()
             return
         }
-        // 工作区名让用户一眼分清是哪个项目完成的（会话 id/标题都太短，分不清）。
+        // 工作区名只作兜底：插件没给标题时用它，否则一行行同名分不清是哪个项目完成的。
         let workspaces = SessionNotifyWorkspaceIndex.load()
         var items: [NSMenuItem] = [NSMenuItem.separator()]
         let header = menuRowItem(title: "会话完成（\(sessionNotifyStore.unreadCount) 个未读）", action: nil, enabled: { false })

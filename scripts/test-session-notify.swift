@@ -162,8 +162,11 @@ struct SessionNotifyChecks {
         ]]])
         precondition(duplicate.title(for: "s1") == "A" || duplicate.title(for: "s1") == "B")
 
-        // 3.9 菜单行标签：工作区名 → 会话标题 → 短 id，永远不出现光秃秃的 `session-`。
-        precondition(SessionNotifyStore.menuLabel(workspace: "dsh-launcher", title: "随便", sessionId: "session-1335d7ff") == "dsh-launcher")
+        // 3.9 菜单行标签：会话标题 → 工作区名 → 短 id，永远不出现光秃秃的 `session-`。
+        // 标题优先：同一工作区下的会话标题都是同一个文件夹名，一列同名分不清是谁。
+        precondition(SessionNotifyStore.menuLabel(workspace: "dsh-launcher", title: "随便", sessionId: "session-1335d7ff") == "随便")
+        // 插件没给标题（占位标题）时才回退到工作区名。
+        precondition(SessionNotifyStore.menuLabel(workspace: "dsh-launcher", title: "session-", sessionId: "session-1335d7ff") == "dsh-launcher")
         precondition(SessionNotifyStore.menuLabel(workspace: nil, title: "修复侧边栏", sessionId: "session-1335d7ff") == "修复侧边栏")
         precondition(SessionNotifyStore.menuLabel(workspace: nil, title: "session-", sessionId: "session-1335d7ff") == "1335d7ff")
         precondition(SessionNotifyStore.menuLabel(workspace: nil, title: "", sessionId: "session-1335d7ff") == "1335d7ff")
