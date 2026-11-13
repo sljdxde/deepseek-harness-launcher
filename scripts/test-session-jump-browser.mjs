@@ -161,7 +161,19 @@ async function queuedCommands(base) {
   return body.items
 }
 
-const browser = await playwright.chromium.launch({ headless: true })
+// Playwright 包在、浏览器二进制没装（首次安装/升级后常见）时同样按 SKIP 处理：
+// 否则回归会被一个纯环境问题打断，看起来像测试挂了。开发机装上 chromium 后照常真跑。
+let browser
+try {
+  browser = await playwright.chromium.launch({ headless: true })
+} catch (error) {
+  const message = String(error?.message ?? error)
+  if (/Executable doesn't exist|playwright install|browserType\.launch/i.test(message)) {
+    console.log('SKIP 会话跳转浏览器回归：Playwright 已安装但缺少浏览器二进制（npx playwright install chromium）')
+    process.exit(0)
+  }
+  throw error
+}
 const server = await startPluginServer(await readFile(CLIENT_SOURCE, 'utf8'))
 try {
   // 1) 后台 Chrome 页面：没有真实用户操作，不得领取命令。

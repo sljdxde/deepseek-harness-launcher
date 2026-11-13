@@ -1,5 +1,11 @@
 # Bug 分析：菜单「会话完成」点进去，浏览器没有跳到该会话
 
+> **历史文档（只读存档）**：本文记录的是 v0.3.1–v0.3.10 浏览器寻址链路的排障与修复，
+> 不代表当前行为。当前默认路径是内置窗口（v0.3.12+），浏览器方案仅作回退；菜单栏
+> 「会话完成」区块、完成/未读轮询与 `scripts/test-session-notify.swift` 均已下线，
+> `DSHSessionNotify` 现在只承担页面存活心跳与会话跳转命令通道（见 README「内置通知插件」）。
+> 下文各节保留原始日志与推理，供回归追溯，不要再当作现行架构说明。
+>
 > 影响版本：v0.3.1 - v0.3.10（`BrowserAutomationSupport` 建起来之后一直如此）
 > 修复状态：浏览器路径的历史修复见各节；2026-11-11 起默认路径改为内置窗口（v0.3.12，见四之七），浏览器方案仅作回退
 >
@@ -500,4 +506,5 @@ AppleScript / NSWorkspace / HTTP），单测入口：
 
 回归：`scripts/test-session-jump-browser.mjs` 用真实 Chromium + 真实 HTTP 跑四种
 场景（后台 Chrome 不领/有真实操作可领/内置页面直接领/两者并存时归内置），另有
-`requireEmbedded` 定向场景；`test-client` 与 `test-session-notify` 补协议级用例。
+`requireEmbedded` 定向场景；协议级用例当时由 `test-client` 与 `test-session-notify`
+覆盖，后者随「会话完成」入口一起下线（当前协议回归在插件单测与浏览器脚本中）。

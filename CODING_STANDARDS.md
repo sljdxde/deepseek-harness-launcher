@@ -19,7 +19,7 @@
 
 ## 2. 可测试逻辑不进 `Sources/main.swift`
 
-`main.swift` 是唯一的 App 主类，约 2700 行，测试二进制没法加载它（顶层代码 + AppKit
+`main.swift` 是唯一的 App 主类，约 2500 行，测试二进制没法加载它（顶层代码 + AppKit
 启动），所以写进去的逻辑只能靠 grep 字符串断言——按第 1 条那是无效验证。
 
 菜单标题、状态决策、调度参数、版本口径、跳过记录规则，一律抽成 `Sources/*Support.swift`

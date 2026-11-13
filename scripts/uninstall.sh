@@ -152,4 +152,21 @@ for PLUGIN_SPEC in "dsh-archive-manager:DSHArchiveManager" "dsh-plugin-manager:D
     fi
   done
 done
+
+# 已下线的内置插件：旧版本升级上来会留下指向 App 包内 Resources 的悬空软链。
+# 判定比上面更严：链接名在清单里、目标是软链、且目标确实落在某个 App 包的
+# Contents/Resources/<旧内置目录>。用户自装的同名插件（真实目录或本地软链）保留。
+for PLUGIN_SPEC in "dsh-more-menu:DSHMoreMenu" "dsh-ui-enhance:DSHUiEnhance" "dsh-launcher-settings:DSHLauncherSettings" "dsh-sidebar-deck:DSHSidebarDeck"; do
+  PLUGIN_NAME="${PLUGIN_SPEC%%:*}"
+  PLUGIN_MARKER="${PLUGIN_SPEC##*:}"
+  for MODULES_DIR in "$HOME/.dsh/profiles/web/node_modules" "$HOME/.dsh/profiles/node_modules"; do
+    PLUGIN_LINK="$MODULES_DIR/$PLUGIN_NAME"
+    [[ -L "$PLUGIN_LINK" ]] || continue
+    TARGET="$(readlink "$PLUGIN_LINK" || true)"
+    if [[ "$TARGET" == *"/Contents/Resources/$PLUGIN_MARKER"* ]]; then
+      /bin/rm -f "$PLUGIN_LINK"
+      echo "Removed retired bundled plugin link $PLUGIN_LINK"
+    fi
+  done
+done
 echo "Deepseek Harness Launcher 的 ~/.dsh 数据保持不变。"

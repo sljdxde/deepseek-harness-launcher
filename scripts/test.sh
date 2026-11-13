@@ -452,6 +452,15 @@ fi
 rg -q 'ensureBundledPluginLinks' "$ROOT/Sources/main.swift"
 rg -q 'ensureBundledPluginLink' "$ROOT/Sources/ArchivePluginSupport.swift"
 rg -q 'BundledPlugin\(' "$ROOT/Sources/main.swift"
+# 旧内置插件软链回收：启动链路、实现、单测、卸载脚本四处都要在，缺一处就会
+# 让升级用户继续看到「装了但加载失败」的幽灵插件。逐文件断言，别用多文件 rg -q
+# （任一命中即通过，会把主流程删掉而测试文件还在的情况判成通过）。
+for f in "$ROOT/Sources/main.swift" "$ROOT/Sources/ArchivePluginSupport.swift" "$ROOT/scripts/test-launcher-support.swift"; do
+  rg -Fq 'removeLegacyBundledPluginLinks' "$f"
+done
+rg -Fq 'dsh-more-menu:DSHMoreMenu' "$ROOT/scripts/uninstall.sh"
+rg -Fq 'dsh-sidebar-deck:DSHSidebarDeck' "$ROOT/scripts/uninstall.sh"
+rg -Fq '/Contents/Resources/$PLUGIN_MARKER' "$ROOT/scripts/uninstall.sh"
 rg -Fq 'Plugins/DSHPluginManager' "$ROOT/Sources/main.swift"
 rg -q 'executablePath\(named: "npm"' "$ROOT/Sources/main.swift"
 rg -q 'DSHRuntimeSupport.install' "$ROOT/Sources/main.swift"
@@ -833,6 +842,18 @@ else
   "$ROOT/scripts/build-universal.sh" >/dev/null
   lipo -info "$ROOT/build/Deepseek Harness Launcher.app/Contents/MacOS/DHL" | grep -q 'x86_64.*arm64\|arm64.*x86_64'
   test -f "$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/menubar-creature.png"
+  # 发布包必须带齐三个内置插件的运行时文件，但不能把仓库里的 test/ 与空的
+  # Sources/ 占位目录一起签进去。查产物本身，不查脚本里有没有写 --exclude。
+  for plugin in DSHArchiveManager DSHPluginManager DSHSessionNotify; do
+    plugin_dir="$ROOT/build/Deepseek Harness Launcher.app/Contents/Resources/$plugin"
+    test -f "$plugin_dir/package.json"
+    test -f "$plugin_dir/cordis.patch.yml"
+    test -d "$plugin_dir/lib"
+    if [[ -d "$plugin_dir/test" || -d "$plugin_dir/Sources" ]]; then
+      echo "release bundle must not ship plugin tests or empty placeholders: $plugin" >&2
+      exit 1
+    fi
+  done
   codesign --verify --deep --strict "$ROOT/build/Deepseek Harness Launcher.app"
   "$ROOT/scripts/build-installer-app.sh" >/dev/null
   test -x "$ROOT/build/双击完成安装或更新.app/Contents/MacOS/DHLInstaller"

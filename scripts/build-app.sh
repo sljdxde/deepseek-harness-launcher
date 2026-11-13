@@ -5,9 +5,17 @@ SDK="$(xcrun --show-sdk-path 2>/dev/null || true)"; [[ -n "$SDK" ]] || SDK="/Lib
 rm -rf "$ROOT/build"; mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 swiftc "$ROOT"/Sources/*.swift -o "$OUT/Contents/MacOS/DHL" -sdk "$SDK" -target arm64-apple-macos12.0
 cp "$ROOT/Resources/Info.plist" "$OUT/Contents/Info.plist"; chmod +x "$OUT/Contents/MacOS/DHL"
-cp -R "$ROOT/Plugins/DSHArchiveManager" "$OUT/Contents/Resources/DSHArchiveManager"
-cp -R "$ROOT/Plugins/DSHPluginManager" "$OUT/Contents/Resources/DSHPluginManager"
-cp -R "$ROOT/Plugins/DSHSessionNotify" "$OUT/Contents/Resources/DSHSessionNotify"
+# 发布包只带插件运行时文件：test/ 是仓库里的单测，Sources/ 是空的占位目录，
+# 打进去只会白白增大签名体积，还让用户以为 App 里带了源码。源目录保持不动，
+# 本地跑插件单测不受影响。
+copy_bundled_plugin() {
+  local name="$1"
+  /usr/bin/rsync -a --exclude 'test/' --exclude 'Sources/' \
+    "$ROOT/Plugins/$name/" "$OUT/Contents/Resources/$name/"
+}
+copy_bundled_plugin DSHArchiveManager
+copy_bundled_plugin DSHPluginManager
+copy_bundled_plugin DSHSessionNotify
 cp -R "$ROOT/Resources/dsh-runtime" "$OUT/Contents/Resources/dsh-runtime"
 cp "$ROOT/scripts/install-from-app.sh" "$OUT/Contents/Resources/install-from-app.sh"; chmod +x "$OUT/Contents/Resources/install-from-app.sh"
 cp "$ROOT/Resources/menubar-creature.png" "$OUT/Contents/Resources/menubar-creature.png"

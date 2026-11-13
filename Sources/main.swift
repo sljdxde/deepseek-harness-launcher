@@ -2149,6 +2149,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             profiles.appendingPathComponent("node_modules", isDirectory: true),
             profiles.appendingPathComponent("web/node_modules", isDirectory: true)
         ]
+        let retired = removeLegacyBundledPluginLinks(profileURLs: locations)
+        if !retired.isEmpty {
+            appendLogString("已清理旧内置插件软链：\(retired.joined(separator: ", "))\n")
+        }
         if !ensureBundledPluginLinks(plugins: bundledPlugins, profileURLs: locations) {
             appendLogString("无法更新内置插件链接，保留现有插件配置\n")
         }

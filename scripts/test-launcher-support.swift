@@ -49,6 +49,73 @@ struct LauncherSupportChecks {
         let profileManagerDestination = try FileManager.default.destinationOfSymbolicLink(atPath: profileManagerLink.path)
         precondition(profileManagerDestination == currentManager.path)
 
+        // MARK: - 旧内置插件软链回收
+
+        // 旧版本内置插件整体下线后，~/.dsh/profiles/**/node_modules 里会留下指向
+        // App Resources 的悬空软链；插件管理器会把它们当成「装了但加载失败」的
+        // user 插件。只回收确定属于旧内置包的软链，用户自装的同名插件一律保留。
+        func linkDestination(_ url: URL) -> String? {
+            try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)
+        }
+
+        let retiredProfiles = [
+            root.appendingPathComponent("retired/shared/node_modules", isDirectory: true),
+            root.appendingPathComponent("retired/web/node_modules", isDirectory: true)
+        ]
+        for dir in retiredProfiles { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
+        let oldResources = root.appendingPathComponent("Old.app/Contents/Resources", isDirectory: true)
+
+        let retiredLink = retiredProfiles[0].appendingPathComponent("dsh-more-menu")
+        try FileManager.default.createSymbolicLink(
+            at: retiredLink,
+            withDestinationURL: oldResources.appendingPathComponent("DSHMoreMenu", isDirectory: true)
+        )
+        let retiredWebLink = retiredProfiles[1].appendingPathComponent("dsh-ui-enhance")
+        try FileManager.default.createSymbolicLink(
+            at: retiredWebLink,
+            withDestinationURL: oldResources.appendingPathComponent("DSHUiEnhance", isDirectory: true)
+        )
+        // 旧安装包也用过相对目标，解析到 node_modules 所在目录后必须同样识别。
+        let relativeLink = retiredProfiles[1].appendingPathComponent("dsh-launcher-settings")
+        try FileManager.default.createSymbolicLink(
+            atPath: relativeLink.path,
+            withDestinationPath: "../../../Old.app/Contents/Resources/DSHLauncherSettings"
+        )
+
+        // 用户自装：真实目录、指向 local-plugins 的软链、以及名字带 marker 但
+        // 不在 App 包内的软链，三种都不能被回收。
+        let userDir = retiredProfiles[0].appendingPathComponent("dsh-sidebar-deck", isDirectory: true)
+        try FileManager.default.createDirectory(at: userDir, withIntermediateDirectories: true)
+        let userPlugin = root.appendingPathComponent("local-plugins/dsh-more-menu", isDirectory: true)
+        try FileManager.default.createDirectory(at: userPlugin, withIntermediateDirectories: true)
+        let userLink = retiredProfiles[0].appendingPathComponent("dsh-ui-enhance")
+        try FileManager.default.createSymbolicLink(at: userLink, withDestinationURL: userPlugin)
+        let lookalikeLink = retiredProfiles[1].appendingPathComponent("dsh-more-menu")
+        try FileManager.default.createSymbolicLink(
+            at: lookalikeLink,
+            withDestinationURL: root.appendingPathComponent("somewhere/DSHMoreMenu", isDirectory: true)
+        )
+
+        // 当前仍在使用的内置插件链接绝不能进回收清单。
+        precondition(!legacyBundledPluginLinks.keys.contains(archive.linkName))
+        precondition(!legacyBundledPluginLinks.keys.contains(manager.linkName))
+        let liveLink = retiredProfiles[0].appendingPathComponent("dsh-archive-manager")
+        try FileManager.default.createSymbolicLink(at: liveLink, withDestinationURL: currentPlugin)
+
+        let removed = removeLegacyBundledPluginLinks(profileURLs: retiredProfiles)
+        precondition(
+            Set(removed) == Set(["dsh-more-menu", "dsh-ui-enhance", "dsh-launcher-settings"]),
+            "只回收指向旧 App 包的三个内置插件软链，实际：\(removed)"
+        )
+        precondition(linkDestination(retiredLink) == nil, "旧的绝对目标悬空软链已删除")
+        precondition(linkDestination(retiredWebLink) == nil, "web profile 里的悬空软链已删除")
+        precondition(linkDestination(relativeLink) == nil, "相对目标的旧软链已删除")
+        precondition(FileManager.default.fileExists(atPath: userDir.path), "用户自装的同名真实目录保留")
+        precondition(linkDestination(userLink) == userPlugin.path, "指向 local-plugins 的用户软链保留")
+        precondition(linkDestination(lookalikeLink) != nil, "不在 Contents/Resources 内的同名软链保留")
+        precondition(linkDestination(liveLink) == currentPlugin.path, "当前内置插件软链保留")
+        precondition(removeLegacyBundledPluginLinks(profileURLs: retiredProfiles).isEmpty, "重复执行是幂等的")
+
         let timestamp = formatLogTimestamp(Date(timeIntervalSince1970: 0), timeZone: TimeZone(secondsFromGMT: 8 * 3600)!)
         precondition(timestamp == "1970-01-01 08:00:00 +0800")
 

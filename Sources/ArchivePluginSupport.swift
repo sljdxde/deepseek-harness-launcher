@@ -116,6 +116,55 @@ func ensureBundledPluginLink(
     }
 }
 
+/// 已下线的内置插件：node_modules 里的链接名 → App Resources 里的旧目录名。
+///
+/// 这些插件以前随启动器分发，插件从 App 包里移除后，升级用户的
+/// `~/.dsh/profiles/**/node_modules` 里只剩一条指向 App 包内的悬空软链；插件管理器
+/// 会把它当成「用户装了但加载失败」的插件一直列出来。启动时回收一次，旧数据不必
+/// 手动清理；`scripts/uninstall.sh` 用同一份清单做完整卸载。
+///
+/// 判定同时要求「链接名在清单里」+「软链目标解析后确实在 App 包的
+/// Contents/Resources 下，且目录名与旧内置包一致」。用户自己装的同名插件（真实
+/// 目录、或指向 local-plugins 的软链）以及不在 App 包内的同名软链都保留。
+let legacyBundledPluginLinks: [String: String] = [
+    "dsh-more-menu": "DSHMoreMenu",
+    "dsh-ui-enhance": "DSHUiEnhance",
+    "dsh-launcher-settings": "DSHLauncherSettings",
+    "dsh-sidebar-deck": "DSHSidebarDeck"
+]
+
+/// 回收旧版本内置插件留下的悬空软链，返回实际删掉的链接名（重复执行为空）。
+@discardableResult
+func removeLegacyBundledPluginLinks(
+    profileURLs: [URL],
+    retired: [String: String] = legacyBundledPluginLinks,
+    fileManager: FileManager = .default
+) -> [String] {
+    var removed: [String] = []
+    for profileURL in profileURLs {
+        for (linkName, bundleMarker) in retired {
+            let link = profileURL.appendingPathComponent(linkName)
+            // 非软链（用户自装的真实目录）会在这里抛错，直接跳过。
+            guard let destination = try? fileManager.destinationOfSymbolicLink(atPath: link.path) else { continue }
+            let resolved: String
+            if (destination as NSString).isAbsolutePath {
+                resolved = (destination as NSString).standardizingPath
+            } else {
+                resolved = URL(fileURLWithPath: destination, relativeTo: profileURL).standardizedFileURL.path
+            }
+            guard resolved.contains("/Contents/Resources/"),
+                  (resolved as NSString).lastPathComponent == bundleMarker else { continue }
+            do {
+                try fileManager.removeItem(at: link)
+                removed.append(linkName)
+            } catch {
+                continue
+            }
+        }
+    }
+    return removed
+}
+
 @discardableResult
 func ensureBundledPluginLinks(
     plugins: [BundledPlugin],
