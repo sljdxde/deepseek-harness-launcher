@@ -12,6 +12,11 @@ import (
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/paths"
 )
 
+// maxLogBytes caps one log file; on overflow it rotates to dhl.log.1 (one
+// backup kept). The launcher runs for days, so an unbounded log is a slow
+// disk leak.
+const maxLogBytes int64 = 2 << 20
+
 var (
 	mu sync.Mutex
 	f  *os.File
@@ -52,7 +57,30 @@ func Logf(format string, args ...any) {
 		return
 	}
 	stamp := time.Now().Format("2006-01-02 15:04:05 -0700")
-	fmt.Fprintf(f, "%s %s\n", stamp, fmt.Sprintf(format, args...))
+	line := fmt.Sprintf("%s %s\n", stamp, fmt.Sprintf(format, args...))
+	if info, err := f.Stat(); err == nil && info.Size()+int64(len(line)) > maxLogBytes {
+		rotateLocked()
+		if f == nil {
+			return
+		}
+	}
+	_, _ = f.WriteString(line)
+}
+
+// rotateLocked closes the current file, moves it to dhl.log.1 and reopens a
+// fresh dhl.log. A failed rename still reopens the original so logging keeps
+// working; only the oldest bytes are at risk.
+func rotateLocked() {
+	path := paths.LogFile()
+	if f != nil {
+		_ = f.Close()
+		f = nil
+	}
+	_ = os.Remove(path + ".1")
+	_ = os.Rename(path, path+".1")
+	if file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+		f = file
+	}
 }
 
 // Close flushes and closes the log at exit.

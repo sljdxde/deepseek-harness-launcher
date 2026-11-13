@@ -5,10 +5,12 @@ package app
 // the settings file, and the unread menu section.
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
@@ -405,11 +407,30 @@ type settingsFile struct {
 	AutoCheckUpdates *bool `json:"autoCheckUpdates,omitempty"`
 }
 
+// lastSettingsData is the last payload actually written. Callers persist the
+// whole settings file (including the unread rows) and several run on timers,
+// so an unchanged payload must not touch the disk at all.
+var (
+	settingsWriteMu  sync.Mutex
+	lastSettingsData []byte
+)
+
 // writeSettings persists a settings value set directly (the settings page
 // path), then repaints the badge.
 func writeSettings(settings settingsFile) {
 	data, err := marshalJSON(settings)
 	if err != nil {
+		return
+	}
+	writeSettingsData(data)
+}
+
+// writeSettingsData writes one payload unless it is byte-identical to the last
+// successful write (the Windows counterpart of macOS's persistIfChanged).
+func writeSettingsData(data []byte) {
+	settingsWriteMu.Lock()
+	defer settingsWriteMu.Unlock()
+	if bytes.Equal(data, lastSettingsData) {
 		return
 	}
 	if err := os.MkdirAll(paths.SettingsDir(), 0o755); err != nil {
@@ -419,7 +440,10 @@ func writeSettings(settings settingsFile) {
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return
 	}
-	_ = os.Rename(tmp, paths.SettingsFile())
+	if err := os.Rename(tmp, paths.SettingsFile()); err != nil {
+		return
+	}
+	lastSettingsData = append(lastSettingsData[:0], data...)
 }
 
 func saveSettings() {
@@ -451,14 +475,7 @@ func saveSettings() {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(paths.SettingsDir(), 0o755); err != nil {
-		return
-	}
-	tmp := paths.SettingsFile() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return
-	}
-	_ = os.Rename(tmp, paths.SettingsFile())
+	writeSettingsData(data)
 }
 
 func loadSettings() settingsFile {

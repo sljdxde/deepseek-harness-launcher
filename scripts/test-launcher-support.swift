@@ -182,6 +182,24 @@ struct LauncherSupportChecks {
         precondition(BuiltinPluginProbePolicy.readiness.deadline >= 60)
         precondition(BuiltinPluginProbePolicy.legacyEndpointFallback.deadline >= 20)
 
+        // MARK: - 日志常驻句柄与轮转
+
+        // 每块输出不再 open/seek/write/close；超过上限轮转成 .1，且轮转后句柄
+        // 仍能继续写。上限设得很小，几百字节就能走到两条分支。
+        let logDir = root.appendingPathComponent("logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
+        let logURL = logDir.appendingPathComponent("dhl.log")
+        let writer = LogFileWriter(url: logURL, maxBytes: 64)
+        for _ in 0..<8 { writer.append(Data(repeating: 0x41, count: 20)) }
+        writer.close()
+        let rotatedSize = (try? FileManager.default.attributesOfItem(atPath: logURL.path)[.size] as? Int) ?? 0
+        precondition(rotatedSize <= 64, "单个日志文件不得超过上限：\(String(describing: rotatedSize))")
+        precondition(FileManager.default.fileExists(atPath: logURL.path + ".1"), "超限时必须留下 .1 备份")
+        writer.append(Data("tail".utf8))
+        writer.close()
+        let tail = try Data(contentsOf: logURL)
+        precondition(tail.suffix(4) == Data("tail".utf8), "轮转后句柄应能继续追加")
+
         print("launcher support checks passed")
     }
 }

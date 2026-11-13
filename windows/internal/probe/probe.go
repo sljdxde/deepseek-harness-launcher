@@ -16,6 +16,15 @@ import (
 	"time"
 )
 
+// client is shared by every loopback probe: keep-alive reuse matters here
+// because the completion / plugin loops hit the same host for hours. The
+// per-request deadline comes from the context, not Client.Timeout.
+var client = &http.Client{Transport: &http.Transport{
+	MaxIdleConns:        8,
+	MaxIdleConnsPerHost: 4,
+	IdleConnTimeout:     90 * time.Second,
+}}
+
 // Response asks url once, waiting up to timeout. A real HTTP response
 // (any status) returns status and body with a nil error; only transport
 // failure or timeout returns err.
@@ -26,7 +35,7 @@ func Response(url string, timeout time.Duration) (status int, body string, err e
 	if err != nil {
 		return 0, "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, "", err
 	}
@@ -57,7 +66,7 @@ func PostJSON(url string, payload string, timeout time.Duration) int {
 		return 0
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0
 	}

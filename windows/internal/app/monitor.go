@@ -173,6 +173,9 @@ func (c *controller) startPluginUpdatePoll() {
 	go func() {
 		refreshed := false
 		elapsed := 0
+		// 上次真正刷新的摘要。轮询每 10 s 都会重读一次，但只有数字变了才
+		// 重绘角标 / 面板并落盘，避免空闲时反复写 settings.json。
+		lastSignature := "\x00"
 		for {
 			c.mu.Lock()
 			port := c.port
@@ -192,6 +195,11 @@ func (c *controller) startPluginUpdatePoll() {
 			c.mu.Lock()
 			c.pluginUpdates = summary
 			c.mu.Unlock()
+			signature := fmt.Sprintf("%d/%d/%d/%t", summary.Available, summary.Ignored, summary.Failed, active)
+			if signature != lastSignature {
+				lastSignature = signature
+				c.refreshBadgeAndMenu()
+			}
 			if active {
 				time.Sleep(1 * time.Second)
 				elapsed++
@@ -199,7 +207,6 @@ func (c *controller) startPluginUpdatePoll() {
 				time.Sleep(10 * time.Second)
 				elapsed += 10
 			}
-			c.refreshBadgeAndMenu()
 		}
 	}()
 }

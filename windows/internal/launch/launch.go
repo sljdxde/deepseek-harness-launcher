@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"net/url"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +25,7 @@ import (
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/harnessweb"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/paths"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/pluginisolation"
+	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/probe"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/proc"
 )
 
@@ -372,12 +372,5 @@ func dataDir() string { return filepath.Dir(paths.LogDir()) }
 
 // probeGet is a tiny GET with a short timeout, enough for loopback.
 func probeGet(url string) (int, string, error) {
-	client := &http.Client{Timeout: 1500 * time.Millisecond}
-	resp, err := client.Get(url)
-	if err != nil {
-		return 0, "", err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	return resp.StatusCode, string(data), nil
+	return probe.Response(url, 1500*time.Millisecond)
 }

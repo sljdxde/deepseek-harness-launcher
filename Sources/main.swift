@@ -163,6 +163,22 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 点击菜单项后菜单即关闭，反馈必须出现在菜单栏本身才能被看见；
     /// makeStatusImage 重建图标时按此保持 variableLength 不裁剪文案。
     private var statusTitleOverride: String?
+    /// 菜单栏角标的合成缓存：未读数 / 更新态 / 深浅色没变时直接复用旧图，
+    /// 不再每 3.5 秒重读 PNG、重新 lockFocus 合成。
+    private struct StatusBadgeKey: Equatable {
+        let unread: Int
+        let updateAvailable: Bool
+        let isDark: Bool
+    }
+    private var lastStatusBadgeKey: StatusBadgeKey?
+    private var cachedStatusBadgeImage: (key: StatusBadgeKey, image: NSImage)?
+    private lazy var statusBarBaseImage: NSImage = {
+        guard let url = Bundle.main.url(forResource: "menubar-creature", withExtension: "png"),
+              let base = NSImage(contentsOf: url) else {
+            return NSImage(size: NSSize(width: 18, height: 18))
+        }
+        return base
+    }()
     // 插件隔离 / 启动前预检 / 安全模式 / 启动失败自动恢复已整体移除：启动器不再
     // 主动禁用、跳过或回退任何插件，dsh 起不来时如实报错即可。
     private var autoUpdateTimer: Timer?
@@ -236,7 +252,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var updateAvailable: Bool {
         pendingUpdate != nil || (dshUpdateBadgeVisible && dshUpdateReport?.isUpdate == true)
     }
-    private let logLock = NSLock()
+    private let logWriterLock = NSLock()
+    private var cachedLogWriter: LogFileWriter?
     private lazy var globalHotKeyManager = GlobalHotKeyManager { [weak self] in
         self?.openDHL()
     }
@@ -2314,18 +2331,18 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // 逐个判 peer 区间（见 startHealthMonitors 的注释）。启动前预检、插件隔离与
     // 安全模式也一并移除；dsh 起不来时只如实报错，不再自动禁用任何插件。
 
+    private var logWriter: LogFileWriter {
+        logWriterLock.lock(); defer { logWriterLock.unlock() }
+        if let cachedLogWriter { return cachedLogWriter }
+        let writer = LogFileWriter(url: logURL)
+        cachedLogWriter = writer
+        return writer
+    }
+
     private func appendLog(_ data: Data, prefix: String? = nil) {
         if let prefix { appendLogString("[\(formatLogTimestamp())] [\(prefix)] ", includeTimestamp: false) }
-        logLock.lock(); defer { logLock.unlock() }
-        if !FileManager.default.fileExists(atPath: logURL.path) { FileManager.default.createFile(atPath: logURL.path, contents: nil) }
-        guard let handle = try? FileHandle(forWritingTo: logURL) else { return }
-        defer { try? handle.close() }
-        do {
-            try handle.seekToEnd()
-            try handle.write(contentsOf: data)
-        } catch {
-            // Logging must never interrupt the launcher lifecycle.
-        }
+        // 常驻句柄 + 2 MB 轮转（LogFileWriter），不再每块输出 open/close。
+        logWriter.append(data)
     }
 
     private func appendLogString(_ text: String, includeTimestamp: Bool = true) {
@@ -2397,12 +2414,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func makeStatusImage() -> NSImage {
         // 基于上游 deepseek-harness-desktop 的菜单栏图标（干净单 path 剪影），
-        // 角标合成见 Sources/StatusBadgeSupport.swift。
-        guard let url = Bundle.main.url(forResource: "menubar-creature", withExtension: "png"),
-              let base = NSImage(contentsOf: url) else {
-            return NSImage(size: NSSize(width: 18, height: 18))
-        }
-
+        // 角标合成见 Sources/StatusBadgeSupport.swift。底图只读一次；合成结果按
+        // 「未读数 + 更新态 + 深浅色」缓存，状态没变时零解码、零绘制。
         let unread = sessionNotifyStore.unreadCount
         // Dock 图标数字：与菜单栏未读角标同口径（按会话计数）。窗口关掉后
         // 用户低头看 Dock 也能看到「有任务完成」。侧栏红点不再由启动器注入，
@@ -2421,7 +2434,28 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ? NSStatusItem.variableLength : NSStatusItem.squareLength
         let appearance = statusItem.button?.window?.effectiveAppearance ?? NSApp.effectiveAppearance
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        return StatusBadgeSupport.image(base: base, plan: plan, isDark: isDark)
+        let key = StatusBadgeKey(unread: unread, updateAvailable: updateAvailable, isDark: isDark)
+        if let cachedStatusBadgeImage, cachedStatusBadgeImage.key == key {
+            lastStatusBadgeKey = key
+            return cachedStatusBadgeImage.image
+        }
+        let image = StatusBadgeSupport.image(base: statusBarBaseImage, plan: plan, isDark: isDark)
+        cachedStatusBadgeImage = (key, image)
+        lastStatusBadgeKey = key
+        return image
+    }
+
+    private func currentStatusBadgeKey() -> StatusBadgeKey {
+        let appearance = statusItem.button?.window?.effectiveAppearance ?? NSApp.effectiveAppearance
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return StatusBadgeKey(unread: sessionNotifyStore.unreadCount, updateAvailable: updateAvailable, isDark: isDark)
+    }
+
+    /// 轮询里的无条件重绘改成「状态真的变了才重绘」；深浅色切换也在 key 里，
+    /// 最多滞后一个轮询周期（3.5 秒）。
+    private func refreshStatusBadgeIfNeeded() {
+        guard currentStatusBadgeKey() != lastStatusBadgeKey else { return }
+        statusItem.button?.image = makeStatusImage()
     }
 
     /// 后台检查（手动检查同理）拿到结论后刷新菜单栏角标与悬停提示。
@@ -2554,8 +2588,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.appendLogString("会话完成通知插件不可用（当前 Harness 未加载内置插件），重启 dsh 后可用\n")
                 }
             }
-            // 轮询顺带重绘角标，外观切换后最多滞后一个轮询周期。
-            statusItem.button?.image = makeStatusImage()
+            // 状态没变就不重绘：外观切换（深/浅色）由 key 覆盖，最多滞后一个轮询周期。
+            self.refreshStatusBadgeIfNeeded()
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
                 self.pollSessionNotify(port: port, loopID: loopID)
             }
