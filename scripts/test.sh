@@ -532,31 +532,36 @@ plutil -extract NSAppleEventsUsageDescription raw "$ROOT/Resources/Info.plist" |
 rg -Fq 'BrowserConnectionTests' "$ROOT/scripts/test-browser-connection.swift"
 xcrun swiftc -o /tmp/dsh-test-browser-connection "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/BrowserAutomationSupport.swift" "$ROOT/scripts/test-browser-connection.swift" -framework AppKit
 /tmp/dsh-test-browser-connection
-# 会话提醒跳转的决策链必须留在可单测的 SessionJumpSupport 里（main.swift 只执行）：
-# 点击处置 / 页面重开 / 重启接管关旧标签 / 单实例与多实例的失败诊断 / 失败降级顺序。
+# 浏览器回退模式的决策链必须留在可单测的 SessionJumpSupport 里（main.swift 只执行）：
+# 页面重开 / 重启接管关旧标签 / 单实例与多实例的失败诊断 / 失败降级顺序。
 # 这些判断曾散在 main.swift 的异步回调里，改一处坏另一处、grep 字符串又抓不住。
-rg -Fq 'SessionJumpSupport' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
-rg -Fq 'clickDisposition' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
-rg -Fq 'pagePlan' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
-rg -Fq 'focusPlan' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
-# 任何分支都要投递「打开会话」命令：标签没选中只影响看得见看不见，不能连会话一起不切。
-rg -Fq 'sendsSessionOpen' "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
-rg -Fq 'requestSessionOpen' "$ROOT/Sources/main.swift"
+# 逐文件断言：多文件 rg -q 是「任一命中即通过」，主流程把调用删了照样蒙混过关
+# （clickDisposition 就是被这样一条空转守卫护了好几个版本）。
+for f in "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"; do
+  rg -Fq 'SessionJumpSupport' "$f"
+done
 # 多实例寻址：只有 AppleScript 确实会发给「连着 Harness 的那个实例」时才允许
 # 选中/关闭标签页；否则会在另一个实例（自动化浏览器恢复出来的旧页面）里选中
 # 一个 Harness 标签页，把用户带去错误窗口。判定必须留在可单测的 SessionJumpSupport。
-rg -Fq 'appleScriptReachesConnectedInstance' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
-rg -Fq 'unreachableInstancePlan' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
-rg -Fq 'runningInstances' "$ROOT/Sources/BrowserAutomationSupport.swift" "$ROOT/Sources/main.swift"
-# 不可达时「只前置 vs 新开标签」由页面可见性决定，且必须按 pid 定向新开：
-# 只前置对「用户切到了别的标签」无效（点了没反应），NSWorkspace/open 又可能
-# 落到最近启动的另一个实例。判定在 SessionJumpSupport，执行在 BrowserAutomationSupport。
-rg -Fq 'unreachablePresentation' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
-rg -Fq 'presenceVisible' "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/main.swift"
-rg -Fq 'openURL' "$ROOT/Sources/BrowserAutomationSupport.swift" "$ROOT/Sources/main.swift"
-rg -Fq 'newTabOpened' "$ROOT/Sources/main.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/scripts/test-session-jump.swift"
-# 内置窗口是默认界面：Dock 常驻、主菜单装上、跳转走「前置窗口 + 投递命令」，
-# 不再依赖 AppleScript 选中浏览器标签页。回退到浏览器只能通过设置显式开启。
+# 不可达时「只前置 vs 新开标签」由页面可见性决定，且必须按 pid 定向新开。
+for symbol in pagePlan focusPlan appleScriptReachesConnectedInstance unreachableInstancePlan unreachablePresentation newTabOpened; do
+  rg -Fq "$symbol" "$ROOT/Sources/main.swift"
+  rg -Fq "$symbol" "$ROOT/Sources/SessionJumpSupport.swift"
+done
+rg -Fq 'runningInstances' "$ROOT/Sources/BrowserAutomationSupport.swift"
+rg -Fq 'runningInstances' "$ROOT/Sources/main.swift"
+rg -Fq 'presenceVisible' "$ROOT/Sources/BrowserConnectionSupport.swift"
+rg -Fq 'presenceVisible' "$ROOT/Sources/main.swift"
+rg -Fq 'openURL' "$ROOT/Sources/BrowserAutomationSupport.swift"
+rg -Fq 'openURL' "$ROOT/Sources/main.swift"
+# 「点完成提醒 → 投递打开会话命令」的触发点已连同启动器侧的发送链路删除，
+# 这些实现不许再长回来。插件侧的 /dsh-session-notify/open 端点留给 Windows 托盘，
+# 不在这条守卫的范围内（守卫只看启动器的 Swift 源码）。
+if rg -q 'enum ClickDisposition|static func clickDisposition|static func openSessionPayload|func requestSessionOpen|let sendsSessionOpen|static func postJSON' "$ROOT/Sources"; then
+  echo "会话跳转死代码不许回到启动器（插件侧 /open 仍由 Windows 使用）" >&2
+  exit 1
+fi
+# 内置窗口是默认界面：Dock 常驻、主菜单装上。回退到浏览器只能通过设置显式开启。
 rg -Fq 'HarnessWindowController' "$ROOT/Sources/main.swift" "$ROOT/Sources/HarnessWindowController.swift"
 rg -Fq 'HarnessWindowSupport.action' "$ROOT/Sources/main.swift" "$ROOT/Sources/HarnessWindowSupport.swift"
 rg -Fq 'NSApp.setActivationPolicy(.regular)' "$ROOT/Sources/main.swift"

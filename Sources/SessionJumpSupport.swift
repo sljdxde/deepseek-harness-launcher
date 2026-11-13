@@ -1,21 +1,20 @@
 import Foundation
 
-/// 点击菜单栏「会话完成」→ 在已打开的 Harness 标签页里直接看到那个会话。
+/// 浏览器回退模式下「打开 Harness 页面」的决策链。
 ///
-/// 这条链路被反复改坏过（整串 URL 匹配不上、跳转请求没投递、重启后接管顺序错），
-/// 而原来的判断全写在 `main.swift` 的异步回调里，测试二进制加载不了 App 主类，
-/// 只能靠 grep 字符串——那种断言挡不住任何行为回归。所以把**决策**抽到这里，
-/// `main.swift` 只负责把计划翻译成 AppleScript / NSWorkspace / HTTP 调用
-/// （CODING_STANDARDS §2：可测试逻辑不进 main.swift）。
+/// 内置窗口是默认 UI；只有用户在设置里显式关掉它，才会走到这里的页面/标签
+/// 计划。判断曾散在 `main.swift` 的异步回调里，改一处坏另一处、grep 字符串又
+/// 抓不住，所以把**决策**抽到这里，`main.swift` 只负责翻译成 AppleScript /
+/// NSWorkspace / HTTP 调用（CODING_STANDARDS §2：可测试逻辑不进 main.swift）。
 ///
-/// 链路分三步，每一步都能单独喂输入、断言输出：
-/// 1. `clickDisposition`：这次点击是直接跳、先启动 dsh、还是等运行环境装完；
-/// 2. `pagePlan`：页面要不要重开、重启接管要不要先关旧标签、要不要选中已有标签；
-/// 3. `focusPlan` + 日志：AppleScript 的结果怎么解释、失败时怎么降级、日志怎么写。
+/// 链路两步，每一步都能单独喂输入、断言输出：
+/// 1. `pagePlan`：页面要不要重开、重启接管要不要先关旧标签、要不要选中已有标签；
+/// 2. `focusPlan` + 日志：AppleScript 的结果怎么解释、失败时怎么降级、日志怎么写。
 ///
-/// 特别地：**任何分支都必须投递「打开会话」命令**（`FocusPlan.sendsSessionOpen`
-/// 恒为 true）。标签没选中只影响「用户看不看得见」，不能连会话一起不切——那正是
-/// 「点了没反应」的一半。
+/// 历史上这里还有「点击会话完成提醒 → 投递打开会话命令」的处置与请求体
+/// （`clickDisposition` / `openSessionPayload`）。那个触发点已下线，启动器不再
+/// POST `/dsh-session-notify/open`，相关实现与常量已删除；插件侧的 `/open`
+/// 端点仍由 Windows 托盘的未读列表使用，不要在共享插件里删。
 enum SessionJumpSupport {
     /// 已连接 Harness 的浏览器（lsof 连接 + ps 父子链找到的那个进程）。
     /// `instanceCount` 是同一 bundle 正在运行的实例数：macOS 只把 AppleScript
@@ -61,23 +60,6 @@ enum SessionJumpSupport {
             if startedAt >= connectedStartedAt { return false }
         }
         return true
-    }
-
-    // MARK: - 点击处置
-
-    /// 点击一条完成提醒时该走哪条路。
-    enum ClickDisposition: Equatable {
-        /// 实例在跑：直接开页面（或前置）并投递会话。
-        case jumpInPlace
-        /// 实例没在跑：先启动，就绪后再开页面并投递会话（不能丢这次点击）。
-        case startThenJump
-        /// 正在安装/更新运行环境：等安装结束、页面可打开时再跳。
-        case waitForInstall
-    }
-
-    static func clickDisposition(isRunning: Bool, hasPort: Bool, isInstalling: Bool) -> ClickDisposition {
-        if isInstalling { return .waitForInstall }
-        return (isRunning && hasPort) ? .jumpInPlace : .startThenJump
     }
 
     // MARK: - 页面阶段
@@ -128,7 +110,7 @@ enum SessionJumpSupport {
         /// 真正连着 Harness 的浏览器（Harness 页本来就是可见标签，前置即可）。
         case unreachableInstance(instanceCount: Int)
         /// 同上，但 Harness 页不在眼前（用户切到了别的标签）：已在真正连接的
-        /// 实例里新开一个 Harness 标签，把会话送到他面前（旧标签保留）。
+        /// 实例里新开一个 Harness 标签，把页面送到他眼前（旧标签保留）。
         case unreachableInstanceNewTab(instanceCount: Int)
         /// 同上，但「新开标签」的 Apple Event 没投递成功：退回只前置浏览器，
         /// 日志必须说清楚，否则又会变成「点了没反应还不留痕」。
@@ -141,10 +123,6 @@ enum SessionJumpSupport {
         let diagnosis: FocusDiagnosis
         /// 选不中标签时至少把已连接的浏览器前置，别让点击看起来毫无反应。
         let activateBrowser: Bool
-        /// 恒 true：会话开关必须投递（标签没选中也要切会话）。
-        let sendsSessionOpen: Bool = true
-        /// 恒 true：流程必须收尾（清 inFlight、跑 completion），早退会把后续点击吞掉。
-        let completes: Bool = true
     }
 
     /// - Parameter addressedConnectedInstance: 这次 AppleScript 是否真的寻址到了
@@ -183,7 +161,7 @@ enum SessionJumpSupport {
     }
 
     /// 不可达 + Harness 页不在眼前：在真正连接的实例里新开标签（由 main 执行
-    /// Apple Event 投递），置位后会话命令照常交给页面。
+    /// Apple Event 投递），让真正连接的实例里出现一个可见的 Harness 页面。
     static func unreachableNewTabPlan(browser: BrowserInfo) -> FocusPlan {
         FocusPlan(
             diagnosis: .unreachableInstanceNewTab(instanceCount: browser.instanceCount),
@@ -209,25 +187,10 @@ enum SessionJumpSupport {
     }
 
     /// 只有**明确看到**「Harness 页可见」时才认为前置就够；不可见或未知
-    /// （旧插件不上报 `visible`）都新开标签——用户点完成提醒的诉求是「看到
-    /// 那个会话」，宁肯多开一张标签，也不要不响应。
+    /// （旧插件不上报 `visible`）都新开标签——用户要的是「看到 Harness 页面」，
+    /// 宁肯多开一张标签，也不要不响应。
     static func unreachablePresentation(pageVisible: Bool?) -> UnreachablePresentation {
         pageVisible == true ? .activateOnly : .openNewTabInConnectedInstance
-    }
-
-    // MARK: - 跳转请求
-
-    /// 「打开会话」POST `/dsh-session-notify/open` 的请求体。
-    ///
-    /// `embeddedOnly` 为 true（内置窗口模式）时带 `requireEmbedded`：服务端只允许
-    /// WKWebView 页面领取。外部 Chrome 标签页的 `document.hasFocus()` 会谎报 true，
-    /// 光靠焦点优先挡不住它抢命令——抢走后会话切在看不见的窗口里，表现成「点了没反应」。
-    static func openSessionPayload(sessionId: String, embeddedOnly: Bool) -> [String: Any]? {
-        let trimmed = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        var payload: [String: Any] = ["sessionId": trimmed]
-        if embeddedOnly { payload["requireEmbedded"] = true }
-        return payload
     }
 
     // MARK: - 日志文案
@@ -259,17 +222,17 @@ enum SessionJumpSupport {
             // 事实三件事：连着的是哪个、为什么不能精确选中、这次实际做了什么。
             return "检测到 \(browser.name) 已连接 Harness 端口 \(port)，但同 bundle 有 \(instanceCount) 个实例在运行，"
                 + "AppleScript 只会发给最近启动的那个（不是连着 Harness 的这个）；"
-                + "未改动另一个实例的标签页，已前置真正连接 Harness 的浏览器并投递会话。"
+                + "未改动另一个实例的标签页，已前置真正连接 Harness 的浏览器。"
                 + "退出那个后台/自动化浏览器实例后即可恢复精确选中标签页"
         case .unreachableInstanceNewTab(let instanceCount):
             return "检测到 \(browser.name) 已连接 Harness 端口 \(port)，但同 bundle 有 \(instanceCount) 个实例在运行，"
                 + "AppleScript 只会发给最近启动的那个（不是连着 Harness 的这个），选中不了你正在看的 Harness 标签；"
-                + "已在真正连接 Harness 的浏览器里新开一个 Harness 标签并切到目标会话（原标签保留）。"
-                + "退出那个后台/自动化浏览器实例后即可恢复在原标签里直接切换"
+                + "已在真正连接 Harness 的浏览器里新开一个 Harness 标签（原标签保留）。"
+                + "退出那个后台/自动化浏览器实例后即可恢复在原标签里精确定位"
         case .unreachableInstanceNewTabFailed(let instanceCount):
             return "检测到 \(browser.name) 已连接 Harness 端口 \(port)，但同 bundle 有 \(instanceCount) 个实例在运行，"
                 + "AppleScript 只会发给最近启动的那个（不是连着 Harness 的这个）；"
-                + "新开 Harness 标签的事件投递失败（浏览器拒绝或自动化权限被收回），已前置浏览器并照常切换会话"
+                + "新开 Harness 标签的事件投递失败（浏览器拒绝或自动化权限被收回），已前置浏览器"
         case .failed(let message):
             return "定位 \(browser.name) Harness 标签页失败（\(message)）；已前置浏览器"
         }

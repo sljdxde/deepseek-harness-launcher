@@ -1650,11 +1650,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         HarnessWebCompatibility.isHarnessWebBody(body)
     }
 
-    private func dshHasArchivePlugin(on port: Int) -> Bool {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/dsh-archive-manager/archives"), let body = ServiceProbe.body(at: url) else { return false }
-        return body.contains("items")
-    }
-
     private func canBind(port: Int) -> Bool {
         let fd = socket(AF_INET, SOCK_STREAM, 0); guard fd >= 0 else { return false }; defer { close(fd) }
         var reuse: Int32 = 1
@@ -2016,7 +2011,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let arguments = PluginIsolationSupport.bootArguments(
             port: port,
             basePatch: FileManager.default.isReadableFile(atPath: patchPath) ? patchPath : nil,
-            isolationPatch: nil,
             // 用户停用层排在最后：最后应用的覆盖优先级最高，确保用户意图生效。
             disabledPatch: stagedPluginDisabledPatchPath()
         )

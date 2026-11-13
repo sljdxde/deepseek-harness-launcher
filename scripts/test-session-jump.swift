@@ -38,21 +38,6 @@ struct SessionJumpChecks {
         let chromeMulti = SessionJumpSupport.BrowserInfo(name: "Google Chrome", bundleIdentifier: "com.google.Chrome", instanceCount: 2)
         let safari = SessionJumpSupport.BrowserInfo(name: "Safari", bundleIdentifier: "com.apple.Safari", instanceCount: 1)
 
-        // MARK: - 1. 点击处置（菜单点击 / 提醒点击）
-        // 实例在跑：立刻开页面并投递会话，不该先重启。
-        checkEqual(SessionJumpSupport.clickDisposition(isRunning: true, hasPort: true, isInstalling: false),
-                   .jumpInPlace, "实例在跑应直接跳")
-        // 没在跑（或还没拿到端口）：先启动，再把这次点击补上——不能因为「晚了几秒」丢掉点击。
-        checkEqual(SessionJumpSupport.clickDisposition(isRunning: false, hasPort: false, isInstalling: false),
-                   .startThenJump, "没在跑应先启动再跳")
-        checkEqual(SessionJumpSupport.clickDisposition(isRunning: true, hasPort: false, isInstalling: false),
-                   .startThenJump, "没有端口等同没就绪，应先启动再跳")
-        // 正在装/更新运行环境：等装完，别在安装中途去开一个旧进程的页面。
-        checkEqual(SessionJumpSupport.clickDisposition(isRunning: false, hasPort: false, isInstalling: true),
-                   .waitForInstall, "安装运行环境时应等安装完成")
-        checkEqual(SessionJumpSupport.clickDisposition(isRunning: true, hasPort: true, isInstalling: true),
-                   .waitForInstall, "安装优先于直接跳")
-
         // MARK: - 2. 页面阶段计划
         // 每条用例：presence 心跳、有没有已连接的浏览器、是不是重启接管。
         let pageCases: [(name: String, presence: Bool?, browser: SessionJumpSupport.BrowserInfo?, restart: Bool, expect: (reopen: Bool, close: Bool, focus: Bool))] = [
@@ -181,8 +166,6 @@ struct SessionJumpChecks {
         let unreachable = SessionJumpSupport.unreachableInstancePlan(browser: chromeMulti)
         checkEqual(unreachable.diagnosis, .unreachableInstance(instanceCount: 2), "不可达实例诊断")
         check(unreachable.activateBrowser, "不可达时应前置真正连着 Harness 的浏览器")
-        check(unreachable.sendsSessionOpen, "不可达时仍必须投递打开会话命令")
-        check(unreachable.completes, "不可达时也必须收尾，否则下一次点击被吞")
         let unreachableLog = SessionJumpSupport.focusLog(unreachable, browser: chromeMulti, port: 3080)
         check(unreachableLog.contains("2 个实例"), "不可达日志应写明实例数：\(unreachableLog)")
         check(unreachableLog.contains("未改动另一个实例的标签页"), "不可达日志应说明没有碰另一个实例：\(unreachableLog)")
@@ -196,7 +179,6 @@ struct SessionJumpChecks {
         checkEqual(unreachableNewTab.diagnosis, .unreachableInstanceNewTab(instanceCount: 2),
                    "不可达新开标签诊断")
         check(unreachableNewTab.activateBrowser, "新开标签后仍应前置浏览器")
-        check(unreachableNewTab.sendsSessionOpen && unreachableNewTab.completes, "新开标签计划同样要投递+收尾")
         let newTabLog = SessionJumpSupport.focusLog(unreachableNewTab, browser: chromeMulti, port: 3080)
         check(newTabLog.contains("选中不了你正在看的 Harness 标签"),
               "新开标签日志应说明原标签选不中：\(newTabLog)")
@@ -227,15 +209,6 @@ struct SessionJumpChecks {
         )
         check(unreachableCloseFallback.contains("事件投递失败"), "定向新开页失败要留痕：\(unreachableCloseFallback)")
 
-        // 不变式：**任何**结果都必须投递「打开会话」并收尾流程。
-        // 否则就会出现「浏览器起来了但还是旧会话」或下一次点击被 inFlight 吞掉。
-        let allPlans = [focused, singleMissing, multiMissing, unsupported, failed, closed,
-                        unreachable, unreachableNewTab, newTabFailed]
-        for (index, plan) in allPlans.enumerated() {
-            check(plan.sendsSessionOpen, "焦点计划[\(index)]：任何分支都必须投递打开会话命令")
-            check(plan.completes, "焦点计划[\(index)]：任何分支都必须收尾（清 inFlight / 跑 completion）")
-        }
-
         // MARK: - 4. 重启接管的「关旧标签」日志
         let closeClosed = SessionJumpSupport.closeLog(result: .closed, browser: chrome)
         check(closeClosed.contains("已关闭") && closeClosed.contains("正在打开新页面"), "关旧标签成功日志：\(closeClosed)")
@@ -252,25 +225,20 @@ struct SessionJumpChecks {
         checkEqual(SessionJumpSupport.closeLog(result: .focused, browser: chrome), "", "关闭流程收到 focused 时不需要日志")
 
         // MARK: - 5. 端到端顺序仿真
-        // 用纯计划函数串出「一次点击按什么顺序做什么」，锁住两个最容易复发的顺序错误：
-        // 先关旧标签再开新页面；失败先前置再投递会话（而不是只做其中一半）。
+        // 用纯计划函数串出「打开 Harness 页面按什么顺序做什么」，锁住两个最容易复发
+        // 的顺序错误：先关旧标签再开新页面；失败时先前置再记日志（而不是只做一半）。
+        // 「点完成提醒 → 投递会话命令」的触发点已下线，仿真里不再有目标会话与
+        // 点击处置的概念（两者连实现一起删了）。
         func simulate(
-            disposition: SessionJumpSupport.ClickDisposition,
             presence: Bool?,
             browser: SessionJumpSupport.BrowserInfo?,
             restartTakeover: Bool,
             focusResult: BrowserTabFocusResult,
-            sessionId: String?,
             reachable: Bool = true,
             pageVisible: Bool? = true,
             newTabOpened: Bool = true
         ) -> [String] {
-            var steps: [String] = []
-            switch disposition {
-            case .jumpInPlace: steps.append("page")
-            case .startThenJump: steps.append("start"); steps.append("page")
-            case .waitForInstall: steps.append("waitInstall"); steps.append("page")
-            }
+            var steps: [String] = ["page"]
             let plan = SessionJumpSupport.pagePlan(presenceActive: presence, browser: browser, restartTakeover: restartTakeover)
             // 不可达的重启接管整段由 deliverPageWithoutTabAutomation 处理：
             // 关旧标签的 AppleScript 会作用到别的实例，改为按 pid 定向新开页面。
@@ -319,119 +287,109 @@ struct SessionJumpChecks {
                     }
                 }
             }
-            if sessionId != nil { steps.append("sendSessionOpen") }
             return steps
         }
 
-        // 页面还在、单实例、选中成功：只选标签 + 投递会话，绝不重复开页面。
+        // 页面还在、单实例、选中成功：只选标签，绝不重复开页面。
         let happy = simulate(
-            disposition: .jumpInPlace, presence: true, browser: chrome, restartTakeover: false,
-            focusResult: .focused, sessionId: "session-1"
+            presence: true, browser: chrome, restartTakeover: false,
+            focusResult: .focused
         )
-        checkEqual(happy, ["page", "focusTab", "log", "sendSessionOpen"], "成功跳转的顺序")
+        checkEqual(happy, ["page", "focusTab", "log"], "成功定位的顺序")
         check(!happy.contains("openPage"), "已打开页面时不能再开新标签")
         check(!happy.contains("activateBrowser"), "选中成功不需要降级前置")
 
         // 本机现状：多实例且 AppleScript 只会落到另一个实例 → 一次标签页脚本都
-        // 不发；Harness 页就是可见标签时前置即可，会话必须照切。
+        // 不发；Harness 页就是可见标签时前置即可。
         let multi = simulate(
-            disposition: .jumpInPlace, presence: nil, browser: chromeMulti, restartTakeover: false,
-            focusResult: .missing(tabs: evidenceTabs), sessionId: "session-2",
+            presence: nil, browser: chromeMulti, restartTakeover: false,
+            focusResult: .missing(tabs: evidenceTabs),
             reachable: false, pageVisible: true
         )
-        checkEqual(multi, ["page", "activateBrowser", "log", "sendSessionOpen"],
+        checkEqual(multi, ["page", "activateBrowser", "log"],
                    "多实例不可达但页面可见时的顺序")
         check(!multi.contains("focusTab"), "多实例不可达时必须跳过标签选中（那会跳到错误窗口）")
-        let activateIndex = multi.firstIndex(of: "activateBrowser")!
-        let logIndex = multi.firstIndex(of: "log")!
-        let openIndex = multi.firstIndex(of: "sendSessionOpen")!
-        check(activateIndex < logIndex && logIndex < openIndex, "不可达时：先前置、再记日志、最后也必须投递会话")
+        check(multi.firstIndex(of: "activateBrowser")! < multi.firstIndex(of: "log")!,
+              "不可达时：先前置、再记日志")
 
         // 用户切到了别的标签（Harness 页不可见）：只前置什么也不会发生，
-        // 必须在真正连接的实例里新开标签，把会话送到眼前。
+        // 必须在真正连接的实例里新开标签，把页面送到眼前。
         let multiHiddenTab = simulate(
-            disposition: .jumpInPlace, presence: true, browser: chromeMulti, restartTakeover: false,
-            focusResult: .missing(tabs: evidenceTabs), sessionId: "session-2d",
+            presence: true, browser: chromeMulti, restartTakeover: false,
+            focusResult: .missing(tabs: evidenceTabs),
             reachable: false, pageVisible: false
         )
-        checkEqual(multiHiddenTab, ["page", "newTab", "activateBrowser", "log", "sendSessionOpen"],
+        checkEqual(multiHiddenTab, ["page", "newTab", "activateBrowser", "log"],
                    "多实例不可达且页面不可见时应新开标签")
         check(!multiHiddenTab.contains("focusTab"), "新开标签路径同样不能发 AppleScript")
-        check(multiHiddenTab.firstIndex(of: "newTab")! < multiHiddenTab.firstIndex(of: "sendSessionOpen")!,
-              "新开标签必须在投递会话之前（新页面才能领取命令）")
+        check(multiHiddenTab.firstIndex(of: "newTab")! < multiHiddenTab.firstIndex(of: "activateBrowser")!,
+              "新开标签必须先于前置浏览器")
 
         // 新开标签事件投递失败：退回只前置，日志必须如实降级，不能装成成功。
         let multiHiddenTabFailed = simulate(
-            disposition: .jumpInPlace, presence: true, browser: chromeMulti, restartTakeover: false,
-            focusResult: .missing(tabs: evidenceTabs), sessionId: "session-2e",
+            presence: true, browser: chromeMulti, restartTakeover: false,
+            focusResult: .missing(tabs: evidenceTabs),
             reachable: false, pageVisible: false, newTabOpened: false
         )
-        checkEqual(multiHiddenTabFailed, ["page", "activateBrowser", "log", "sendSessionOpen"],
+        checkEqual(multiHiddenTabFailed, ["page", "activateBrowser", "log"],
                    "新开标签失败时应退回只前置并记日志")
         check(!multiHiddenTabFailed.contains("newTab"), "投递失败时不能假装新开了标签")
 
         // 多实例但连着 Harness 的实例就是最新启动的：AppleScript 安全，仍走精确选中。
         let multiReachable = simulate(
-            disposition: .jumpInPlace, presence: true, browser: chromeMulti, restartTakeover: false,
-            focusResult: .focused, sessionId: "session-2b", reachable: true
+            presence: true, browser: chromeMulti, restartTakeover: false,
+            focusResult: .focused, reachable: true
         )
-        checkEqual(multiReachable, ["page", "focusTab", "log", "sendSessionOpen"],
+        checkEqual(multiReachable, ["page", "focusTab", "log"],
                    "寻址可达的多实例仍应精确选中标签")
 
         // 多实例不可达 + 重启接管：旧标签关不掉（关的是另一个实例），按 pid 在
         // 真正连接的实例里新开页面；事件投递失败才退回默认方式打开。
         let unreachableTakeover = simulate(
-            disposition: .jumpInPlace, presence: true, browser: chromeMulti, restartTakeover: true,
-            focusResult: .focused, sessionId: "session-2c", reachable: false
+            presence: true, browser: chromeMulti, restartTakeover: true,
+            focusResult: .focused, reachable: false
         )
-        checkEqual(unreachableTakeover, ["page", "closeSkipped", "newTab", "log", "sendSessionOpen"],
+        checkEqual(unreachableTakeover, ["page", "closeSkipped", "newTab", "log"],
                    "不可达的重启接管应跳过关旧标签并定向新开页")
         let unreachableTakeoverFallback = simulate(
-            disposition: .jumpInPlace, presence: true, browser: chromeMulti, restartTakeover: true,
-            focusResult: .focused, sessionId: "session-2f", reachable: false, newTabOpened: false
+            presence: true, browser: chromeMulti, restartTakeover: true,
+            focusResult: .focused, reachable: false, newTabOpened: false
         )
-        checkEqual(unreachableTakeoverFallback, ["page", "closeSkipped", "log", "openPage", "sendSessionOpen"],
+        checkEqual(unreachableTakeoverFallback, ["page", "closeSkipped", "log", "openPage"],
                    "定向新开页失败时应退回默认方式打开")
 
         // 页面全关（keep-alive 还在）：重开页面，而不是对着空标签跑自动化。
         let reopen = simulate(
-            disposition: .jumpInPlace, presence: false, browser: chrome, restartTakeover: false,
-            focusResult: .focused, sessionId: "session-3"
+            presence: false, browser: chrome, restartTakeover: false,
+            focusResult: .focused
         )
-        checkEqual(reopen, ["page", "openPage", "sendSessionOpen"], "页面全关时应重开页面")
+        checkEqual(reopen, ["page", "openPage"], "页面全关时应重开页面")
 
         // 没有已连接的浏览器（外部实例 / 首次打开）：直接打开页面。
         let noBrowser = simulate(
-            disposition: .jumpInPlace, presence: nil, browser: nil, restartTakeover: false,
-            focusResult: .focused, sessionId: "session-4"
+            presence: nil, browser: nil, restartTakeover: false,
+            focusResult: .focused
         )
-        checkEqual(noBrowser, ["page", "openPage", "sendSessionOpen"], "无浏览器时应打开页面")
+        checkEqual(noBrowser, ["page", "openPage"], "无浏览器时应打开页面")
 
-        // 重启接管 + 等待期间点了一条提醒：先关旧标签、再开新页面、最后补投会话。
+        // 重启接管：先关旧标签、再开新页面。
         let takeover = simulate(
-            disposition: .startThenJump, presence: true, browser: chrome, restartTakeover: true,
-            focusResult: .focused, sessionId: "session-5"
+            presence: true, browser: chrome, restartTakeover: true,
+            focusResult: .focused
         )
-        checkEqual(takeover, ["start", "page", "closeTab", "openPage", "sendSessionOpen"], "重启接管的顺序")
+        checkEqual(takeover, ["page", "closeTab", "openPage"], "重启接管的顺序")
         let closeIdx = takeover.firstIndex(of: "closeTab")!
         let reopenIdx = takeover.firstIndex(of: "openPage")!
         check(closeIdx < reopenIdx, "重启接管必须先关旧标签再开新页面，否则会留下两张 Harness 标签")
 
-        // 自动化失败 / 浏览器不支持：仍要前置 + 投递会话。
+        // 自动化失败 / 浏览器不支持：仍要前置 + 记日志。
         for (label, result) in [("失败", BrowserTabFocusResult.failed("denied")), ("不支持", .unsupported)] {
             let steps = simulate(
-                disposition: .jumpInPlace, presence: true, browser: chrome, restartTakeover: false,
-                focusResult: result, sessionId: "session-6"
+                presence: true, browser: chrome, restartTakeover: false,
+                focusResult: result
             )
-            checkEqual(steps, ["page", "focusTab", "activateBrowser", "log", "sendSessionOpen"], "\(label)时的降级顺序")
+            checkEqual(steps, ["page", "focusTab", "activateBrowser", "log"], "\(label)时的降级顺序")
         }
-
-        // 菜单里点「打开 Harness」而不是某条提醒（sessionId == nil）：不应投递会话命令。
-        let plainOpen = simulate(
-            disposition: .jumpInPlace, presence: true, browser: chrome, restartTakeover: false,
-            focusResult: .focused, sessionId: nil
-        )
-        checkEqual(plainOpen, ["page", "focusTab", "log"], "普通打开不需要投递会话命令")
 
         // MARK: - 6. 与标签匹配/脚本生成的历史回归联动
         // 详细断言在 test-browser-connection.swift；这里只锁「跳转链路仍按 origin 匹配」
@@ -443,27 +401,12 @@ struct SessionJumpChecks {
             bundleIdentifier: "com.google.Chrome", targetURL: target
         )?.contains("matchesHarnessOrigin") == true, "标签脚本必须用 origin 匹配")
 
-        // MARK: - 7. 跳转请求体：内置窗口模式必须带 requireEmbedded
-        let embeddedPayload = SessionJumpSupport.openSessionPayload(
-            sessionId: "session-embedded", embeddedOnly: true
-        )
-        check(embeddedPayload?["sessionId"] as? String == "session-embedded", "请求体必须带 sessionId")
-        check(embeddedPayload?["requireEmbedded"] as? Bool == true,
-              "内置窗口模式必须带 requireEmbedded=true，否则后台 Chrome 会抢跳转命令")
-        let browserPayload = SessionJumpSupport.openSessionPayload(
-            sessionId: "session-browser", embeddedOnly: false
-        )
-        check(browserPayload?["requireEmbedded"] == nil,
-              "外部浏览器模式不能带 requireEmbedded，否则 Chrome 页面永远领不到命令")
-        check(SessionJumpSupport.openSessionPayload(sessionId: "   ", embeddedOnly: true) == nil,
-              "空 sessionId 不应生成请求体")
-
         if !failures.isEmpty {
             for failure in failures { print("FAIL: \(failure)") }
             exit(1)
         }
-        print("PASS: click disposition, page plan, focus diagnosis (single/multi instance), "
+        print("PASS: page plan, focus diagnosis (single/multi instance), "
               + "multi-instance addressing guard, unreachable presentation (activate/new tab), "
-              + "fallback order, close-then-open takeover, session-open invariant, origin-based jump")
+              + "fallback order, close-then-open takeover, origin-based jump")
     }
 }
