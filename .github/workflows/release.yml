@@ -114,7 +114,11 @@ jobs:
         working-directory: windows
         shell: pwsh
         run: |
-          $ver = (Select-String -Path ..\Resources\Info.plist -Pattern 'CFBundleShortVersionString</key>\s*<string>([^<]+)</string>').Matches[0].Groups[1].Value
+          # Select-String 是按行匹配的，而 plist 里 <key> 与 <string> 分在两行，
+          # 所以必须整文件读入再做多行正则（之前用 Select-String 直接报
+          # "Cannot index into a null array"）。
+          $ver = [regex]::Match((Get-Content -Raw ..\Resources\Info.plist), 'CFBundleShortVersionString</key>\s*<string>([^<]+)</string>').Groups[1].Value
+          if (-not $ver) { throw 'cannot read CFBundleShortVersionString from Resources/Info.plist' }
           $stage = "build\portable"
           New-Item $stage -ItemType Directory -Force | Out-Null
           Copy-Item build\DHL.exe $stage
