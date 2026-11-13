@@ -6,8 +6,8 @@ import Foundation
 /// 发给「最近启动」的同 bundle 实例；这台机器上 `chrome-devtools-mcp` / agent-browser
 /// 这类自动化浏览器常驻时，标签定位必然落空，只能退化成「新开一个标签页」——用户
 /// 看到的正是「又开了一个窗口」。内置窗口把页面变成启动器自己的 `WKWebView`：
-/// 没有浏览器实例、没有 AppleScript、没有标签页匹配，窗口只有一个，跳转就是
-/// 「把窗口拿到前面 + 通过插件命令切会话」。
+/// 没有浏览器实例、没有 AppleScript、没有标签页匹配，窗口只有一个，打开就是
+/// 「把窗口拿到前面」。会话完成提醒与对应的插件命令跳转入口均已下线。
 ///
 /// 这里放**可单测的判断**（`main.swift` 只把结论翻译成 AppKit/WKWebView 调用）：
 /// 1. `action(context:entryURL:forceReload:)`：这次点击该新建窗口、重载、还是只前置；
@@ -181,109 +181,6 @@ enum HarnessWindowSupport {
             name = ext.isEmpty ? String(stem.prefix(120)) : "\(stem.prefix(budget)).\(ext)"
         }
         return name.isEmpty ? fallback : name
-    }
-
-    // MARK: - 侧栏「已完成」红点
-
-    /// 把「最近完成」的会话 id 渲染成注入 WKWebView 的脚本：在侧栏对应行尾画红点。
-    ///
-    /// 用户可见语义（按优先级）：
-    /// 1. **当前选中的会话不画**：人已经在这个会话里，完成提示没有意义；选中即视为已看，
-    ///    并记住不再复发（否则「我在会话里操作完了，红点还挂着」——用户实际报的 bug）；
-    /// 2. 点击该行 → 视为已看，红点消失且本次完成不再复发；
-    /// 3. 同一会话再次完成（id 从集合里消失后重新出现）→ 红点重新出现；
-    /// 4. DSH 自己已经显示「已完成」状态时不重复画（避免两个完成标记）。
-    ///
-    /// 「已看」记在 sessionStorage：同一页面刷新不重复，新完成会清掉旧记录。
-    /// 选择变化通过 `aria-selected` 属性监听（MutationObserver 默认不监听属性变化，
-    /// 只监听子节点会导致「用键盘/程序切到会话」时红点不消失）。
-    static func sidebarCompletionScript(sessionIds: [String]) -> String {
-        let idsJSON: String
-        if let data = try? JSONSerialization.data(withJSONObject: sessionIds),
-           let text = String(data: data, encoding: .utf8) {
-            idsJSON = text
-        } else {
-            idsJSON = "[]"
-        }
-        return """
-        (() => {
-          const ids = new Set(\(idsJSON));
-          const previous = window.__dhlCompletedIds || new Set();
-          const DISMISS_KEY = 'dhl-completed-dismissed';
-          if (!window.__dhlCompletionDismissed) {
-            try { window.__dhlCompletionDismissed = new Set(JSON.parse(sessionStorage.getItem(DISMISS_KEY) || '[]')); }
-            catch (_) { window.__dhlCompletionDismissed = new Set(); }
-          }
-          const dismissed = window.__dhlCompletionDismissed;
-          const persistDismissed = () => {
-            try { sessionStorage.setItem(DISMISS_KEY, JSON.stringify([...dismissed])); } catch (_) {}
-          };
-          // 新完成（上一轮不在集合里）的会话要清掉之前的「已看」记录，否则同一
-          // 会话第二次完成时红点不会出现。
-          let dismissedChanged = false;
-          for (const id of ids) {
-            if (!previous.has(id) && dismissed.delete(id)) dismissedChanged = true;
-          }
-          if (dismissedChanged) persistDismissed();
-          window.__dhlCompletedIds = ids;
-          const rowIsSelected = (row) => {
-            if (row.getAttribute('aria-selected') === 'true') return true;
-            const cls = typeof row.className === 'string' ? row.className : '';
-            return /(^|[_-])selected([_-]|$)/.test(cls);
-          };
-          const ensure = () => {
-            document.querySelectorAll('[data-row-key]').forEach(row => {
-              const key = row.getAttribute('data-row-key') || '';
-              if (!key.startsWith('session:')) return;
-              const id = key.slice(8);
-              if (!ids.has(id)) { const stale = row.querySelector('.dhl-completed-dot'); if (stale) stale.remove(); return; }
-              // 当前选中的会话：人已经在里面，完成提示视为已看。
-              if (rowIsSelected(row) && !dismissed.has(id)) {
-                dismissed.add(id);
-                persistDismissed();
-              }
-              const dot = row.querySelector('.dhl-completed-dot');
-              const nativeDone = Array.from(row.querySelectorAll('span')).some(el => el.textContent === '已完成' || el.textContent === 'Completed');
-              const want = ids.has(id) && !dismissed.has(id) && !nativeDone;
-              if (want && !dot) {
-                const mark = document.createElement('span');
-                mark.className = 'dhl-completed-dot';
-                mark.title = '任务已完成';
-                mark.setAttribute('aria-label', '任务已完成');
-                mark.style.cssText = 'display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:#ff3b30;margin-inline-start:6px;';
-                row.appendChild(mark);
-              } else if (!want && dot) {
-                dot.remove();
-              }
-            });
-          };
-          window.__dhlEnsureCompletionMarks = ensure;
-          if (!window.__dhlCompletionObserver) {
-            const observer = new MutationObserver(() => { if (window.__dhlEnsureCompletionMarks) window.__dhlEnsureCompletionMarks(); });
-            observer.observe(document.body, {
-              childList: true,
-              subtree: true,
-              attributes: true,
-              attributeFilter: ['aria-selected']
-            });
-            window.__dhlCompletionObserver = observer;
-            document.addEventListener('click', event => {
-              const target = event.target;
-              const row = target && target.closest ? target.closest('[data-row-key]') : null;
-              if (!row) return;
-              const key = row.getAttribute('data-row-key') || '';
-              if (!key.startsWith('session:')) return;
-              const id = key.slice(8);
-              if (!window.__dhlCompletedIds || !window.__dhlCompletedIds.has(id)) return;
-              window.__dhlCompletionDismissed.add(id);
-              persistDismissed();
-              const dot = row.querySelector('.dhl-completed-dot');
-              if (dot) dot.remove();
-            }, true);
-          }
-          ensure();
-        })()
-        """
     }
 
     // MARK: - 失败兜底页

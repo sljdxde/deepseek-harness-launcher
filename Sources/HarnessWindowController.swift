@@ -10,7 +10,8 @@ import WebKit
 /// 用户看到的就是「点已完成任务，又开了一个窗口」。
 ///
 /// 这个窗口把页面收归启动器自己：只有一个窗口、没有 AppleScript、没有标签匹配。
-/// 「跳转到某个会话」= 把窗口拿到前面 + 通过 `dsh-session-notify` 插件命令切会话。
+/// 历史上「跳转到某个会话」还要通过 `dsh-session-notify` 插件命令切会话；会话完成
+/// 提醒下线后，这个入口连同启动器侧的发送链路一起移除（插件端点留给 Windows 托盘）。
 ///
 /// 它同时也是普通浏览器行为的最小替身：外链交给系统浏览器、`<input type=file>`
 /// 用原生文件选择器、下载落到 `~/Downloads`、JS alert/confirm/prompt 用原生弹窗。
@@ -32,8 +33,6 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
     /// 命令：命令的「焦点优先领取」窗口只有 2.5 秒，页面还没加载完就入队，会被
     /// 别处残留的浏览器页面先领走——那正是这次要修掉的现象）。
     private var pageReadyCallbacks: [() -> Void] = []
-    /// 要画在 Harness 侧栏会话行上的「任务已完成」红点（session id）。
-    private var sidebarCompletionMarks: [String] = []
 
     /// 窗口尺寸来自 `HarnessWindowSupport`，方便和单测共用同一套边界。
     init(logger: @escaping (String) -> Void = { _ in }, onClose: @escaping () -> Void = {}) {
@@ -102,28 +101,6 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
 
     func closeWindow() {
         window?.performClose(nil)
-    }
-
-    /// 把「最近完成」的会话同步到 Harness 侧栏：对应会话行右侧画一颗红点。
-    ///
-    /// DSH 自带的 `completionUnread` 只在「会话不在主视图」时显示已完成状态；
-    /// 用户正看着当前会话收尾时，侧栏不会出现任何提示。启动器单独维护一份
-    /// 「最近完成」集合（viewed 不撤销；点过该行、或该行正是当前选中的会话，
-    /// 都算已看；同一会话再次开跑/完成才复发），通过 DOM 标记补上这颗红点——
-    /// 不改 DSH 源码，也不影响它自己的状态点。
-    func updateSidebarCompletionMarks(_ sessionIds: [String]) {
-        sidebarCompletionMarks = sessionIds
-        applySidebarCompletionMarks()
-    }
-
-    private func applySidebarCompletionMarks() {
-        guard let webView else { return }
-        // 脚本本身在 HarnessWindowSupport 里（可单测）：选中即已看、点击即已看、
-        // 新完成才复发、DSH 原生「已完成」不重复画。
-        let js = HarnessWindowSupport.sidebarCompletionScript(sessionIds: sidebarCompletionMarks)
-        webView.evaluateJavaScript(js) { [weak self] _, error in
-            if let error { self?.logger("侧栏完成标记注入失败：\(error.localizedDescription)") }
-        }
     }
 
     private func present() {
@@ -223,7 +200,6 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard !showingFailurePage else { return }
         logger("内置窗口页面加载完成（端口 \(loadedPort.map(String.init) ?? "?")）")
-        applySidebarCompletionMarks()
         let callbacks = pageReadyCallbacks
         pageReadyCallbacks = []
         callbacks.forEach { $0() }

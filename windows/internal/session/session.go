@@ -1,8 +1,13 @@
-// Package session carries the completion-reminder model, ported from
-// Sources/SessionNotifySupport.swift. The bundled dsh-session-notify
-// plugin records root-session turn ends and serves them over loopback
-// HTTP; this package polls that feed and keeps the unread set the tray
-// badge and the menu list are drawn from.
+// Package session carries the completion-reminder model ported from the
+// macOS launcher (Sources/SessionNotifySupport.swift, since removed there:
+// macOS now follows Harness's own sidebar status dot). The bundled
+// dsh-session-notify plugin records root-session turn ends and serves them
+// over loopback HTTP; this package polls that feed and keeps the unread set
+// the tray badge and the menu list are drawn from.
+//
+// NOTE: the macOS launcher no longer maintains this model. The Windows port
+// still does; aligning it with "display and counting follow Harness itself"
+// is a separate change.
 //
 // The counting unit is a SESSION, not a turn: a long session writes one
 // turn/end per round, and counting events would show "9 unread" for one

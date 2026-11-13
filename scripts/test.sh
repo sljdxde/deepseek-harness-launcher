@@ -178,11 +178,16 @@ rg -q 'ensurePnpmPath' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'corepack' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'pnpm-bin' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -q 'dsh-plugin-manager' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"
-# 会话完成通知：插件随启动器打包、patch 注入并由菜单栏轮询。
+# 会话完成通知插件仍随启动器打包（会话跳转命令 / 页面存活心跳还要用），但启动器
+# 不再轮询完成事件：完成状态完全以 DSH 自己的侧栏状态点为准，启动器不另算未读。
 rg -q 'dsh-session-notify' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"
 rg -Fq 'DSHSessionNotify' "$ROOT/scripts/build-app.sh" "$ROOT/scripts/build-universal.sh" "$ROOT/Sources/main.swift"
 rg -Fq 'BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL)' "$ROOT/Sources/main.swift"
-rg -q '/dsh-session-notify/events' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Sources/main.swift"
+rg -q '/dsh-session-notify/events' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
+if rg -q '/dsh-session-notify/events\?after=' "$ROOT/Sources/main.swift"; then
+  echo "启动器不得再轮询完成事件：完成状态以 DSH 侧栏状态点为准" >&2
+  exit 1
+fi
 # 页面存活心跳：标签页全关后 keep-alive 连接仍在，必须靠注入客户端的
 # presence（轮询心跳 + pagehide bye）判断是否需要新开页面。
 rg -q '/dsh-session-notify/presence' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Plugins/DSHSessionNotify/client/client.js" "$ROOT/Sources/main.swift"
@@ -207,34 +212,13 @@ if rg -q 'ctx\.sessions\.open\(' "$ROOT/Plugins/DSHSessionNotify/client/client.j
   echo "session jump must go through uiWorkspace.openSession: ctx.sessions has no open()" >&2
   exit 1
 fi
-# 看过即已读：注入客户端把「用户正在看的会话」随 750ms 轮询上报（可见且有焦点
-# 才算），插件只在观看目标变化时记一条 viewed，启动器把那份未读撤掉。少了任何
-# 一环，人盯着结果看的时候角标还亮着。
+# 注入客户端仍随 750ms 轮询上报「用户正在看的会话」（会话跳转命令要靠它判断
+# 哪个页面在前台）；插件侧的 viewed 记录保留，但启动器已不再消费它。
 rg -Fq 'viewing=' "$ROOT/Plugins/DSHSessionNotify/client/client.js"
 rg -Fq 'viewingSession' "$ROOT/Plugins/DSHSessionNotify/client/client.js"
 rg -Fq "kind: 'viewed'" "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 rg -Fq 'viewingNow' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
-rg -Fq 'event.isView' "$ROOT/Sources/SessionNotifySupport.swift"
-rg -Fq 'ingested.viewed' "$ROOT/Sources/main.swift"
 rg -Fq 'viewingNow' "$ROOT/Plugins/DSHSessionNotify/test/session-notify.test.js"
-rg -Fq 'retracted.viewed' "$ROOT/scripts/test-session-notify.swift"
-# viewed 只在**该会话确实挂着未读完成**时才记：750ms 一次轮询、用户来回切会话时每次
-# 都记会把 50 条缓冲区占满，真正的完成提醒被挤出去。
-rg -Fq 'lastKindBySession' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
-rg -Fq 'pendingCompletion' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
-# 菜单正在屏幕上（追踪中）时不许增删条目：轮询每 3.5 秒就可能带来新提醒，摘掉鼠标下
-# 那一行会让点击落到已摘除的条目上（「点了没反应」）。延后到菜单关闭再补重建。
-rg -Fq 'deferWhileMenuOpen' "$ROOT/Sources/main.swift"
-rg -Fq 'sessionNotifyMenuRebuildPending' "$ROOT/Sources/main.swift"
-rg -Fq 'func menuDidClose' "$ROOT/Sources/main.swift"
-# 插件 peer 区间语义单测（兼容性扫描已停用，纯函数与用例保留以防语义回归）：
-# 一个插件踩多个 peer 只合并成一条、peer 按 Node 顺序解析（插件自带、profile 提升的
-# 都要算）；浏览器侧的 react/react-dom 由外壳注入，不能当成「运行时里不存在」。
-# 内置插件（归档管理 / 插件管理 / 会话完成通知）永不参与扫描：用户升不了也卸不掉。
-rg -Fq 'mergeByPlugin' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
-rg -Fq 'resolvePeerVersion' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
-rg -Fq 'shellProvidedClientPeers' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
-rg -Fq 'bundledPluginNames' "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/scripts/test-plugin-compatibility.swift"
 # 内置插件也不许再被构造成「插件可能与当前 dsh 版本不兼容」的 Issue：它们的加载状态
 # 只由就绪探针写日志（monitorArchivePlugin）。这两条理由字符串是旧告警路径的指纹，
 # 出现即代表「为启动器自带插件弹窗」的老逻辑回来了。
@@ -331,9 +315,9 @@ rg -Fq 'readRemoteJSON' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -Fq 'raw 卡住/超时时用 api.github.com 兜底' "$ROOT/Plugins/DSHPluginManager/test/plugin-updates.test.js"
 rg -q '"\./client": "\./client/client.js"' "$ROOT/Plugins/DSHSessionNotify/package.json"
 rg -q '"client"' "$ROOT/Plugins/DSHSessionNotify/package.json"
-rg -q 'monitorSessionNotify' "$ROOT/Sources/main.swift"
-# 菜单栏角标：会话未读（红胶囊）+ 后台检查到的可用更新（蓝箭头圆盘），两条链路
-# 共用一张合成图。角标是「画」出来的，符号/坐标写错不会崩、只会画歪或看不见，
+# 菜单栏角标只画「有可用更新」（蓝箭头圆盘）。会话完成状态归 DSH 自己的侧栏
+# 状态点，启动器不再维护未读数字（菜单栏 / Dock / 侧栏三处曾各说各话）。
+# 角标是「画」出来的，符号/坐标写错不会崩、只会画歪或看不见，
 # 所以除源码不变量外还有 scripts/test-status-badge.swift 逐像素验证。
 rg -q 'StatusBadgeSupport' "$ROOT/Sources/main.swift"
 rg -Fq 'private var updateAvailable: Bool' "$ROOT/Sources/main.swift"
@@ -704,7 +688,7 @@ if rg -Fq '检测启动器（DHL）更新' "$ROOT/Sources/main.swift"; then
 fi
 # main.swift 约 2700 行且主类只有一个：定位靠 // MARK 分区，少一段等于那一段又得靠
 # grep 从头翻。新增章节时把名字加进这个列表。
-for section in 顶部辅助类型 生命周期 状态栏与菜单 'dsh 更新检查' 浏览器打开与连接探测 进程停止与重启 设置窗口与全局快捷键 启动器自更新 启动与端口选择 运行环境安装与恢复 会话完成提醒与菜单栏角标; do
+for section in 顶部辅助类型 生命周期 状态栏与菜单 'dsh 更新检查' 浏览器打开与连接探测 进程停止与重启 设置窗口与全局快捷键 启动器自更新 启动与端口选择 运行环境安装与恢复 菜单栏角标; do
   if ! rg -Fq "// MARK: - $section" "$ROOT/Sources/main.swift"; then
     echo "main.swift 缺少 // MARK 分区：$section" >&2
     exit 1
@@ -727,23 +711,12 @@ rg -Fq 'AlertDesign.accessory' "$ROOT/Sources/main.swift"
 rg -Fq 'AlertDesign.card' "$ROOT/Sources/main.swift"
 rg -Fq 'NSImage.SymbolConfiguration' "$ROOT/Sources/AlertDesign.swift"
 rg -Fq 'cornerCurve = .continuous' "$ROOT/Sources/AlertDesign.swift"
-# 会话完成提醒按会话计数：同一会话连跑多轮不能把角标数字刷高。
-rg -Fq 'events.removeAll { $0.sessionId == event.sessionId }' "$ROOT/Sources/SessionNotifySupport.swift"
-rg -Fq '个会话未读' "$ROOT/Sources/main.swift"
+# 插件侧仍按会话收敛事件（启动器已不消费，但缓冲语义别退化）。
 rg -Fq 'sessionLabelFromId' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 # 排队消息场景：被打断的回合不算完成；新一轮开始（turn/start）要撤销该会话的未读提醒。
 rg -Fq "if (reason === 'aborted') return null;" "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 rg -Fq 'summarizeTurnStart' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 rg -Fq "kind: 'resumed'" "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
-rg -Fq 'event.isResume' "$ROOT/Sources/SessionNotifySupport.swift"
-rg -Fq '已撤销其完成提醒' "$ROOT/Sources/main.swift"
-# 会话完成提醒：行标签用工作区名（回退标题/短 id），点一条只清那一条，列表保留。
-rg -Fq 'SessionNotifyWorkspaceIndex' "$ROOT/Sources/SessionNotifySupport.swift"
-rg -Fq 'storages/workspace.json' "$ROOT/Sources/SessionNotifySupport.swift"
-rg -Fq 'static func menuLabel' "$ROOT/Sources/SessionNotifySupport.swift"
-rg -Fq 'SessionNotifyWorkspaceIndex.load()' "$ROOT/Sources/main.swift"
-rg -Fq 'sessionNotifyStore.markRead(sessionId)' "$ROOT/Sources/main.swift"
-rg -Fq 'SessionNotifyWorkspaceIndex' "$ROOT/scripts/test-session-notify.swift"
 rg -Fq 'snapshotEvents' "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 rg -Fq 'selectableUpdates' "$ROOT/scripts/test-dsh-version-support.swift"
 # 自动检查只改菜单标题：不得出现「检查完直接安装」的路径。
@@ -795,21 +768,18 @@ fi
 mkdir -p "$ROOT/build"
 swiftc "$ROOT/scripts/test-update-support.swift" "$ROOT/Sources/UpdateSupport.swift" -o "$ROOT/build/test-update-support"
 "$ROOT/build/test-update-support"
-swiftc "$ROOT/scripts/test-plugin-compatibility.swift" "$ROOT/Sources/PluginCompatibilitySupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" -o "$ROOT/build/test-plugin-compatibility"
-"$ROOT/build/test-plugin-compatibility"
 swiftc "$ROOT/scripts/test-release-notes.swift" "$ROOT/Sources/ReleaseNotesSupport.swift" -o "$ROOT/build/test-release-notes"
 "$ROOT/build/test-release-notes"
-swiftc "$ROOT/scripts/test-session-notify.swift" "$ROOT/Sources/SessionNotifySupport.swift" -o "$ROOT/build/test-session-notify"
 # Web 入口解析：dsh 打印的公开地址（--public-url，如 Tailscale 域名）必须 rebase
 # 回本机 loopback；否则内置窗口拿公开域名换 cookie，任何网络波动都会落到 401 页。
 swiftc "$ROOT/scripts/test-harness-web-compat.swift" "$ROOT/Sources/HarnessWebCompatibility.swift" -o "$ROOT/build/test-harness-web-compat"
 "$ROOT/build/test-harness-web-compat"
-swiftc "$ROOT/scripts/test-plugin-isolation.swift" "$ROOT/Sources/PluginIsolationSupport.swift" "$ROOT/Sources/PluginSourceCheck.swift" -o "$ROOT/build/test-plugin-isolation"
+swiftc "$ROOT/scripts/test-plugin-isolation.swift" "$ROOT/Sources/PluginIsolationSupport.swift" -o "$ROOT/build/test-plugin-isolation"
 "$ROOT/build/test-plugin-isolation"
 swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupport.swift" -o "$ROOT/build/test-plugin-updates"
 "$ROOT/build/test-plugin-updates"
-"$ROOT/build/test-session-notify"
-# 点击「会话完成」→ 跳转：点击处置 / 页面计划 / 失败诊断 / 降级顺序 / 会话投递不变式。
+# 浏览器回退模式打开页面：页面计划 / 失败诊断 / 降级顺序 / 多实例寻址。
+# （「点完成提醒 → 投递会话命令」已下线，点击处置与请求体的用例随之删除。）
 swiftc "$ROOT/scripts/test-session-jump.swift" "$ROOT/Sources/SessionJumpSupport.swift" "$ROOT/Sources/BrowserConnectionSupport.swift" "$ROOT/Sources/BrowserAutomationSupport.swift" -o "$ROOT/build/test-session-jump" -framework AppKit
 "$ROOT/build/test-session-jump"
 # 内置 Harness 窗口（WKWebView）的决策：打开/重载/只前置、外链外开、下载落点、
