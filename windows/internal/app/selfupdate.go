@@ -7,7 +7,9 @@ package app
 // file swap guarded by a hash-free but version-checked download.
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -92,11 +94,15 @@ func compareRelease(a, b string) int {
 	return ver.CycleCompare(ver.NormalizeRelease(a), ver.NormalizeRelease(b))
 }
 
-// installLauncherUpdate downloads the exe and swaps it in on restart: the
-// running exe cannot overwrite itself on Windows, so the new file lands
-// beside it and a small cmd script moves it once this process exits.
+// installLauncherUpdate downloads the exe with a visible progress window
+// and swaps it in on restart: the running exe cannot overwrite itself on
+// Windows, so the new file lands beside it and a small cmd script moves it
+// once this process exits.
+//
 // auto skips the confirm dialog — it is the 自动下载并安装更新 switch
-// doing its job; the manual path still asks.
+// doing its job; the manual path still asks. Either way the download runs
+// behind downloadUI, so a stalled GitHub connection shows as a stalled bar
+// the user can cancel instead of a silent ten-minute wait.
 func (c *controller) installLauncherUpdate(release *launcherRelease, auto bool) {
 	if release.URL == "" {
 		warn("启动器更新", "这个 Release 没有 Windows 安装包（"+winAssetName+"）。")
@@ -108,12 +114,36 @@ func (c *controller) installLauncherUpdate(release *launcherRelease, auto bool) 
 		return
 	}
 	target := filepath.Join(paths.Downloads(), "DHL-windows-"+release.Version+".exe")
-	if err := downloadTo(release.URL, target); err != nil {
+
+	if !downloadUI.begin(c.app, release.Version) {
+		applog.Logf("launcher update: a download is already running; window brought forward")
+		return
+	}
+	defer downloadUI.close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	downloadUI.setCancel(cancel)
+
+	err = downloadTo(ctx, release.URL, target, downloadUI.progress)
+	switch {
+	case err == nil:
+		downloadUI.finish(downloadDone, "")
+	case errors.Is(err, context.Canceled):
+		applog.Logf("launcher update download cancelled by the user")
+		downloadUI.finish(downloadCancelled, "")
+		return
+	default:
 		applog.Logf("launcher update download failed: %v", err)
+		downloadUI.finish(downloadFailed, err.Error())
+		downloadUI.close()
 		warn("启动器更新", "下载失败："+err.Error())
 		return
 	}
 	applog.Logf("launcher update downloaded: %s", target)
+	// the progress window has done its job; the install question replaces it
+	downloadUI.close()
+
 	if !auto {
 		if !confirm("安装启动器更新",
 			fmt.Sprintf("已下载 v%s。\n\n安装会替换当前程序并重新启动，现在继续吗？", release.Version)) {
@@ -129,13 +159,25 @@ func (c *controller) installLauncherUpdate(release *launcherRelease, auto bool) 
 	c.Quit()
 }
 
-// downloadTo fetches a URL into path, replacing any earlier copy.
-func downloadTo(url, path string) error {
+// downloadTo fetches a URL into path, replacing any earlier copy, and
+// reports progress. Cancelling ctx aborts the transfer and removes the
+// partial file.
+func downloadTo(ctx context.Context, url, path string, onProgress func(written, total int64)) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 10 * time.Minute}
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	// A stalled connection used to block inside Do for the client's whole
+	// timeout with nothing on screen. Headers within 30 s or the download
+	// fails with a message the user can act on; the overall ceiling keeps a
+	// half-dead transfer from running forever.
+	transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = base.Clone()
+	}
+	transport.ResponseHeaderTimeout = 30 * time.Second
+	client := &http.Client{Transport: transport, Timeout: 15 * time.Minute}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
@@ -148,20 +190,56 @@ func downloadTo(url, path string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
+
 	tmp := path + ".part"
 	out, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		out.Close()
-		os.Remove(tmp)
-		return err
+	total := resp.ContentLength
+	var written int64
+	if onProgress != nil {
+		onProgress(0, total)
+	}
+
+	buf := make([]byte, 64<<10)
+	lastReport := time.Now()
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
+				out.Close()
+				os.Remove(tmp)
+				return writeErr
+			}
+			written += int64(n)
+			if onProgress != nil && time.Since(lastReport) >= 150*time.Millisecond {
+				onProgress(written, total)
+				lastReport = time.Now()
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			out.Close()
+			os.Remove(tmp)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return readErr
+		}
+	}
+	if onProgress != nil {
+		onProgress(written, total)
 	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmp)
 		return err
 	}
+	// os.Rename refuses to replace an existing file on Windows, and a
+	// re-download of the same version hits exactly that.
+	_ = os.Remove(path)
 	return os.Rename(tmp, path)
 }
 

@@ -11,19 +11,20 @@ import (
 
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/harnessweb"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/launch"
+	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/nodeenv"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/session"
 )
 
-// taskbarBadgeText and badgeText must agree: the taskbar overlay and the
-// tray tile show the same number, and a disagreement would look like a
-// bug to the user. Both follow the macOS BadgeText rule.
-func TestTaskbarBadgeText(t *testing.T) {
+// badgeText is the one label rule the tray tile and the taskbar button
+// share, so the two badges can never show different numbers. It follows
+// the macOS BadgeText rule.
+func TestBadgeText(t *testing.T) {
 	cases := []struct {
 		count int
 		want  string
 	}{
 		{-5, ""}, // negative is treated as none
-		{0, ""},  // none clears the overlay
+		{0, ""},  // none clears the badge
 		{1, "1"},
 		{9, "9"},
 		{10, "10"},
@@ -32,17 +33,8 @@ func TestTaskbarBadgeText(t *testing.T) {
 		{1000, "99+"},
 	}
 	for _, c := range cases {
-		if got := taskbarBadgeText(c.count); got != c.want {
-			t.Errorf("taskbarBadgeText(%d) = %q, want %q", c.count, got, c.want)
-		}
-	}
-}
-
-func TestTrayBadgeTextMatchesTaskbar(t *testing.T) {
-	// the two badges are drawn by different code; they must never disagree
-	for count := -2; count <= 250; count++ {
-		if got, want := taskbarBadgeText(count), badgeText(count); got != want {
-			t.Fatalf("badge mismatch at %d: taskbar %q, tray %q", count, got, want)
+		if got := badgeText(c.count); got != c.want {
+			t.Errorf("badgeText(%d) = %q, want %q", c.count, got, c.want)
 		}
 	}
 }
@@ -195,20 +187,19 @@ func TestStartLatchIgnoresCheckingState(t *testing.T) {
 	}
 }
 
-// A launcher that already serves dsh must not start a second one; the
-// same is true while a user-initiated restart owns the transition.
+// A launcher that already serves dsh must not start a second one, and it
+// must not claim the start latch while doing so.
+//
+// "Serving" requires a port: state==running alone is not enough, because
+// the exit watcher clears the port before it flips the state. The restart
+// guard is covered in state_machine_test.go.
 func TestStartLatchShowsPageWhenUp(t *testing.T) {
-	running := &controller{state: stateRunning}
+	running := &controller{state: stateRunning, port: 3080}
 	if got := running.beginStart(); got != startShowBrowser {
-		t.Fatalf("state=running: decision = %v, want startShowBrowser", got)
+		t.Fatalf("state=running with a port: decision = %v, want startShowBrowser", got)
 	}
 	if running.starting {
 		t.Error("state=running must not claim the latch")
-	}
-
-	restarting := &controller{state: stateStopped, restarting: true}
-	if got := restarting.beginStart(); got != startShowBrowser {
-		t.Fatalf("restart in flight: decision = %v, want startShowBrowser", got)
 	}
 }
 
@@ -244,9 +235,11 @@ func TestStartupActionDefaultsToOpen(t *testing.T) {
 // Windows environment keys are case-insensitive; a map carrying both
 // "Path" and "PATH" must collapse to one line, or the child's
 // environment block keeps whichever line the random map order emitted
-// last — the bug that made dsh.cmd lose node half the time.
+// last — the bug that made dsh.cmd lose node half the time. The
+// implementation lives in nodeenv (both the launcher and the installer
+// flatten through it); this test pins the launcher's own use of it.
 func TestFlattenEnvDedupesCaseInsensitiveKeys(t *testing.T) {
-	out := flattenEnv(map[string]string{
+	out := nodeenv.Environment(map[string]string{
 		"Path":  `C:\old`,
 		"PATH":  `C:\new`,
 		"DHL_X": "1",
@@ -341,5 +334,142 @@ func TestNotifyOnCompleteDefaultsOnAndPersists(t *testing.T) {
 	}
 	if *restored.NotifyOnComplete {
 		t.Error("an explicit off came back on")
+	}
+}
+
+// The icon-cache rebuild must happen exactly once per installed binary.
+// Doing it on every start would cost a shell-wide cache rebuild each launch;
+// never doing it leaves Start-menu search showing the previous build's art
+// (the "5" burned into the icon long after badges stopped being written
+// into shortcuts).
+func TestClaimIconFlushOncePerBinary(t *testing.T) {
+	c := &controller{}
+
+	if !c.claimIconFlush(1000) {
+		t.Fatal("the first start of a binary must rebuild the cache")
+	}
+	if c.claimIconFlush(1000) {
+		t.Error("a second start of the same binary must not rebuild again")
+	}
+	if !c.claimIconFlush(2000) {
+		t.Error("a new binary (new mtime) must rebuild")
+	}
+	if c.claimIconFlush(2000) {
+		t.Error("the new binary rebuilt twice")
+	}
+	// a downgrade back to the old binary is still a new stamp
+	if !c.claimIconFlush(1000) {
+		t.Error("returning to a previous binary must rebuild")
+	}
+}
+
+// The Wails app Name is the Windows toast AppID, not a display string.
+// Wails passes cfg.Name to wintoast.SetAppData, which registers
+// HKCU\Software\Classes\AppUserModelId\<Name>. When that differed from the
+// process AUMID, Windows created a SECOND app identity: Start-menu search
+// listed the launcher twice, and the auto-generated entry carried its own
+// unread badge — the "5" that survived every icon-cache rebuild.
+func TestAppNameIsTheAUMID(t *testing.T) {
+	// the constant the shortcuts, the process and the toast must share
+	if appUserModelID == "" {
+		t.Fatal("appUserModelID must be set")
+	}
+	// a friendly display name here is the bug: it must look like an AUMID
+	if strings.ContainsAny(appUserModelID, " ") {
+		t.Errorf("appUserModelID %q contains spaces; it is a registry key and an "+
+			"AppUserModelId, not a label", appUserModelID)
+	}
+}
+
+// Every field saveSettings writes must survive the round trip, and every
+// field restoreSessionUnread reads must be one of them. The two lists
+// drifting apart is a silent bug: a setting the user changes reverts on the
+// next launch with no error anywhere.
+func TestSettingsFieldsRoundTripCompletely(t *testing.T) {
+	on, off := true, false
+	original := settingsFile{
+		UpdateIntervalHours:    12,
+		AutoCheckPluginUpdates: true,
+		OpenBrowserOnReady:     true,
+		SidebarDeck:            true,
+		LaunchAtLogin:          true,
+		GlobalHotKeyEnabled:    true,
+		GlobalHotKey:           "Ctrl+Alt+D",
+		DesktopShortcut:        true,
+		NpmRegistry:            "https://registry.npmmirror.com",
+		SkippedDSHVersion:      "0.2.3",
+		SkippedLauncherVersion: "0.4.0",
+		Theme:                  "dark",
+		AutoUpdate:             true,
+		AutoCheckUpdates:       &on,
+		NotifyOnComplete:       &off,
+	}
+	data, err := marshalJSON(original)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var restored settingsFile
+	if err := unmarshalJSON(data, &restored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if restored.UpdateIntervalHours != original.UpdateIntervalHours {
+		t.Errorf("UpdateIntervalHours = %v, want %v", restored.UpdateIntervalHours, original.UpdateIntervalHours)
+	}
+	if restored.AutoCheckPluginUpdates != original.AutoCheckPluginUpdates {
+		t.Error("AutoCheckPluginUpdates lost")
+	}
+	if restored.OpenBrowserOnReady != original.OpenBrowserOnReady {
+		t.Error("OpenBrowserOnReady lost")
+	}
+	if restored.SidebarDeck != original.SidebarDeck {
+		t.Error("SidebarDeck lost")
+	}
+	if restored.LaunchAtLogin != original.LaunchAtLogin {
+		t.Error("LaunchAtLogin lost")
+	}
+	if restored.GlobalHotKeyEnabled != original.GlobalHotKeyEnabled {
+		t.Error("GlobalHotKeyEnabled lost")
+	}
+	if restored.GlobalHotKey != original.GlobalHotKey {
+		t.Errorf("GlobalHotKey = %q, want %q", restored.GlobalHotKey, original.GlobalHotKey)
+	}
+	if restored.DesktopShortcut != original.DesktopShortcut {
+		t.Error("DesktopShortcut lost")
+	}
+	if restored.NpmRegistry != original.NpmRegistry {
+		t.Errorf("NpmRegistry = %q", restored.NpmRegistry)
+	}
+	if restored.SkippedDSHVersion != original.SkippedDSHVersion {
+		t.Errorf("SkippedDSHVersion = %q", restored.SkippedDSHVersion)
+	}
+	if restored.SkippedLauncherVersion != original.SkippedLauncherVersion {
+		t.Errorf("SkippedLauncherVersion = %q", restored.SkippedLauncherVersion)
+	}
+	if restored.Theme != original.Theme {
+		t.Errorf("Theme = %q, want %q", restored.Theme, original.Theme)
+	}
+	if restored.AutoUpdate != original.AutoUpdate {
+		t.Error("AutoUpdate lost")
+	}
+	if restored.AutoCheckUpdates == nil || !*restored.AutoCheckUpdates {
+		t.Error("AutoCheckUpdates lost")
+	}
+	if restored.NotifyOnComplete == nil || *restored.NotifyOnComplete {
+		t.Error("NotifyOnComplete lost")
+	}
+}
+
+// harnessTargetURL with no port cannot produce a usable URL: port 0 is not
+// a listening port, so "http://127.0.0.1:0/" would be a navigation to
+// nowhere. Callers check the port, but the function must not hand back
+// something that looks valid when it is not.
+func TestHarnessTargetURLRejectsZeroPort(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+
+	// an adopted instance with no saved URL and no port
+	got := harnessTargetURL(0, nil)
+	if strings.Contains(got, ":0/") {
+		t.Errorf("harnessTargetURL(0, nil) = %q: port 0 is not a listening port", got)
 	}
 }

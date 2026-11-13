@@ -13,7 +13,6 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"math"
 	"sort"
 	"strconv"
 	"sync"
@@ -210,23 +209,12 @@ func composeBadgeAt(base image.Image, state badgeState, px int) image.Image {
 }
 
 func drawDisc(dst *image.RGBA, x, y, d float64, c color.RGBA) {
-	drawPill(dst, x, y, d, d, c)
+	fillPill(dst, x, y, d, d, c)
 }
 
-// drawPill fills a rounded rectangle (a full circle when w == h).
+// drawPill fills a rounded rectangle with fully rounded ends.
 func drawPill(dst *image.RGBA, x, y, w, h float64, c color.RGBA) {
-	r := h / 2
-	for py := 0; py < int(h); py++ {
-		for px := 0; px < int(w); px++ {
-			fx := float64(px) + 0.5
-			fy := float64(py) + 0.5
-			cx := math.Min(math.Max(fx, r), w-r)
-			cy := math.Min(math.Max(fy, r), h-r)
-			if math.Hypot(fx-cx, fy-cy) <= r {
-				dst.Set(int(x)+px, int(y)+py, c)
-			}
-		}
-	}
+	fillPill(dst, x, y, w, h, c)
 }
 
 func drawUpArrow(dst *image.RGBA, x, y, d float64, c color.RGBA) {
@@ -252,56 +240,13 @@ func drawUpArrow(dst *image.RGBA, x, y, d float64, c color.RGBA) {
 
 // drawCenteredText draws the badge count with the built-in bitmap face,
 // which needs no font file on disk.
-// drawBadgeDigits draws the count with the 3x5 bitmaps the taskbar badge
-// already uses. The old 7x13 text face could not fit a 10px pill (it
-// overflowed and left a smudge), and a scaled bitmap font is exactly the
-// blur the user reported; whole-pixel glyphs stay legible at 20px and up.
+// drawBadgeDigits draws the count into the tray tile's pill. It delegates
+// to the taskbar badge's renderer so the two badges use the same glyphs,
+// scale search and spacing — the old 7x13 text face could not fit a 10px
+// pill (it overflowed and left a smudge), and whole-pixel 3x5 glyphs stay
+// legible at 20px and up.
 func drawBadgeDigits(dst *image.RGBA, label string, x, y, w, h float64) {
-	runes := []rune(label)
-	if len(runes) == 0 {
-		return
-	}
-	const glyphW, glyphH, tracking = 3, 5, 1
-	cols := len(runes)*glyphW + (len(runes)-1)*tracking
-	scale := 0
-	for s := 1; s <= 6; s++ {
-		if float64(cols*s) <= w-2 && float64(glyphH*s) <= h-2 {
-			scale = s
-		}
-	}
-	if scale == 0 {
-		return // no room: the red pill alone carries the signal
-	}
-	startX := int(x + (w-float64(cols*scale))/2)
-	startY := int(y + (h-float64(glyphH*scale))/2)
-	white := color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}
-	for i, r := range runes {
-		var rows [5]uint8
-		switch {
-		case r >= '0' && r <= '9':
-			rows = digitGlyphs[r-'0']
-		case r == '+':
-			rows = plusGlyph
-		default:
-			continue
-		}
-		ox := startX + i*(glyphW+tracking)*scale
-		for gy := 0; gy < glyphH; gy++ {
-			for gx := 0; gx < glyphW; gx++ {
-				if rows[gy]&(1<<uint(glyphW-1-gx)) == 0 {
-					continue
-				}
-				for sy := 0; sy < scale; sy++ {
-					for sx := 0; sx < scale; sx++ {
-						px, py := ox+gx*scale+sx, startY+gy*scale+sy
-						if image.Pt(px, py).In(dst.Bounds()) {
-							dst.Set(px, py, white)
-						}
-					}
-				}
-			}
-		}
-	}
+	drawBadgeText(dst, label, x, y, w, h)
 }
 
 // badgeText is the tray tile's label: blank for none, digits to 99, then

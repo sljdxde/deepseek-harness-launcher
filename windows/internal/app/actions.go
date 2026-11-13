@@ -6,6 +6,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/applog"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/dshrt"
+	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/dshrt/progress"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/dshupdate"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/launch"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/nodeenv"
@@ -24,34 +26,71 @@ import (
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/session"
 )
 
+// openIntent is what Open does for the current state, decided without
+// touching a window so it can be tested.
+type openIntent int
+
+const (
+	openNow      openIntent = iota // dsh is serving: show the page
+	openQueued                     // dsh is starting: remember the request
+	openStarting                   // nothing running: start, then show
+)
+
+// decideOpen reads the launcher state and says what a 打开 should do. It
+// also records a deferred open when dsh is not serving yet: a click that
+// arrives while dsh is booting used to be dropped here, and nothing on the
+// ready path ever showed the window — the "taskbar click sometimes does
+// nothing" report.
+func (c *controller) decideOpen() openIntent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state == stateRunning && c.port != 0 {
+		return openNow
+	}
+	// dsh is not serving yet, so this click has to survive until it is.
+	c.openWhenReady = true
+	if c.starting {
+		return openQueued
+	}
+	return openStarting
+}
+
 // Open is the 打开 Harness row and the hotkey action: start dsh if
 // needed, then bring the page up. Running already means "just open the
 // browser".
 func (c *controller) Open() {
-	c.mu.Lock()
-	state := c.state
-	port := c.port
-	launcher := c.launcher
-	starting := c.starting
-	c.mu.Unlock()
-
-	switch {
-	case state == stateRunning && port != 0:
+	switch c.decideOpen() {
+	case openNow:
+		c.mu.Lock()
+		port, launcher := c.port, c.launcher
+		c.mu.Unlock()
 		c.openBrowser(port, launcher)
-	case starting:
+	case openQueued:
 		// a start is already in flight; its ready path opens the page
+		// (see prepareHarnessURLFor / the adopt path)
 	default:
 		c.Start()
 	}
 }
 
-// ShowHarnessWindow is what a tray/panel "打开" action does now: reveal
-// the launcher's own Harness window. The taskbar button itself is handled
-// entirely by Windows (restore/minimise) — the launcher no longer tries
-// to detect clicks, which was the source of every "sometimes it works"
-// bug on this platform.
-func (c *controller) ShowHarnessWindow() {
-	go c.Open()
+// consumeOpenWhenReady reports whether a click asked for the page while
+// dsh was still starting, clearing the flag. The ready path calls it once
+// so one click opens the window exactly once.
+func (c *controller) consumeOpenWhenReady() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	want := c.openWhenReady
+	c.openWhenReady = false
+	return want
+}
+
+// requeueOpenWhenReady puts the request back after the startup minimise
+// path looked at it: that path only inspects the flag to decide whether to
+// minimise, and the page still has to be shown once dsh is ready.
+func (c *controller) requeueOpenWhenReady() {
+	c.mu.Lock()
+	c.openWhenReady = true
+	c.mu.Unlock()
 }
 
 // openDSHUpdate runs a dsh update check on demand and, when one exists,
@@ -64,7 +103,7 @@ func (c *controller) openDSHUpdate() {
 		return
 	}
 	current := dshVersionOf(nodeEnvironment())
-	report := dshupdate.Check(current, npmPathForCheck(), flattenEnv(nodeEnvironment()))
+	report := dshupdate.Check(current, npmPathForCheck(), nodeenv.Environment(nodeEnvironment()))
 	if len(report.Candidates) == 0 {
 		warn("Deepseek Harness 更新", "没有取到任何已发布版本。\n"+strings.Join(report.Warnings, "\n"))
 		return
@@ -75,32 +114,10 @@ func (c *controller) openDSHUpdate() {
 		return
 	}
 	best := choices[0]
-	text := fmt.Sprintf("当前版本：v%s\n可更新到：v%s（%s）\n", report.Current, best.Version, best.LabelFor())
-	if report.NewestStable != nil && report.NewestStable.Version != best.Version {
-		text += fmt.Sprintf("最新正式版：v%s\n", report.NewestStable.Version)
-	}
-	if len(choices) > 1 {
-		text += fmt.Sprintf("\n（共 %d 个可更新版本，本次安装其中最新的一个）\n", len(choices))
-	}
-	if best.Notes != "" {
-		notes := best.Notes
-		if runes := []rune(notes); len(runes) > 900 {
-			notes = string(runes[:900]) + "\n…"
-		}
-		text += "\n更新说明：\n" + notes
-	}
-	text += "\n现在更新吗？（安装期间 dsh 会重启）"
+	// The notes are Markdown; the dialog renders them (the old native
+	// MessageBox showed the raw "## …" text).
 	bringToFront()
-	if !confirm("更新 Deepseek Harness", text) {
-		c.mu.Lock()
-		c.skippedDSHVersion = best.Version
-		c.mu.Unlock()
-		saveSettings()
-		c.refreshBadgeAndMenu()
-		applog.Logf("dsh update skipped: %s", best.Version)
-		return
-	}
-	c.updateDSHTo(best.Version)
+	c.showDSHUpdateDialog(&best, report.Current)
 }
 
 // updateDSHTo installs a specific dsh version, stopping dsh first and
@@ -136,8 +153,8 @@ func (c *controller) updateDSHTo(version string) {
 	}
 	tracker := newProgressWindow(c.app, "正在更新 Deepseek Harness")
 	defer tracker.Close()
-	progress := newProgress()
-	ctx, cancel := contextWithCancel()
+	progress := progress.NewTracker()
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, err := dshrt.Install(ctx, dshrt.InstallOptions{
 		NpmPath:     npm,
@@ -198,25 +215,10 @@ func (c *controller) openLauncherUpdate() {
 		warn("启动器（DHL）更新", fmt.Sprintf("已是最新版本（v%s）。", c.version))
 		return
 	}
-	text := fmt.Sprintf("当前版本：v%s\n最新版本：v%s\n", c.version, info.Version)
-	if info.Notes != "" {
-		notes := info.Notes
-		if runes := []rune(notes); len(runes) > 900 {
-			notes = string(runes[:900]) + "\n…"
-		}
-		text += "\n更新说明：\n" + notes
-	}
-	text += "\n现在下载并安装吗？"
+	// Render the Markdown release notes in the dialog's scroll pane, the
+	// way macOS does — a native MessageBox showed them as raw text.
 	bringToFront()
-	if !confirm("启动器更新", text) {
-		c.mu.Lock()
-		c.skippedLauncherVersion = info.Version
-		c.mu.Unlock()
-		saveSettings()
-		c.refreshBadgeAndMenu()
-		return
-	}
-	c.installLauncherUpdate(info, false)
+	c.showLauncherUpdateDialog(info)
 }
 
 // registerNotifier wires the Windows Toast service. It must run before
@@ -235,11 +237,6 @@ func (c *controller) registerNotifier() {
 	panel.ctl = c
 	c.app.RegisterService(application.NewServiceWithOptions(
 		&PanelService{ctl: c}, application.ServiceOptions{Name: "PanelService"}))
-
-	// the progress window's 取消 button (an HTML-option window, so it has
-	// bindings — unlike the asset-server panel)
-	c.app.RegisterService(application.NewServiceWithOptions(
-		&ProgressBridge{ctl: c}, application.ServiceOptions{Name: "ProgressBridge"}))
 }
 
 // startUpdateSchedule starts the periodic checks, restores the unread
@@ -269,29 +266,6 @@ func (c *controller) startUpdateSchedule() {
 	c.scheduleUpdateChecks()
 	c.startPluginUpdatePoll()
 	c.refreshBadgeAndMenu()
-}
-
-// createDesktopShortcut writes the desktop .lnk (the menu row), and
-// remembers the choice so a moved exe refreshes it next start.
-func (c *controller) createDesktopShortcut() {
-	c.mu.Lock()
-	c.desktopShortcut = true
-	c.mu.Unlock()
-	exe, err := os.Executable()
-	if err != nil {
-		warn("桌面快捷方式", "无法定位当前程序："+err.Error())
-		return
-	}
-	dir := desktopDir()
-	if dir == "" {
-		warn("桌面快捷方式", "找不到桌面目录。")
-		return
-	}
-	writeShortcut(filepath.Join(dir, shortcutName), exe)
-	saveSettings()
-	warn("桌面快捷方式",
-		"已创建桌面快捷方式：\n"+filepath.Join(dir, shortcutName)+
-			"\n\n双击即可进入 Harness 页面；右键选择「固定到任务栏」后，单击任务栏图标同样直达。")
 }
 
 // --- menu section -----------------------------------------------------------
@@ -371,7 +345,7 @@ func dshVersionOf(env map[string]string) string {
 	if _, err := os.Stat(entry); err != nil {
 		return ""
 	}
-	return dshupdate.RunVersion(entry, flattenEnv(env))
+	return dshupdate.RunVersion(entry, nodeenv.Environment(env))
 }
 
 // settingsFile is the persisted launcher settings (the counterpart of
@@ -544,5 +518,12 @@ func restoreSessionUnread() {
 	// count forever — the "always shows 4" report.
 	if real := filterRealEvents(settings.UnreadEvents); len(real) > 0 {
 		sessionStore.Restore(real)
+	}
+	// The Harness page's theme lives in dsh's own settings document, which
+	// this launcher rewrites. Re-apply it on every start: dsh normalises
+	// that file on boot and drops keys it considers unset, so the value can
+	// be missing even though the user chose it.
+	if applyDSHTheme(settings.Theme) > 0 {
+		applog.Logf("dsh theme re-applied from launcher settings")
 	}
 }

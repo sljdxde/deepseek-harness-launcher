@@ -37,6 +37,33 @@ func pageHandler() http.Handler {
 		}
 		writePage(w, panelHTML(model))
 	})
+	// The update dialog: version rows plus the Markdown-rendered release
+	// notes. Replaces the Win32 MessageBox, which could not draw Markdown.
+	mux.HandleFunc("/dhl-update", func(w http.ResponseWriter, r *http.Request) {
+		if model, ok := updateDialog.pageModel(); ok {
+			writePage(w, updateDialogHTML(model))
+			return
+		}
+		writePage(w, updateDialogGoneHTML)
+	})
+	// The download progress window's page and the state it polls.
+	mux.HandleFunc("/dhl-download", func(w http.ResponseWriter, r *http.Request) {
+		writePage(w, downloadPage(downloadUI.versionOf()))
+	})
+	mux.HandleFunc("/dhl-download-state", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json; charset=utf-8")
+		w.Header().Set("cache-control", "no-store")
+		_, _ = w.Write([]byte(downloadUI.stateJSON()))
+	})
+	// The dsh install/update progress window, same polling contract.
+	mux.HandleFunc("/dhl-progress", func(w http.ResponseWriter, r *http.Request) {
+		writePage(w, progressPage)
+	})
+	mux.HandleFunc("/dhl-progress-state", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json; charset=utf-8")
+		w.Header().Set("cache-control", "no-store")
+		_, _ = w.Write([]byte(installProgress.stateJSON()))
+	})
 	// Panel actions go through HTTP, not through a Wails binding: a page
 	// served by a custom asset handler does not get the window.go runtime
 	// object, so every binding call from the page threw and a click on a
@@ -57,12 +84,6 @@ func pageHandler() http.Handler {
 		// effective switch state); everything else gets {"ok":true}
 		handlePanelAction(action, id, w, r)
 	})
-
-	// a deliberately trivial page: if this renders and the real panel does
-	// not, the problem is in the panel markup rather than the plumbing
-	mux.HandleFunc("/dhl-probe", func(w http.ResponseWriter, r *http.Request) {
-		writePage(w, `<!doctype html><html><body style="margin:0;background:#c00;color:#fff;font:24px sans-serif;padding:20px">PROBE OK</body></html>`)
-	})
 	return mux
 }
 
@@ -71,6 +92,17 @@ func writePage(w http.ResponseWriter, html string) {
 	w.Header().Set("cache-control", "no-store")
 	_, _ = w.Write([]byte(html))
 }
+
+// updateDialogGoneHTML answers a dialog page requested after the dialog
+// was answered (a stray reload): a line instead of a blank body.
+const updateDialogGoneHTML = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<style>
+  html,body{height:100%;margin:0}
+  body{display:flex;align-items:center;justify-content:center;
+    font:13px/1.6 "Segoe UI","Microsoft YaHei",sans-serif;
+    color:#85858d;background:light-dark(#f4f4f6,#1a1a1e)}
+</style></head><body>这个更新提示已经处理过了。</body></html>`
 
 // dshLoadingHTML is the main window's first paint: dsh takes a few
 // seconds to boot (a cold first install much longer), and a blank white

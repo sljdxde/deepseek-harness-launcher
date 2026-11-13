@@ -38,7 +38,7 @@ func nodeVersionOfZip() string {
 	if err != nil {
 		return ""
 	}
-	return nodeVersionFromZip(reader, commonTopDir(reader))
+	return nodeVersionFromZip(commonTopDir(reader))
 }
 
 var errNodeZipMissing = &nodeZipError{}

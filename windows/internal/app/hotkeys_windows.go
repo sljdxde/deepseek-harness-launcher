@@ -284,6 +284,14 @@ func parseHotkey(chord string) (mods int, vk int, ok bool) {
 	if vk == 0 {
 		return 0, 0, false
 	}
+	// A global hotkey with no modifier would swallow that key everywhere:
+	// RegisterHotKey("R") eats every R the user types into any application.
+	// The macOS launcher's recorder always includes a modifier for the same
+	// reason. Reject it here so the settings page reports the format error
+	// instead of installing a chord that breaks typing system-wide.
+	if mods == 0 {
+		return 0, 0, false
+	}
 	return mods, vk, true
 }
 

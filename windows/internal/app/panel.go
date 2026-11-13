@@ -14,7 +14,6 @@ package app
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,7 +34,7 @@ const (
 	// fit-glide) reads nicer but adds a resize failure mode this panel does
 	// not need; a fixed window also never jumps when a background poll
 	// refreshes an open panel.
-	panelHeightWanted = 460
+	panelHeight = 460
 
 	// sessionRowsInModel is how many records the model carries: enough
 	// history to feel like a list, few enough to keep the payload small.
@@ -189,7 +188,7 @@ func (c *controller) buildPanelModel() panelModel {
 	if themeOut == "" {
 		themeOut = "system"
 	}
-	mirror := registry == "" || strings.Contains(registry, "npmmirror")
+	mirror := mirrorEnabled(registry)
 	model.Settings = settingsModel{
 		Theme:                  themeOut,
 		Freq:                   interval,
@@ -230,6 +229,14 @@ func (p *panelHost) toggle(app *application.App) {
 		p.Hide()
 		return
 	}
+	// A tray click reaches here twice: once as a click-outside (the hook
+	// hid the panel) and once as this toggle. Without this guard the second
+	// half re-opens what the first half just closed, and the panel can
+	// never be dismissed with the tray icon.
+	if panelWasJustDismissed(time.Now()) {
+		applog.Logf("panel toggle: tray click already dismissed it; not reopening")
+		return
+	}
 	p.Show(app)
 }
 
@@ -237,10 +244,8 @@ func (p *panelHost) toggle(app *application.App) {
 func (p *panelHost) Show(app *application.App) {
 	w := p.ensure(app)
 	model := p.ctl.buildPanelModel()
-	height := panelHeight()
 
-	lastPanelHeight = height
-	w.SetSize(panelWidth, height)
+	w.SetSize(panelWidth, panelHeight)
 	// Reload so the asset handler rebuilds the page with current state
 	// baked in. This is the whole data path: no binding, no push, no race.
 	w.SetURL("/dhl-panel")
@@ -252,9 +257,17 @@ func (p *panelHost) Show(app *application.App) {
 	// AlwaysOnTop does not always survive that on beta.24.
 	raiseTopmost(windowHWND(w))
 
+	// Record the rectangle BEFORE marking the panel visible: the hook reads
+	// the two together, and a visible panel with no rectangle would fall
+	// back to the slower window-from-point path on the first click.
+	setPanelRect(windowHWND(w))
 	p.mu.Lock()
 	p.visible = true
 	p.mu.Unlock()
+	// click anywhere outside closes it: the WindowLostFocus handler below
+	// stopped firing for this window shape, so the clicks are watched
+	// directly.
+	startPanelDismissHook()
 	applog.Logf("panel shown: %d sessions, %d unread", len(model.Sessions), model.UnreadAll)
 }
 
@@ -270,18 +283,24 @@ func windowHWND(w *application.WebviewWindow) uintptr {
 	return uintptr(nw)
 }
 
-// Hide dismisses the panel.
+// Hide dismisses the panel. Idempotent: several callers reach it for one
+// gesture (the click-outside hook fires per mouse message, the focus-loss
+// handler, a row click), and only the transition from visible to hidden
+// should touch the window or log.
 func (p *panelHost) Hide() {
 	p.mu.Lock()
 	w := p.win
+	wasVisible := p.visible
+	p.visible = false
 	p.mu.Unlock()
-	if w == nil {
+	if w == nil || !wasVisible {
 		return
 	}
 	w.Hide()
-	p.mu.Lock()
-	p.visible = false
-	p.mu.Unlock()
+	applog.Logf("panel hidden")
+	// the click-outside hook only has work to do while the panel is up; its
+	// cached rectangle is what tells it the panel is gone
+	clearPanelRect()
 }
 
 // ensure creates the panel window on first use.
@@ -310,7 +329,7 @@ func (p *panelHost) ensure(app *application.App) *application.WebviewWindow {
 			Name:        "dhl-panel",
 			Title:       "Deepseek Harness Launcher",
 			Width:       panelWidth,
-			Height:      panelHeight(),
+			Height:      panelHeight,
 			Frameless:   true,
 			AlwaysOnTop: true,
 			// Translucent renders nothing on Windows 10: the layered-window
@@ -371,17 +390,17 @@ func (p *panelHost) position(w *application.WebviewWindow, app *application.App)
 	x, y := trayCorner(work)
 	// clamp into the work area (multi-monitor / moved taskbar)
 	x = clamp(x, work.X, work.X+work.Width-panelWidth)
-	y = clamp(y, work.Y, work.Y+work.Height-lastPanelHeight)
+	y = clamp(y, work.Y, work.Y+work.Height-panelHeight)
 	w.SetPosition(x, y)
 	applog.Logf("panel positioned at (%d,%d) size %dx%d, work area (%d,%d) %dx%d",
-		x, y, panelWidth, lastPanelHeight, work.X, work.Y, work.Width, work.Height)
+		x, y, panelWidth, panelHeight, work.X, work.Y, work.Width, work.Height)
 }
 
 // trayCorner is where the panel sits when there is no better anchor: the
 // tray is at the far right of the taskbar, so the panel hugs the same
 // corner. A 4 DIP gap keeps it visually attached to the icon.
 func trayCorner(work application.Rect) (int, int) {
-	return work.X + work.Width - panelWidth - 4, work.Y + work.Height - lastPanelHeight - 4
+	return work.X + work.Width - panelWidth - 4, work.Y + work.Height - panelHeight - 4
 }
 
 // clamp keeps v inside [lo, hi] (hi is inclusive-minus-size callers pass).
@@ -396,52 +415,6 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
-}
-
-// lastPanelHeight is the height Show last asked for; kept out of the
-// struct so position() stays free of locking.
-var lastPanelHeight = panelHeight()
-
-// panelHeight is fixed: the tab content scrolls inside the window, so the
-// height does not chase the model. It is clamped to the space above the
-// taskbar so the bottom edge never hides behind it.
-func panelHeight() int {
-	return panelHeightWanted
-}
-
-// panelModelMap is the model in the shape Wails serialises for a bound
-// method call. The page fetches this on load as a fallback to the baked
-// HTML, which cannot race the document the way a pushed ExecJS can.
-func panelModelMap(model panelModel) map[string]any {
-	rows := make([]map[string]any, 0, len(model.Sessions))
-	for _, r := range model.Sessions {
-		rows = append(rows, map[string]any{
-			"id": r.SessionID, "label": r.Label, "reason": r.Reason,
-			"at": r.AtMillis, "unread": r.Unread,
-		})
-	}
-	return map[string]any{
-		"status": model.Status, "running": model.Running, "version": model.Version,
-		"sessions": rows, "unreadAll": model.UnreadAll,
-		"launcher": map[string]any{
-			"current": model.Launcher.Current, "pending": model.Launcher.Pending,
-			"label": model.Launcher.Label,
-		},
-		"dsh": map[string]any{
-			"current": model.DSH.Current, "pending": model.DSH.Pending,
-			"label": model.DSH.Label,
-		},
-		"plugins": model.Plugins,
-		"settings": map[string]any{
-			"theme": model.Settings.Theme, "freq": model.Settings.Freq,
-			"autoUpdate": model.Settings.AutoUpdate, "mirror": model.Settings.Mirror,
-			"autoCheckUpdates":       model.Settings.AutoCheckUpdates,
-			"autoCheckPluginUpdates": model.Settings.AutoCheckPluginUpdates,
-			"openOnReady":            model.Settings.OpenOnReady,
-			"sidebarDeck":            model.Settings.SidebarDeck,
-			"launchAtLogin":          model.Settings.LaunchAtLogin,
-		},
-	}
 }
 
 // panelPayload renders the model as the JSON the page consumes.
@@ -460,7 +433,8 @@ func panelPayload(model panelModel) string {
 			`"plugins":%d,`+
 			`"settings":{"theme":%q,"freq":%v,"autoUpdate":%v,"mirror":%v,`+
 			`"autoCheckUpdates":%v,"autoCheckPluginUpdates":%v,`+
-			`"openOnReady":%v,"sidebarDeck":%v,"launchAtLogin":%v}}`,
+			`"openOnReady":%v,"sidebarDeck":%v,"launchAtLogin":%v,`+
+			`"notifyOnComplete":%v}}`,
 		model.Status, model.Running, model.Version,
 		joinStrings(rows, ","), model.UnreadAll,
 		model.Launcher.Current, model.Launcher.Pending, model.Launcher.Label,
@@ -469,7 +443,8 @@ func panelPayload(model panelModel) string {
 		model.Settings.Theme, model.Settings.Freq, model.Settings.AutoUpdate,
 		model.Settings.Mirror, model.Settings.AutoCheckUpdates,
 		model.Settings.AutoCheckPluginUpdates, model.Settings.OpenOnReady,
-		model.Settings.SidebarDeck, model.Settings.LaunchAtLogin)
+		model.Settings.SidebarDeck, model.Settings.LaunchAtLogin,
+		model.Settings.NotifyOnComplete)
 }
 
 func joinStrings(parts []string, sep string) string {

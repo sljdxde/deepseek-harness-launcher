@@ -50,7 +50,7 @@ func CanBind(port int) bool {
 // that reads as dsh (asset marks, or the fixed 401 text of a token-gated
 // front page) means the service is ready regardless of who started it.
 func Reuse(port int) bool {
-	_, body, err := probeGet(fmt.Sprintf("http://127.0.0.1:%d/", port))
+	body, err := probeGet(fmt.Sprintf("http://127.0.0.1:%d/", port))
 	if err != nil {
 		return false
 	}
@@ -273,7 +273,7 @@ func pollReady(ctx context.Context, port int, deadline time.Duration) error {
 	limit := time.Now().Add(deadline)
 	target := fmt.Sprintf("http://127.0.0.1:%d/", port)
 	for {
-		_, body, err := probeGet(target)
+		body, err := probeGet(target)
 		if err == nil && harnessweb.IsHarnessWebBody(body) {
 			return nil
 		}
@@ -299,16 +299,6 @@ func OpenURLForEntry(l *Launcher, port int) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/", port)
 }
 
-// Release forgets the process without ending it. The launcher uses this on
-// quit: dsh is a server the user's browser talks to, and closing the tray
-// icon must not take it down. The process keeps running as an orphan and
-// the next launcher start adopts it through the port probe.
-func (l *Launcher) Release() {
-	l.mu.Lock()
-	l.cmd = nil
-	l.mu.Unlock()
-}
-
 // Stop ends the dsh tree: descendants first (they would be orphaned
 // node children otherwise), then dsh itself.
 func (l *Launcher) Stop() {
@@ -320,11 +310,6 @@ func (l *Launcher) Stop() {
 		return
 	}
 	_ = proc.EndTree(cmd.Process.Pid)
-}
-
-// SessionOpenURL is the session-notify open endpoint for a port.
-func SessionOpenURL(port int) string {
-	return fmt.Sprintf("http://127.0.0.1:%d/dsh-session-notify/open", port)
 }
 
 // BootArgs mirrors PluginIsolationSupport.bootArguments: `web`, then each
@@ -370,7 +355,10 @@ func SessionEventsURL(port int) string {
 // dataDir is %LOCALAPPDATA%\DHL, where the plugins extract.
 func dataDir() string { return filepath.Dir(paths.LogDir()) }
 
-// probeGet is a tiny GET with a short timeout, enough for loopback.
-func probeGet(url string) (int, string, error) {
-	return probe.Response(url, 1500*time.Millisecond)
+// probeGet is a tiny GET with a short timeout, enough for loopback. The
+// status code is deliberately not returned: every caller only cares
+// whether a body came back and whether it looks like the Harness page.
+func probeGet(url string) (string, error) {
+	_, body, err := probe.Response(url, 1500*time.Millisecond)
+	return body, err
 }

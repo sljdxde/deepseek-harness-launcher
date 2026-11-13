@@ -64,11 +64,6 @@ func DSHHome() string {
 	return filepath.Join(home(), ".dsh")
 }
 
-// RuntimeDir is the fixed dsh runtime root inside DSHHome.
-func RuntimeDir() string {
-	return filepath.Join(DSHHome(), "runtime")
-}
-
 // Downloads is the user's Downloads folder, where the self-update fetches
 // its payload before installing it (macOS: ~/Downloads).
 func Downloads() string {

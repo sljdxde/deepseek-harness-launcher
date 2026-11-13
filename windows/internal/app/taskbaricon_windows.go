@@ -17,7 +17,6 @@ package app
 
 import (
 	"bytes"
-	"errors"
 	"image"
 	"image/color"
 	"image/draw"
@@ -39,9 +38,6 @@ const (
 	iconBig   = 1
 )
 
-// errNoBaseIcon means the exe carried no icon to paint a badge onto.
-var errNoBaseIcon = errors.New("no base icon")
-
 // taskbarIconCache holds the last painted icon so an unchanged count does
 // not rebuild (and re-destroy) HICONs on every poll.
 var taskbarIconMu sync.Mutex
@@ -54,7 +50,6 @@ var taskbarIconState struct {
 }
 
 // System metrics for the two icon boxes a window is asked for.
-// (procGetSystemMetrics is declared in taskbar_windows.go.)
 const (
 	smCxIcon   = 11 // SM_CXICON: large icon width
 	smCxSmIcon = 49 // SM_CXSMICON: small icon width
@@ -77,7 +72,7 @@ func setTaskbarIcon(hwnd uintptr, count int) {
 	taskbarIconMu.Lock()
 	defer taskbarIconMu.Unlock()
 
-	label := taskbarBadgeText(count)
+	label := badgeText(count)
 	if label == taskbarIconState.last && taskbarIconState.hicon != 0 {
 		return
 	}
@@ -98,17 +93,14 @@ func setTaskbarIcon(hwnd uintptr, count int) {
 	// 36 produced a soft, stair-stepped edge on a taskbar that actually
 	// wanted 48: Windows upscaled our bitmap. Querying the metric and drawing
 	// at that exact size is what makes the icon crisp.
+	// ICON_BIG: the taskbar button's icon box.
 	box := iconBoxPx()
 	bigBase := baseAppIconFor(box)
 	if bigBase == nil {
 		applog.Logf("taskbar icon: no base icon to paint on")
 		return
 	}
-	bigIcon := resizeRGBA(toRGBA(bigBase), box)
-	if label != "" {
-		bigIcon = paintBadgeAt(bigBase, label, box)
-	}
-	hiconBig := rgbaToHICON(bigIcon)
+	hiconBig := rgbaToHICON(iconFor(bigBase, label, box))
 
 	// ICON_SMALL: the title bar and Alt+Tab.
 	small := smallIconPx()
@@ -116,11 +108,7 @@ func setTaskbarIcon(hwnd uintptr, count int) {
 	if smallBase == nil {
 		smallBase = bigBase
 	}
-	smallIcon := resizeRGBA(toRGBA(smallBase), small)
-	if label != "" {
-		smallIcon = paintBadgeAt(smallBase, label, small)
-	}
-	hiconSmall := rgbaToHICON(smallIcon)
+	hiconSmall := rgbaToHICON(iconFor(smallBase, label, small))
 
 	if hiconBig == 0 || hiconSmall == 0 {
 		applog.Logf("taskbar icon: rgbaToHICON failed")
@@ -221,12 +209,6 @@ func toRGBA(src image.Image) *image.RGBA {
 	return dst
 }
 
-// paintBadge returns a copy of base with a red count pill at the
-// bottom-right of the icon, sized to stay legible from 16px to 64px.
-func paintBadge(base image.Image, label string) *image.RGBA {
-	return paintBadgeAt(base, label, base.Bounds().Dx())
-}
-
 // badgeRatio is the badge's height as a fraction of the icon.
 //
 // 30% is the size the user settled on: at 60% and 46% it covered the bird
@@ -246,6 +228,16 @@ const badgeDigitMinSize = 20
 // badgeHeightFor is the badge's height at a given icon size.
 func badgeHeightFor(size int) float64 {
 	return float64(size) * badgeRatio
+}
+
+// iconFor is the icon to install for one size: the art scaled to that box,
+// with the count painted on when there is one. paintBadgeAt already scales,
+// so the no-badge case is the only one that needs a bare resize.
+func iconFor(base image.Image, label string, size int) *image.RGBA {
+	if label == "" {
+		return resizeRGBA(toRGBA(base), size)
+	}
+	return paintBadgeAt(base, label, size)
 }
 
 // paintBadgeAt paints the badge onto base scaled to `size`, so each .ico
@@ -352,7 +344,8 @@ var plusGlyph = [5]uint8{
 // drawBadgeText centres label in the badge using the bitmaps above. The
 // glyphs are scaled by an integer factor so no pixel is half-lit; when even
 // 1× does not fit, the red badge alone carries the signal (a bare red dot
-// still reads as "unread").
+// still reads as "unread"). The tray tile draws through this too, so the
+// two badges can never disagree on glyph shapes or spacing.
 func drawBadgeText(dst *image.RGBA, label string, x, y, w, h float64) {
 	runes := []rune(label)
 	if len(runes) == 0 {
@@ -408,61 +401,12 @@ func drawBadgeText(dst *image.RGBA, label string, x, y, w, h float64) {
 	}
 }
 
-// fillPill draws a rounded rectangle (a circle when w == h).
+// fillPill draws a rounded rectangle with fully rounded ends (a circle
+// when w == h). It is the badge's shape, so it is spelled as the
+// degenerate case of fillRoundRect rather than as a second copy of the
+// same pixel loop.
 func fillPill(dst *image.RGBA, x, y, w, h float64, c color.RGBA) {
-	if w <= 0 || h <= 0 {
-		return
-	}
-	r := h / 2
-	for py := 0; py < int(h); py++ {
-		for px := 0; px < int(w); px++ {
-			fx := float64(px) + 0.5
-			fy := float64(py) + 0.5
-			cx := math.Min(math.Max(fx, r), w-r)
-			cy := math.Min(math.Max(fy, r), h-r)
-			if math.Hypot(fx-cx, fy-cy) <= r {
-				px2, py2 := int(x)+px, int(y)+py
-				if image.Pt(px2, py2).In(dst.Bounds()) {
-					dst.Set(px2, py2, c)
-				}
-			}
-		}
-	}
-}
-
-// readIconFromExe pulls the largest PNG payload out of the exe's icon
-// resource. Falls back to nil when the resource is a classic DIB icon
-// (ExtractIconEx already covers that case for the plain icon).
-// readIconFromExe returns the LARGEST embedded icon image, not one near
-// 32px.
-//
-// The badge is composited per target size (16…64px) and each entry in the
-// written .ico is drawn from this source at its own resolution. Starting
-// from a 32px source meant every larger entry was an upscale, which is why
-// the icon looked soft on a taskbar that asks for 36–48px: the art, not
-// just the badge, had been resampled from 32px.
-func readIconFromExe(exe string) ([]byte, error) {
-	// the embedded tray ICO carries the same art at several sizes and is
-	// already in memory — no need to parse the exe's resources
-	entries, err := icoEntries(trayICO)
-	if err != nil || len(entries) == 0 {
-		return nil, err
-	}
-	best := entries[0]
-	for _, e := range entries {
-		if e.width > best.width {
-			best = e
-		}
-	}
-	return best.data, nil
-}
-
-// absInt is |n|.
-func absInt(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
+	fillRoundRect(dst, x, y, w, h, h/2, c)
 }
 
 // resizeRGBA scales src to size×size with a box filter, which is what a

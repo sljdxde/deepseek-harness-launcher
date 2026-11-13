@@ -47,14 +47,70 @@ const reloadDebounce = 700 * time.Millisecond
 
 var dshWin = &dshHost{}
 
+// procIsWindow answers "does this HWND still exist", which is the only
+// reliable way to tell a hidden window from a destroyed one here.
+var procIsWindow = user32.NewProc("IsWindow")
+
+// windowAlive reports whether the WebviewWindow still has a live native
+// window. Wails offers no public IsDestroyed, and its IsVisible() returns
+// false for both "hidden" and "destroyed" — which is exactly the
+// distinction that matters here, so the HWND is checked directly.
+func windowAlive(w *application.WebviewWindow) bool {
+	hwnd := windowHWND(w)
+	if hwnd == 0 {
+		return false
+	}
+	ok, _, _ := procIsWindow.Call(hwnd)
+	return ok != 0
+}
+
+// forgetWindow drops the handle and the loaded-page record when w is the
+// window the host currently holds.
+//
+// Whether the platform window is really gone depends on Wails' own
+// WindowClosing handler, which closes it regardless of e.Cancel(); the
+// close has not necessarily completed by the time this runs. So the
+// decision is made on the handle, not on the event: a window that still
+// exists is KEPT (the next open reuses it), and only a dead one is
+// forgotten. Clearing unconditionally leaked a live orphan window per
+// close — three close/open cycles left three Harness windows behind.
+func (d *dshHost) forgetWindow(w *application.WebviewWindow) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.win != w {
+		return // a newer window took over; leave it alone
+	}
+	if windowAlive(w) {
+		// Still alive: Wails' close has not taken effect (or was
+		// cancelled). Keep the handle so the next open reuses the window
+		// instead of leaving this one orphaned on screen.
+		return
+	}
+	applog.Logf("dsh window: closed; a new window is built on the next open")
+	d.win = nil
+	d.lastURL = ""
+}
+
 // ensureDshWindow creates the window once. It starts hidden; the caller
 // shows it once dsh is up and the token URL is known.
+//
+// A window that is gone gets rebuilt. The close button really does destroy
+// the window: Wails registers its own WindowClosing handler when the
+// window is created, and that handler marks the window destroyed and calls
+// the platform close regardless of e.Cancel(). Our handler (which cancels
+// and hides) therefore cannot keep it alive, and the stale WebviewWindow
+// left behind accepted every later Show() silently — the "after closing
+// the Harness window, the taskbar icon never opens it again" report.
 func (d *dshHost) ensure(app *application.App) *application.WebviewWindow {
 	d.mu.Lock()
-	if d.win != nil {
-		w := d.win
-		d.mu.Unlock()
-		return w
+	if w := d.win; w != nil {
+		if windowAlive(w) {
+			d.mu.Unlock()
+			return w
+		}
+		applog.Logf("dsh window: previous window was destroyed; recreating")
+		d.win = nil
+		d.lastURL = ""
 	}
 	d.mu.Unlock()
 
@@ -92,12 +148,22 @@ func (d *dshHost) ensure(app *application.App) *application.WebviewWindow {
 			// that starts visible and is minimised right away keeps it.
 			Hidden: false,
 		})
-		// Closing is hiding: the launcher lives in the tray, and quitting
-		// the window must not quit dsh.
+		// Closing destroys this window: Wails installs its own
+		// WindowClosing handler when the window is created, and that
+		// handler marks the window destroyed and closes the platform
+		// window regardless of e.Cancel(). Our handler therefore cannot
+		// keep it alive — ensure() rebuilds it on the next open, which is
+		// what makes the taskbar button work after a close.
+		//
+		// Forget the handle right here rather than waiting for ensure() to
+		// notice: the two destruction timings observed on this shell (the
+		// window is sometimes gone by the time the handler returns and
+		// sometimes survives a moment longer) both leave d.win pointing at
+		// something that must not be reused.
 		w.OnWindowEvent(events.Common.WindowClosing, func(e *application.WindowEvent) {
 			e.Cancel()
-			w.Hide()
-			applog.Logf("dsh window: close -> hide")
+			d.forgetWindow(w)
+			applog.Logf("dsh window: closed; a new window is built on the next open")
 		})
 		// Give the window the real native frame (caption + the three
 		// buttons); Wails sometimes creates it without a visible one.
@@ -129,7 +195,8 @@ func (d *dshHost) SetURL(app *application.App, url string) {
 }
 
 // Show reveals the main window. Pass a URL to also (re)load the page; an
-// empty URL just shows whatever is already loaded.
+// empty URL keeps whatever is already loaded — except on a freshly rebuilt
+// window, which has no page yet and would come up blank.
 func (d *dshHost) Show(app *application.App, url string) {
 	w := d.ensure(app)
 	if w == nil {
@@ -137,6 +204,19 @@ func (d *dshHost) Show(app *application.App, url string) {
 	}
 	if url != "" {
 		d.SetURL(app, url)
+	} else {
+		// A rebuilt window has nothing loaded: ensure() cleared lastURL, so
+		// the caller's "show what is already there" would present a blank
+		// page. Fall back to the saved entry URL, which is the page the
+		// user was on.
+		d.mu.Lock()
+		needsPage := d.lastURL == ""
+		d.mu.Unlock()
+		if needsPage {
+			if saved := harnessweb.LoadLastURL(); saved != "" {
+				d.SetURL(app, saved)
+			}
+		}
 	}
 	// Windows remembers a maximised state across runs; a maximised
 	// Wails window can push its native title bar (and its minimise /

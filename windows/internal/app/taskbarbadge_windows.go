@@ -13,7 +13,6 @@ package app
 import (
 	"image"
 	"image/color"
-	"strconv"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -180,7 +179,7 @@ func setTaskbarBadge(count int) {
 	// optional — the title and the painted icon work without it, and an
 	// early return here is what kept the count off the taskbar button on
 	// shells that do not expose ITaskbarList3.
-	text := taskbarBadgeText(count)
+	text := badgeText(count)
 	// Before the badge is bound to a window there is nowhere to paint, and
 	// recording the text here would make the next (post-bind) call think it
 	// was already drawn — that is why the count never reached the taskbar
@@ -249,18 +248,6 @@ func setTaskbarBadge(count int) {
 		return
 	}
 	badge.icon = hicon
-}
-
-// taskbarBadgeText is the badge label: blank for none, digits to 99,
-// "99+" above (the macOS BadgeText rule).
-func taskbarBadgeText(count int) string {
-	if count <= 0 {
-		return ""
-	}
-	if count > 99 {
-		return "99+"
-	}
-	return strconv.Itoa(count)
 }
 
 // renderBadgeIcon draws the red pill with the count into an HICON.

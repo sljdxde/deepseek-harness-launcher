@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -76,7 +75,12 @@ type controller struct {
 	// settings the page edits
 	updateIntervalHours    float64
 	autoCheckPluginUpdates bool
-	openBrowserOnReady     bool
+	// openBrowserOnReady is the 就绪后自动打开主窗口 setting.
+	openBrowserOnReady bool
+	// openWhenReady records a 打开 request that arrived while dsh was still
+	// starting. Without it that click was silently dropped and the window
+	// never appeared — the "taskbar click sometimes does nothing" report.
+	openWhenReady bool
 	// sidebarDeck 是实验性的接管型侧栏（DSHSidebarDeck）：默认关，还在优化。
 	sidebarDeck         bool
 	globalHotKeyEnabled bool
@@ -115,6 +119,10 @@ type controller struct {
 	autoUpdate bool
 	// notifyOnComplete shows a Windows toast when a session finishes.
 	notifyOnComplete bool
+	// iconCacheStamp is the exe mtime of the last binary that rebuilt
+	// Explorer's icon cache, so the flush happens once per upgrade rather
+	// than on every start.
+	iconCacheStamp int64
 	// lastAutoVersion remembers which launcher version was already
 	// auto-installed, so one release is installed exactly once.
 	lastAutoVersion string
@@ -139,12 +147,6 @@ func (c *controller) setState(state int, text string) {
 		c.portItem.SetLabel(text)
 	})
 	applog.Logf("state -> %d %s", state, text)
-}
-
-func (c *controller) currentState() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.state
 }
 
 // nodeDir locates the portable node next to the exe (node\node.exe),
@@ -189,7 +191,7 @@ func (c *controller) npmPath(env map[string]string) string {
 func (c *controller) dshEntryPath() string { return dshrt.ExecutablePath() }
 
 // cancelInstall stops a running dsh install; the progress window's 取消
-// button reaches it through ProgressBridge.
+// button reaches it over POST /dhl-action (see panelaction.go).
 func (c *controller) cancelInstall() {
 	c.mu.Lock()
 	cancel := c.installCancel
@@ -197,18 +199,6 @@ func (c *controller) cancelInstall() {
 	if cancel != nil {
 		applog.Logf("install cancelled from progress window")
 		cancel()
-	}
-}
-
-// ProgressBridge is what the progress window calls into.
-type ProgressBridge struct {
-	ctl *controller
-}
-
-// Cancel stops the running install.
-func (b *ProgressBridge) Cancel() {
-	if b.ctl != nil {
-		b.ctl.cancelInstall()
 	}
 }
 
@@ -242,7 +232,7 @@ func (c *controller) ensureDSHVersion() {
 func (c *controller) installedDSHVersion(env map[string]string) string {
 	entry := c.dshEntryPath()
 	cmd := proc.Command(entry, "--version")
-	cmd.Env = flattenEnv(env)
+	cmd.Env = nodeenv.Environment(env)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return ""
@@ -263,14 +253,27 @@ const (
 // state: every flow that restarts dsh (update, 重启, exit-0 relaunch)
 // sets stateChecking *before* calling Start, so a state-based mutex made
 // those flows return immediately and the launcher never came back up.
+//
+// "Already serving" means state==running AND a port to serve. The port
+// check is not cosmetic: the exit watcher clears the port before it flips
+// the state, so there is a window where state still says running with
+// nothing behind it. Answering startShowBrowser there made Start() call
+// openBrowserForCurrent(), which returns immediately on port 0 — the click
+// vanished.
+//
+// The latch is checked before the state so a start already in flight is
+// never doubled: two Start() calls would race for the same port.
 func (c *controller) beginStart() startDecision {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.state == stateRunning || c.restarting {
-		return startShowBrowser
-	}
 	if c.starting {
 		return startInFlight
+	}
+	if c.state == stateRunning && c.port != 0 {
+		return startShowBrowser
+	}
+	if c.restarting {
+		return startShowBrowser
 	}
 	c.starting = true
 	return startProceed
@@ -323,6 +326,11 @@ func (c *controller) Start() {
 		c.setState(stateRunning, fmt.Sprintf("端口：%d（已接管）", port))
 		c.startSessionMonitor()
 		c.prepareHarnessURL(port, nil)
+		// an adopted instance is ready immediately, so a click that queued
+		// while the port was being probed is honoured here
+		if c.consumeOpenWhenReady() {
+			dshWin.Show(c.app, "")
+		}
 		// watch the adopted instance: if it dies, start our own rather than
 		// leaving the user with a tab that cannot connect
 		go c.watchAdopted(port)
@@ -365,7 +373,7 @@ func (c *controller) Start() {
 			return
 		}
 		// the snapshot was itself incomplete: treat as rebuild
-		if !c.offerRebuild(port, env) {
+		if !c.offerRebuild() {
 			return
 		}
 		c.installAndLaunch(port, env, dshrt.InstallOptions{Force: true})
@@ -381,7 +389,7 @@ func (c *controller) Start() {
 		}
 		c.installAndLaunch(port, env, dshrt.InstallOptions{Force: true})
 	case planner.OfferRepair:
-		if !c.offerRebuild(port, env) {
+		if !c.offerRebuild() {
 			return
 		}
 		c.installAndLaunch(port, env, dshrt.InstallOptions{Force: true})
@@ -402,7 +410,7 @@ func (c *controller) Start() {
 
 // offerRebuild asks once about rebuilding a missing runtime; a no is
 // remembered for this run.
-func (c *controller) offerRebuild(port int, env map[string]string) bool {
+func (c *controller) offerRebuild() bool {
 	text := "DeepSeek Harness 的运行环境缺失（~/.dsh/runtime 不存在）。\n" +
 		"你的会话与数据不受影响，可以原地重建运行环境。\n\n现在重建吗？"
 	bringToFront()
@@ -429,7 +437,6 @@ func (c *controller) installAndLaunch(port int, env map[string]string, opts dshr
 	// install chain puts it first and keeps the defaults as fallbacks
 	if registry := c.chosenRegistry(); registry != "" {
 		env["DHL_NPM_REGISTRY"] = registry
-		opts.Environment = env
 	}
 	opts.Environment = env
 
@@ -494,7 +501,7 @@ func (c *controller) launchInstalled(port int, env map[string]string) {
 	c.launcher = launcher
 	c.mu.Unlock()
 
-	if err := launcher.Start(ctx, entry, port, flattenEnv(env)); err != nil {
+	if err := launcher.Start(ctx, entry, port, nodeenv.Environment(env)); err != nil {
 		c.mu.Lock()
 		c.launcher = nil
 		c.mu.Unlock()
@@ -564,6 +571,13 @@ func (c *controller) prepareHarnessURLFor(port int, l *launch.Launcher) {
 		l.WaitEntryURL(3 * time.Second)
 	}
 	c.prepareHarnessURL(port, l)
+	// A click that arrived while dsh was booting asked for the page; the
+	// window is ready now, so honour it. This is the path the 打开 branch
+	// relies on when it sees `starting`.
+	if c.consumeOpenWhenReady() {
+		applog.Logf("dsh window: opening, as the click asked while dsh was starting")
+		dshWin.Show(c.app, "")
+	}
 }
 
 // waitLauncher blocks until the launcher's dsh process exits.
@@ -575,6 +589,7 @@ func (c *controller) waitLauncher(l *launch.Launcher) error {
 // WITHOUT showing it. dsh becoming ready is not a request from the user
 // to pop a window up — the launcher starts in the tray with a minimised
 // main window, and clicking the taskbar button is what reveals it.
+//
 // harnessTargetURL is the URL the main window should show for port: the
 // token entry when this launcher captured one, the last saved token URL
 // for an adopted instance (dsh's front page answers 401 without a token,
@@ -583,7 +598,14 @@ func (c *controller) waitLauncher(l *launch.Launcher) error {
 // The saved URL is ONLY an adopted-instance credential. For a dsh this
 // launcher started, falling back to it would load the previous process's
 // token and render a 401 page — dsh mints a new token on every boot.
+//
+// An empty string means "no usable page": port 0 is not a listening port,
+// and handing back "http://127.0.0.1:0/" would navigate the window to
+// nowhere. Callers already treat "" as "do not navigate".
 func harnessTargetURL(port int, l *launch.Launcher) string {
+	if port == 0 {
+		return ""
+	}
 	if l == nil {
 		if saved := harnessweb.LoadLastURL(); saved != "" {
 			return saved
@@ -606,18 +628,10 @@ func (c *controller) prepareHarnessURL(port int, l *launch.Launcher) {
 // behaviour on Windows: the taskbar button then belongs to a real window,
 // and Windows itself handles click-to-restore / click-to-minimise. No
 // foreground hooks or window hunting needed.
-func (c *controller) openBrowser(port int, l *launch.Launcher) bool {
+func (c *controller) openBrowser(port int, l *launch.Launcher) {
 	c.prepareHarnessURL(port, l)
 	dshWin.Show(c.app, "")
-	return true
 }
-
-// refreshUpdateRows repaints the panel's update rows. The panel renders
-// from the live model, so this is just a re-render of an open panel.
-func (c *controller) refreshUpdateMenuRows() {
-	refreshOpenPanel()
-}
-
 func (c *controller) openBrowserForCurrent() {
 	c.mu.Lock()
 	port, l := c.port, c.launcher
@@ -702,12 +716,40 @@ func (c *controller) chosenRegistry() string {
 }
 
 // setTheme stores the panel colour scheme ("system"/"light"/"dark"; ""
-// means system).
+// means system) and mirrors it into dsh's own settings, so the Harness
+// window follows the same choice. The two are separate WebViews with
+// separate themes; syncing only one of them was the "外观设置对 dsh 窗口
+// 不生效" report.
 func (c *controller) setTheme(mode string) {
 	c.mu.Lock()
+	changed := c.theme != mode
 	c.theme = mode
 	c.mu.Unlock()
 	saveSettings()
+	if !changed {
+		return
+	}
+	if applyDSHTheme(mode) == 0 {
+		return
+	}
+	// dsh injects the palette when it serves the page, so the window has to
+	// load the page again to pick the new theme up.
+	c.reloadHarnessPage()
+}
+
+// reloadHarnessPage re-navigates the Harness window to its current URL.
+// dsh reads its theme at page-serve time, so a theme change only becomes
+// visible after a fresh load — and a reload of a dsh page needs a real
+// navigation (see dshHost.Reload).
+func (c *controller) reloadHarnessPage() {
+	c.mu.Lock()
+	port, launcher := c.port, c.launcher
+	c.mu.Unlock()
+	if port == 0 {
+		return
+	}
+	dshWin.SetURL(c.app, harnessTargetURL(port, launcher))
+	dshWin.Reload(c.app)
 }
 
 // setOpenOnReady toggles "show the main window when dsh is ready".
@@ -735,12 +777,12 @@ func (c *controller) setAutoCheckPluginUpdates(on bool) {
 	saveSettings()
 }
 
-// mirrorEnabled reports whether installs prefer the China mirror. An
-// unset registry means the default chain, which is npmmirror-first.
-func (c *controller) mirrorEnabled() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.npmRegistry == "" || strings.Contains(c.npmRegistry, "npmmirror")
+// mirrorEnabled reports whether a registry setting means "prefer the
+// China mirror". An unset registry means the default chain, which is
+// npmmirror-first. The panel model asks the same question about the
+// value it already read, so the rule lives here once.
+func mirrorEnabled(registry string) bool {
+	return registry == "" || strings.Contains(registry, "npmmirror")
 }
 
 // setMirror pins the install source: on = the China mirror explicitly,
@@ -789,6 +831,20 @@ func (c *controller) setAutoUpdate(on bool) {
 	saveSettings()
 }
 
+// claimIconFlush records stamp as the binary whose icon cache was rebuilt,
+// reporting whether this call is the one that should do the work. A
+// rebuild is needed once per installed binary: a normal start sees the
+// same stamp and skips, an upgrade sees a new one and flushes.
+func (c *controller) claimIconFlush(stamp int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.iconCacheStamp == stamp {
+		return false
+	}
+	c.iconCacheStamp = stamp
+	return true
+}
+
 // setNotifyOnComplete turns the session-finished toast on or off.
 func (c *controller) setNotifyOnComplete(on bool) {
 	c.mu.Lock()
@@ -831,38 +887,6 @@ func (c *controller) stepFrequency(dir string) float64 {
 	c.mu.Unlock()
 	saveSettings()
 	return cur
-}
-
-// setTheme stores the panel colour scheme ("system"/"light"/"dark"; ""
-// means system).
-
-// flattenEnv adapts the nodeenv map to an exec environment slice.
-// Windows environment keys are case-insensitive, but a Go map is not:
-// os.Environ() hands us "Path" while new code writes "PATH", and both
-// lines riding into the child's environment block lets the (random) map
-// order decide which one survives — that is exactly how dsh.cmd once
-// lost node half the time. Deduplicate case-insensitively with a
-// DETERMINISTIC winner: original-cased keys are visited in sorted order,
-// and a later key overwrites an earlier one (so "PATH" sorts before
-// "Path" and wins — the new value is the one we wrote).
-func flattenEnv(env map[string]string) []string {
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	index := map[string]int{}
-	var out []string
-	for _, k := range keys {
-		v := env[k]
-		if i, ok := index[strings.ToLower(k)]; ok {
-			out[i] = k + "=" + v
-			continue
-		}
-		index[strings.ToLower(k)] = len(out)
-		out = append(out, k+"="+v)
-	}
-	return out
 }
 
 // watchAdopted polls an adopted instance and takes over when it stops

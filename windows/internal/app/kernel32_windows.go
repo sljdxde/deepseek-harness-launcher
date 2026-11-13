@@ -1,8 +1,7 @@
 package app
 
 // kernel32_windows.go holds the kernel32 DLL handle shared by the
-// process helpers. It used to live in hostwindow_windows.go, which was
-// deleted with the invisible-host-window click-detection hack.
+// process helpers.
 
 import "syscall"
 

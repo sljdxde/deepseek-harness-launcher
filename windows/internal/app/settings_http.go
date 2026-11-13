@@ -83,17 +83,6 @@ func (c *controller) startControlServer() {
 	applog.Logf("control server listening on 127.0.0.1:%d", port)
 }
 
-// stopControlServer tears the API down at exit.
-func stopControlServer() {
-	control.mu.Lock()
-	srv := control.server
-	control.server = nil
-	control.mu.Unlock()
-	if srv != nil {
-		_ = srv.Close()
-	}
-}
-
 // controlSettingsPayload is what GET returns.
 type controlSettingsPayload struct {
 	Settings settingsFile    `json:"settings"`

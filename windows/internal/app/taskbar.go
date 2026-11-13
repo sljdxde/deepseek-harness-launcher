@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"unsafe"
 
+	"golang.org/x/sys/windows/registry"
+
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/applog"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/proc"
 )
@@ -150,25 +152,65 @@ func writeShortcut(link, exe string) {
 		return
 	}
 	applog.Logf("shortcut written: %s", link)
-	// Tell the shell the icon may have changed. Without this Explorer keeps
-	// serving the cached bitmap for that .lnk — the reason a rebuilt app
-	// with a corrected icon still showed the old art (a stale unread count
-	// burned into it) in Start-menu search.
 	notifyShellIconChanged(link)
 }
 
-// shcneAssocChanged / shcnfPathW: "this file's icon is out of date".
+// Shell change-notify flags. SHCNE_UPDATEITEM names one file whose cached
+// icon/shell data is stale; SHCNF_PATHW says dwItem1 is a wide-string path.
+//
+// The earlier version used SHCNE_ASSOCCHANGED here, which is wrong twice
+// over: that event IGNORES dwItem1/dwItem2 (so the path named nothing), and
+// it is meant for a global file-association change. The result was a call
+// that looked right and refreshed nothing.
 const (
-	shcneAssocChanged = 0x08000000
-	shcnfPathW        = 0x0005
+	shcneUpdateItem = 0x00002000
+	shcnfPathW      = 0x0005
 )
 
 // notifyShellIconChanged asks Explorer to re-read link's icon.
 func notifyShellIconChanged(link string) {
 	ptr := mustUTF16(link)
 	shell32.NewProc("SHChangeNotify").Call(
-		uintptr(shcneAssocChanged), uintptr(shcnfPathW),
+		uintptr(shcneUpdateItem), uintptr(shcnfPathW),
 		uintptr(unsafe.Pointer(&ptr[0])), 0)
+}
+
+// flushIconCache rebuilds Explorer's icon cache, which is what Start-menu
+// search reads. SHChangeNotify above only invalidates one item; the search
+// index keeps its own copy of every app icon, so a shortcut that has
+// pointed at the right exe all along can still show art from a build that
+// no longer exists (the "5" burned into the icon, long after the launcher
+// stopped writing badges into shortcuts).
+//
+// ie4uinit -show is the documented, non-destructive way to rebuild it.
+// It is run at most once per installed binary: the exe's mtime is the
+// stamp, so an upgrade flushes once and a normal start does nothing.
+func flushIconCache() {
+	if h == nil || h.ectx == nil {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	info, err := os.Stat(exe)
+	if err != nil {
+		return
+	}
+	stamp := info.ModTime().UnixNano()
+	if !h.ectx.claimIconFlush(stamp) {
+		return // this binary already flushed
+	}
+
+	// off the startup path: the launcher has a dsh to bring up
+	go func() {
+		cmd := proc.Command("ie4uinit.exe", "-show")
+		if err := cmd.Run(); err != nil {
+			applog.Logf("icon cache flush skipped: %v", err)
+			return
+		}
+		applog.Logf("icon cache flushed (new binary %d)", stamp)
+	}()
 }
 
 // shortcutIcon reads a .lnk's IconLocation, or "".
@@ -229,4 +271,30 @@ func mustUTF16(s string) []uint16 {
 		return []uint16{0}
 	}
 	return ptr
+}
+
+// toastDisplayName is what the notification UI and the Start-menu entry for
+// this app should read. The registry key stays the AUMID; only the label
+// changes.
+const toastDisplayName = "Deepseek Harness Launcher"
+
+// fixToastDisplayName rewrites the toast identity's DisplayName.
+//
+// Wails derives both the registry key AND the DisplayName from the app
+// Name, so registering under the AUMID (which is required — a friendly
+// name there created a second app identity, listed twice in Start-menu
+// search, with Windows' own unread badge on it) also labelled the toast
+// with the raw AUMID string. This restores the label without touching the
+// key.
+func fixToastDisplayName() {
+	key, _, err := registry.CreateKey(registry.CURRENT_USER,
+		`Software\Classes\AppUserModelId\`+appUserModelID, registry.ALL_ACCESS)
+	if err != nil {
+		applog.Logf("toast display name: open key: %v", err)
+		return
+	}
+	defer key.Close()
+	if err := key.SetStringValue("DisplayName", toastDisplayName); err != nil {
+		applog.Logf("toast display name: set: %v", err)
+	}
 }

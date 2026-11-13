@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -180,17 +181,14 @@ func install(selfExe, version string) error {
 // dance selfupdate uses. The embedded Node only re-extracts when its
 // version marker differs, which keeps the usual upgrade a single-file
 // move.
-func upgrade(selfExe, version, installedExe string) error {
+func upgrade(selfExe, installedExe string) error {
 	target := InstallDir()
 	staged := filepath.Join(target, "DHL.new.exe")
 	if err := copyFile(selfExe, staged); err != nil {
 		return err
 	}
 	stagedNode := filepath.Join(target, "node.new")
-	needNode, err := nodeNeedsRefresh(filepath.Join(target, "node"))
-	if err != nil {
-		needNode = true // when in doubt, lay the bundled Node down again
-	}
+	needNode := nodeNeedsRefresh(filepath.Join(target, "node"))
 	if needNode {
 		if err := extractNode(stagedNode); err != nil {
 			return err
@@ -203,7 +201,7 @@ func upgrade(selfExe, version, installedExe string) error {
 		"rem waits for the running launcher to exit, then swaps the install",
 		":wait",
 		"timeout /t 1 /nobreak >nul",
-		`tasklist /fi "PID eq `+itoa(os.Getpid())+`" | find "`+itoa(os.Getpid())+`" >nul && goto wait`,
+		`tasklist /fi "PID eq `+strconv.Itoa(os.Getpid())+`" | find "`+strconv.Itoa(os.Getpid())+`" >nul && goto wait`,
 	)
 	if needNode {
 		lines = append(lines,
@@ -231,20 +229,6 @@ func upgrade(selfExe, version, installedExe string) error {
 	// the script runs detached; the .cmd deletes itself
 	go func() { _ = cmd.Wait() }()
 	return nil
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }
 
 // startInstalled launches the installed copy detached and reports
@@ -306,7 +290,7 @@ func extractNode(dest string) error {
 	if err := extractZipTo(reader, dest, prefix); err != nil {
 		return err
 	}
-	version := nodeVersionFromZip(reader, prefix)
+	version := nodeVersionFromZip(prefix)
 	if version != "" {
 		_ = os.WriteFile(filepath.Join(dest, ".dhl-node-version"), []byte(version), 0o644)
 	}
@@ -388,8 +372,10 @@ func commonTopDir(r *zip.Reader) string {
 }
 
 // nodeVersionFromZip pulls the version out of the wrapper directory name
-// (node-v24.22.2-win-x64 → v24.22.2), "" when it cannot be read.
-func nodeVersionFromZip(r *zip.Reader, prefix string) string {
+// (node-v24.22.2-win-x64 → v24.22.2), "" when it cannot be read. The
+// archive itself is not needed: the version only ever lives in the
+// wrapper's name.
+func nodeVersionFromZip(prefix string) string {
 	prefix = strings.TrimSuffix(prefix, "/")
 	if prefix == "" {
 		return ""
@@ -408,15 +394,17 @@ func nodeVersionFromZip(r *zip.Reader, prefix string) string {
 // nodeNeedsRefresh reports whether the installed copy's bundled Node is
 // missing or older than the one this exe carries. A same-version Node
 // (the common upgrade) is left alone: re-extracting ~100MB per update
-// for nothing is how updates feel slow.
-func nodeNeedsRefresh(installedNodeDir string) (bool, error) {
+// for nothing is how updates feel slow. Anything unreadable counts as
+// "refresh": laying the bundled Node down again is always safe, while
+// skipping it can leave a broken install.
+func nodeNeedsRefresh(installedNodeDir string) bool {
 	want := nodeVersionOfZip()
 	if _, err := os.Stat(filepath.Join(installedNodeDir, "node.exe")); err != nil {
-		return true, nil
+		return true
 	}
 	marker, err := os.ReadFile(filepath.Join(installedNodeDir, ".dhl-node-version"))
 	if err != nil || strings.TrimSpace(string(marker)) == "" {
-		return true, nil // unknown vintage: refresh
+		return true // unknown vintage: refresh
 	}
-	return strings.TrimSpace(string(marker)) != want, nil
+	return strings.TrimSpace(string(marker)) != want
 }

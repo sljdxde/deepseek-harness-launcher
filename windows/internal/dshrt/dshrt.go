@@ -72,12 +72,6 @@ func ExecutablePath() string {
 	return filepath.Join(RuntimeDir(), "node_modules", ".bin", "dsh.cmd")
 }
 
-// ProfileModulesDir is the user web profile's dependency directory; the
-// plugins' package.json / cordis.patch.yml are read from here.
-func ProfileModulesDir() string {
-	return filepath.Join(DSHHome(), "profiles", "web", "node_modules")
-}
-
 // RollbackDir is the old runtime kept before a version-targeted update;
 // the new version must prove it starts before this snapshot is dropped.
 func RollbackDir() string { return filepath.Join(DSHHome(), "runtime.rollback") }

@@ -1,5 +1,16 @@
 package app
 
+// progress_window.go is the install/update progress dialog, the
+// counterpart of DSHInstallWindowController: one small window, a stage line
+// and a percentage, driven by the npm output pump.
+//
+// The page is served from the asset handler (/dhl-progress) and reads its
+// state by polling, for the same reason the panel is: the WebviewWindow
+// HTML option is ignored on Windows, so an HTML-option window renders
+// nothing, and its window.go binding (the old 取消 button) does not exist
+// on asset-served pages either. Cancel therefore travels over
+// POST /dhl-action like every other launcher page action.
+
 import (
 	"fmt"
 	"sync"
@@ -7,45 +18,93 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// progressWindow is the install/update progress dialog, the counterpart
-// of DSHInstallWindowController: one small window, a stage line and a
-// percentage, driven by ExecJS from the npm output pump. The window's
-// 取消 button cancels the running install through the registered
-// ProgressBridge service.
+const progressPageURL = "/dhl-progress"
+
+// progressState is what /dhl-progress-state answers.
+type progressState struct {
+	mu         sync.Mutex
+	detail     string
+	percentage float64
+	finished   bool
+	cancelled  bool
+}
+
+var installProgress = &progressState{detail: "准备安装…"}
+
+func (s *progressState) set(detail string, percentage float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.detail = detail
+	s.percentage = percentage
+}
+
+func (s *progressState) finish(detail string, cancelled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.detail = detail
+	s.percentage = 100
+	s.finished = true
+	s.cancelled = cancelled
+}
+
+func (s *progressState) reset(detail string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.detail = detail
+	s.percentage = 0
+	s.finished = false
+	s.cancelled = false
+}
+
+func (s *progressState) stateJSON() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pct := s.percentage
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	return fmt.Sprintf(`{"detail":%q,"pct":%.1f,"finished":%v,"cancelled":%v}`,
+		s.detail, pct, s.finished, s.cancelled)
+}
+
+// progressWindow is the window handle plus its close.
 type progressWindow struct {
-	mu     sync.Mutex
 	window *application.WebviewWindow
-	lastJS string
 }
 
 func newProgressWindow(a *application.App, title string) *progressWindow {
-	p := &progressWindow{}
-	w := a.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:           title,
-		Width:           460,
-		Height:          190,
-		DisableResize:   true,
-		AlwaysOnTop:     true,
-		InitialPosition: application.WindowCentered,
-		HTML:            progressHTML,
+	installProgress.reset("准备安装…")
+	var created *application.WebviewWindow
+	application.InvokeSync(func() {
+		created = a.Window.NewWithOptions(application.WebviewWindowOptions{
+			Name:           "dhl-progress",
+			Title:          title,
+			Width:          460,
+			Height:         190,
+			Frameless:      true,
+			AlwaysOnTop:    true,
+			DisableResize:  true,
+			BackgroundType: application.BackgroundTypeSolid,
+			URL:            progressPageURL,
+		})
 	})
-	p.window = w
+	p := &progressWindow{window: created}
+	// Show marshals itself, so it must stay outside the InvokeSync block
+	// above (nesting the two deadlocks the GUI thread).
+	if created != nil {
+		created.Center()
+		created.Show()
+		raiseTopmost(windowHWND(created))
+	}
 	return p
 }
 
 // Update pushes a new stage line and percentage into the page.
 func (p *progressWindow) Update(detail string, percentage float64) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.window == nil {
-		return
-	}
-	js := fmt.Sprintf("window.__dhlUpdate(%q, %.1f);", detail, percentage)
-	if js == p.lastJS {
-		return
-	}
-	p.lastJS = js
-	p.window.ExecJS(js)
+	installProgress.set(detail, percentage)
 }
 
 // Finish labels the bar done; the caller closes shortly after.
@@ -54,74 +113,93 @@ func (p *progressWindow) Finish(ok bool) {
 	if !ok {
 		text = "安装失败"
 	}
-	p.Update(text, 100)
+	installProgress.finish(text, false)
 }
 
 // Cancelled labels the bar stopped-by-user; the caller closes shortly
 // after.
 func (p *progressWindow) Cancelled() {
-	p.Update("已取消", 100)
+	installProgress.finish("已取消", true)
 }
 
 // Close takes the window down for good.
 func (p *progressWindow) Close() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.window != nil {
 		p.window.Close()
 		p.window = nil
 	}
 }
 
-// progressHTML is the whole page: no framework, no asset server, one
-// function the host calls. The bar uses a plain accent color rather
-// than the Windows theme accent — matching it needs a WebView2 bridge
-// the first install does not need.
-const progressHTML = `<!doctype html>
+// progressPage is the served progress document.
+const progressPage = `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <style>
-  :root { color-scheme: light dark; }
-  body {
-    margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
-    font-size: 13px; padding: 18px 20px;
-    background: light-dark(#ffffff, #202020);
-    color: light-dark(#1a1a1a, #f2f2f2);
-    user-select: none; overflow: hidden;
-  }
-  #detail { margin-bottom: 12px; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; opacity: .92; }
-  .bar { height: 8px; border-radius: 4px;
-    background: light-dark(#e6e6e6, #3a3a3a); overflow: hidden; }
-  .fill { height: 100%; width: 0%;
-    background: light-dark(#0f6cbd, #4cc2ff); border-radius: 4px;
-    transition: width .25s ease; }
-  #pct { margin-top: 8px; font-variant-numeric: tabular-nums;
-    opacity: .7; font-size: 12px; }
-  #cancelbtn { margin-top: 12px; padding: 5px 14px; border-radius: 5px;
-    border: 1px solid light-dark(#c8c8c8, #555);
-    background: light-dark(#fafafa, #333); color: inherit; cursor: pointer;
-    font-size: 12px; }
-  #cancelbtn:disabled { opacity: .5; cursor: default; }
+:root{color-scheme:light dark}
+body{
+  margin:0;padding:18px 20px;overflow:hidden;user-select:none;
+  font:13px/1.5 "Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",
+       "Microsoft YaHei",system-ui,sans-serif;
+  background:light-dark(#f4f4f6,#1a1a1e);color:light-dark(#1c1c21,#ededf1);
+  border:1px solid light-dark(#e3e3e8,#333339);
+}
+#detail{margin-bottom:12px;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;font-size:12px;color:light-dark(#4b4b53,#b9b9c1)}
+.bar{height:8px;background:light-dark(#e3e3e8,#333339);overflow:hidden}
+.fill{height:100%;width:0%;background:light-dark(#4f46e5,#a5b4fc);
+  transition:width .25s ease}
+#pct{margin-top:8px;font-size:12px;font-variant-numeric:tabular-nums;
+  color:light-dark(#85858d,#8b8b94)}
+button{margin-top:12px;font:inherit;font-size:12px;height:28px;padding:0 12px;
+  border:1px solid light-dark(#e3e3e8,#333339);border-radius:0;
+  background:light-dark(#fff,#232327);color:inherit;cursor:default}
+button:hover{background:light-dark(#ececf1,#303036)}
+button:disabled{opacity:.5}
 </style>
 </head>
 <body>
-  <div id="detail">准备安装…</div>
+  <div id="detail" style="--wails-draggable:drag">准备安装…</div>
   <div class="bar"><div class="fill" id="fill"></div></div>
   <div id="pct">0.0%</div>
   <button id="cancelbtn">取消安装</button>
-  <script>
-    window.__dhlUpdate = function (detail, pct) {
-      document.getElementById('detail').textContent = detail;
-      document.getElementById('fill').style.width = Math.max(0, Math.min(100, pct)) + '%';
-      document.getElementById('pct').textContent = pct.toFixed(1) + '%';
-    };
-    document.getElementById('cancelbtn').onclick = function () {
-      this.disabled = true;
-      this.textContent = '正在取消…';
-      try { window.go.app.ProgressBridge.Cancel(); } catch (e) {}
-    };
-  </script>
+<script>
+(function () {
+  var answered = false;
+  var fill = document.getElementById('fill');
+  var detail = document.getElementById('detail');
+  var pct = document.getElementById('pct');
+  var cancel = document.getElementById('cancelbtn');
+  function paint(s) {
+    detail.textContent = s.detail;
+    fill.style.width = s.pct + '%';
+    pct.textContent = s.pct.toFixed(1) + '%';
+    if (s.finished) {
+      cancel.disabled = true;
+      cancel.textContent = s.cancelled ? '已取消' : '请稍候…';
+    }
+  }
+  function tick() {
+    fetch('/dhl-progress-state', { cache: 'no-store' }).then(function (r) {
+      return r.json();
+    }).then(paint).catch(function () {});
+    setTimeout(tick, 200);
+  }
+  cancel.onclick = function () {
+    if (answered) return;
+    answered = true;
+    cancel.disabled = true;
+    cancel.textContent = '正在取消…';
+    try {
+      fetch('/dhl-action', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'action=progress-cancel'
+      });
+    } catch (e) {}
+  };
+  tick();
+})();
+</script>
 </body>
 </html>`

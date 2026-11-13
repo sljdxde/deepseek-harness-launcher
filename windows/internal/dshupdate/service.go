@@ -18,12 +18,6 @@ import (
 // which the launcher's own update path already hit.
 const ReleasesFeedURL = "https://github.com/deepseek-ai/deepseek-harness/releases.atom"
 
-// CheckResult is what one check found.
-type CheckResult struct {
-	Report Report
-	Err    string
-}
-
 // RunVersion reads `dsh --version` through the given entry and environment.
 func RunVersion(entry string, env []string) string {
 	cmd := proc.Command(entry, "--version")

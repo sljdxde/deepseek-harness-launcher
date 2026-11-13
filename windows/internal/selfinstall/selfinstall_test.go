@@ -15,8 +15,8 @@ import (
 
 func TestDecide(t *testing.T) {
 	base := Input{
-		SelfPath:     `C:\Users\u\Downloads\DHL.exe`,
-		SelfVersion:  "0.4.0",
+		SelfPath:      `C:\Users\u\Downloads\DHL.exe`,
+		SelfVersion:   "0.4.0",
 		DownloadsLike: true,
 	}
 	cases := []struct {
@@ -140,7 +140,7 @@ func TestExtractStripsTopDir(t *testing.T) {
 	if prefix != "node-v24.22.2-win-x64/" {
 		t.Fatalf("commonTopDir = %q, want the wrapper dir", prefix)
 	}
-	if got := nodeVersionFromZip(r, prefix); got != "v24.22.2" {
+	if got := nodeVersionFromZip(prefix); got != "v24.22.2" {
 		t.Errorf("nodeVersionFromZip = %q, want v24.22.2", got)
 	}
 
@@ -164,7 +164,7 @@ func TestExtractWithoutTopDir(t *testing.T) {
 	if prefix := commonTopDir(r); prefix != "" {
 		t.Fatalf("commonTopDir = %q, want empty", prefix)
 	}
-	if got := nodeVersionFromZip(r, ""); got != "" {
+	if got := nodeVersionFromZip(""); got != "" {
 		t.Errorf("nodeVersionFromZip = %q, want empty", got)
 	}
 	dest := t.TempDir()
@@ -180,7 +180,7 @@ func TestExtractWithoutTopDir(t *testing.T) {
 // not written.
 func TestExtractRefusesZipSlip(t *testing.T) {
 	data := zipBytes(t, map[string]string{
-		"node-v24-win-x64/node.exe":      "fine",
+		"node-v24-win-x64/node.exe":       "fine",
 		"node-v24-win-x64/../../evil.exe": "nope",
 	})
 	r := reader(t, data)

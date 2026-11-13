@@ -8,6 +8,7 @@ package nodeenv
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -161,6 +162,37 @@ func FindExecutable(name string, env map[string]string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// Environment flattens an environment map into the "KEY=VALUE" slice
+// exec.Cmd wants.
+//
+// Windows environment keys are case-insensitive, but a Go map is not:
+// os.Environ() hands us "Path" while new code writes "PATH", and both
+// lines riding into the child's environment block lets the (random) map
+// order decide which one survives — that is exactly how dsh.cmd once
+// lost node half the time. Deduplicate case-insensitively with a
+// DETERMINISTIC winner: original-cased keys are visited in sorted order,
+// and a later key overwrites an earlier one (so "PATH" sorts before
+// "Path" and wins — the new value is the one we wrote).
+func Environment(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	index := map[string]int{}
+	var out []string
+	for _, k := range keys {
+		v := env[k]
+		if i, ok := index[strings.ToLower(k)]; ok {
+			out[i] = k + "=" + v
+			continue
+		}
+		index[strings.ToLower(k)] = len(out)
+		out = append(out, k+"="+v)
+	}
+	return out
 }
 
 func firstNonEmpty(values ...string) string {

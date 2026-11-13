@@ -202,7 +202,7 @@ func installAttempt(ctx context.Context, opts InstallOptions, onOutput func(stri
 
 	cmd := proc.CommandContext(ctx, opts.NpmPath, args...)
 	cmd.Dir = DSHHome()
-	cmd.Env = flattenEnv(attemptEnv)
+	cmd.Env = nodeenv.Environment(attemptEnv)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -314,7 +314,7 @@ func validateStaged(ctx context.Context, staging string, env map[string]string) 
 	}
 	cmd := proc.CommandContext(ctx, staged, "--version")
 	cmd.Dir = DSHHome()
-	cmd.Env = flattenEnv(env)
+	cmd.Env = nodeenv.Environment(env)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("安装后的 dsh 自检失败：%s", strings.TrimSpace(string(output)))
@@ -345,12 +345,4 @@ func joinNonEmpty(parts ...string) string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
-}
-
-func flattenEnv(env map[string]string) []string {
-	out := make([]string, 0, len(env))
-	for k, v := range env {
-		out = append(out, k+"="+v)
-	}
-	return out
 }

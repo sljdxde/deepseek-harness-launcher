@@ -14,8 +14,6 @@ var (
 	procSetWindowPos      = user32.NewProc("SetWindowPos")
 	procGetWindowLongPt   = user32.NewProc("GetWindowLongPtrW")
 	procSetWindowLongPt   = user32.NewProc("SetWindowLongPtrW")
-	procIsZoomed          = user32.NewProc("IsZoomed")
-	procShowWindowCmd     = user32.NewProc("ShowWindow")
 	procGetWindowRect     = user32.NewProc("GetWindowRect")
 	procMonitorFromWindow = user32.NewProc("MonitorFromWindow")
 	procGetMonitorInfo    = user32.NewProc("GetMonitorInfoW")
@@ -28,12 +26,14 @@ const (
 	wsThickFrame  = 0x00040000
 	wsMinimizeBox = 0x00020000
 	wsMaximizeBox = 0x00010000
-	swMaximize    = 3
 
 	swpNoSize       = 0x0001
 	swpNoMove       = 0x0002
 	swpNoZOrder     = 0x0004
 	swpFrameChanged = 0x0020
+	swpShowWindow   = 0x0040
+
+	hwndTopmost = ^uintptr(0) // (HWND)-1
 )
 
 const monitorDefaultToNearest = 2
@@ -117,7 +117,6 @@ func clampIntoMonitor(hwnd uintptr) {
 	if x == r.left && y == r.top && !resize {
 		return
 	}
-	const swpNoZOrder = 0x0004
 	procSetWindowPos.Call(hwnd, 0, uintptr(x), uintptr(y), uintptr(w), uintptr(h), swpNoZOrder)
 }
 
@@ -140,11 +139,5 @@ func raiseTopmost(hwnd uintptr) {
 	if hwnd == 0 {
 		return
 	}
-	const (
-		hwndTopmost   = ^uintptr(0) // (HWND)-1
-		swpNoSize     = 0x0001
-		swpNoMove     = 0x0002
-		swpShowWindow = 0x0040
-	)
 	procSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, swpNoSize|swpNoMove|swpShowWindow)
 }

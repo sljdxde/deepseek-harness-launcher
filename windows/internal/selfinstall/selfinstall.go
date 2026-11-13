@@ -181,7 +181,7 @@ func Settle(version string) bool {
 		return true
 	case ActionUpgrade:
 		applog.Logf("selfinstall: upgrading %s -> %s", in.InstalledVersion, version)
-		if err := upgrade(exe, version, in.InstalledExe); err != nil {
+		if err := upgrade(exe, in.InstalledExe); err != nil {
 			applog.Logf("selfinstall: upgrade failed: %v", err)
 			return false
 		}

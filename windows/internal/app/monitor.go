@@ -18,6 +18,7 @@ import (
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/dshrt"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/dshupdate"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/launch"
+	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/nodeenv"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/paths"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/probe"
 	"github.com/sljdxde/deepseek-harness-launcher/windows/internal/session"
@@ -250,7 +251,7 @@ func (c *controller) checkUpdates(announce bool) {
 	// dsh: npm dist-tags + GitHub release feed, both already ported
 	installed := dshrt.IsInstalled()
 	if installed {
-		report := dshupdate.Check(installedDSHVersionForCheck(), npmPathForCheck(), flattenEnv(nodeEnvironment()))
+		report := dshupdate.Check(installedDSHVersionForCheck(), npmPathForCheck(), nodeenv.Environment(nodeEnvironment()))
 		c.mu.Lock()
 		if report.Current != "" {
 			c.dshVersion = report.Current
@@ -306,7 +307,7 @@ func (c *controller) checkUpdates(announce bool) {
 		}
 	}
 	c.refreshBadgeAndMenu()
-	application.InvokeSync(c.refreshUpdateMenuRows)
+	application.InvokeSync(refreshOpenPanel)
 }
 
 // launcherReleaseAction decides whether a published release is worth

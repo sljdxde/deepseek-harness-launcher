@@ -35,7 +35,6 @@ const (
 	keySetValue     = 0x0002
 	keyQueryValue   = 0x0001
 	regSZ           = 1
-	regBinary       = 3
 )
 
 // executablePath is this program's own path.

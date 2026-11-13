@@ -128,13 +128,15 @@ func TestPanelPayloadEmptyIsStillValid(t *testing.T) {
 
 // The panel height is fixed by design — the tab content scrolls inside —
 // so a background poll refreshing an open panel must never resize it.
+// The bound lives in geometry_test.go (it must fit a 1024×768 screen);
+// this pins the value the window is actually created and positioned with.
 func TestPanelHeightFixed(t *testing.T) {
-	if h := panelHeight(); h != panelHeightWanted {
-		t.Errorf("panelHeight() = %d, want the default %d", h, panelHeightWanted)
+	if panelHeight <= 0 {
+		t.Fatalf("panelHeight = %d, must be positive", panelHeight)
 	}
-	if lastPanelHeight != panelHeight() {
-		t.Errorf("lastPanelHeight %d disagrees with panelHeight %d",
-			lastPanelHeight, panelHeight())
+	work := application.Rect{X: 0, Y: 0, Width: 1920, Height: 1040}
+	if _, y := trayCorner(work); y != 1040-panelHeight-4 {
+		t.Errorf("trayCorner y = %d, so the panel is not anchored to the panel height", y)
 	}
 }
 
@@ -146,22 +148,8 @@ func TestTrayCornerAtWorkAreaCorner(t *testing.T) {
 	if x != 1920-panelWidth-4 {
 		t.Errorf("x = %d, want %d", x, 1920-panelWidth-4)
 	}
-	if y != 1040-panelHeight()-4 {
-		t.Errorf("y = %d, want %d", y, 1040-panelHeight()-4)
-	}
-}
-
-// clamp keeps the anchored position on screen even when the click point
-// sits at a screen edge.
-func TestClamp(t *testing.T) {
-	if got := clamp(-50, 0, 100); got != 0 {
-		t.Errorf("clamp(-50) = %d, want 0", got)
-	}
-	if got := clamp(500, 0, 100); got != 100 {
-		t.Errorf("clamp(500) = %d, want 100", got)
-	}
-	if got := clamp(50, 0, 100); got != 50 {
-		t.Errorf("clamp(50) = %d, want 50", got)
+	if y != 1040-panelHeight-4 {
+		t.Errorf("y = %d, want %d", y, 1040-panelHeight-4)
 	}
 }
 
@@ -269,8 +257,7 @@ func TestMirrorEnabled(t *testing.T) {
 		{"https://registry.npmjs.org", false},
 	}
 	for _, c := range cases {
-		ctl := &controller{npmRegistry: c.registry}
-		if got := ctl.mirrorEnabled(); got != c.want {
+		if got := mirrorEnabled(c.registry); got != c.want {
 			t.Errorf("mirrorEnabled(%q) = %v, want %v", c.registry, got, c.want)
 		}
 	}
@@ -422,6 +409,102 @@ func TestPanelSwitchRouteHandlesEveryRenderedKey(t *testing.T) {
 		// this test exists to catch
 		if !strings.Contains(body, `"on":`) {
 			t.Errorf("switch %q: response %q carries no effective state", key, body)
+		}
+	}
+}
+
+// The session rows the page renders must be clickable by the selector the
+// delegation uses. They render `data-sid`, while the handler looked for
+// `data-jump` — so a click on a finished session did nothing at all, which
+// is the "单击应该可以定位到对应会话" report.
+func TestPanelSessionRowIsClickable(t *testing.T) {
+	ctl := &controller{version: "0.3.12", autoCheckUpdates: true}
+	sessionStore.Restore([]session.Event{{
+		Seq: 1, SessionID: "session-1335d7ff-x", Title: "修复登录问题",
+		Reason: "completed", At: 1_700_000_000_000, Kind: "completion",
+	}})
+	t.Cleanup(func() { sessionStore.Restore(nil) })
+
+	page := panelHTML(ctl.buildPanelModel())
+
+	// the row carries the id the click handler reads
+	if !strings.Contains(page, `data-sid="session-1335d7ff-x"`) {
+		t.Fatal("the session row lost its data-sid attribute")
+	}
+	// and the handler matches on that same attribute
+	if !strings.Contains(page, `t.closest('[data-sid]')`) {
+		t.Error("the click delegation does not match [data-sid]; rows would be inert")
+	}
+	if strings.Contains(page, `t.closest('[data-jump]')`) {
+		t.Error("the delegation still looks for [data-jump], which no row renders")
+	}
+	// a clickable row must look clickable
+	if !strings.Contains(page, "cursor:pointer") {
+		t.Error("session rows must show a pointer cursor")
+	}
+}
+
+// A finished session must be labelled with its title, not the folder it
+// ran in — otherwise every row in one project reads the same.
+func TestPanelSessionRowUsesSessionTitle(t *testing.T) {
+	ctl := &controller{version: "0.3.12", autoCheckUpdates: true}
+	sessionStore.Restore([]session.Event{{
+		Seq: 1, SessionID: "session-1335d7ff-x", Title: "修复登录问题",
+		Reason: "completed", At: 1_700_000_000_000, Kind: "completion",
+	}})
+	t.Cleanup(func() { sessionStore.Restore(nil) })
+
+	page := panelHTML(ctl.buildPanelModel())
+	if !strings.Contains(page, "修复登录问题") {
+		t.Error("the row does not show the session title")
+	}
+	if !strings.Contains(page, `title="修复登录问题"`) {
+		t.Error("the row's tooltip does not carry the session title")
+	}
+}
+
+// A duplicated function definition in the page's script means the later
+// copy silently wins. sessionsHTML was defined twice; the duplicate is
+// gone and must not come back, because the copy that wins is the one that
+// renders the rows.
+func TestPanelPageDefinesEachHelperOnce(t *testing.T) {
+	ctl := &controller{version: "0.3.12", autoCheckUpdates: true}
+	page := panelHTML(ctl.buildPanelModel())
+	for _, fn := range []string{"function sessionsHTML(", "function timeLabel(", "function esc("} {
+		if got := strings.Count(page, fn); got != 1 {
+			t.Errorf("%s appears %d times, want exactly 1", fn, got)
+		}
+	}
+}
+
+// The payload the panel's JS receives must carry every setting the page
+// renders a switch for. A missing key means the pushed model cannot restore
+// that switch after a re-render, and the UI silently drifts from the
+// stored value.
+func TestPanelPayloadCarriesEveryRenderedSetting(t *testing.T) {
+	ctl := &controller{version: "0.3.12", autoCheckUpdates: true, notifyOnComplete: true}
+	page := panelHTML(ctl.buildPanelModel())
+
+	var payload struct {
+		Settings map[string]any `json:"settings"`
+	}
+	if err := json.Unmarshal([]byte(panelPayload(ctl.buildPanelModel())), &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	settings := payload.Settings
+
+	// every data-key the page renders must exist in the pushed settings
+	keys := []string{
+		"autoCheckUpdates", "autoUpdate", "mirror",
+		"launchAtLogin", "openOnReady", "notifyOnComplete",
+	}
+	for _, key := range keys {
+		if !strings.Contains(page, `data-key="`+key+`"`) {
+			t.Errorf("the page no longer renders a switch for %q", key)
+			continue
+		}
+		if _, ok := settings[key]; !ok {
+			t.Errorf("the payload has no %q, so the pushed model cannot restore that switch", key)
 		}
 	}
 }

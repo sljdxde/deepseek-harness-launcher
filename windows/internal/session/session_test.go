@@ -290,12 +290,22 @@ func TestPresentation(t *testing.T) {
 	if BadgeText(0) != "" || BadgeText(1) != "1" || BadgeText(99) != "99" || BadgeText(100) != "99+" {
 		t.Errorf("BadgeText: %q %q %q %q", BadgeText(0), BadgeText(1), BadgeText(99), BadgeText(100))
 	}
-	// label preference: workspace → title → short id
-	if MenuLabel("my-workspace", "some title", "session-1335d7ff-x") != "my-workspace" {
-		t.Error("workspace must win")
+	// label preference: title → workspace → short id.
+	// The title must win: a workspace is the folder, so every session in
+	// one project rendered as the same row and the user could not tell
+	// which conversation had finished.
+	if MenuLabel("my-workspace", "some title", "session-1335d7ff-x") != "some title" {
+		t.Error("session title must win over the workspace name")
+	}
+	if MenuLabel("my-workspace", "", "session-1335d7ff-x") != "my-workspace" {
+		t.Error("an untitled session falls back to its workspace")
+	}
+	if MenuLabel("my-workspace", "session-", "session-1335d7ff-x") != "my-workspace" {
+		t.Errorf("a placeholder title must not shadow the workspace, got %q",
+			MenuLabel("my-workspace", "session-", "session-1335d7ff-x"))
 	}
 	if MenuLabel("", "real title", "session-1335d7ff-x") != "real title" {
-		t.Error("title next")
+		t.Error("title without a workspace")
 	}
 	if MenuLabel("", "session-", "session-1335d7ff-x") != "1335d7ff" {
 		t.Errorf("placeholder title must fall back to short id, got %q", MenuLabel("", "session-", "session-1335d7ff-x"))
@@ -361,4 +371,109 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// Ingest must survive the shapes a real feed can take, without dropping
+// the unread set or double-counting.
+func TestIngestBoundaries(t *testing.T) {
+	t.Run("nil feed is a no-op", func(t *testing.T) {
+		s := NewStore(10)
+		if got := s.Ingest(nil); !got.IsEmpty() {
+			t.Error("a nil feed must not report events")
+		}
+		if s.UnreadCount() != 0 {
+			t.Error("a nil feed must not add unread")
+		}
+	})
+
+	t.Run("empty items is a no-op", func(t *testing.T) {
+		s := NewStore(10)
+		if got := s.Ingest(&Feed{BootID: "b", Items: nil}); !got.IsEmpty() {
+			t.Error("an empty feed must not report events")
+		}
+	})
+
+	t.Run("a new bootId resets the sequence", func(t *testing.T) {
+		s := NewStore(10)
+		s.Ingest(&Feed{BootID: "b1", Items: []Event{
+			{Seq: 5, SessionID: "s1", Reason: "completed", Kind: KindCompletion},
+		}})
+		if s.PollAfterSeq() != 5 {
+			t.Fatalf("PollAfterSeq = %d, want 5", s.PollAfterSeq())
+		}
+		// dsh restarted: seq restarts at 1 and must still be ingested
+		s.Ingest(&Feed{BootID: "b2", Items: []Event{
+			{Seq: 1, SessionID: "s2", Reason: "completed", Kind: KindCompletion},
+		}})
+		if s.PollAfterSeq() != 1 {
+			t.Errorf("PollAfterSeq = %d, want 1 after the bootId reset", s.PollAfterSeq())
+		}
+		if s.UnreadCount() != 2 {
+			t.Errorf("unread = %d, want 2 (both sessions)", s.UnreadCount())
+		}
+	})
+
+	t.Run("a replayed seq is ignored", func(t *testing.T) {
+		s := NewStore(10)
+		ev := Event{Seq: 3, SessionID: "s1", Reason: "completed", Kind: KindCompletion}
+		s.Ingest(&Feed{BootID: "b", Items: []Event{ev}})
+		got := s.Ingest(&Feed{BootID: "b", Items: []Event{ev}})
+		if !got.IsEmpty() {
+			t.Error("a replayed event must not be reported again")
+		}
+		if s.UnreadCount() != 1 {
+			t.Errorf("unread = %d, want 1 (no double count)", s.UnreadCount())
+		}
+	})
+
+	t.Run("one row per session", func(t *testing.T) {
+		s := NewStore(10)
+		s.Ingest(&Feed{BootID: "b", Items: []Event{
+			{Seq: 1, SessionID: "s1", Reason: "completed", Kind: KindCompletion, Title: "first"},
+		}})
+		s.Ingest(&Feed{BootID: "b", Items: []Event{
+			{Seq: 2, SessionID: "s1", Reason: "completed", Kind: KindCompletion, Title: "second"},
+		}})
+		rows := s.Rows(10)
+		if len(rows) != 1 {
+			t.Fatalf("rows = %d, want 1 (one per session)", len(rows))
+		}
+		if rows[0].Title != "second" {
+			t.Errorf("row title = %q, want the newer event", rows[0].Title)
+		}
+	})
+}
+
+// A session pushed out by capacity must stop counting toward the badge:
+// the badge shows what is visible, and a row nobody can see cannot be
+// clicked to clear.
+func TestCapacityEvictionClearsUnread(t *testing.T) {
+	s := NewStore(2)
+	s.Ingest(&Feed{BootID: "b", Items: []Event{
+		{Seq: 1, SessionID: "s1", Reason: "completed", Kind: KindCompletion},
+		{Seq: 2, SessionID: "s2", Reason: "completed", Kind: KindCompletion},
+		{Seq: 3, SessionID: "s3", Reason: "completed", Kind: KindCompletion},
+	}})
+	if got := s.UnreadCount(); got != 2 {
+		t.Errorf("unread = %d, want 2 (capacity)", got)
+	}
+	for _, row := range s.Rows(10) {
+		if row.SessionID == "s1" {
+			t.Error("s1 should have been evicted")
+		}
+	}
+}
+
+// MarkRead and MarkAllRead must not invent unread state for unknown
+// sessions.
+func TestMarkReadUnknownSession(t *testing.T) {
+	s := NewStore(10)
+	s.MarkRead("never-seen")
+	if s.UnreadCount() != 0 {
+		t.Error("marking an unknown session read must not create state")
+	}
+	s.MarkAllRead()
+	if s.UnreadCount() != 0 {
+		t.Error("MarkAllRead on an empty store must stay empty")
+	}
 }

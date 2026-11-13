@@ -101,6 +101,18 @@ func handlePanelAction(action, id string, w http.ResponseWriter, r *http.Request
 				refreshOpenPanel()
 			}()
 		}
+	// The update dialog and the download window answer through the same
+	// endpoint: they are asset-served pages too, so they have no bindings.
+	case "update-confirm", "update-later", "update-skip", "update-unskip":
+		handleUpdateDialogAction(action)
+	case "download-cancel":
+		downloadUI.cancelDownload()
+	case "progress-cancel":
+		// the install/update progress window's 取消 (asset pages have no
+		// bindings, so this cannot go through the old ProgressBridge)
+		if h != nil && h.ectx != nil {
+			h.ectx.cancelInstall()
+		}
 	default:
 		applog.Logf("panel action: unknown %q", action)
 	}

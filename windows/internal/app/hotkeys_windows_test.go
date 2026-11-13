@@ -126,3 +126,62 @@ func TestPanelChordsParse(t *testing.T) {
 		}
 	}
 }
+
+// Hotkey chord parsing must reject everything it cannot honour, rather than
+// registering a chord that silently never fires. A user-typed chord goes
+// straight into RegisterHotKey, so a wrong parse is a dead shortcut with no
+// error shown.
+func TestParseHotkeyEdges(t *testing.T) {
+	bad := []string{
+		"",           // empty
+		"   ",        // whitespace only
+		"+",          // separator only
+		"Ctrl+",      // trailing separator
+		"Ctrl",       // modifier with no key
+		"R",          // key with no modifier: a global bare key would eat typing
+		"Ctrl+Ctrl",  // no actual key
+		"Ctrl+F25",   // out of the F1..F24 range
+		"Ctrl+F0",    // ditto
+		"Ctrl+AB",    // multi-char, not an F-key
+		"Ctrl+é",     // non-ASCII
+	}
+	for _, chord := range bad {
+		if _, _, ok := parseHotkey(chord); ok {
+			t.Errorf("parseHotkey(%q) accepted a chord it cannot honour", chord)
+		}
+	}
+
+	good := []string{
+		"Ctrl+R", "Ctrl+Alt+L", "Ctrl+Shift+A", "Win+D",
+		"Ctrl+F1", "Ctrl+F12", "Ctrl+F24", "Alt+0",
+	}
+	for _, chord := range good {
+		mods, vk, ok := parseHotkey(chord)
+		if !ok {
+			t.Errorf("parseHotkey(%q) rejected a valid chord", chord)
+			continue
+		}
+		if mods == 0 || vk == 0 {
+			t.Errorf("parseHotkey(%q) = mods %d vk %d, both must be non-zero", chord, mods, vk)
+		}
+	}
+}
+
+// Case and spacing must not matter: the settings file is hand-editable and
+// the panel shows the chord as typed.
+func TestParseHotkeyNormalises(t *testing.T) {
+	want, wantVK, ok := parseHotkey("Ctrl+Alt+L")
+	if !ok {
+		t.Fatal("baseline chord did not parse")
+	}
+	for _, variant := range []string{"ctrl+alt+l", "CTRL+ALT+L", " Ctrl + Alt + L ", "Ctrl+alt+L"} {
+		mods, vk, ok := parseHotkey(variant)
+		if !ok {
+			t.Errorf("parseHotkey(%q) rejected a case/space variant", variant)
+			continue
+		}
+		if mods != want || vk != wantVK {
+			t.Errorf("parseHotkey(%q) = (%d,%d), want (%d,%d)", variant, mods, vk, want, wantVK)
+		}
+	}
+}

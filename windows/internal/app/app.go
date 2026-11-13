@@ -61,7 +61,16 @@ func Run(version string) error {
 	h.ectx.version = version
 
 	h.app = application.New(application.Options{
-		Name:        "Deepseek Harness Launcher",
+		// Name is the toast AppID on Windows, not a display string: Wails
+		// hands cfg.Name to wintoast.SetAppData, which registers
+		// HKCU\Software\Classes\AppUserModelId\<Name>. Using the friendly
+		// title there created a SECOND app identity beside the process's
+		// real AUMID — Start-menu search then listed "Deepseek Harness
+		// Launcher" twice, and the auto-generated entry carried Windows'
+		// own unread badge (the "5" that survived every icon-cache
+		// rebuild). Every window sets its own Title, so nothing here is a
+		// display string.
+		Name:        appUserModelID,
 		Description: "Deepseek Harness 的菜单栏启动器",
 		// the panel and the flyout are served as real pages: on Windows the
 		// HTML window option is ignored and SetHTML only rewrites an
@@ -111,6 +120,9 @@ func Run(version string) error {
 	// one of them opens this app; the desktop copy is written when the
 	// setting asks for it
 	ensureShortcuts(loadSettings().DesktopShortcut)
+	// a freshly installed binary gets one Explorer icon-cache rebuild, so
+	// Start-menu search stops showing the previous build's art
+	flushIconCache()
 
 	// the notifier must be registered before Run: Wails refuses services
 	// added once the loop is going
@@ -123,6 +135,12 @@ func Run(version string) error {
 	// (1025) — listening to Common here never fires on this platform.
 	h.app.Event.OnApplicationEvent(events.Windows.ApplicationStarted, func(*application.ApplicationEvent) {
 		startOnce.Do(func() {
+			// Wails registers the toast identity from the app Name (which
+			// is the AUMID, see Options.Name) and uses that same string as
+			// the toast's DisplayName. Give the registration the friendly
+			// title instead: the AUMID stays correct, the toast and the
+			// notification settings page read "Deepseek Harness Launcher".
+			fixToastDisplayName()
 			// The main window IS the taskbar button. It starts visible
 			// (showing a loading placeholder) and is minimised right away,
 			// which keeps the button while leaving the desktop quiet. From
@@ -136,7 +154,18 @@ func Run(version string) error {
 				if w := dshWin.win; w != nil {
 					w.UnMaximise()
 					w.Show()
-					w.Minimise()
+					// Minimise only if no 打开 click arrived in the
+					// meantime: a click in the first moments of a launch
+					// (the taskbar button is already there) asks for the
+					// window, and minimising it right after would swallow
+					// that click — the "sometimes the click does nothing"
+					// half of the report. The flag is put back so the ready
+					// path still shows the page once dsh is up.
+					if h.ectx.consumeOpenWhenReady() {
+						h.ectx.requeueOpenWhenReady()
+					} else {
+						w.Minimise()
+					}
 				}
 				if hwnd := dshWin.HWND(); hwnd != 0 {
 					initTaskbarBadge(syscall.Handle(hwnd))

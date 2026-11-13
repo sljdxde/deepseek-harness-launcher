@@ -124,7 +124,7 @@ func TestHostWindowTitleFormat(t *testing.T) {
 		{100, "(99+) Deepseek Harness Launcher"}, // capped like the overlay
 	}
 	for _, c := range cases {
-		text := taskbarBadgeText(c.count)
+		text := badgeText(c.count)
 		var got string
 		if text == "" {
 			got = "Deepseek Harness Launcher"

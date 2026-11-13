@@ -103,7 +103,7 @@ body{
 /* 会话行（可点：打开并清除该条提醒） */
 .row{display:flex;align-items:center;gap:8px;width:100%;height:32px;
   background:none;border:0;border-bottom:1px solid var(--line-2);border-radius:0;
-  font-size:12px;color:var(--fg);text-align:left;padding:0 2px;cursor:default}
+  font-size:12px;color:var(--fg);text-align:left;padding:0 2px;cursor:pointer}
 .row:hover{background:var(--hover)}
 .row.read{color:var(--muted)}
 .row.read .rdot{background:transparent;box-shadow:inset 0 0 0 1px var(--faint)}
@@ -299,20 +299,6 @@ function timeLabel(ms) {
          String(d.getDate()).padStart(2, '0') + ' ' + hh + ':' + mm;
 }
 
-function sessionsHTML(rows) {
-  let h = '';
-  for (const r of rows) {
-    const bad = isBadReason(r.reason);
-    h += '<div class="row' + (r.unread ? '' : ' read') + '" data-sid="' + esc(r.id) + '" data-unread="' + (r.unread ? '1' : '0') + '">' +
-      '<span class="rdot ' + (bad ? 'bad' : 'ok') + '"></span>' +
-      '<span class="tm">' + timeLabel(r.at) + '</span>' +
-      '<span class="nm" title="' + esc(r.label) + '">' + esc(r.label || '') + '</span>' +
-      '<span class="rs">' + esc(reasonLabel(r.reason)) + '</span></div>';
-  }
-  if (!rows.length) h = '<div class="empty">没有会话记录</div>';
-  return h;
-}
-
 /* ── 交互 ─────────────────────────────────────────── */
 let stampTimer = null;
 function say(text) {
@@ -408,7 +394,6 @@ function toggleSw(el) {
 }
 
 /* 频率步进：服务端计算新档位 */
-const FREQS = [1, 3, 6, 12, 24, 48];
 function stepFreq(dir) {
   post('freq', { dir: dir }).then(function (resp) {
     if (resp && resp.hours) {
@@ -453,7 +438,13 @@ document.addEventListener('click', function (e) {
     post('act', { id: 'check-updates' }).then(function () { say('检查完成'); });
     return;
   }
-  if ((el = t.closest('[data-jump]'))) { post('jump', { id: el.getAttribute('data-jump') }); return; }
+  // 会话行：渲染用 data-sid（见 sessionsHTML），点击必须按同一个属性取
+  // id。以前找的是 data-jump，属性名对不上，点行完全没反应。
+  if ((el = t.closest('[data-sid]'))) {
+    const sid = el.getAttribute('data-sid');
+    if (sid) post('jump', { id: sid });
+    return;
+  }
   if ((el = t.closest('#openBtn'))) { post('act', { id: 'open' }); return; }
   if ((el = t.closest('#restartBtn'))) { doRestart(el); return; }
   if ((el = t.closest('[data-act="quit"]'))) { post('act', { id: 'quit' }); return; }

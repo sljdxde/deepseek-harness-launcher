@@ -326,15 +326,23 @@ func BadgeText(count int) string {
 	return fmt.Sprint(count)
 }
 
-// MenuLabel picks a row's name: workspace → title → short id. The plugin
-// falls back to values like `session-`/`session-1335…` when it has no
-// title, and a column of `session-` rows tells nobody anything.
+// MenuLabel picks a row's name: title → workspace → short id.
+//
+// The session TITLE wins over the workspace name. A workspace is the
+// folder the session ran in, so every session in one project rendered as
+// the same string — a list of 「deepseek-harness-launcher」 rows tells the
+// user nothing about which conversation finished. The workspace stays as
+// the fallback for a session the plugin never titled.
+//
+// The plugin also falls back to values like `session-`/`session-1335…`
+// when it has no title, and a column of `session-` rows tells nobody
+// anything either, hence isPlaceholderTitle.
 func MenuLabel(workspace, title, sessionID string) string {
-	if ws := strings.TrimSpace(workspace); ws != "" {
-		return ws
-	}
 	if t := strings.TrimSpace(title); t != "" && !isPlaceholderTitle(t, sessionID) {
 		return t
+	}
+	if ws := strings.TrimSpace(workspace); ws != "" {
+		return ws
 	}
 	return ShortIdentifier(sessionID)
 }

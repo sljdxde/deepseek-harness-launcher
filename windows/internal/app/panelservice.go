@@ -73,34 +73,9 @@ func (s *PanelService) Act(id string) {
 	}
 }
 
-// Jump opens Harness at the given session.
-func (s *PanelService) Jump(sessionID string) {
-	panel.Hide()
-	if s.ctl != nil && sessionID != "" {
-		s.ctl.jumpToSession(sessionID)
-	}
-}
-
-// Hide dismisses the panel (Escape).
-func (s *PanelService) Hide() { panel.Hide() }
-
-// Model returns the current panel state. The page calls this on load
-// instead of relying on a pushed ExecJS: a push can arrive before the
-// document exists and is then silently dropped, which leaves a correctly
-// positioned but blank window.
-func (s *PanelService) Model() map[string]any {
-	if s.ctl == nil {
-		applog.Logf("panel model: controller not set")
-		return map[string]any{}
-	}
-	model := s.ctl.buildPanelModel()
-	applog.Logf("panel model served: %d sessions", len(model.Sessions))
-	return panelModelMap(model)
-}
-
 // InjectTestEvents seeds fake completions. Dev-only: it exists so the
 // 会话 tab and the badges can be exercised without waiting for a real dsh
-// turn, and it is only reachable by typing into the panel's JS console.
+// turn, reachable through the --seed startup argument.
 func (s *PanelService) InjectTestEvents(n int) {
 	if n <= 0 {
 		n = 8
@@ -129,11 +104,4 @@ func (s *PanelService) InjectTestEvents(n int) {
 		s.ctl.refreshBadgeAndMenu()
 	}
 	applog.Logf("panel: injected %d test events", n)
-}
-
-// injectForTest seeds completions and repaints the badge. Reachable only
-// from the panel's JS console; it exists so the badge can be checked
-// without waiting for a real dsh turn.
-func (s *PanelService) injectForTest(n int) {
-	s.InjectTestEvents(n)
 }

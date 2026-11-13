@@ -181,3 +181,39 @@ func containsSegment(parts []string, want string) bool {
 	}
 	return false
 }
+
+// Environment is what both the launcher and the installer hand to a
+// child process. Windows keys are case-insensitive while a Go map is
+// not, so a map carrying both "Path" and "PATH" must collapse to ONE
+// line — otherwise the child's environment block keeps whichever line
+// the random map order emitted last, which is how dsh.cmd lost node.
+func TestEnvironmentDedupesCaseInsensitiveKeys(t *testing.T) {
+	out := Environment(map[string]string{
+		"Path":  `C:\old`,
+		"PATH":  `C:\new`,
+		"DHL_X": "1",
+		"dhl_x": "2",
+		"OTHER": "keep",
+	})
+	var pathLines, xLines, otherLines []string
+	for _, line := range out {
+		key := line[:strings.IndexByte(line, '=')]
+		switch {
+		case strings.EqualFold(key, "PATH"):
+			pathLines = append(pathLines, line)
+		case strings.EqualFold(key, "DHL_X"):
+			xLines = append(xLines, line)
+		case strings.EqualFold(key, "OTHER"):
+			otherLines = append(otherLines, line)
+		}
+	}
+	if len(pathLines) != 1 {
+		t.Errorf("PATH lines = %v, want exactly one", pathLines)
+	}
+	if len(xLines) != 1 {
+		t.Errorf("DHL_X lines = %v, want exactly one", xLines)
+	}
+	if len(otherLines) != 1 {
+		t.Errorf("unrelated key lost: %v", otherLines)
+	}
+}
