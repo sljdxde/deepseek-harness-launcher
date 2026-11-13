@@ -243,13 +243,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
     private var pluginManagerURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHPluginManager") ?? rootURL.appendingPathComponent("Plugins/DSHPluginManager") }
     private var sessionNotifyPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSessionNotify") ?? rootURL.appendingPathComponent("Plugins/DSHSessionNotify") }
-    private var sidebarDeckPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSidebarDeck") ?? rootURL.appendingPathComponent("Plugins/DSHSidebarDeck") }
     private var bundledPlugins: [BundledPlugin] {
         [
             BundledPlugin(linkName: "dsh-archive-manager", bundleMarker: "DSHArchiveManager", url: pluginURL),
             BundledPlugin(linkName: "dsh-plugin-manager", bundleMarker: "DSHPluginManager", url: pluginManagerURL),
-            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL),
-            BundledPlugin(linkName: "dsh-sidebar-deck", bundleMarker: "DSHSidebarDeck", url: sidebarDeckPluginURL)
+            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL)
         ]
     }
     private var patchPath: String { pluginURL.appendingPathComponent("cordis.patch.yml").path }
@@ -2063,41 +2061,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return patch.path
     }
 
-    /// 侧栏 Deck 接管补丁：停用官方侧栏 + 插入 Deck 行。
-    /// 任何一环不满足（资源缺失 / 用户停用 / 写盘失败）都返回 nil，退回官方侧栏——
-    /// Deck 是“增强”，绝不能因为它的补丁缺失把侧栏弄没。
-    private func stagedSidebarDeckPatchPath() -> String? {
-        // Deck 还在优化期：默认关，不进设置界面。只有显式改过 UserDefaults
-        // （sidebarDeckEnabled）才 staging 接管补丁，普通安装始终是官方侧栏。
-        guard settings.sidebarDeckEnabled else {
-            appendLogString("侧栏 Deck 未启用（实验性），本次使用官方侧栏\n")
-            return nil
-        }
-        let patchSource = sidebarDeckPluginURL.appendingPathComponent("cordis.patch.yml")
-        guard FileManager.default.fileExists(atPath: patchSource.path) else {
-            appendLogString("未找到侧栏 Deck 资源，本次使用官方侧栏\n")
-            return nil
-        }
-        let disabled = PluginIsolationSupport.readDisabledState(url: pluginDisabledStateURL)
-        if PluginIsolationSupport.isSidebarDeckDisabled(in: disabled) {
-            appendLogString("侧栏 Deck 已被用户停用，本次使用官方侧栏\n")
-            return nil
-        }
-        let directory = PluginIsolationSupport.disabledPatchDirectory(home: DSHRuntimeSupport.dshHomeURL)
-        guard let patch = PluginIsolationSupport.stagedSidebarDeckPatchFile(directory: directory) else {
-            appendLogString("侧栏 Deck 接管补丁写入失败，本次使用官方侧栏\n")
-            return nil
-        }
-        appendLogString("侧栏 Deck 接管补丁：\(patch.path)\n")
-        return patch.path
-    }
-
     private func launchInstalledDSH(port: Int, executableURL: URL, environment: [String: String]) {
         let task = Process(); task.executableURL = executableURL
         let arguments = PluginIsolationSupport.bootArguments(
             port: port,
             basePatch: FileManager.default.isReadableFile(atPath: patchPath) ? patchPath : nil,
-            deckPatch: stagedSidebarDeckPatchPath(),
             isolationPatch: nil,
             // 用户停用层排在最后：最后应用的覆盖优先级最高，确保用户意图生效。
             disabledPatch: stagedPluginDisabledPatchPath()

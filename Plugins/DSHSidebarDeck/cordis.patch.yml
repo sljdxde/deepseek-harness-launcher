@@ -1,8 +1,0 @@
-# 接管左侧栏：先停用官方侧栏外壳，再插入本插件。
-# 用户从插件管理里停用本插件时，启动器的停用覆盖层会追加 `ui-sidebar: disabled: false`
-# 把官方侧栏放回来（见 Sources/PluginIsolationSupport.swift 的 replacementRows）。
-- id: ui-sidebar
-  disabled: true
-- insert:
-    - id: dsh-sidebar-deck
-      name: 'dsh-sidebar-deck'

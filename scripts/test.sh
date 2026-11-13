@@ -43,8 +43,6 @@ node --test "$ROOT/Plugins/DSHArchiveManager/test/health-route.test.js"
 rg -q 'patchWorkspaceDeleteForAutoArchive' "$ROOT/Plugins/DSHArchiveManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/client/client.js"
-node --check "$ROOT/Plugins/DSHSidebarDeck/lib/index.js"
-node --check "$ROOT/Plugins/DSHSidebarDeck/client/client.js"
 node --test "$ROOT/Plugins/DSHSessionNotify/test/session-notify.test.js"
 node --test "$ROOT/Plugins/DSHSessionNotify/test/client.test.js"
 # 真实浏览器端到端：后台 Chrome 页面不得抢「打开会话」命令（无 Playwright 时自动 SKIP）。

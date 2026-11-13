@@ -200,16 +200,6 @@ final class LauncherSettings {
         set { defaults.set(newValue, forKey: "embeddedHarnessWindow") }
     }
 
-    /// 侧栏 Deck（接管型侧栏插件 DSHSidebarDeck，实验性）。
-    ///
-    /// 默认关：Deck 还在优化期，开启会在下一次 dsh 启动时顶掉官方侧栏
-    /// （启动器 staging 接管补丁），所以这个开关只影响之后的启动，不热生效。
-    /// 优化完成前不进设置界面——先让默认安装保持官方侧栏。
-    var sidebarDeckEnabled: Bool {
-        get { defaults.bool(forKey: "sidebarDeckEnabled") }
-        set { defaults.set(newValue, forKey: "sidebarDeckEnabled") }
-    }
-
     /// 用户选择「跳过此版本」的 dsh 版本：不再写进菜单标题，也不亮菜单栏角标；
     /// 手动点菜单仍然弹窗，并可以在弹窗里取消跳过。
     var skippedDSHVersion: String? {
