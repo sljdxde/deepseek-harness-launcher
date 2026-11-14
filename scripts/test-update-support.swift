@@ -141,6 +141,63 @@ struct UpdateSupportChecks {
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
         precondition(completed)
+
+        // 备用源的 feed 按发布时间**倒序**：最新在最前，最旧在最后。历史实现让每个
+        // entry 覆盖前一个，于是取到最旧的 v0.3.5-1.2-SNAPSHOT，比当前版本还旧，
+        // 更新检查永远报「已是最新」——真实事故（GitHub API 限流时必现）。
+        // 这里用真实的条目顺序，断言取到的是版本号最大的那个。
+        func entry(_ tag: String, _ title: String) -> String {
+            "<entry><title>\(title)</title><link href=\"https://github.com/sljdxde/deepseek-harness-launcher/releases/tag/\(tag)\" /></entry>"
+        }
+        let descendingFeed = "<?xml version=\"1.0\"?><feed>"
+            + entry("v0.4.2", "Deepseek Harness Launcher v0.4.2")
+            + entry("v0.4.1", "Deepseek Harness Launcher v0.4.1")
+            + entry("v0.4.0", "Deepseek Harness Launcher v0.4.0")
+            + entry("v0.3.5", "Deepseek Harness Launcher v0.3.5")
+            + entry("v0.3.5-1.2-SNAPSHOT", "Deepseek Harness Launcher v0.3.5-1.2-SNAPSHOT")
+            + "</feed>"
+        HTTPStatusProtocol.atomBody = Data(descendingFeed.utf8)
+        completed = false
+        UpdateService(
+            releasesURL: URL(string: "https://api.github.test/releases/latest")!,
+            feedURL: URL(string: "https://github.test/releases.atom")!,
+            session: URLSession(configuration: configuration)
+        ).check(currentVersion: "0.4.1") { result in
+            guard case .available(let update) = result else {
+                preconditionFailure("倒序 feed 必须取到最新版 v0.4.2，实际 \(result)")
+            }
+            precondition(update.version == "0.4.2", "取到的是 \(update.version)，不是版本号最大的 v0.4.2")
+            precondition(update.dmgURL.contains("/v0.4.2/"), "DMG 地址必须指向 v0.4.2：\(update.dmgURL)")
+            completed = true
+        }
+        let orderDeadline = Date().addingTimeInterval(5)
+        while !completed && Date() < orderDeadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        precondition(completed)
+
+        // 中间版本比当前新、末尾更旧：仍然必须取到最新的那个，不能因为末尾更旧就
+        // 判定「已是最新」。
+        HTTPStatusProtocol.atomBody = Data(("<?xml version=\"1.0\"?><feed>"
+            + entry("v0.5.0", "Deepseek Harness Launcher v0.5.0")
+            + entry("v0.4.9", "Deepseek Harness Launcher v0.4.9")
+            + "</feed>").utf8)
+        completed = false
+        UpdateService(
+            releasesURL: URL(string: "https://api.github.test/releases/latest")!,
+            feedURL: URL(string: "https://github.test/releases.atom")!,
+            session: URLSession(configuration: configuration)
+        ).check(currentVersion: "0.4.1") { result in
+            guard case .available(let update) = result, update.version == "0.5.0" else {
+                preconditionFailure("应取版本号最大的 v0.5.0，实际 \(result)")
+            }
+            completed = true
+        }
+        let maxDeadline = Date().addingTimeInterval(5)
+        while !completed && Date() < maxDeadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        precondition(completed)
         print("update support checks passed")
     }
 }

@@ -52,8 +52,12 @@ struct SettingsWindowChecks {
             exit(1)
         }
 
+        // 勾选框的可见文字现在由独立的 NSTextField 承担（NSButton 标题在深色下
+        // 会被解析成近黑且不随外观刷新），按钮本身标题为空、文案挂在无障碍标签上。
+        // 所以先按 title 找，找不到再按 accessibilityLabel 找。
         func checkbox(_ title: String) -> NSButton? {
             buttons(in: content).first { $0.title == title }
+                ?? buttons(in: content).first { $0.accessibilityLabel() == title }
         }
 
         // 后台检查常开：既没有那个开关，频率输入框也不会因为它而变灰。

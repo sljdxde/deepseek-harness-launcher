@@ -404,12 +404,17 @@ rg -q 'onProgress' "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift
 rg -Fq 'DSHPluginManager' "$ROOT/scripts/build-app.sh" "$ROOT/scripts/build-universal.sh" "$ROOT/Sources/main.swift"
 rg -q 'window.isOpaque = true' "$ROOT/Sources/SettingsWindowController.swift"
 rg -q 'visualEffect.blendingMode = .withinWindow' "$ROOT/Sources/SettingsWindowController.swift"
-# 勾选框：标签文字必须显式写 labelColor（contentTintColor 只管开关字形，
-# 标签在深色窗口里会被解析成近黑 #070808 on #1D1E1E = 1.2:1，看不见）；
-# 字形用强调色，未选中态才不会淡到看不出是可点的开关。
-rg -Fq 'checkbox.attributedTitle = NSAttributedString' "$ROOT/Sources/SettingsWindowController.swift"
-rg -Fq '.foregroundColor: NSColor.labelColor' "$ROOT/Sources/SettingsWindowController.swift"
+# 勾选框：标签文字**不能**留在 NSButton 上。NSButton 的标题（title /
+# attributedTitle）在深色窗口里会被解析成近黑（#070808 on #1D1E1E = 1.2:1），
+# 而且塞进 attributedTitle 的动态色也不会随外观重新解析（白天创建、夜里切深色
+# 仍是黑字）。所以按钮只负责开关字形，文字交给 NSTextField。
+if rg -q 'checkbox\.attributedTitle\s*=' "$ROOT/Sources/SettingsWindowController.swift"; then
+  echo "勾选框标签不能用 attributedTitle（深色下解析成近黑且不随外观刷新）" >&2
+  exit 1
+fi
+rg -Fq 'checkbox.title = ""' "$ROOT/Sources/SettingsWindowController.swift"
 rg -Fq 'checkbox.contentTintColor = .controlAccentColor' "$ROOT/Sources/SettingsWindowController.swift"
+rg -Fq 'let label = makeLabel(title, size: 13, weight: .regular, color: .labelColor)' "$ROOT/Sources/SettingsWindowController.swift"
 if rg -q 'feedField|updateFeedURL|更新清单' "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift"; then
   echo "update source must be fixed to GitHub Releases" >&2
   exit 1
@@ -880,6 +885,16 @@ swiftc "$ROOT/scripts/test-runtime-health.swift" "$ROOT/Sources/RuntimeHealthSup
 # 关键文案必须用正文色。
 swiftc -parse-as-library "$ROOT/scripts/test-contrast.swift" -o "$ROOT/build/test-contrast" -framework AppKit
 "$ROOT/build/test-contrast"
+# 旧版 WebKit 没有 CSS 锚点定位，而 DSH 前端只靠它定位弹层且无降级——不注入
+# 降级脚本时，macOS 15 及更早系统上所有菜单都叠在窗口左上角。
+swiftc -parse-as-library "$ROOT/scripts/test-anchor-fallback.swift" "$ROOT/Sources/HarnessAnchorFallback.swift" -o "$ROOT/build/test-anchor-fallback"
+"$ROOT/build/test-anchor-fallback"
+# 降级脚本的行为（用 node 跑真实逻辑）：不支持锚点时按触发元素摆位、支持时不动。
+if command -v node >/dev/null 2>&1; then
+  node "$ROOT/scripts/test-anchor-fallback.js"
+else
+  echo "跳过 test-anchor-fallback.js：未找到 node"
+fi
 # 动态颜色不能被 .cgColor 冻结：浅色下创建的窗口切到夜间后必须重新解析图层色，
 # 否则卡片停在纯白底、配白字（真实事故）。
 swiftc -parse-as-library "$ROOT/scripts/test-dynamic-layer.swift" "$ROOT/Sources/DynamicLayerView.swift" -o "$ROOT/build/test-dynamic-layer" -framework AppKit

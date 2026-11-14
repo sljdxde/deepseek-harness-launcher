@@ -74,6 +74,16 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
         // （会话列表、主题、工作区选择都属于 Harness 自己的持久状态）。
         configuration.websiteDataStore = .default()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        // 旧版 WebKit 不支持 CSS 锚点定位，而 DSH 前端完全依赖它定位弹层且没有
+        // 降级方案——不注入的话，macOS 15 及更早系统上所有菜单都叠在左上角。
+        // 脚本自身会先探测能力，支持锚点定位的新系统不受影响。
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: HarnessAnchorFallback.userScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+        )
         let webView = WKWebView(frame: window.contentView?.bounds ?? .zero, configuration: configuration)
         webView.autoresizingMask = [.width, .height]
         webView.navigationDelegate = self

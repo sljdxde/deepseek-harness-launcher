@@ -397,29 +397,56 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         return label
     }
 
+    /// 勾选框行：**开关字形 + 独立 NSTextField 标签**。
+    ///
+    /// 为什么不把文字留在按钮上：`NSButton` 的标题（无论 `title` 还是
+    /// `attributedTitle`）在深色窗口里会被解析成近黑（实测 #070808 画在
+    /// #1D1E1E 的卡片上，对比度 1.2:1），而且给 `attributedTitle` 塞
+    /// `NSColor.labelColor` 这种动态色**并不会让它随外观重新解析**——
+    /// 白天创建、夜里切深色时仍是黑字。同一窗口里的 NSTextField（hint、
+    /// 版本号）却是正常的，说明只有 NSButton 的标题这条路不可靠。
+    /// 所以这里让按钮只负责开关字形，文字交给 NSTextField（动态色可靠）。
+    ///
+    /// 点击标签也要能切换：NSTextField 默认不接收点击，加手势后整行可点。
     @discardableResult
-    private func configureCheckbox(_ checkbox: NSButton) -> NSButton {
+    private func configureCheckbox(_ checkbox: NSButton) -> NSView {
+        // 先记住原始文案，再清空按钮标题（顺序不能反，否则标签变成空串）。
+        let title = checkbox.title
+        checkboxCheckboxTitles[ObjectIdentifier(checkbox)] = title
         checkbox.translatesAutoresizingMaskIntoConstraints = false
         checkbox.setButtonType(.switch)
-        checkbox.font = NSFont.systemFont(ofSize: 13)
-        // 勾选框的**标签文字**必须显式给色。`contentTintColor` 只影响开关字形，
-        // 标签沿用按钮的 attributedTitle —— 在深色窗口里它会被解析成近黑
-        // （实测 #070808 画在 #1D1E1E 的卡片上，对比度 1.2:1，等于看不见，
-        // 用户只看到几个白色勾）。这里用 attributedTitle 显式写 labelColor，
-        // 它随外观动态解析，浅色/深色都成立。
-        let title = checkbox.title
-        checkbox.attributedTitle = NSAttributedString(
-            string: title,
-            attributes: [
-                .foregroundColor: NSColor.labelColor,
-                .font: NSFont.systemFont(ofSize: 13)
-            ]
-        )
-        // 开关字形本身用强调色：深色下未选中的灰框（#5F6060 on #1A1B1B）
-        // 同样偏暗，强调色能明确表达「这是可点的开关」。
+        checkbox.title = ""
+        checkbox.imagePosition = .imageOnly
+        // 开关字形用强调色：深色下未选中的灰框（#5F6060 on #1A1B1B）偏暗。
         checkbox.contentTintColor = .controlAccentColor
-        checkbox.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        return checkbox
+        checkbox.setContentHuggingPriority(.required, for: .horizontal)
+        checkbox.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 辅助功能：按钮本身没有可见标题了，把文案挂到按钮上，读屏仍能念出。
+        checkbox.setAccessibilityLabel(title)
+
+        let label = makeLabel(title, size: 13, weight: .regular, color: .labelColor)
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // 点标签 = 点开关。
+        let click = NSClickGestureRecognizer(target: self, action: #selector(toggleCheckboxFromLabel(_:)))
+        label.addGestureRecognizer(click)
+
+        let row = NSStackView(views: [checkbox, label])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 6
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    /// 勾选框 → 原始标题文案。`configureCheckbox` 会把按钮标题清空，这里留一份。
+    private var checkboxCheckboxTitles: [ObjectIdentifier: String] = [:]
+
+    @objc private func toggleCheckboxFromLabel(_ sender: NSClickGestureRecognizer) {
+        guard let label = sender.view as? NSTextField,
+              let row = label.superview as? NSStackView,
+              let checkbox = row.arrangedSubviews.first as? NSButton else { return }
+        checkbox.state = checkbox.state == .on ? .off : .on
+        checkbox.sendAction(checkbox.action, to: checkbox.target)
     }
 
     private func configureTextField(_ field: NSTextField, placeholder: String) {

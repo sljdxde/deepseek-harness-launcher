@@ -340,28 +340,41 @@ final class UpdateService {
         }
     }
 
-    private final class AtomReleaseParser: NSObject, XMLParserDelegate {
-        private var currentElement = ""
+    /// atom feed 的备用解析器（GitHub API 限流时的唯一来源）。
+    ///
+    /// **不能取「最后一个」entry**：feed 按发布时间倒序，最后一条是最旧的
+    /// release。历史实现让每个 entry 都覆盖 `latestTag`，结果取到
+    /// `v0.3.5-1.2-SNAPSHOT`——比当前版本还旧，于是更新检查永远报「已是最新」，
+    /// 用户看到的就是「检测不到新版本」。这里按版本号取最大值，与 feed 顺序无关。
+    final class AtomReleaseParser: NSObject, XMLParserDelegate {
         private var currentText = ""
         private var insideEntry = false
-        private var latestTag: String?
-        private var latestTitle: String?
+        /// 当前 entry 解析出的 tag / title，遇到 `</entry>` 时提交。
+        private var entryTag: String?
+        private var entryTitle: String?
+        /// 已提交的候选，按版本号比较后保留最大者。
+        private(set) var bestTag: String?
+        private(set) var bestTitle: String?
 
         func parse(_ data: Data) -> (tag: String, title: String?)? {
             let parser = XMLParser(data: data)
             parser.delegate = self
-            guard parser.parse(), let latestTag else { return nil }
-            return (latestTag, latestTitle)
+            guard parser.parse(), let bestTag else { return nil }
+            return (bestTag, bestTitle)
         }
 
         func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String : String] = [:]) {
-            currentElement = elementName
             currentText = ""
-            if elementName == "entry" { insideEntry = true }
+            if elementName == "entry" {
+                insideEntry = true
+                entryTag = nil
+                entryTitle = nil
+                return
+            }
             if insideEntry, elementName == "link", let href = attributeDict["href"], href.contains("/releases/tag/") {
                 let rawTag = URL(string: href)?.pathComponents.last ?? ""
                 let tag = rawTag.removingPercentEncoding ?? rawTag
-                if !tag.isEmpty { latestTag = tag }
+                if !tag.isEmpty { entryTag = tag }
             }
         }
 
@@ -370,13 +383,28 @@ final class UpdateService {
         }
 
         func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
-            if insideEntry, elementName == "title", latestTitle == nil {
+            if insideEntry, elementName == "title" {
                 let value = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !value.isEmpty { latestTitle = value }
+                if !value.isEmpty { entryTitle = value }
             }
-            if elementName == "entry" { insideEntry = false }
-            currentElement = ""
+            if elementName == "entry" {
+                insideEntry = false
+                commitEntry()
+            }
             currentText = ""
+        }
+
+        /// 把一个 entry 的 tag 与已选出的最优 tag 比较，取版本号更大的那个。
+        private func commitEntry() {
+            guard let tag = entryTag else { return }
+            let candidate = tag.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
+            guard !candidate.isEmpty else { return }
+            if let current = bestTag {
+                let currentVersion = current.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
+                if compareVersions(candidate, currentVersion) != .orderedDescending { return }
+            }
+            bestTag = tag
+            bestTitle = entryTitle
         }
     }
 
