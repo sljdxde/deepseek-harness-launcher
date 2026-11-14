@@ -246,11 +246,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     /// 一张卡片：小标题 + 若干行。高度由内容顶出来，不写死。
     private func makeCard(title: String, rows: [NSView], accessory: NSView? = nil) -> NSView {
-        let card = NSView()
+        // 卡片底色/边框必须走 NSView 的 layer 更新回调，不能直接写 `.cgColor`：
+        // `cgColor` 在赋值那一刻就把动态颜色解析成固定 RGBA（实测浅色下创建、
+        // 切到深色后仍是纯白 255,255,255），于是夜间模式出现浅灰卡片配白字。
+        // 这里用 DynamicLayerView，在每次外观变化时重新解析。
+        let card = DynamicLayerView { view, appearance in
+            let background = NSColor.controlBackgroundColor.withAlphaComponent(0.78)
+            let border = NSColor.separatorColor.withAlphaComponent(0.7)
+            appearance.performAsCurrentDrawingAppearance {
+                view.layer?.backgroundColor = background.cgColor
+                view.layer?.borderColor = border.cgColor
+            }
+        }
         card.wantsLayer = true
         card.layer?.cornerRadius = 10
-        card.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.78).cgColor
-        card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.7).cgColor
         card.layer?.borderWidth = 1
 
         let headerLabel = makeLabel(title, size: 12, weight: .semibold, color: .secondaryLabelColor)
@@ -331,7 +340,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     /// 为什么没有「要不要自动检查」的开关：后台检查常开，只提示不自动安装。
     private func makeUpdateHint() -> NSView {
-        let hint = makeLabel("后台检查常开：发现新版本只在菜单栏提示，不会自动安装。", size: 11, weight: .regular, color: .tertiaryLabelColor)
+        // 11pt 小字对底色要求最高：三级灰深色 2.3:1 / 浅色 1.9:1，二级灰浅色也只有
+        // 3.95:1，都低于 WCAG AA 的 4.5:1。层级已经由字号（11 vs 13）表达，这里
+        // 直接用正文色，保证两种外观下都读得出来。
+        let hint = makeLabel("后台检查常开：发现新版本只在菜单栏提示，不会自动安装。", size: 11, weight: .regular, color: .labelColor)
         hint.lineBreakMode = .byTruncatingTail
         return hint
     }
@@ -351,7 +363,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         separator.translatesAutoresizingMaskIntoConstraints = false
 
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
-        let versionLabel = makeLabel("当前版本 v\(version)", size: 11, weight: .regular, color: .tertiaryLabelColor)
+        // 同上：用户要靠这行确认「我现在是哪个版本」，必须读得出来。
+        let versionLabel = makeLabel("当前版本 v\(version)", size: 11, weight: .regular, color: .labelColor)
 
         let cancelButton = NSButton(title: "取消", target: self, action: #selector(cancel))
         cancelButton.bezelStyle = .rounded
@@ -389,8 +402,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         checkbox.translatesAutoresizingMaskIntoConstraints = false
         checkbox.setButtonType(.switch)
         checkbox.font = NSFont.systemFont(ofSize: 13)
-        // Keep the switch glyph native while retaining readable label color.
-        checkbox.contentTintColor = .labelColor
+        // 勾选框的**标签文字**必须显式给色。`contentTintColor` 只影响开关字形，
+        // 标签沿用按钮的 attributedTitle —— 在深色窗口里它会被解析成近黑
+        // （实测 #070808 画在 #1D1E1E 的卡片上，对比度 1.2:1，等于看不见，
+        // 用户只看到几个白色勾）。这里用 attributedTitle 显式写 labelColor，
+        // 它随外观动态解析，浅色/深色都成立。
+        let title = checkbox.title
+        checkbox.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.systemFont(ofSize: 13)
+            ]
+        )
+        // 开关字形本身用强调色：深色下未选中的灰框（#5F6060 on #1A1B1B）
+        // 同样偏暗，强调色能明确表达「这是可点的开关」。
+        checkbox.contentTintColor = .controlAccentColor
         checkbox.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         return checkbox
     }
@@ -441,7 +468,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     private func setHotKeyControlsEnabled(_ enabled: Bool) {
         globalHotKeyButton.isEnabled = enabled
-        hotkeyLabel?.textColor = enabled ? .labelColor : .tertiaryLabelColor
+        // 停用态也要读得出来：tertiaryLabelColor 在深色下只有 2.3:1。
+        hotkeyLabel?.textColor = enabled ? .labelColor : .secondaryLabelColor
     }
 
     @objc private func checkNow() {

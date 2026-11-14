@@ -76,7 +76,8 @@ enum AlertDesign {
 
         let arrow = NSTextField(labelWithString: "→")
         arrow.font = NSFont.systemFont(ofSize: 13)
-        arrow.textColor = .tertiaryLabelColor
+        // tertiaryLabelColor 在深色下 2.3:1、浅色下 1.9:1，深色弹窗里几乎看不见。
+        arrow.textColor = .secondaryLabelColor
 
         let candidateLabel = NSTextField(labelWithString: "v\(candidate)")
         candidateLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
@@ -97,7 +98,7 @@ enum AlertDesign {
     static func captionRow(_ caption: String, _ value: String) -> NSView {
         let captionLabel = NSTextField(labelWithString: caption)
         captionLabel.font = NSFont.systemFont(ofSize: 12)
-        captionLabel.textColor = .tertiaryLabelColor
+        captionLabel.textColor = .secondaryLabelColor
         captionLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         let valueLabel = NSTextField(labelWithString: value)
@@ -116,7 +117,8 @@ enum AlertDesign {
     static func footnote(_ text: String, width: CGFloat = cardWidth) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = NSFont.systemFont(ofSize: 11)
-        label.textColor = .tertiaryLabelColor
+        // 11pt 小字配三级灰只有 2.3:1，深色弹窗里读不出来；二级灰 5.9:1 过 AA。
+        label.textColor = .secondaryLabelColor
         label.preferredMaxLayoutWidth = width
         return label
     }
@@ -221,9 +223,8 @@ private final class AlertCardView: NSView {
             layer.cornerRadius = 10
             layer.cornerCurve = .continuous
             layer.borderWidth = 1
-            layer.borderColor = NSColor.separatorColor.withAlphaComponent(0.7).cgColor
-            layer.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.55).cgColor
         }
+        applyLayerColors()
 
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -243,6 +244,23 @@ private final class AlertCardView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// 动态颜色必须按当前外观重新解析：`cgColor` 在赋值那一刻就把语义色固定成
+    /// RGBA，浅色下创建、切到夜间后卡片会停在浅色底（配白字糊成一片）。
+    private func applyLayerColors() {
+        let background = NSColor.controlBackgroundColor.withAlphaComponent(0.55)
+        let border = NSColor.separatorColor.withAlphaComponent(0.7)
+        effectiveAppearance.performAsCurrentDrawingAppearance { [weak self] in
+            self?.layer?.backgroundColor = background.cgColor
+            self?.layer?.borderColor = border.cgColor
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyLayerColors()
+    }
+
 }
 
 /// 通道小标签：胶囊底 + 同色文字，比纯文字更像 macOS 的状态标记。
@@ -252,7 +270,9 @@ private final class AlertPillView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.cornerCurve = .continuous
-        layer?.backgroundColor = color.withAlphaComponent(0.16).cgColor
+        // 胶囊底色同理：controlAccentColor 会随「强调色」偏好变化，不能冻结。
+        self.tint = color
+        applyPillColor()
 
         let label = NSTextField(labelWithString: text)
         label.font = NSFont.systemFont(ofSize: 11, weight: .medium)
@@ -269,4 +289,18 @@ private final class AlertPillView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private var tint: NSColor = .systemGray
+
+    private func applyPillColor() {
+        let background = tint.withAlphaComponent(0.16)
+        effectiveAppearance.performAsCurrentDrawingAppearance { [weak self] in
+            self?.layer?.backgroundColor = background.cgColor
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyPillColor()
+    }
 }

@@ -101,7 +101,8 @@ private final class MenuRowView: NSView {
         } else if isEnabled {
             foregroundColor = NSColor.labelColor
         } else {
-            foregroundColor = NSColor.tertiaryLabelColor
+            // 禁用态用语义色，而不是三级文字色（后者在深色菜单里淡到读不出）。
+            foregroundColor = NSColor.disabledControlTextColor
         }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.menuFont(ofSize: 0),

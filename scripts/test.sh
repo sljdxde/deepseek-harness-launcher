@@ -404,7 +404,12 @@ rg -q 'onProgress' "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift
 rg -Fq 'DSHPluginManager' "$ROOT/scripts/build-app.sh" "$ROOT/scripts/build-universal.sh" "$ROOT/Sources/main.swift"
 rg -q 'window.isOpaque = true' "$ROOT/Sources/SettingsWindowController.swift"
 rg -q 'visualEffect.blendingMode = .withinWindow' "$ROOT/Sources/SettingsWindowController.swift"
-rg -q 'checkbox.contentTintColor = .labelColor' "$ROOT/Sources/SettingsWindowController.swift"
+# 勾选框：标签文字必须显式写 labelColor（contentTintColor 只管开关字形，
+# 标签在深色窗口里会被解析成近黑 #070808 on #1D1E1E = 1.2:1，看不见）；
+# 字形用强调色，未选中态才不会淡到看不出是可点的开关。
+rg -Fq 'checkbox.attributedTitle = NSAttributedString' "$ROOT/Sources/SettingsWindowController.swift"
+rg -Fq '.foregroundColor: NSColor.labelColor' "$ROOT/Sources/SettingsWindowController.swift"
+rg -Fq 'checkbox.contentTintColor = .controlAccentColor' "$ROOT/Sources/SettingsWindowController.swift"
 if rg -q 'feedField|updateFeedURL|更新清单' "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift"; then
   echo "update source must be fixed to GitHub Releases" >&2
   exit 1
@@ -855,7 +860,7 @@ swiftc "$ROOT/scripts/test-status-badge.swift" "$ROOT/Sources/StatusBadgeSupport
 "$ROOT/build/test-status-badge"
 # 设置窗口是复用的：取消后再打开必须回到已保存的设置（否则界面显示的是被取消掉的
 # 勾选与间隔，用户以为生效了）。
-swiftc "$ROOT/scripts/test-settings-window.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/AlertBoundary.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-settings-window" -framework AppKit
+swiftc "$ROOT/scripts/test-settings-window.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/DynamicLayerView.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/AlertBoundary.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-settings-window" -framework AppKit
 "$ROOT/build/test-settings-window"
 swiftc "$ROOT/scripts/test-global-hotkey.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-global-hotkey"
 "$ROOT/build/test-global-hotkey"
@@ -870,6 +875,15 @@ swiftc "$ROOT/scripts/test-runtime-launch-plan.swift" "$ROOT/Sources/RuntimeLaun
 # Could not connect」且再也进不去），同时不能因为一次慢探测误杀健康实例。
 swiftc "$ROOT/scripts/test-runtime-health.swift" "$ROOT/Sources/RuntimeHealthSupport.swift" -o "$ROOT/build/test-runtime-health" -framework Foundation
 "$ROOT/build/test-runtime-health"
+# 界面文字对比度：夜间模式下勾选框标签曾只有 1.2:1（近黑画在深色卡片上），
+# 三级灰小字也只有 2.3:1。这里按 WCAG 算系统语义色的真实对比度，并守卫
+# 关键文案必须用正文色。
+swiftc -parse-as-library "$ROOT/scripts/test-contrast.swift" -o "$ROOT/build/test-contrast" -framework AppKit
+"$ROOT/build/test-contrast"
+# 动态颜色不能被 .cgColor 冻结：浅色下创建的窗口切到夜间后必须重新解析图层色，
+# 否则卡片停在纯白底、配白字（真实事故）。
+swiftc -parse-as-library "$ROOT/scripts/test-dynamic-layer.swift" "$ROOT/Sources/DynamicLayerView.swift" -o "$ROOT/build/test-dynamic-layer" -framework AppKit
+"$ROOT/build/test-dynamic-layer"
 swiftc "$ROOT/scripts/test-dsh-runtime-support.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-dsh-runtime-support"
 RUNTIME_TEST_HOME="$(mktemp -d /tmp/dsh-runtime-home.XXXXXX)"
 # macOS ignores the HOME env var for NSHomeDirectory(); DSHRuntimeSupport honors
