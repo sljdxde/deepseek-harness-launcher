@@ -615,6 +615,13 @@ fi
 rg -Fq 'AppMenuSupport.makeMainMenu' "$ROOT/Sources/main.swift" "$ROOT/Sources/AppMenuSupport.swift"
 rg -Fq 'settings.embeddedHarnessWindow' "$ROOT/Sources/main.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/UpdateSupport.swift"
 rg -Fq 'presentHarnessWindow' "$ROOT/Sources/main.swift"
+# 运行中存活看护不许被删：接管（复用）的实例没有进程句柄，它退出后启动器若
+# 仍停在 running，每次「打开」都只会把同一个死端口再加载一遍——用户看到的就是
+# 「Harness 页面打不开 / Could not connect to the server」，而且再也进不去。
+rg -Fq 'startRuntimeWatchdog' "$ROOT/Sources/main.swift"
+rg -Fq 'recoverDeadHarness' "$ROOT/Sources/main.swift"
+rg -Fq 'onConnectionFailure' "$ROOT/Sources/main.swift" "$ROOT/Sources/HarnessWindowController.swift"
+rg -Fq 'isConnectionFailure' "$ROOT/Sources/RuntimeHealthSupport.swift"
 rg -Fq 'window.setFrameAutosaveName' "$ROOT/Sources/HarnessWindowController.swift"
 rg -Fq 'runOpenPanelWith' "$ROOT/Sources/HarnessWindowController.swift"
 rg -Fq 'WKDownloadDelegate' "$ROOT/Sources/HarnessWindowController.swift"
@@ -859,6 +866,10 @@ swiftc "$ROOT/scripts/test-dsh-install-progress.swift" "$ROOT/Sources/DSHInstall
 # 启动期运行环境决策：每个分支都必须是「直接启动」或「先问用户」，不允许自己开装。
 swiftc "$ROOT/scripts/test-runtime-launch-plan.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-runtime-launch-plan"
 "$ROOT/build/test-runtime-launch-plan"
+# 运行期存活判据：接管实例退出后必须重启（否则「Harness 页面打不开 /
+# Could not connect」且再也进不去），同时不能因为一次慢探测误杀健康实例。
+swiftc "$ROOT/scripts/test-runtime-health.swift" "$ROOT/Sources/RuntimeHealthSupport.swift" -o "$ROOT/build/test-runtime-health" -framework Foundation
+"$ROOT/build/test-runtime-health"
 swiftc "$ROOT/scripts/test-dsh-runtime-support.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-dsh-runtime-support"
 RUNTIME_TEST_HOME="$(mktemp -d /tmp/dsh-runtime-home.XXXXXX)"
 # macOS ignores the HOME env var for NSHomeDirectory(); DSHRuntimeSupport honors

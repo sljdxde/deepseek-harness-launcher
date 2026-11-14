@@ -259,6 +259,15 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private let basePort = 3080
     private let maxPort = 3099
+    /// 运行中「端口上还有 dsh 在应答吗」的看护。自己拉起的实例有 terminationHandler
+    /// 兜底；接管的实例没有进程句柄，它退出时启动器察觉不到，`state` 会一直停在
+    /// running、`selectedPort` 指向一个空端口——表现就是每次「打开」都只得到一张
+    /// 「Harness 页面打不开 / Could not connect to the server」，而且再也进不去。
+    private var runtimeWatchdogTimer: Timer?
+    private var runtimeWatchdogPort: Int?
+    private var runtimeWatchdogFailures = 0
+    /// 正在为「后端没了」重新拉起：防止窗口失败回调与看护节拍同时触发两次重启。
+    private var runtimeRecoveryInFlight = false
 
     private var rootURL: URL { URL(fileURLWithPath: FileManager.default.currentDirectoryPath).deletingLastPathComponent().appendingPathComponent("deepseek-harness-launcher") }
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
@@ -775,6 +784,9 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             logger: { [weak self] message in self?.appendLogString("\(message)\n") },
             onClose: {}
         )
+        window.onConnectionFailure = { [weak self] port in
+            self?.handleHarnessWindowConnectionFailure(port: port)
+        }
         harnessWindow = window
         return window
     }
@@ -1278,6 +1290,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func stopDHL(completion: (() -> Void)? = nil) {
         cancelDSHInstall()
+        // 状态先落下来：看护的下一次探测不该再拿旧端口当「当前服务」。
+        stopRuntimeWatchdog()
         let trackedPID = process?.processIdentifier ?? 0
         process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false; pendingSessionId = nil
         // 旧进程的 token 随进程失效，重开后必须用新进程打印的入口 URL。
@@ -2266,10 +2280,111 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 插件兼容性扫描、启动前预检、插件隔离与安全模式已整体移除：启动器不再主动
     /// 禁用或跳过任何插件，也不再为「可能起不来」提前做任何判定。
     private func startHealthMonitors(port: Int) {
+        startRuntimeWatchdog(port: port)
         openBrowserWhenReadyIfNeeded()
         monitorArchivePlugin(port: port)
         monitorSessionNotify(port: port)
         monitorPluginUpdates(port: port)
+    }
+
+    // MARK: - 运行中存活看护
+
+    /// 就绪之后每 5 秒确认一次「当前端口上还有 dsh 在应答」。
+    /// 这是 `findPort` 复用路径的必要补丁：那条路不会拿到 `Process` 句柄，
+    /// 也就没有 terminationHandler 可以兜底。Windows 侧 `watchRuntime` 同义。
+    /// 自己拉起的实例也一并纳入：进程活着但端口卡死同样会漏过 terminationHandler。
+    private func startRuntimeWatchdog(port: Int) {
+        stopRuntimeWatchdog()
+        // 新实例已经就绪：解除「正在恢复」这把闸，之后它再消失才会再触发一次重启。
+        runtimeRecoveryInFlight = false
+        runtimeWatchdogPort = port
+        runtimeWatchdogFailures = 0
+        let timer = Timer(timeInterval: RuntimeHealthSupport.adoptedProbeInterval, repeats: true) { [weak self] _ in
+            self?.probeRuntimeHealth()
+        }
+        // .common：菜单打开（event tracking）时也要跑，否则挂着菜单就永远不检查。
+        RunLoop.main.add(timer, forMode: .common)
+        runtimeWatchdogTimer = timer
+    }
+
+    private func stopRuntimeWatchdog() {
+        runtimeWatchdogTimer?.invalidate()
+        runtimeWatchdogTimer = nil
+        runtimeWatchdogPort = nil
+        runtimeWatchdogFailures = 0
+    }
+
+    private func probeRuntimeHealth() {
+        guard !runtimeRecoveryInFlight,
+              state == .running,
+              let port = selectedPort,
+              port == runtimeWatchdogPort else {
+            stopRuntimeWatchdog()
+            return
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let alive = self?.dshResponds(on: port) ?? false
+            DispatchQueue.main.async {
+                guard let self, self.state == .running, self.selectedPort == port else { return }
+                if alive {
+                    self.runtimeWatchdogFailures = 0
+                    return
+                }
+                self.runtimeWatchdogFailures += 1
+                // 自己的进程还活着：那多半只是慢/卡，用更长的预算，别用 15 秒的
+                // 判据去打断正在跑的回合。
+                if let process = self.process, process.isRunning {
+                    guard RuntimeHealthSupport.shouldRestartHungProcess(failures: self.runtimeWatchdogFailures) else {
+                        return
+                    }
+                    self.appendLogString("dsh 端口 \(port) 连续 \(self.runtimeWatchdogFailures) 次探测无响应（进程仍在运行但已卡死）\n")
+                    self.runtimeWatchdogFailures = 0
+                    self.recoverDeadHarness(port: port, reason: "dsh 进程仍在但端口不再应答")
+                    return
+                }
+                guard RuntimeHealthSupport.shouldTakeOver(failures: self.runtimeWatchdogFailures) else { return }
+                self.runtimeWatchdogFailures = 0
+                self.recoverDeadHarness(port: port, reason: "端口上已没有 dsh 在应答")
+            }
+        }
+    }
+
+    /// 内置窗口连不上那个端口（WKWebView 报到 -1004 之类）时立刻确认一次。
+    /// 等 5 秒看护节拍也行，但用户眼前已经是一张死页面了，没理由再让他多等。
+    private func handleHarnessWindowConnectionFailure(port: Int?) {
+        guard !runtimeRecoveryInFlight, state == .running, let current = selectedPort else { return }
+        let target = port ?? current
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let alive = self?.dshResponds(on: target) ?? false
+            DispatchQueue.main.async {
+                guard let self, self.state == .running, self.selectedPort == current else { return }
+                // 端口还在应答：问题不是「服务没了」（401 / 内容类型 / 证书），
+                // 交给兜底页与提示，重启解决不了。
+                guard !alive else { return }
+                self.recoverDeadHarness(port: target, reason: "内置窗口连不上该端口")
+            }
+        }
+    }
+
+    /// 后端确认没了：收尾当前状态（顺带清掉失效 token），再走正常启动流程，
+    /// 由 `findPort` 重新选端口拉起一个**受本启动器管理**的实例。
+    /// 这条路径同时覆盖「接管的实例退出」与「刚装上/刚更新完那个实例又没起来」。
+    private func recoverDeadHarness(port: Int, reason: String) {
+        guard !runtimeRecoveryInFlight, dshInstallHandle == nil, state == .running else { return }
+        stopRuntimeWatchdog()
+        appendLogString("\(reason)（端口 \(port)），正在重新启动…\n")
+        showStatusTitle("正在重新启动…")
+        // stopDHL 的同步段会清掉 openWhenReady，置位必须放在其后（同 restartDSH）。
+        stopDHL { [weak self] in
+            guard let self else { return }
+            self.appendLogString("已清空失效实例，重新启动 dsh…\n")
+            self.start()
+        }
+        // 置位放在 stopDHL 之后：它的同步段会先把状态落到 stopped，这里再上闸，
+        // 挡住窗口失败回调与看护节拍同时发起的第二次重启。
+        runtimeRecoveryInFlight = true
+        openWhenReady = true
+        relaunchingAfterRestart = true
     }
 
     /// 内置插件探针用的同步 HTTP 探测（区分状态码；超时/连接失败返回 nil）。

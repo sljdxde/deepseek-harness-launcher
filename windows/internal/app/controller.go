@@ -333,7 +333,7 @@ func (c *controller) Start() {
 		}
 		// watch the adopted instance: if it dies, start our own rather than
 		// leaving the user with a tab that cannot connect
-		go c.watchAdopted(port)
+		go c.watchRuntime(port, false)
 		return
 	}
 
@@ -557,6 +557,11 @@ func (c *controller) launchInstalled(port int, env map[string]string) {
 	}()
 
 	c.prepareHarnessURLFor(port, launcher)
+
+	// the exit watcher above only fires when the child actually dies; a dsh
+	// that stays alive while its listener stops answering is invisible to
+	// it, and the window then navigates to a port nothing serves
+	go c.watchRuntime(port, true)
 }
 
 // prepareHarnessURLFor points the main window at this launcher's page,
@@ -889,34 +894,3 @@ func (c *controller) stepFrequency(dir string) float64 {
 	return cur
 }
 
-// watchAdopted polls an adopted instance and takes over when it stops
-// answering. Without this, an instance that dies after adoption leaves the
-// launcher showing "已接管" over a dead port, and every click opens a tab
-// that cannot connect.
-func (c *controller) watchAdopted(port int) {
-	failures := 0
-	for {
-		time.Sleep(5 * time.Second)
-		c.mu.Lock()
-		same := c.reused && c.port == port
-		c.mu.Unlock()
-		if !same {
-			return // a restart replaced it
-		}
-		if launch.Reuse(port) {
-			failures = 0
-			continue
-		}
-		failures++
-		if failures < 3 {
-			continue // tolerate a slow moment
-		}
-		applog.Logf("adopted instance on port %d stopped answering; launching our own", port)
-		c.mu.Lock()
-		c.reused = false
-		c.mu.Unlock()
-		c.setState(stateStopped, "未运行")
-		go c.Start()
-		return
-	}
-}
