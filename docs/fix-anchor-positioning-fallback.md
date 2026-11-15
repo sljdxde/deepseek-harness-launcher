@@ -92,3 +92,85 @@ left: 12px;                                          /* → 12px */
   能力探测要把实际用到的函数一起测。
 - **症状能直接指向机制**：弹层出现在 `(12,12)` 这个具体坐标，正是 CSS 里
   写死的回退值——从「这个数字哪来的」出发，比从「定位逻辑哪里错了」出发快得多。
+
+---
+
+# 二次修复：降级脚本误伤「自己居中」的弹层（0.4.3 → 0.4.4）
+
+## 现象
+
+0.4.3 发布后，点开「插件管理」「归档管理」，弹层被挤到窗口左侧、内容裁掉一半，
+几乎无法操作；模型选择等菜单则正常。
+
+## 根因：判据过宽
+
+插件管理和归档管理的弹层是这样居中的：
+
+```css
+.dsh-pm-page {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(720px, calc(100vw - 32px));
+}
+```
+
+它们**根本不依赖锚点定位**，自己就能居中。但它们都带 `role="dialog"`，
+而 0.4.3 的降级脚本把「`position: fixed` + `role="dialog"`」当成锚点弹层：
+
+```js
+if (role === 'menu' || role === 'listbox' || role === 'dialog'
+    || role === 'group') return true;      // ← 把居中弹层也抓进来了
+```
+
+于是脚本改写了 `top`/`left`，**却没有清掉 `transform: translate(-50%,-50%)`**。
+两部分叠加后的实际位置是：
+
+```
+left: 300px  +  translate(-50%) = 300 - 360 = -60px
+```
+
+弹层被推走自身宽度的一半，正好是截图里「内容裁到左边」的样子。
+
+## 修复：按「是否真的用了锚点」判定，而不是按角色
+
+```js
+function hasAnchorDeclaration(el) { /* data-anchor-side、anchor-name … */ }
+function centersItself(el) { return getComputedStyle(el).transform !== 'none'; }
+
+function isOverlay(el) {
+  if (centersItself(el)) return false;        // 自带居中的一律放过
+  return hasAnchorDeclaration(el);
+}
+```
+
+`scan()` 的选择器同步收窄，不再无条件抓 `role="dialog"`。
+
+另外补了**升级路径**：旧版本可能已经给某些弹层写过内联 `top`/`left`，而内联样式
+优先级高于 CSS，不清掉的话老用户升级后弹层仍然偏着。脚本启动时先把带
+`data-dsh-anchor-fallback` 标记的元素还原。
+
+顺带修了一个时序问题：`.atDocumentStart` 注入时 `documentElement` 可能还不存在，
+原先会因拿不到根节点而装不上 `MutationObserver`。改为等 `DOMContentLoaded`。
+
+## 验证
+
+新增三类用例，并确认「撤销修复后测试会失败」：
+
+| 用例 | 撤销修复 | 修复后 |
+|------|---------|--------|
+| 自带居中弹层不被改写 `top`/`left` | ❌ `top=432px` | ✅ 不动 |
+| 带 `anchor-name` 的弹层仍被接管 | — | ✅ `top=432` |
+| 升级路径还原旧版残留内联样式 | ❌ 残留 `12px` | ✅ 清空 |
+| `documentElement` 缺失不抛错 | — | ✅ 等 `DOMContentLoaded` |
+
+## 教训
+
+- **降级逻辑的作用域要按「机制」划，不能按「表象」划**：`role="dialog"` 描述的
+  是语义，不是定位方式。用一个宽泛的角色去匹配「用了某个 CSS 特性」的元素，
+  必然误伤。
+- **改别人的布局前，先看它原本怎么定位**：如果元素自带 `transform` 居中就说明
+  它不需要你帮忙。**部分覆盖**（改 `left` 不改 `transform`）比不覆盖更糟。
+- **降级脚本要写「还原」路径**：任何往 DOM 上写内联样式的注入，都必须能在
+  下一次启动时把自己上次写的清掉，否则升级后遗症会一直留着。

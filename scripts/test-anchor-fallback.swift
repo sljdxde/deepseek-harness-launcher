@@ -104,6 +104,27 @@ struct AnchorFallbackChecks {
             "被降级摆位的弹层要打标记，便于用户排查与后续样式覆盖"
         )
 
+        // MARK: - 8.5 自带居中的弹层必须被跳过
+        // 真实回归：插件管理 / 归档管理用 left:50%;top:50%;transform:translate(-50%,-50%)
+        // 居中且带 role="dialog"。早期实现无条件接管 role="dialog"，改写 top/left
+        // 却留下 transform，弹层被推走自身尺寸的一半，内容裁到左边。
+        check(
+            script.contains("centersItself"),
+            "必须识别「自带居中」的弹层并跳过，否则会再次把它们推偏"
+        )
+        check(
+            script.contains("if (centersItself(el)) return false;"),
+            "自带居中的弹层必须在 isOverlay 里直接排除"
+        )
+        check(
+            !script.contains("'[role=\"menu\"],[role=\"listbox\"],[role=\"dialog\"]"),
+            "scan 不能再无条件抓 role=\"dialog\"，那会把居中弹层一起抓进来"
+        )
+        check(
+            script.contains("undoPreviousRun"),
+            "必须能还原上一版留下的内联样式，否则升级后弹层一直偏着"
+        )
+
         // MARK: - 9. 只在内置窗口注入
         check(
             HarnessAnchorFallback.shouldInstall(embeddedWindow: true),

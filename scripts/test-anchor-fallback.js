@@ -46,15 +46,26 @@ class FakeHTMLElement {
   getAttribute(k) { return this.attributes[k] ?? null; }
   setAttribute(k, v) { this.attributes[k] = v; }
   hasAttribute(k) { return k in this.attributes; }
+  removeAttribute(k) { delete this.attributes[k]; }
   getBoundingClientRect() {
     // 触发元素在窗口中部：left=300, top=400, 高 28
     return { top: 400, bottom: 428, left: 300, right: 420, width: 120, height: 28 };
   }
 }
 
-function makeEnv({ supportsAnchor }) {
+// 每个元素的 computed style 可由用例指定（transform 决定「是否自己居中」）。
+function styleFor(el, overrides) {
+  return Object.assign({
+    position: 'fixed', display: 'flex', visibility: 'visible',
+    transform: 'none',
+    getPropertyValue: (k) => (k === 'anchor-name' ? (el.__anchorName || '') : ''),
+  }, overrides || {});
+}
+
+function makeEnv({ supportsAnchor, styleOverrides }) {
   const trigger = new FakeHTMLElement();
   const menu = new FakeHTMLElement({ id: 'model-menu' });
+  menu.__style = styleOverrides || null;
   const env = {
     window: {
       __dshAnchorFallbackInstalled: false,
@@ -67,11 +78,13 @@ function makeEnv({ supportsAnchor }) {
       body: {},
       activeElement: trigger,
       contains: () => true,
-      querySelectorAll: () => [menu],
+      querySelectorAll: (sel) => (sel.includes('data-dsh-anchor-fallback')
+        ? [menu].filter((m) => 'data-dsh-anchor-fallback' in m.attributes)
+        : [menu]),
       addEventListener() {},
     },
     CSS: { supports: (expr) => (expr.includes('anchor') ? supportsAnchor : true) },
-    getComputedStyle: () => ({ position: 'fixed', display: 'flex', visibility: 'visible' }),
+    getComputedStyle: (el) => styleFor(el, el && el.__style),
     MutationObserver: class { observe() {} },
     requestAnimationFrame: (fn) => fn(),
     HTMLElement: FakeHTMLElement,
@@ -118,6 +131,62 @@ function run(env) {
   check('新 WebKit：不改动弹层', menu.attributes['data-dsh-anchor-fallback'] === undefined);
   check('新 WebKit：不写死 top/left', menu.style.top === undefined && menu.style.left === undefined,
     `top=${menu.style.top} left=${menu.style.left}`);
+}
+
+// ── 用例 2.5：自带居中的弹层（插件管理 / 归档管理）必须原样不动 ────────────
+// 真实回归：这两个弹层用 left:50%;top:50%;transform:translate(-50%,-50%) 居中，
+// 且带 role="dialog"。早期实现把它们当锚点弹层改写 top/left，但没清 transform，
+// 结果整个弹层又被推走自身尺寸的一半，内容裁到左边——用户看到「排版彻底坏了」。
+{
+  const { env, menu } = makeEnv({
+    supportsAnchor: false,
+    styleOverrides: { transform: 'matrix(1, 0, 0, 1, -360, -270)' },
+  });
+  menu.setAttribute('role', 'dialog');
+  run(env);
+  check('自带居中弹层：不被改写 top', menu.style.top === undefined, `top=${menu.style.top}`);
+  check('自带居中弹层：不被改写 left', menu.style.left === undefined, `left=${menu.style.left}`);
+  check('自带居中弹层：不打降级标记', menu.attributes['data-dsh-anchor-fallback'] === undefined);
+}
+
+// ── 用例 2.6：带 anchor-name 的弹层仍要被接管 ────────────────────────────
+{
+  const { env, menu } = makeEnv({ supportsAnchor: false });
+  menu.__anchorName = '--dsh-menu-x';
+  run(env);
+  check('anchor-name 弹层：被接管并摆位',
+    menu.attributes['data-dsh-anchor-fallback'] === '1' && parseInt(menu.style.top, 10) !== 12,
+    `top=${menu.style.top}`);
+}
+
+// ── 用例 2.7：升级路径——旧版残留的内联样式必须被还原 ──────────────────────
+// 用户从旧版本升上来时，旧脚本可能已经给弹层写过内联 top/left。新逻辑跳过
+// 这类弹层，但内联样式优先级高于 CSS，不还原就会一直偏着。
+{
+  const { env, menu } = makeEnv({
+    supportsAnchor: false,
+    styleOverrides: { transform: 'matrix(1, 0, 0, 1, -360, -270)' },
+  });
+  menu.setAttribute('role', 'dialog');
+  menu.style.top = '12px';
+  menu.style.left = '12px';
+  menu.attributes['data-dsh-anchor-fallback'] = '1';
+  run(env);
+  check('升级路径：残留 top 被清空', menu.style.top === '', `top=${JSON.stringify(menu.style.top)}`);
+  check('升级路径：残留 left 被清空', menu.style.left === '', `left=${JSON.stringify(menu.style.left)}`);
+  check('升级路径：标记被移除', menu.attributes['data-dsh-anchor-fallback'] === undefined);
+}
+
+// ── 用例 2.8：atDocumentStart 时 documentElement 还没建好，不能抛错 ─────────
+{
+  const { env } = makeEnv({ supportsAnchor: false });
+  let registered = null;
+  env.document.documentElement = null;
+  env.document.addEventListener = (name) => { registered = name; };
+  let threw = false;
+  try { run(env); } catch (e) { threw = true; }
+  check('documentElement 缺失时不抛错', !threw);
+  check('documentElement 缺失时等 DOMContentLoaded', registered === 'DOMContentLoaded', `registered=${registered}`);
 }
 
 // ── 用例 3：幂等 ─────────────────────────────────────────────────────────

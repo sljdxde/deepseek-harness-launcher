@@ -49,15 +49,62 @@ enum HarnessAnchorFallback {
           var GAP = 4;
           var MARGIN = 12;
 
-          // DSH 的弹出层都是 position:fixed 的 portal，且带 role 或 data 标记。
+          // 升级路径：旧版本可能已经给某些弹层写过内联 top/left 并打了标记。
+          // 新逻辑会跳过这些（它们自己居中），但残留的内联样式优先级高于 CSS，
+          // 不清掉的话弹层会一直偏着。先把上一版留下的痕迹全部还原。
+          function undoPreviousRun() {
+            var marked = document.querySelectorAll('[data-dsh-anchor-fallback]');
+            for (var i = 0; i < marked.length; i++) {
+              var el = marked[i];
+              el.style.top = '';
+              el.style.left = '';
+              el.style.right = '';
+              el.style.bottom = '';
+              el.style.maxHeight = '';
+              el.removeAttribute('data-dsh-anchor-fallback');
+            }
+          }
+          undoPreviousRun();
+
+          // 只接管**真正依赖 anchor() 摆位**的弹层。
+          //
+          // 这里曾经把所有 role="dialog" 都当成锚点弹层，结果把插件管理 / 归档
+          // 管理这类「自己居中」的弹层改坏了：它们用
+          //   left:50%; top:50%; transform:translate(-50%,-50%)
+          // 居中，我们改写了 top/left 却没动 transform，于是整个弹层又被推走
+          // 自身尺寸的一半，内容裁到左边看不见。
+          //
+          // 判据改成「CSS 里确实写了 anchor() 相关声明」：
+          //   - DSH 自己的菜单/子菜单带 data-anchor-side，或 --dsh-menu-anchor；
+          //   - 兜底再看 computed style 的 positionAnchor / positionArea。
+          // 自带 transform 居中的弹层一律跳过，交给它们自己的 CSS。
+          function hasAnchorDeclaration(el) {
+            if (el.hasAttribute('data-anchor-side')) return true;
+            if (el.hasAttribute('data-anchor-align')) return true;
+            var anchorName = getComputedStyle(el).getPropertyValue('anchor-name');
+            if (anchorName && anchorName.trim() !== '' && anchorName.trim() !== 'none') return true;
+            var positionAnchor = getComputedStyle(el).getPropertyValue('position-anchor');
+            if (positionAnchor && positionAnchor.trim() !== '' && positionAnchor.trim() !== 'auto' && positionAnchor.trim() !== 'none') return true;
+            return false;
+          }
+
+          // 自己居中的弹层：transform 里带 translate，或 inset 四边都为 0。
+          // 这类弹层不需要（也不该）由我们摆位。
+          function centersItself(el) {
+            var t = getComputedStyle(el).transform;
+            if (t && t !== 'none') return true;
+            return false;
+          }
+
           function isOverlay(el) {
             if (!(el instanceof HTMLElement)) return false;
             var cs = getComputedStyle(el);
             if (cs.position !== 'fixed') return false;
             if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+            if (centersItself(el)) return false;
+            if (hasAnchorDeclaration(el)) return true;
             var role = el.getAttribute('role');
-            if (role === 'menu' || role === 'listbox' || role === 'dialog' || role === 'group') return true;
-            if (el.hasAttribute('data-anchor-side')) return true;
+            if (role === 'menu' || role === 'listbox') return true;
             if (el.id && /-menu$/.test(el.id)) return true;
             return false;
           }
@@ -126,7 +173,9 @@ enum HarnessAnchorFallback {
           }
 
           function scan() {
-            var nodes = document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"],[data-anchor-side]');
+            // 不再无条件抓 role="dialog"：自带居中的弹层（插件管理、归档管理）
+            // 必须原样交给它们自己的 CSS，否则会被推偏。
+            var nodes = document.querySelectorAll('[data-anchor-side],[data-anchor-align],[role="menu"],[role="listbox"],[id$="-menu"]');
             for (var i = 0; i < nodes.length; i++) place(nodes[i]);
           }
 
@@ -140,11 +189,18 @@ enum HarnessAnchorFallback {
               scan();
             });
           }
-          var observer = new MutationObserver(schedule);
-          observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'data-anchor-side'] });
+          // atDocumentStart 时 documentElement 可能还没建好（脚本在 <html> 之前
+          // 执行）。没有它就不能 observe，等 DOM 就绪后再装监听。
+          function installObserver() {
+            var root = document.documentElement;
+            if (!root) { document.addEventListener('DOMContentLoaded', installObserver, { once: true }); return; }
+            var observer = new MutationObserver(schedule);
+            observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'data-anchor-side', 'data-anchor-align'] });
+            schedule();
+          }
+          installObserver();
           window.addEventListener('resize', schedule);
           window.addEventListener('scroll', schedule, true);
-          schedule();
         })();
         """
     }
