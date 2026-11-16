@@ -145,11 +145,23 @@ rg -Fq "const rail = wide === false" "$ROOT/Plugins/DSHPluginManager/client/clie
 rg -Fq "rail ? 'dsh-pm-trigger dsh-pm-trigger-rail' : 'dsh-pm-trigger'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq '!rail && h' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq "wide === false ? 'dsh-archive-trigger dsh-archive-trigger-rail' : 'dsh-archive-trigger'" "$ROOT/Plugins/DSHArchiveManager/client/client.js"
-# 市场分类筛选必须留退出口：下拉里的「全部分类」与 chip 的「再点一次取消筛选」，
-# 否则从「更多分类」里选中分类后就再也回不到全部（渲染冒烟场景 10 断言行为）。
-rg -Fq "h('option', { value: 'all' }, '全部分类')" "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq "setCategory(category === cat ? 'all' : cat)" "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq "全部分类" "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 分类条（v3）：带数量的分段胶囊 + 「更多分类」原位展开 + 分类视图（查看全部）。
+# 旧的「更多分类…」下拉已删除，不许回来（用户明确嫌丑）。
+if rg -Fq "h('option', { value: 'all' }, '全部分类')" "$ROOT/Plugins/DSHPluginManager/client/client.js"; then
+  echo "分类筛选不许退回下拉（v3 用分段胶囊 + 原位展开）" >&2
+  exit 1
+fi
+rg -Fq 'dsh-pm-seg' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'setCategory(active ? ' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'dsh-pm-sec2' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'dsh-pm-crumbs' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'categoryHue' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'dsh-pm-hue-brand' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '场景10（分类条：分段/展开/分类视图/返回）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+rg -Fq '场景16（分区查看全部 → 分类视图 + 分页）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 发现页结构（v3）：本周推荐整行 → 双榜两列 → 分类条 → 分区（每区 6 张）。
+rg -Fq 'dsh-pm-cols2' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'MARKET_SECTION_CARDS' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 # 市场刷新必须是**后台任务**：不得占用 busy（占 busy 会连关闭按钮一起锁住——用户
 # 实测「刷新时点关闭关不上」），并且在途请求要单飞，避免关掉再开/多标签页并发
 # 重建市场仓库（服务端会先 rm 再 clone，并发必然互相踩）。

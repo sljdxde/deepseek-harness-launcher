@@ -154,6 +154,13 @@ const openPanelOn = async (runtime, view) => {
   }
 };
 const openInstalledPanel = runtime => openPanelOn(runtime, '已安装');
+/** 分类/排序/搜索变化会触发一次 250ms 防抖后的服务端查询：等它真的发出并回来。 */
+const settleQuery = async (runtime) => {
+  // 先重画一次：effect 要等这次渲染才会挂上防抖定时器；再等定时器触发查询、最后画结果。
+  await settle(runtime, 10);
+  await new Promise(resolve => setTimeout(resolve, 400));
+  await settle(runtime, 10);
+};
 
 // ---------- 场景装配 ----------
 function makeDocument() {
@@ -773,10 +780,10 @@ await openInstalledPanel(runtime);
   console.log('场景9（dev-linked 二选一）通过');
 }
 
-/** 场景 10：市场分类筛选 —「更多分类」下拉选中后必须还能退回「全部」 */
+/** 场景 10：分类条（v3）——分段胶囊带数量、「更多分类」原位展开、点分类进分类视图、
+ *  「返回发现」/「全部」都能退回首屏。旧的「更多分类…」下拉已删除。 */
 {
-  // 12 个分类：插件多的 10 个平铺成 chip，official / a（各 1 个）落进「更多分类」下拉。
-  // 总数刻意小于分页阈值 PAGE_SIZE，「全部」时一次列完，便于用卡片数量判断筛选结果。
+  // 12 个分类：前 6 个平铺，其余进「更多分类」；official 只有 1 个插件便于断言。
   const categoryCounts = { official: 1, a: 1, b: 5, c: 5, d: 5, e: 5, f: 5, g: 5, h: 5, i: 5, j: 5, k: 5 };
   const categories = Object.keys(categoryCounts);
   const marketPlugins = [];
@@ -789,6 +796,7 @@ await openInstalledPanel(runtime);
       });
     }
   }
+  const ordered = Object.entries(categoryCounts).sort((a, b) => b[1] - a[1]).map(([name]) => name);
   const fetchImpl = url => {
     const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
     if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
@@ -796,10 +804,8 @@ await openInstalledPanel(runtime);
       return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
     }
     if (url.startsWith('/dsh-plugin-manager/marketplace')) {
-      // 方案 B 后筛选在服务端：按 query 参数过滤/分页，客户端只渲染当前页。
       const query = new URLSearchParams(url.split('?')[1] || '');
       const category = query.get('category') || 'all';
-      const sort = query.get('sort') || 'stars';
       const limit = Number(query.get('limit')) || 60;
       const offset = Number(query.get('offset')) || 0;
       const q = (query.get('q') || '').toLowerCase();
@@ -808,12 +814,18 @@ await openInstalledPanel(runtime);
         if (!q) return true;
         return `${plugin.name} ${plugin.repo} ${plugin.descriptionEn}`.toLowerCase().includes(q);
       });
-      filtered.sort((a, b) => sort === 'downloads' ? (b.downloads || 0) - (a.downloads || 0) : (b.stars || 0) - (a.stars || 0));
-      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count }));
+      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+      const sections = category === 'all' && !q
+        ? ordered.slice(0, 3).map(name => ({
+            category: name,
+            count: categoryCounts[name],
+            plugins: marketPlugins.filter(plugin => plugin.category === name).slice(0, 6),
+          }))
+        : [];
       return respond({
         ok: true, stale: false, indexedAt: '2026-09-22T11:00:00.000Z',
         total: filtered.length, allTotal: marketPlugins.length,
-        counts, categories, plugins: filtered.slice(offset, offset + limit),
+        counts, categories, plugins: filtered.slice(offset, offset + limit), sections,
         featured: marketPlugins.slice(0, 5), topDownloads: marketPlugins.slice(0, 5), topStars: marketPlugins.slice(0, 5),
       });
     }
@@ -822,62 +834,58 @@ await openInstalledPanel(runtime);
   const { runtime, trigger } = boot({ fetchImpl });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-await openInstalledPanel(runtime);
-  // 方案 B：「发现」是默认视图（原「插件市场」页签），打开面板即在其中；先切回
-  // 「发现」保证无论当前在哪一页都从发现页开始。
+  await openInstalledPanel(runtime);
   const gotoDiscover = async () => {
     const item = findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '发现')[0];
     if (item) { item.props.onClick(); await settle(runtime, 10); }
   };
   await gotoDiscover();
 
-  const chips = () => findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-chip( |$)/.test(String(node.props.className || '')));
-  const chipByLabel = label => chips().find(node => textOf(node) === label);
-  const chipsRow = findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '') === 'dsh-pm-chips')[0];
-  const moreSelect = () => findAll(runtime.tree, node => node.type === 'select' && String(node.props.className || '').includes('dsh-pm-cat-more'))[0];
-  const options = () => findAll(chipsRow, node => node.type === 'option');
+  const segs = () => findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-seg( |$)/.test(String(node.props.className || '')));
+  const segByLabel = label => segs().find(node => textOf(node).startsWith(label));
   const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  const crumbs = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-crumbs( |$)/.test(String(node.props.className || '')));
 
-  assert.ok(moreSelect(), '尾部分类收进「更多分类」下拉');
-  assert.equal(textOf(options()[0]), '更多分类…', '下拉第一项是占位');
-  assert.equal(options()[0].props.value, '', '占位项没有值：选中它不该改动筛选');
-  assert.ok(options().some(node => node.props.value === 'all'), '下拉里有「全部分类」出口（此前缺失，选了尾部分类就退不回去）');
-  assert.equal(moreSelect().props.value, '', '筛选为全部时下拉显示占位，而不是回显某个分类');
-  assert.equal(textOf(chips()[0]), '全部', '第一颗 chip 是「全部」');
-  assert.ok(/dsh-pm-chip-active/.test(String(chips()[0].props.className)), '进市场默认选中「全部」');
-  assert.equal(cards().length, marketPlugins.length, '「全部」列出所有插件');
+  // 1. 首屏：分类条带数量、前 6 个平铺、其余进「更多分类」，旧的 select 下拉不复存在。
+  assert.equal(segs().length, 7, '全部 + 前 5 个分类 + 更多分类');
+  assert.ok(textOf(segByLabel('全部')).includes(String(marketPlugins.length)), '「全部」带总数');
+  assert.ok(textOf(segByLabel('b')).includes('5'), '分类胶囊带数量');
+  assert.ok(/dsh-pm-seg on/.test(String(segByLabel('全部').props.className)), '默认选中「全部」');
+  assert.equal(findAll(runtime.tree, node => node.type === 'select' && /dsh-pm-cat-more/.test(String(node.props.className || ''))).length, 0, '旧「更多分类…」下拉已删除');
+  assert.ok(cards().length > 0, '首屏有分区卡片');
+  assert.equal(crumbs().length, 0, '首屏没有面包屑');
 
-  // 1. 从「更多分类」下拉选尾部分类 → 只看该分类
-  moreSelect().props.onChange({ target: { value: 'official' } });
-  await settle(runtime);
-  assert.equal(cards().length, categoryCounts.official, '尾部分类筛选生效');
-  assert.equal(moreSelect().props.value, 'official', '下拉回显当前分类');
-  assert.ok(/dsh-pm-cat-more-active/.test(String(moreSelect().props.className)), '下拉自带选中态');
-  assert.equal(chipByLabel('全部').props.className.includes('dsh-pm-chip-active'), false, '选了尾部分类后「全部」chip 不再高亮');
+  // 2. 点分类 → 进分类视图（面包屑 + 该分类全量）。
+  segByLabel('b').props.onClick();
+  await settleQuery(runtime);
+  assert.equal(crumbs().length, 1, '进分类视图出现面包屑');
+  assert.ok(textOf(crumbs()[0]).includes('返回发现'), '面包屑有返回入口');
+  assert.equal(cards().length, categoryCounts.b, '分类视图只列该分类');
+  assert.ok(/dsh-pm-seg on/.test(String(segByLabel('b').props.className)), '当前分类胶囊高亮');
+  assert.equal(/dsh-pm-seg on/.test(String(segByLabel('全部').props.className)), false, '「全部」不再高亮');
 
-  // 2. 再选占位项「更多分类…」：保持原样（它是标题不是退出口）
-  moreSelect().props.onChange({ target: { value: '' } });
-  await settle(runtime);
-  assert.equal(cards().length, categoryCounts.official, '选中占位项不改变当前筛选');
+  // 3. 面包屑返回 → 回首屏。
+  findAll(crumbs()[0], node => node.type === 'button')[0].props.onClick();
+  await settleQuery(runtime);
+  assert.equal(crumbs().length, 0, '返回发现后面包屑消失');
+  assert.ok(/dsh-pm-seg on/.test(String(segByLabel('全部').props.className)), '回到全部');
 
-  // 3. 选「全部分类」→ 退回全部（本次修复的主入口）
-  moreSelect().props.onChange({ target: { value: 'all' } });
-  await settle(runtime);
-  assert.equal(cards().length, marketPlugins.length, '「全部分类」退回所有插件');
-  assert.ok(/dsh-pm-chip-active/.test(String(chipByLabel('全部').props.className)), '退回后「全部」chip 高亮');
-  assert.equal(moreSelect().props.value, '', '退回后下拉回到占位显示');
-
-  // 4. 平铺 chip 再点一次也取消筛选（另一条退出口，避免只能去下拉里找）
-  const flatChip = chips()[1];
-  const flatLabel = textOf(flatChip);
-  flatChip.props.onClick();
-  await settle(runtime);
-  assert.equal(cards().length, categoryCounts[flatLabel], `点「${flatLabel}」chip 只看该分类`);
-  assert.ok(/dsh-pm-chip-active/.test(String(chipByLabel(flatLabel).props.className)), 'chip 选中后高亮');
-  chipByLabel(flatLabel).props.onClick();
-  await settle(runtime);
-  assert.equal(cards().length, marketPlugins.length, '再点一次已选中的 chip 回到全部');
-  console.log('场景10（分类筛选可退回「全部」）通过');
+  // 4. 「更多分类」原位展开：尾部分类出现（不是下拉）；再点收起。
+  const moreBtn = segs().find(node => /dsh-pm-seg more/.test(String(node.props.className || '')));
+  assert.ok(moreBtn, '有「更多分类」按钮');
+  moreBtn.props.onClick();
+  await settle(runtime, 10);
+  assert.ok(segByLabel('官方'), '展开后尾部分类平铺出来');
+  assert.equal(segs().filter(node => /dsh-pm-seg more/.test(String(node.props.className || ''))).length, 1, '展开后按钮变成「收起分类」');
+  // 尾部分类同样能进分类视图。
+  segByLabel('官方').props.onClick();
+  await settleQuery(runtime);
+  assert.equal(cards().length, categoryCounts.official, '尾部分类进分类视图');
+  // 「全部」也能从分类视图退回。
+  segByLabel('全部').props.onClick();
+  await settleQuery(runtime);
+  assert.equal(crumbs().length, 0, '点「全部」退回首屏');
+  console.log('场景10（分类条：分段/展开/分类视图/返回）通过');
 }
 
 /** 场景 11：市场刷新是后台任务 —— 刷新中面板能关，安装/切 tab 照常可用。
@@ -1211,4 +1219,77 @@ await openInstalledPanel(runtime);
   assert.ok(all.some(text => text.includes('1 个源失败')), '失败的源在 toast 里点明：' + JSON.stringify(all));
   assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/marketplace')), '刷新结束后重读了市场索引（/marketplace/query）');
   console.log('场景15（源刷新 202 + 进度轮询 + 真实计数）通过');
+}
+
+/** 场景 16：分区「查看全部」→ 分类视图 + 「显示更多」分页。
+ *  分区只给 6 张（两整行），点查看全部进入该分类全量列表；分页按服务端 total 续页。 */
+{
+  const categoryCounts = { ui: 70, tools: 20 };
+  const marketPlugins = [];
+  for (const [cat, count] of Object.entries(categoryCounts)) {
+    for (let n = 0; n < count; n++) {
+      marketPlugins.push({
+        id: `${cat}-${n}`, name: `${cat}-plugin-${n}`, repo: `owner/${cat}-${n}`,
+        author: 'owner', category: cat, descriptionEn: `${cat} 插件 ${n}`,
+        stars: 100 - n, downloads: 1000 - n, addedDate: '2026-01-01',
+      });
+    }
+  }
+  const fetchImpl = url => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      const query = new URLSearchParams(url.split('?')[1] || '');
+      const category = query.get('category') || 'all';
+      const limit = Number(query.get('limit')) || 60;
+      const offset = Number(query.get('offset')) || 0;
+      const filtered = marketPlugins.filter(plugin => category === 'all' || plugin.category === category);
+      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count }));
+      const sections = category === 'all'
+        ? Object.entries(categoryCounts).map(([name, count]) => ({
+            category: name, count,
+            plugins: marketPlugins.filter(plugin => plugin.category === name).slice(0, 6),
+          }))
+        : [];
+      return respond({
+        ok: true, stale: false, indexedAt: null,
+        total: filtered.length, allTotal: marketPlugins.length,
+        counts, categories: Object.keys(categoryCounts), plugins: filtered.slice(offset, offset + limit), sections,
+        featured: marketPlugins.slice(0, 5), topDownloads: marketPlugins.slice(0, 5), topStars: marketPlugins.slice(0, 5),
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+
+  const sections = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-sec2( |$)/.test(String(node.props.className || '')));
+  const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  assert.equal(sections().length, 2, '两个分类分区');
+  assert.equal(cards().length, 12, '每区 6 张（两整行），共 12 张');
+  assert.ok(textOf(runtime.tree).includes('查看全部 70 个'), '分区头给出该分类总数');
+
+  // 点分区头「查看全部 70 个」→ 分类视图，首页 60 张 + 分页条。
+  const viewAll = findAll(runtime.tree, node => node.type === 'span' && /dsh-pm-sechead2/.test(String(node.props.className || '')) === false && textOf(node).startsWith('查看全部 70 个'))[0]
+    || findAll(runtime.tree, node => textOf(node).startsWith('查看全部 70 个'))[0];
+  assert.ok(viewAll, '有「查看全部 70 个」入口');
+  viewAll.props.onClick();
+  await settleQuery(runtime);
+  assert.ok(textOf(runtime.tree).includes('返回发现'), '进入分类视图（面包屑）');
+  assert.equal(cards().length, 60, '分类视图首页 60 张');
+  assert.ok(textOf(runtime.tree).includes('已显示 60 / 70'), '分页计数显示 60 / 70');
+
+  // 「显示更多」续页 → 70 张，按钮消失。
+  const more = findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === '显示更多')[0];
+  assert.ok(more, '有「显示更多」按钮');
+  more.props.onClick();
+  await settle(runtime, 10);
+  assert.equal(cards().length, 70, '续页后 70 张');
+  assert.ok(textOf(runtime.tree).includes('已全部显示'), '全部加载后提示');
+  console.log('场景16（分区查看全部 → 分类视图 + 分页）通过');
 }

@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({ id: "dsh-archive-manager", factory: (require) => 
   const css = `div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}.dsh-archive-trigger{align-items:center;appearance:none;background:transparent;border:0;border-radius:8px;box-sizing:border-box;color:inherit;cursor:pointer;display:flex;flex:0 0 100%;font:inherit;font-size:14px;gap:8px;line-height:22px;margin:4px -2px;min-height:42px;min-width:0;padding:0 10px 0 8px;text-align:left}.dsh-archive-trigger:hover{background:var(--dsw-alias-button-ghost-active-fill)}.dsh-archive-trigger.dsh-archive-trigger-rail{border-radius:50%;corner-shape:round;flex:none;height:36px;justify-content:center;margin:4px 0;min-height:36px;padding:0;width:36px}.dsh-archive-trigger.dsh-archive-trigger-rail:hover{background:var(--dsw-alias-interactive-bg-hover)}.dsh-archive-trigger-icon{border:1.75px solid currentColor;border-radius:4px;box-sizing:border-box;display:inline-block;flex:0 0 16px;height:16px;position:relative;width:16px}.dsh-archive-trigger-icon:before{border-top:1.75px solid currentColor;content:"";left:2px;position:absolute;right:2px;top:5px}.dsh-archive-trigger-icon:after{border:1.75px solid currentColor;border-bottom:0;border-radius:3px 3px 0 0;box-sizing:border-box;content:"";height:4px;left:3px;position:absolute;top:-5px;width:7px}
 /* 弹层（main slot 里以居中面板呈现，与插件中心同一形态） */
 .dsh-archive-backdrop{background:rgba(15,18,24,.32);inset:0;position:fixed;z-index:2147483000}
-.dsh-archive-modal{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 20px 70px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;font-size:13px;gap:12px;left:50%;max-height:82vh;max-width:720px;overflow:auto;padding:16px 18px 18px;position:fixed;top:50%;transform:translate(-50%,-50%);width:min(720px,calc(100vw - 32px));z-index:2147483001}
+.dsh-archive-modal{--pm-accent:#3b82f6;--pm-accent-fg:#ffffff;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 20px 70px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;font-size:13px;gap:12px;left:50%;max-height:82vh;max-width:720px;overflow:auto;padding:16px 18px 18px;position:fixed;top:50%;transform:translate(-50%,-50%);width:min(720px,calc(100vw - 32px));z-index:2147483001}
 .dsh-archive-close{background:transparent;border:0;border-radius:6px;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:18px;height:28px;line-height:24px;width:28px}
 .dsh-archive-close:hover{background:var(--dsw-alias-button-ghost-active-fill);color:inherit}
 /* 页头 */
@@ -18,13 +18,13 @@ window.__ModuleLoader__.load({ id: "dsh-archive-manager", factory: (require) => 
 .dsh-archive-head h2{color:var(--dsw-alias-label-primary);font-size:16px;font-weight:700;letter-spacing:-.01em;margin:0}
 .dsh-archive-count{color:var(--dsw-alias-label-tertiary);font-size:11.5px}
 .dsh-archive-find{align-items:center;background:var(--dsw-alias-bg-layer-2);border-radius:8px;color:var(--dsw-alias-label-tertiary);display:flex;gap:6px;height:30px;margin-left:auto;padding:0 10px;width:min(240px,46%);transition:box-shadow .14s ease,background .14s ease}
-.dsh-archive-find:focus-within{background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 1px var(--dsw-alias-brand-primary),0 0 0 3px color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent)}
+.dsh-archive-find:focus-within{background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 1px var(--pm-accent),0 0 0 3px color-mix(in srgb,var(--pm-accent) 18%,transparent)}
 .dsh-archive-find input{background:none;border:0;color:var(--dsw-alias-label-primary);flex:1;font:inherit;font-size:12.5px;min-width:0;outline:none}
 .dsh-archive-find input::placeholder{color:var(--dsw-alias-label-tertiary)}
 /* 工具栏 */
 .dsh-archive-toolbar{align-items:center;display:flex;flex-wrap:wrap;gap:8px;min-height:28px;padding:0 2px}
 .dsh-archive-select-all{align-items:center;color:var(--dsw-alias-label-secondary);display:inline-flex;flex:0 0 auto;font-size:12.5px;gap:8px;line-height:20px}
-.dsh-archive-select-all input{accent-color:var(--dsw-alias-brand-primary);flex:0 0 auto;height:15px;margin:0;width:15px}
+.dsh-archive-select-all input{accent-color:var(--pm-accent);flex:0 0 auto;height:15px;margin:0;width:15px}
 .dsh-archive-toolbar-meta{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;margin-right:auto}
 .dsh-archive-tool{background:none;border:0;border-radius:7px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:12px;line-height:20px;padding:4px 9px}
 .dsh-archive-tool:hover:not(:disabled){background:var(--dsw-alias-button-ghost-active-fill);color:var(--dsw-alias-label-primary)}
@@ -32,22 +32,22 @@ window.__ModuleLoader__.load({ id: "dsh-archive-manager", factory: (require) => 
 .dsh-archive-tool-danger{color:var(--dsw-alias-state-error-primary)}
 .dsh-archive-tool-danger:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}
 /* 「还原选中」：与安装/还原胶囊同一份强调色 */
-.dsh-archive-tool-primary{background:var(--dsw-alias-state-business-tertiary,var(--dsw-alias-bg-layer-2));border-radius:14px;color:var(--dsw-alias-brand-primary);font-weight:600;padding:4px 12px}
-.dsh-archive-tool-primary:hover:not(:disabled){background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}
+.dsh-archive-tool-primary{background:color-mix(in srgb,var(--pm-accent) 12%,transparent);border-radius:14px;color:var(--pm-accent);font-weight:600;padding:4px 12px}
+.dsh-archive-tool-primary:hover:not(:disabled){background:var(--pm-accent);color:var(--dsw-alias-label-primary-foreground)}
 /* 行列表：单容器 + 发丝分隔（与插件中心的行列表同构） */
 .dsh-archive-list{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}
 .dsh-archive-row{align-items:center;display:flex;gap:11px;min-height:54px;padding:8px 13px;transition:background .14s ease}
 .dsh-archive-row:hover{background:var(--dsw-alias-bg-layer-2)}
 .dsh-archive-row + .dsh-archive-row{border-top:1px solid var(--dsw-alias-border-l2)}
-.dsh-archive-row input[type=checkbox]{accent-color:var(--dsw-alias-brand-primary);flex:0 0 auto;height:15px;margin:0;width:15px}
-.dsh-archive-icon{align-items:center;background:var(--dsw-alias-bg-layer-2);border-radius:9px;color:var(--dsw-alias-label-secondary);display:flex;flex:0 0 32px;height:32px;justify-content:center;width:32px}
+.dsh-archive-row input[type=checkbox]{accent-color:var(--pm-accent);flex:0 0 auto;height:15px;margin:0;width:15px}
+.dsh-archive-icon{align-items:center;background:color-mix(in srgb,var(--pm-accent) 12%,transparent);border-radius:9px;color:var(--pm-accent);display:flex;flex:0 0 32px;height:32px;justify-content:center;width:32px}
 .dsh-archive-row-main{flex:1;min-width:0}
 .dsh-archive-row-title{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:550;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-archive-meta{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;flex-wrap:wrap;font-size:11.5px;gap:2px 7px;line-height:18px;margin-top:2px;min-width:0}
 .dsh-archive-meta .sep{color:var(--dsw-alias-label-tertiary);opacity:.6}
 /* 「还原」：强调胶囊（与插件安装按钮同一份样式语言） */
-.dsh-archive-row-restore{background:var(--dsw-alias-state-business-tertiary,var(--dsw-alias-bg-layer-2));border:0;border-radius:13px;color:var(--dsw-alias-brand-primary);cursor:pointer;flex:none;font:inherit;font-size:12px;font-weight:600;height:26px;line-height:26px;padding:0 12px;white-space:nowrap}
-.dsh-archive-row-restore:hover:not(:disabled){background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}
+.dsh-archive-row-restore{background:color-mix(in srgb,var(--pm-accent) 12%,transparent);border:0;border-radius:13px;color:var(--pm-accent);cursor:pointer;flex:none;font:inherit;font-size:12px;font-weight:600;height:26px;line-height:26px;padding:0 12px;white-space:nowrap}
+.dsh-archive-row-restore:hover:not(:disabled){background:var(--pm-accent);color:var(--dsw-alias-label-primary-foreground)}
 .dsh-archive-row-restore:disabled{cursor:not-allowed;opacity:.55}
 .dsh-archive-row-delete{background:none;border:0;border-radius:7px;color:var(--dsw-alias-state-error-primary);cursor:pointer;flex:none;font:inherit;font-size:12px;line-height:20px;padding:4px 9px;white-space:nowrap}
 .dsh-archive-row-delete:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}

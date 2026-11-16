@@ -22,7 +22,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-trigger-icon{display:inline-block;flex:0 0 16px;height:16px;position:relative;width:16px}
 .dsh-pm-trigger-icon:before{background:repeating-linear-gradient(0deg,currentColor 0 2px,transparent 2px 4px);border:1.75px solid currentColor;border-radius:4px;content:"";inset:0;position:absolute}
 .dsh-pm-backdrop{background:rgba(15,18,24,.32);inset:0;position:fixed;z-index:2147483000}
-.dsh-pm-page{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 20px 70px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;font-size:13px;left:50%;max-height:86vh;max-width:1040px;position:fixed;top:50%;transform:translate(-50%,-50%);width:min(1040px,calc(100vw - 48px));z-index:2147483001}
+.dsh-pm-page{--pm-accent:#3b82f6;--pm-accent-fg:#ffffff;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 20px 70px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;font-size:13px;left:50%;max-height:86vh;max-width:1040px;position:fixed;top:50%;transform:translate(-50%,-50%);width:min(1040px,calc(100vw - 48px));z-index:2147483001}
 .dsh-pm-header{align-items:center;border-bottom:1px solid var(--dsw-alias-border-l2);display:flex;gap:10px;padding:0 16px;height:52px;flex:none}
 .dsh-pm-back{background:transparent;border:0;border-radius:8px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:13px;line-height:20px;margin-left:-8px;padding:6px 10px}
 .dsh-pm-back:hover{background:var(--dsw-alias-button-ghost-active-fill);color:inherit}
@@ -50,22 +50,22 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 @keyframes dsh-pm-toast-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 .dsh-pm-empty{color:var(--dsw-alias-label-tertiary);font-size:13px;padding:40px 0;text-align:center}
 .dsh-pm-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-.dsh-pm-check{accent-color:var(--dsw-alias-brand-primary);cursor:pointer;flex:0 0 16px;height:16px;margin:0;width:16px}
+.dsh-pm-check{accent-color:var(--pm-accent);cursor:pointer;flex:0 0 16px;height:16px;margin:0;width:16px}
 .dsh-pm-bulkbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .dsh-pm-bulkbar .dsh-pm-tool{font-size:12px;padding:4px 10px}
 .dsh-pm-find{display:flex;align-items:center;gap:6px;height:30px;width:min(240px,46%);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);padding:0 10px;transition:box-shadow .14s ease,background .14s ease}
-.dsh-pm-find:focus-within{background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 1px var(--dsw-alias-brand-primary),0 0 0 3px color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent)}
+.dsh-pm-find:focus-within{background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 1px var(--pm-accent),0 0 0 3px color-mix(in srgb,var(--pm-accent) 18%,transparent)}
 .dsh-pm-find input{flex:1;min-width:0;border:0;outline:none;background:none;color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px}
 .dsh-pm-find input::placeholder{color:var(--dsw-alias-label-tertiary)}
 .dsh-pm-search{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);border-radius:8px;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;flex:1 1 220px;min-width:180px;padding:7px 12px}
-.dsh-pm-search:focus{border-color:var(--dsw-alias-brand-primary);outline:none}
+.dsh-pm-search:focus{border-color:var(--pm-accent);outline:none}
 .dsh-pm-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 .dsh-pm-chip{border:1px solid var(--dsw-alias-border-l2);background:transparent;border-radius:999px;color:var(--dsw-alias-label-secondary);cursor:pointer;flex:0 0 auto;font:inherit;font-size:12px;line-height:18px;padding:4px 12px}
 .dsh-pm-chip:hover{background:var(--dsw-alias-button-ghost-active-fill)}
-.dsh-pm-chip-active{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}
+.dsh-pm-chip-active{background:var(--pm-accent);border-color:var(--pm-accent);color:var(--dsw-alias-label-primary-foreground)}
 /* 尾部分类的下拉：平铺放不下的分类收进来（带数量），不用横拉去找 */
 .dsh-pm-cat-more{background:transparent;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:12px;line-height:18px;padding:4px 8px}
-.dsh-pm-cat-more-active{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}
+.dsh-pm-cat-more-active{background:var(--pm-accent);border-color:var(--pm-accent);color:var(--dsw-alias-label-primary-foreground)}
 .dsh-pm-sort{margin-left:auto}
 /* 单容器行列表（magpie 式）：一张卡片、行间发丝线，替代逐卡描边堆叠 */
 .dsh-pm-list{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}
@@ -86,7 +86,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-switch-track:after{background:var(--dsw-alias-label-primary);border-radius:50%;box-shadow:0 1px 2px rgba(0,0,0,.28);content:"";height:14px;left:1px;position:absolute;top:1px;transition:transform .15s ease,background .15s ease;width:14px}
 .dsh-pm-switch-input:checked + .dsh-pm-switch-track{background:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-primary)}
 .dsh-pm-switch-input:checked + .dsh-pm-switch-track:after{background:var(--dsw-alias-label-primary-foreground);transform:translateX(14px)}
-.dsh-pm-switch-input:focus-visible + .dsh-pm-switch-track{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
+.dsh-pm-switch-input:focus-visible + .dsh-pm-switch-track{outline:2px solid var(--pm-accent);outline-offset:2px}
 .dsh-pm-switch-input:disabled + .dsh-pm-switch-track{cursor:not-allowed;opacity:.45}
 .dsh-pm-switch-text{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;white-space:nowrap}
 .dsh-pm-switch:has(.dsh-pm-switch-input:disabled){cursor:not-allowed}
@@ -117,8 +117,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-card-meta{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;flex-wrap:wrap;font-size:11px;font-variant-numeric:tabular-nums;gap:8px;min-height:18px}
 .dsh-pm-card-ver{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10.5px}
 .dsh-pm-card-meta .dsh-pm-chip{align-items:center;background:var(--dsw-alias-bg-layer-2);border:0;border-radius:5px;color:var(--dsw-alias-label-secondary);display:inline-flex;font-size:10.5px;gap:3px;height:17px;padding:0 6px}
-.dsh-pm-install{box-sizing:border-box;background:var(--dsw-alias-button-primary-fill);border:0;border-radius:8px;color:var(--dsw-alias-label-primary-foreground);cursor:pointer;flex:none;font:inherit;font-size:12px;line-height:18px;padding:6px 14px;white-space:nowrap}
-.dsh-pm-install:hover{background:var(--dsw-alias-button-primary-hover)}
+.dsh-pm-install{box-sizing:border-box;background:var(--pm-accent);border:0;border-radius:8px;color:var(--pm-accent-fg);cursor:pointer;flex:none;font:inherit;font-size:12px;font-weight:600;line-height:18px;padding:6px 14px;white-space:nowrap}
+.dsh-pm-install:hover:not(:disabled){filter:brightness(1.06)}
 .dsh-pm-install:disabled{cursor:not-allowed;opacity:.6}
 .dsh-pm-installed-tag{color:var(--dsw-alias-state-success-primary);flex:none;font-size:12px;line-height:18px;white-space:nowrap}
 .dsh-pm-cat{color:var(--dsw-alias-label-tertiary);font-size:11px}
@@ -131,7 +131,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-drawer-desc{color:var(--dsw-alias-label-secondary);font-size:13px;line-height:20px;margin:14px 0}
 .dsh-pm-drawer-stats{display:flex;gap:14px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
 .dsh-pm-drawer-actions{display:flex;gap:8px;margin-top:16px}
-.dsh-pm-drawer-link{color:var(--dsw-alias-brand-primary);font-size:12px;line-height:18px;text-decoration:none;display:inline-block;margin-top:12px}
+.dsh-pm-drawer-link{color:var(--pm-accent);font-size:12px;line-height:18px;text-decoration:none;display:inline-block;margin-top:12px}
 .dsh-pm-confirm{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:14px;margin-bottom:10px}
 .dsh-pm-confirm-title{font-size:13px;font-weight:600;line-height:20px}
 .dsh-pm-confirm-copy{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;margin-top:6px}
@@ -190,7 +190,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-rail-item:hover{background:var(--dsw-alias-button-ghost-active-fill);color:var(--dsw-alias-label-primary)}
 .dsh-pm-rail-item.on{background:var(--dsw-alias-bg-layer-1);box-shadow:0 1px 2px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.06);color:var(--dsw-alias-label-primary);font-weight:600}
 .dsh-pm-rail-item .n{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums;margin-left:auto}
-.dsh-pm-rail-item.dsh-pm-rail-updates{color:var(--dsw-alias-brand-primary)}
+.dsh-pm-rail-item.dsh-pm-rail-updates{color:var(--pm-accent)}
 .dsh-pm-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px;overflow-y:auto;padding:16px 18px 22px}
 /* SVG 线性图标：16 网格 / 1.5 描边 / currentColor，替代 emoji。 */
 .dsh-pm-ic{display:inline-flex;flex:none}
@@ -200,9 +200,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-mainhead .date{color:var(--dsw-alias-label-tertiary);font-size:12px}
 /* 推荐位（左）＋ 右列（下载榜/星标榜/待更新）。 */
 .dsh-pm-cols{align-items:start;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(240px,1fr);gap:14px;flex:0 0 auto}
-.dsh-pm-hero{background:radial-gradient(120% 140% at 0% 0%,color-mix(in srgb,var(--dsw-alias-brand-primary) 9%,transparent),transparent 55%),var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;display:flex;gap:12px;padding:14px}
+.dsh-pm-hero{background:radial-gradient(120% 140% at 0% 0%,color-mix(in srgb,var(--pm-accent) 9%,transparent),transparent 55%),var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;display:flex;gap:12px;padding:14px}
 .dsh-pm-hero .who{flex:1;min-width:0}
-.dsh-pm-hero-tag{color:var(--dsw-alias-brand-primary);font-size:11px;font-weight:600}
+.dsh-pm-hero-tag{color:var(--pm-accent);font-size:11px;font-weight:600}
 .dsh-pm-hero-name{align-items:center;color:var(--dsw-alias-label-primary);display:flex;flex-wrap:wrap;gap:7px;font-size:14.5px;font-weight:700}
 .dsh-pm-hero-desc{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5;margin:4px 0 8px}
 .dsh-pm-hero-stats{color:var(--dsw-alias-label-tertiary);display:flex;flex-wrap:wrap;gap:12px;font-size:11px;font-variant-numeric:tabular-nums}
@@ -223,13 +223,13 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-sechead{align-items:baseline;display:flex;flex-wrap:wrap;gap:8px;margin-bottom:9px}
 .dsh-pm-sechead h3{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:650;margin:0}
 .dsh-pm-sechead .sub{color:var(--dsw-alias-label-tertiary);font-size:11.5px}
-.dsh-pm-sechead .viewall{color:var(--dsw-alias-brand-primary);cursor:pointer;font-size:12px;margin-left:auto}
+.dsh-pm-sechead .viewall{color:var(--pm-accent);cursor:pointer;font-size:12px;margin-left:auto}
 .dsh-pm-sechead .viewall:hover{text-decoration:underline}
 /* 已验证 / 来源徽章。 */
 .dsh-pm-verified{align-items:center;color:var(--dsw-alias-state-success-primary);display:inline-flex;flex:none;gap:3px;font-size:11px;font-weight:550}
 .dsh-pm-repl{background:none;box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary);font-weight:400}
 /* 待更新横条（右列底部）。 */
-.dsh-pm-updatestrip{background:var(--dsw-alias-brand-soft,var(--dsw-alias-state-business-tertiary,rgba(59,130,246,.12)));border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 28%,transparent);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:9px;font-size:12px}
+.dsh-pm-updatestrip{background:var(--dsw-alias-brand-soft,var(--dsw-alias-state-business-tertiary,rgba(59,130,246,.12)));border:1px solid color-mix(in srgb,var(--pm-accent) 28%,transparent);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:9px;font-size:12px}
 .dsh-pm-updatestrip .grow{color:var(--dsw-alias-label-secondary);flex:1;min-width:0}
 /* 插件源页行。 */
 .dsh-pm-srcrow{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;display:flex;gap:11px;padding:10px 13px}
@@ -240,7 +240,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-srcrow .meta{color:var(--dsw-alias-label-tertiary);font-size:11px;margin-top:2px}
 .dsh-pm-srcadd{display:flex;gap:8px;align-items:center}
 .dsh-pm-srcadd .inp{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;box-sizing:border-box;color:var(--dsw-alias-label-primary);flex:1;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;height:30px;min-width:160px;outline:none;padding:0 10px}
-.dsh-pm-srcadd .inp:focus{border-color:var(--dsw-alias-brand-primary)}
+.dsh-pm-srcadd .inp:focus{border-color:var(--pm-accent)}
 .dsh-pm-footnote{color:var(--dsw-alias-label-tertiary);font-size:11.5px;line-height:1.5}
 /* 内置页说明行（magpie feat-say 式）。 */
 .dsh-pm-featsay{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5;margin:0 0 10px}
@@ -252,6 +252,63 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-mirror .track:after{background:var(--dsw-alias-label-tertiary);border-radius:50%;content:"";height:12px;left:1px;position:absolute;top:1px;transition:transform .15s,background .15s;width:12px}
 .dsh-pm-mirror.on .track{background:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-primary)}
 .dsh-pm-mirror.on .track:after{background:var(--dsw-alias-bg-layer-1);transform:translateX(12px)}
+/* ── v3：色彩体系 ────────────────────────────────────────────────────────
+   分类色 = 6 组固定色相 + 品牌蓝；图标块/分类 chip 用 13% 透明底 + 同色字，
+   深色主题下透明底自然叠在深底上，文字用 color-mix 往 label-primary 靠一点，
+   两套主题都不刺眼。状态色仍走宿主的 success / warn / brand 语义 token。 */
+.dsh-pm-card-icon.dsh-pm-hue-brand,.dsh-pm-card-chip.dsh-pm-hue-brand{background:color-mix(in srgb,var(--pm-accent) 13%,transparent);color:var(--pm-accent)}
+.dsh-pm-card-icon.dsh-pm-hue-ok,.dsh-pm-card-chip.dsh-pm-hue-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 13%,transparent);color:var(--dsw-alias-state-success-primary)}
+.dsh-pm-card-icon.dsh-pm-hue-warn,.dsh-pm-card-chip.dsh-pm-hue-warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);color:var(--dsw-alias-state-warn-primary)}
+.dsh-pm-card-icon.dsh-pm-hue-violet,.dsh-pm-card-chip.dsh-pm-hue-violet{background:color-mix(in srgb,#7c5cd6 14%,transparent);color:color-mix(in srgb,#7c5cd6 78%,var(--dsw-alias-label-primary))}
+.dsh-pm-card-icon.dsh-pm-hue-teal,.dsh-pm-card-chip.dsh-pm-hue-teal{background:color-mix(in srgb,#0f8f86 14%,transparent);color:color-mix(in srgb,#0f8f86 80%,var(--dsw-alias-label-primary))}
+.dsh-pm-card-icon.dsh-pm-hue-rose,.dsh-pm-card-chip.dsh-pm-hue-rose{background:color-mix(in srgb,#c2467a 13%,transparent);color:color-mix(in srgb,#c2467a 80%,var(--dsw-alias-label-primary))}
+.dsh-pm-card-icon.dsh-pm-hue-cyan,.dsh-pm-card-chip.dsh-pm-hue-cyan{background:color-mix(in srgb,#1b7fa8 13%,transparent);color:color-mix(in srgb,#1b7fa8 80%,var(--dsw-alias-label-primary))}
+.dsh-pm-card-icon.dsh-pm-hue-indigo,.dsh-pm-card-chip.dsh-pm-hue-indigo{background:color-mix(in srgb,#4f63d2 13%,transparent);color:color-mix(in srgb,#4f63d2 80%,var(--dsw-alias-label-primary))}
+.dsh-pm-card-chip{align-items:center;border-radius:5px;display:inline-flex;font-size:10.5px;font-weight:600;gap:3px;height:17px;padding:0 6px}
+/* 分类条：带数量的分段胶囊；「更多分类」在原位展开，不再用下拉 */
+.dsh-pm-catbar{align-items:center;display:flex;flex-wrap:wrap;gap:10px;padding-top:2px}
+.dsh-pm-segs{display:inline-flex;flex:1 1 0;flex-wrap:nowrap;gap:5px;min-width:0;overflow-x:auto;scrollbar-width:none}
+.dsh-pm-segs::-webkit-scrollbar{display:none}
+.dsh-pm-seg{flex:none}
+.dsh-pm-seg{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:15px;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;font:inherit;font-size:12px;gap:5px;height:30px;padding:0 10px}
+.dsh-pm-seg:hover{border-color:var(--dsw-alias-label-tertiary);color:var(--dsw-alias-label-primary)}
+.dsh-pm-seg.on{background:var(--pm-accent);border-color:var(--pm-accent);color:var(--pm-accent-fg);font-weight:600}
+.dsh-pm-seg .n{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
+.dsh-pm-seg.on .n{color:color-mix(in srgb,var(--pm-accent-fg) 75%,transparent)}
+.dsh-pm-seg.more{background:color-mix(in srgb,var(--pm-accent) 8%,transparent);border-color:color-mix(in srgb,var(--pm-accent) 30%,transparent);border-style:dashed;color:var(--pm-accent)}
+.dsh-pm-catbar-sp{flex:0 0 auto;width:0}
+.dsh-pm-select{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;height:30px;padding:0 8px}
+.dsh-pm-select:hover{border-color:var(--dsw-alias-label-tertiary)}
+/* 分区：标题行 + 三列栅格（每区 6 张 = 两整行）+ 分区尾部入口 */
+.dsh-pm-sec2{display:flex;flex-direction:column;gap:10px}
+.dsh-pm-sechead2{align-items:baseline;display:flex;flex-wrap:wrap;gap:8px;padding:0 2px}
+.dsh-pm-sechead2 h3{color:var(--dsw-alias-label-primary);font-size:13.5px;font-weight:700;margin:0}
+.dsh-pm-sechead2 .n{color:var(--dsw-alias-label-tertiary);font-size:11.5px}
+.dsh-pm-sechead2 .viewall{align-items:center;color:var(--pm-accent);cursor:pointer;display:inline-flex;font-size:12px;font-weight:600;gap:3px;margin-left:auto}
+.dsh-pm-sechead2 .viewall:hover{text-decoration:underline}
+.dsh-pm-morelink{display:flex;justify-content:center;padding:2px 0 4px}
+.dsh-pm-morelink button{align-items:center;background:none;border:0;border-radius:8px;color:var(--pm-accent);cursor:pointer;display:inline-flex;font:inherit;font-size:12.5px;font-weight:600;gap:4px;padding:6px 14px}
+.dsh-pm-morelink button:hover{background:color-mix(in srgb,var(--pm-accent) 10%,transparent)}
+/* 分类视图：面包屑 + 分页 */
+.dsh-pm-crumbs{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;font-size:12px;gap:6px}
+.dsh-pm-crumbs-back{align-items:center;background:none;border:0;border-radius:6px;color:var(--pm-accent);cursor:pointer;display:inline-flex;font:inherit;font-size:12px;font-weight:600;gap:4px;padding:2px 6px}
+.dsh-pm-crumbs-back:hover{background:color-mix(in srgb,var(--pm-accent) 10%,transparent)}
+.dsh-pm-pager{align-items:center;display:flex;gap:10px;justify-content:center;padding:6px 0 2px}
+.dsh-pm-pager .more{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:16px;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;font:inherit;font-size:12.5px;font-weight:600;gap:6px;height:32px;padding:0 18px}
+.dsh-pm-pager .more:hover{border-color:var(--pm-accent);color:var(--pm-accent)}
+.dsh-pm-pager .meta{color:var(--dsw-alias-label-tertiary);font-size:11.5px;font-variant-numeric:tabular-nums}
+/* 推荐位改成整行：描述限宽、统计独立一行 */
+.dsh-pm-hero{align-items:flex-start;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;display:flex;gap:14px;padding:18px 20px;background:radial-gradient(120% 150% at 100% 0%,color-mix(in srgb,var(--pm-accent) 11%,transparent),transparent 58%),radial-gradient(90% 120% at 0% 100%,color-mix(in srgb,#7c5cd6 7%,transparent),transparent 60%),var(--dsw-alias-bg-layer-1)}
+.dsh-pm-hero-name{font-size:18px;letter-spacing:-.01em}
+.dsh-pm-hero-desc{font-size:13px;max-width:760px}
+.dsh-pm-hero-stats{gap:30px;margin-top:12px}
+.dsh-pm-hero-stats .s b{display:block;font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.dsh-pm-hero-stats .s span{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+/* 两列榜单 */
+.dsh-pm-cols2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+/* 三列卡片栅格（发现页分区 / 分类视图共用） */
+.dsh-pm-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:900px){.dsh-pm-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.dsh-pm-cols2{grid-template-columns:1fr}}
 /* 窄窗口：左栏收成顶部一行（内容区 < 860px 由容器查询兜不住时媒体查询兜底）。 */
 @media (max-width:860px){
   .dsh-pm-frame{flex-direction:column}
@@ -271,6 +328,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     shield: '<path d="M8 1.5 13.5 3.5v4c0 3.6-2.3 6-5.5 7-3.2-1-5.5-3.4-5.5-7v-4Z"/><path d="m5.8 7.7 1.6 1.6 2.8-3"/>',
     x: '<path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/>',
     chev: '<path d="m6 3.5 4.5 4.5L6 12.5"/>',
+    back: '<path d="M10 3.5 5.5 8 10 12.5"/>',
     download: '<path d="M8 2.5v7.5M8 10l2.8-2.8M8 10 5.2 7.2"/><path d="M2.5 13.5h11"/>',
     star: '<path d="M8 2.2l1.7 3.6 3.9.5-2.8 2.7.7 3.9L8 11l-3.5 1.9.7-3.9L2.4 6.3l3.9-.5Z"/>',
     cube: '<path d="M8 1.8 13.8 4.8v6.4L8 14.2 2.2 11.2V4.8Z"/><path d="M2.2 4.8 8 7.8l5.8-3M8 7.8v6.4"/>',
@@ -327,9 +385,26 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     network: 'globe', dev: 'cube', panel: 'layers', notify: 'bell', auto: 'zap',
     message: 'message', store: 'archive', other: 'puzzle',
   }
-  const CATEGORY_LABELS = { official: '官方', panel: '面板', auto: '自动化' }
+  const CATEGORY_LABELS = {
+    official: '官方', ui: '界面', panel: '界面', tools: '工具', tool: '工具', session: '会话',
+    workflow: '工作流', auto: '自动化', dev: '开发', usage: '用量', model: '模型',
+    memory: '记忆', theme: '主题', skill: '技能', notify: '通知', browser: '浏览器',
+    storage: '存储', data: '数据', search: '搜索', network: '网络', agent: '智能体', other: '其他',
+    market: '市场', mcp: 'MCP', prompt: '提示词', web: '网页', image: '图像', voice: '语音', cli: '命令行', gateway: '网关', plugin: '插件',
+  }
   const categoryLabel = category => CATEGORY_LABELS[category] || category || '其他'
   const categoryIcon = category => CATEGORY_ICONS[category] || 'puzzle'
+  /* 分类 → 色相（v3 配色）：品牌蓝 / 青 / 紫 / 琥珀 / 绿 / 玫 / 靛，未命中的中性灰。 */
+  const CATEGORY_HUES = {
+    official: 'indigo', ui: 'brand', panel: 'brand', tools: 'teal', tool: 'teal',
+    session: 'violet', notify: 'ok', workflow: 'warn', auto: 'warn', dev: 'indigo',
+    usage: 'violet', model: 'cyan', memory: 'rose', theme: 'rose', skill: 'teal',
+    browser: 'cyan', storage: 'rose', data: 'ok', search: 'cyan', network: 'cyan',
+    agent: 'violet', other: 'neutral',
+    market: 'brand', mcp: 'teal', prompt: 'violet', web: 'cyan', image: 'rose',
+    voice: 'rose', cli: 'indigo', gateway: 'teal', plugin: 'brand',
+  }
+  const categoryHue = category => 'dsh-pm-hue-' + (CATEGORY_HUES[category] || 'neutral')
   /** 市场列表首屏与每次「显示更多」的行数（渐进披露，性能关键路径）。 */
   const PAGE_SIZE = 60
 
@@ -828,6 +903,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const [manualSpec, setManualSpec] = React.useState('')
     const [category, setCategory] = React.useState('all')
     const [sort, setSort] = React.useState('stars')
+    // 「更多分类」在原位展开（替代旧的下拉）；来源筛选：all | official | community | 自定义源 id。
+    const [catExpanded, setCatExpanded] = React.useState(false)
+    const [source, setSource] = React.useState('all')
     const [detail, setDetail] = React.useState(null)
     const [busy, setBusy] = React.useState('')
     // 市场刷新是后台任务，独立于 busy：进行中只锁「刷新市场」按钮本身，不锁关闭、
@@ -896,6 +974,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         ['offset', overrides.offset ?? 0],
         ['q', overrides.q ?? search],
         ['category', overrides.category ?? category],
+        ['source', overrides.source ?? source],
         ['sort', overrides.sort ?? sort],
       ]
       return '/dsh-plugin-manager/marketplace/query?' + params
@@ -938,7 +1017,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       if (tab !== 'discover') return undefined
       const timer = setTimeout(() => { loadMarket() }, 250)
       return () => clearTimeout(timer)
-    }, [search, category, sort])
+    }, [search, category, sort, source])
     // 打开面板立刻读一次更新缓存；服务端若正在后台刷新（首轮检测），就等它跑完再显示。
     React.useEffect(() => { pollUpdates().then(applyUpdates) }, [])
     /// 插件源清单与国内加速状态：打开面板读一次；源页操作后重读。
@@ -1595,18 +1674,13 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       for (const plugin of marketPlugins) counts.set(plugin.category, (counts.get(plugin.category) || 0) + 1)
       return counts
     }, [market, marketPlugins])
-    const topCategories = React.useMemo(() => {
-      const names = Array.isArray(market?.categories) && market.categories.length > 0
-        ? market.categories
-        : [...categoryCounts.keys()]
-      return [...names].sort((a, b) => (categoryCounts.get(b) || 0) - (categoryCounts.get(a) || 0)).slice(0, 10)
-    }, [market, categoryCounts])
-    const tailCategories = React.useMemo(() => {
-      const names = Array.isArray(market?.categories) && market.categories.length > 0
-        ? market.categories
-        : [...categoryCounts.keys()]
-      return names.filter(cat => !topCategories.includes(cat))
-    }, [market, topCategories])
+    // 分类条：按数量降序，前 5 个平铺（留出「更多分类」与右侧两个下拉），其余原位展开。
+    const orderedCategories = React.useMemo(
+      () => [...categoryCounts.keys()].filter(Boolean).sort((a, b) => (categoryCounts.get(b) || 0) - (categoryCounts.get(a) || 0)),
+      [categoryCounts]
+    )
+    const pinnedCategories = orderedCategories.slice(0, 5)
+    const tailCategories = orderedCategories.slice(6)
     const marketTotal = Number(market?.total ?? marketPlugins.length) || 0
     const marketFeatured = Array.isArray(market?.featured) && market.featured.length > 0
       ? market.featured
@@ -1716,13 +1790,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             : h('button', { className: 'dsh-pm-row-action', disabled: busy === 'uninstall' || busy === 'uninstall-many' || batchRunning || busyOther || mutationActive, onClick: () => requestUninstall(item), title: mutationActive ? '安装/更新进行中，结束后再卸载' : batchRunning ? '批量更新进行中，等它结束后再卸载' : '卸载' }, '卸载'))
     })
 
-    const marketCards = marketPlugins.map(plugin => {
+    const cardNode = (plugin) => {
       const isInstalled = isInstalledPlugin(plugin)
       const status = installStatus[plugin.id]
-      // 卡片竖版（magpie pm-card）：图标 + 名称/作者 + 安装按钮一行，摘要两行，元信息一行。
+      const hue = categoryHue(plugin.category)
+      // 卡片竖版（v3）：着色图标块 + 名称/作者 + 安装按钮一行，两行摘要，彩色分类 chip 一行。
       return h('div', { className: 'dsh-pm-card', key: plugin.id, onClick: () => setDetail(plugin) },
         h('div', { className: 'dsh-pm-card-top' },
-          h('div', { className: 'dsh-pm-card-icon' }, icon(categoryIcon(plugin.category), 17)),
+          h('div', { className: `dsh-pm-card-icon ${hue}` }, icon(categoryIcon(plugin.category), 17)),
           h('div', { className: 'dsh-pm-card-who' },
             h('div', { className: 'dsh-pm-card-name' }, plugin.repo || plugin.name),
             h('div', { className: 'dsh-pm-card-by' },
@@ -1739,11 +1814,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
               }, status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装')),
         h('p', { className: 'dsh-pm-card-sum' }, descOf(plugin, true) || descOf(plugin) || '暂无描述'),
         h('div', { className: 'dsh-pm-card-meta' },
-          h('span', { className: 'dsh-pm-chip' }, icon(categoryIcon(plugin.category), 10), categoryLabel(plugin.category)),
+          h('span', { className: `dsh-pm-card-chip ${hue}` }, icon(categoryIcon(plugin.category), 10), categoryLabel(plugin.category)),
           h('span', null, `★ ${formatNumber(plugin.stars)}`),
           h('span', null, `↓ ${formatNumber(plugin.downloads)}`),
           plugin.version ? h('span', { className: 'dsh-pm-card-ver' }, `v${plugin.version}`) : null))
-    })
+    }
+    const marketCards = marketPlugins.map(cardNode)
 
     const notesModal = notes ? h('div', {
       className: 'dsh-pm-backdrop',
@@ -1807,7 +1883,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       const status = installStatus[plugin.id]
       return h('div', { className: 'dsh-pm-rank-row', key: plugin.id },
         h('span', { className: 'rk', 'aria-hidden': true }, String(rank)),
-        h('div', { className: 'dsh-pm-card-icon', style: { flex: 'none', width: '28px', height: '28px', borderRadius: '8px', fontSize: '13px' } }, icon(categoryIcon(plugin.category), 14)),
+        h('div', { className: `dsh-pm-card-icon ${categoryHue(plugin.category)}`, style: { flex: 'none', width: '28px', height: '28px', borderRadius: '8px' } }, icon(categoryIcon(plugin.category), 14)),
         h('div', { className: 'who' },
           h('div', { className: 'nm' }, plugin.repo || plugin.name),
           h('div', { className: 'sub' }, `${categoryLabel(plugin.category)} · ↓ ${formatNumber(plugin.downloads)}/周 · ★ ${formatNumber(plugin.stars)}`)),
@@ -1823,47 +1899,38 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const rankCard = (title, sub, list, keyPrefix) => h('div', { className: 'dsh-pm-rank', key: keyPrefix },
       h('div', { className: 'dsh-pm-rank-head' }, h('h3', null, title), h('span', { className: 'sub' }, sub)),
       list.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无数据') : list.map((p, i) => rankRow(p, i + 1)))
-    // 待更新横条（右列底部）：与更新横条同数据源，跳转已安装页去处理。
-    const updatableNow = updates && Array.isArray(updates.inventory)
-      ? updates.inventory.filter(entry => entry && entry.status === 'update-available' && !entry.ignored)
-      : []
-    const updateStrip = updatableNow.length > 0
-      ? h('div', { className: 'dsh-pm-updatestrip' },
-          icon('download', 14),
-          h('span', { className: 'grow' }, updatableNow.length === 1
-            ? `${updatableNow[0].name} 有更新`
-            : `${updatableNow.slice(0, 2).map(item => item.name).join('、')}${updatableNow.length > 2 ? ` 等 ${updatableNow.length} 个` : ''} 有更新`),
-          h('button', { className: 'dsh-pm-install', onClick: () => setTab('installed') }, '去更新'))
-      : null
     const heroCard = hero
       ? h('div', { className: 'dsh-pm-hero' },
-          h('div', { className: 'dsh-pm-card-icon', style: { flex: 'none', width: '44px', height: '44px', borderRadius: '12px', fontSize: '20px' } }, icon(categoryIcon(hero.category), 22)),
+          h('div', { className: `dsh-pm-card-icon ${categoryHue(hero.category)}`, style: { flex: 'none', width: '52px', height: '52px', borderRadius: '14px' } }, icon(categoryIcon(hero.category), 26)),
           h('div', { className: 'who' },
             h('div', { className: 'dsh-pm-hero-tag' }, '今日推荐'),
             h('div', { className: 'dsh-pm-hero-name' }, hero.repo || hero.name,
-              hero.category === 'official' ? h('span', { className: 'dsh-pm-verified' }, icon('shield', 11), 'dsh 官方') : null),
+              h('span', { className: 'dsh-pm-verified' }, icon('shield', 12), hero.category === 'official' ? 'dsh 官方' : 'dsh 社区')),
             h('p', { className: 'dsh-pm-hero-desc' }, descOf(hero, true) || descOf(hero) || '暂无描述'),
             h('div', { className: 'dsh-pm-hero-stats' },
-              h('span', null, `↓ ${formatNumber(hero.downloads)}/周`),
-              h('span', null, `★ ${formatNumber(hero.stars)}`),
-              hero.version ? h('span', null, `v${hero.version}`) : null),
-            h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' } },
+              h('div', { className: 's' }, h('b', null, `${formatNumber(hero.downloads)}/周`), h('span', null, '上周下载')),
+              h('div', { className: 's' }, h('b', null, formatNumber(hero.stars)), h('span', null, '星标')),
+              h('div', { className: 's' }, h('b', null, categoryLabel(hero.category)), h('span', null, '类型')),
+              hero.version ? h('div', { className: 's' }, h('b', null, `v${hero.version}`), h('span', null, '版本')) : null),
+            h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center' } },
               h('button', {
                 className: 'dsh-pm-install',
                 disabled: batchRunning || Boolean(installStatus[hero.id]),
                 onClick: () => install(hero),
               }, installStatus[hero.id] === 'queued' ? '排队中…' : installStatus[hero.id] === 'installing' ? '安装中…' : '安装'),
-              h('button', { className: 'dsh-pm-tool', style: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px' }, onClick: () => setDetail(hero) }, '详情'))))
+              h('button', { className: 'dsh-pm-tool', style: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '15px', padding: '6px 16px' }, onClick: () => setDetail(hero) }, '详情'))))
       : null
-    // 卡片栅格（主列）：服务端分页，当前页已全部渲染；还有更多时按钮续页。
+    // 扁平栅格（分类视图 / 搜索结果）：服务端分页，当前页已全部渲染；还有更多时按钮续页。
     const discoverGrid = marketTotal === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无插件')
       : marketCards.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '没有匹配的插件')
       : h('div', null,
           h('div', { className: 'dsh-pm-grid' }, marketCards),
-          marketPlugins.length < marketTotal
-            ? h('button', { className: 'dsh-pm-more', disabled: loadingMore, onClick: loadMoreMarket },
-                loadingMore ? '加载中…' : `显示更多（还有 ${marketTotal - marketPlugins.length} 个）`)
-            : h('div', { className: 'dsh-pm-more', style: { cursor: 'default' } }, `已显示全部 ${marketPlugins.length} 个`))
+          h('div', { className: 'dsh-pm-pager' },
+            marketPlugins.length < marketTotal
+              ? h('button', { className: 'more', disabled: loadingMore, onClick: loadMoreMarket },
+                  loadingMore ? '加载中…' : '显示更多', icon('chev', 12))
+              : h('span', { className: 'meta' }, '已全部显示'),
+            h('span', { className: 'meta' }, `已显示 ${marketPlugins.length} / ${marketTotal}`)))
     // sticky 手动安装行：npm 包名 / GitHub 仓库 / 本地文件夹（走现有 install 接口）。
     const manualRow = h('form', {
       className: 'dsh-pm-queue', style: { marginTop: '2px' },
@@ -1885,52 +1952,101 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       }),
       h('button', { type: 'submit', className: 'dsh-pm-install', disabled: busy !== '' || batchRunning }, '安装'))
 
+    // ── 发现页（v3）：本周推荐整行 → 双榜两列 → 分类条 → 分类分区 / 分类视图 ──
+    const searchTerm = search.trim()
+    const isCategoryView = category !== 'all'
+    const marketSections = Array.isArray(market?.sections) ? market.sections : []
+
+    const categorySeg = (name, label, count, active) => h('button', {
+      key: 'seg-' + name,
+      className: `dsh-pm-seg${active ? ' on' : ''}`,
+      onClick: () => setCategory(active ? 'all' : name),
+      title: active ? '再点一次回到全部' : `只看「${label}」`,
+    }, label, count != null ? h('span', { className: 'n' }, String(count)) : null)
+
+    const categoryBar = h('div', { className: 'dsh-pm-catbar' },
+      h('div', { className: 'dsh-pm-segs' },
+        categorySeg('all', '全部', market && market.allTotal ? market.allTotal : marketTotal, category === 'all'),
+        pinnedCategories.map(name => categorySeg(name, categoryLabel(name), categoryCounts.get(name) || 0, category === name)),
+        tailCategories.length > 0
+          ? h('button', {
+              key: 'seg-more',
+              className: 'dsh-pm-seg more',
+              onClick: () => setCatExpanded(value => !value),
+              title: '其余分类（按插件数量）',
+            }, catExpanded ? '收起分类' : '更多分类', h('span', { className: 'n' }, catExpanded ? '−' : `+${tailCategories.length}`))
+          : null,
+        catExpanded ? tailCategories.map(name => categorySeg(name, categoryLabel(name), categoryCounts.get(name) || 0, category === name)) : null),
+      h('span', { className: 'dsh-pm-catbar-sp' }),
+      h('select', { className: 'dsh-pm-select', value: source, onChange: (e) => setSource(e.target.value), title: '按插件来源过滤', 'aria-label': '按来源过滤' },
+        h('option', { value: 'all' }, '来源：全部'),
+        h('option', { value: 'official' }, '来源：官方'),
+        h('option', { value: 'community' }, '来源：社区'),
+        (Array.isArray(sources) ? sources : []).filter(item => !item.builtin).map(item => h('option', { key: item.id, value: item.id }, '来源：' + item.url))),
+      h('select', { className: 'dsh-pm-select', value: sort, onChange: (e) => setSort(e.target.value), title: '排序', 'aria-label': '排序' },
+        h('option', { value: 'stars' }, '排序：星标'),
+        h('option', { value: 'downloads' }, '排序：下载量'),
+        h('option', { value: 'newest' }, '排序：最新')))
+
+    // 分类分区：每区 6 张（三列两整行），分区头/尾各一个「查看全部 N 个」。
+    const sectionView = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
+      marketSections.map(section => h('div', { className: 'dsh-pm-sec2', key: 'sec-' + section.category },
+        h('div', { className: 'dsh-pm-sechead2' },
+          h('h3', null, categoryLabel(section.category)),
+          h('span', { className: 'n' }, `${section.count} 个插件`),
+          h('span', { className: 'viewall', role: 'button', tabIndex: 0, onClick: () => setCategory(section.category) },
+            `查看全部 ${section.count} 个`, icon('chev', 12))),
+        h('div', { className: 'dsh-pm-grid' }, section.plugins.map(cardNode)),
+        h('div', { className: 'dsh-pm-morelink' },
+          h('button', { onClick: () => setCategory(section.category) },
+            `查看全部 ${section.count} 个${categoryLabel(section.category)}插件`, icon('chev', 12))))),
+      orderedCategories.length > 0
+        ? h('div', { className: 'dsh-pm-morelink' },
+            h('button', { onClick: () => setCatExpanded(true) },
+              `浏览全部 ${orderedCategories.length} 个分类 · ${market && market.allTotal ? market.allTotal : marketTotal} 个插件`, icon('chev', 12)))
+        : null)
+
+    // 分类视图：面包屑返回 + 该分类全量列表（服务端分页）+ 分类条保留。
+    const categoryView = h('div', null,
+      h('div', { className: 'dsh-pm-crumbs' },
+        h('button', { className: 'dsh-pm-crumbs-back', onClick: () => setCategory('all') }, icon('back', 12), '返回发现'),
+        h('span', { className: 'sep' }, '/'),
+        h('span', null, categoryLabel(category))),
+      h('div', { className: 'dsh-pm-mainhead' },
+        h('h2', null, categoryLabel(category)),
+        h('span', { className: 'date' }, `${marketTotal} 个插件`),
+        h('span', { style: { flex: 1 } }),
+        refreshing ? h('span', { className: 'dsh-pm-footnote' }, '刷新中…') : null,
+        h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13)),
+        h('label', { className: 'dsh-pm-find' }, icon('search', 13),
+          h('input', { placeholder: `在「${categoryLabel(category)}」里搜索…`, value: search, onChange: (e) => setSearch(e.target.value), 'aria-label': '在当前分类里搜索' }))),
+      categoryBar,
+      discoverGrid,
+      manualRow)
+
+    // 发现页首屏：推荐位 + 双榜 + 分类条 + 分区（搜索时退化成扁平结果）。
+    const discoverAllView = h('div', null,
+      h('div', { className: 'dsh-pm-mainhead' },
+        h('h2', null, '本周推荐'), h('span', { className: 'date' }, '每周日更新推荐位'),
+        h('span', { style: { flex: 1 } }),
+        refreshing ? h('span', { className: 'dsh-pm-footnote' }, '刷新中…') : null,
+        h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13)),
+        h('label', { className: 'dsh-pm-find' }, icon('search', 13),
+          h('input', { placeholder: '搜索插件和作者…', value: search, onChange: (e) => setSearch(e.target.value), 'aria-label': '搜索插件' }))),
+      heroCard,
+      h('div', { className: 'dsh-pm-cols2' },
+        rankCard('下载最多', 'npm 上周', marketTopDownloads, 'dl'),
+        rankCard('星标最多', 'GitHub 上', marketTopStars, 'st')),
+      categoryBar,
+      searchTerm ? discoverGrid : (marketSections.length > 0 ? sectionView : discoverGrid),
+      manualRow)
+
     const discoverTab = h('div', null,
       market === null ? h('div', { className: 'dsh-pm-empty' }, '加载中…') :
       market === false ? h('div', { className: 'dsh-pm-empty' },
         h('div', null, '市场索引还没有下载'),
         h('button', { className: 'dsh-pm-install', style: { marginTop: '8px' }, disabled: refreshing, onClick: refreshMarket }, refreshing ? '同步中…' : '立即同步')) :
-      h('div', null,
-        queueStrip,
-        h('div', { className: 'dsh-pm-mainhead' },
-          h('h2', null, '本周推荐'), h('span', { className: 'date' }, '每周日更新推荐位'),
-          h('span', { style: { flex: 1 } }),
-          refreshing ? h('span', { className: 'dsh-pm-footnote' }, '刷新中…') : null,
-          h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13)),
-          h('label', { className: 'dsh-pm-find' }, icon('search', 13),
-            h('input', { placeholder: '搜索插件和作者…', value: search, onChange: (e) => setSearch(e.target.value), 'aria-label': '搜索插件' }))),
-        // 左列 = 推荐位 + 分类 chips + 卡片栅格；右列 = 双榜 + 待更新。
-        // 1040px 弹层下左列约 620px，栅格 minmax(260px) 正好排 2 张卡。
-        h('div', { className: 'dsh-pm-cols' },
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px', minWidth: 0 } },
-            heroCard,
-            h('div', { className: 'dsh-pm-chips' },
-              h('button', { key: 'all', className: `dsh-pm-chip${category === 'all' ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory('all') }, '全部'),
-              // 已选中的 chip 再点一次＝取消筛选（与「全部」等价），省得用户找不到退出口。
-              topCategories.map(cat => h('button', { key: cat, className: `dsh-pm-chip${category === cat ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory(category === cat ? 'all' : cat) }, categoryLabel(cat))),
-              tailCategories.length > 0
-                ? h('select', {
-                    key: 'cat-more',
-                    className: `dsh-pm-cat-more${tailCategories.includes(category) ? ' dsh-pm-cat-more-active' : ''}`,
-                    value: tailCategories.includes(category) ? category : '',
-                    // 占位项「更多分类…」value 为空，选中它保持原样；真正的退出口是下面的「全部分类」。
-                    onChange: (e) => { if (e.target.value) setCategory(e.target.value) },
-                    title: '其余分类（按插件数量）；选「全部分类」取消筛选',
-                  },
-                  h('option', { value: '' }, '更多分类…'),
-                  h('option', { value: 'all' }, '全部分类'),
-                  tailCategories.map(cat => h('option', { key: cat, value: cat }, `${categoryLabel(cat)} · ${categoryCounts.get(cat) || 0}`)))
-                : null,
-              h('select', { className: 'dsh-pm-sort', value: sort, onChange: (e) => setSort(e.target.value), style: { marginLeft: 'auto', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px', padding: '5px 8px' } },
-                h('option', { value: 'stars' }, '排序：星标'),
-                h('option', { value: 'downloads' }, '排序：下载量'),
-                h('option', { value: 'newest' }, '排序：最新'))),
-            discoverGrid),
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', minWidth: 0 } },
-            rankCard('下载最多', '按下载量', topDownloads, 'dl'),
-            rankCard('星标最多', 'GitHub', topStars, 'st'),
-            updateStrip)),
-        manualRow))
+      h('div', null, queueStrip, isCategoryView ? categoryView : discoverAllView))
 
     // ── 内置页：开关列表（无可搜索/联网需求）。 ──
     const builtinItems = installed.filter(item => item.source === 'bundled' && !item.broken)

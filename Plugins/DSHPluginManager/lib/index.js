@@ -2489,7 +2489,7 @@ export async function fetchOfficialMarketPlugins(deps = {}) {
   const found = new Map();
   for (const query of OFFICIAL_MARKET_QUERIES) {
     // registry 查询走镜像感知通道（国内加速打开时映射到 npmmirror）。
-    const url = mirrorMapURL(`https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=${OFFICIAL_MARKET_SEARCH_SIZE}`, await activeMirrorTable());
+    const url = mirrorMapURL(`https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=${OFFICIAL_MARKET_SEARCH_SIZE}`, await activeMirrorTable(doFetch === fetch ? {} : { offline: true }));
     const result = await readRemoteJSON(url, PROBE_TIMEOUT_MS, doFetch).catch(() => ({ error: 'registry 搜索失败' }));
     if (result.error) continue;
     for (const object of result.value?.objects ?? []) {
@@ -2507,7 +2507,7 @@ export async function fetchOfficialMarketPlugins(deps = {}) {
     }
   }
   const rows = await mapWithConcurrency([...found.keys()], PROBE_CONCURRENCY, async name => {
-    const url = mirrorMapURL(`https://registry.npmjs.org/${name.replace('/', '%2F')}/latest`, await activeMirrorTable());
+    const url = mirrorMapURL(`https://registry.npmjs.org/${name.replace('/', '%2F')}/latest`, await activeMirrorTable(doFetch === fetch ? {} : { offline: true }));
     const result = await readRemoteJSON(url, PROBE_TIMEOUT_MS, doFetch);
     const manifest = result.error ? null : result.value;
     if (!manifest?.dsh?.bundle) return null;
@@ -3214,7 +3214,7 @@ async function fetchRepoJSON(spec, timeoutMs = PROBE_TIMEOUT_MS, deps = {}) {
   const path = subdir ? `${String(subdir).replace(/^\/+|\/+$/g, '')}/${file}` : file;
   const doFetch = deps.fetch ?? fetch;
   // raw 在国内网络限速严重，镜像表打开时把 raw 域映射到国内镜像（api 兜底不动）。
-  const rawURL = mirrorMapURL(`https://raw.githubusercontent.com/${author}/${repo}/${commit}/${path}`, await activeMirrorTable());
+  const rawURL = mirrorMapURL(`https://raw.githubusercontent.com/${author}/${repo}/${commit}/${path}`, await activeMirrorTable(doFetch === fetch ? {} : { offline: true }));
   const raw = await readRemoteJSON(rawURL, timeoutMs, doFetch);
   if (!raw.error) return raw;
   const viaAPI = await readRemoteJSON(
@@ -3497,7 +3497,7 @@ async function readRemoteText(author, repo, ref, path, timeoutMs, doFetch) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const rawURL = mirrorMapURL(`https://raw.githubusercontent.com/${author}/${repo}/${ref}/${path}`, await activeMirrorTable());
+    const rawURL = mirrorMapURL(`https://raw.githubusercontent.com/${author}/${repo}/${ref}/${path}`, await activeMirrorTable(doFetch === fetch ? {} : { offline: true }));
     const raw = await doFetch(rawURL, {
       signal: controller.signal, headers: { 'cache-control': 'no-cache' }
     });
@@ -3689,6 +3689,9 @@ export function resetMirrorCache() {
  * @param {{fetch?:Function}} deps - 测试注入。
  */
 export async function activeMirrorTable(deps = {}) {
+  // 注入 fetch 的调用方是单测沙箱：不许碰网络（否则本机跑着 dsh 且开了国内加速时，
+  // 镜像表会把 raw 域名改写，断言对不上）。生产路径永远用全局 fetch。
+  if (deps.offline) return null;
   const state = await readMirrorStateCached(deps);
   return state.enabled && state.table ? state.table : null;
 }
@@ -3717,7 +3720,7 @@ export function mirrorMapURL(url, table) {
  * 超时/网络错误转 error 字段，语义与 readRemoteJSON 相同。
  */
 async function readRemoteJSONMirrored(url, timeoutMs, doFetch, decode = payload => payload) {
-  const table = await activeMirrorTable();
+  const table = await activeMirrorTable(doFetch === fetch ? {} : { offline: true });
   return readRemoteJSON(mirrorMapURL(url, table), timeoutMs, doFetch, decode);
 }
 
@@ -4019,6 +4022,9 @@ async function marketplaceIndexCached() {
 
 const MARKET_PAGE_SIZE = 60;
 const MARKET_PAGE_MAX = 200;
+/** 发现页首屏的分区数量与每区卡片数（3 列 × 2 整行）。 */
+const MARKET_SECTION_CATEGORIES = 3;
+const MARKET_SECTION_CARDS = 6;
 
 /**
  * 分页 + 搜索/分类/排序的市场查询（面板的发现页走这里）。
@@ -4037,6 +4043,7 @@ export async function queryMarketplace(params = {}) {
   const all = Array.isArray(index.plugins) ? index.plugins : [];
   const q = String(params.q || '').trim().toLowerCase();
   const category = typeof params.category === 'string' && params.category ? params.category : 'all';
+  const source = typeof params.source === 'string' && params.source ? params.source : 'all';
   const sort = params.sort === 'downloads' ? 'downloads' : params.sort === 'newest' ? 'newest' : 'stars';
   const limit = Math.min(Math.max(Number(params.limit) || MARKET_PAGE_SIZE, 1), MARKET_PAGE_MAX);
   const offset = Math.max(Number(params.offset) || 0, 0);
@@ -4044,6 +4051,12 @@ export async function queryMarketplace(params = {}) {
   const match = (plugin) => {
     if (!plugin) return false;
     if (category !== 'all' && plugin.category !== category) return false;
+    // 来源筛选：official（npm 官方）| community（awesome-dsh 默认源）| 自定义源 id。
+    if (source !== 'all') {
+      if (source === 'official' && plugin.source !== 'official') return false;
+      if (source === 'community' && plugin.source !== 'community') return false;
+      if (source !== 'official' && source !== 'community' && plugin.source !== source) return false;
+    }
     if (!q) return true;
     return [plugin.name, plugin.repo, plugin.author, plugin.descriptionEn, plugin.descriptionZh]
       .filter(Boolean).join(' ').toLowerCase().includes(q);
@@ -4051,15 +4064,30 @@ export async function queryMarketplace(params = {}) {
   const filtered = all.filter(match);
   const byStars = (a, b) => (b.stars || 0) - (a.stars || 0);
   const byDownloads = (a, b) => (b.downloads || 0) - (a.downloads || 0);
-  const sorted = filtered.slice().sort(sort === 'downloads' ? byDownloads
+  const sortedCompare = sort === 'downloads' ? byDownloads
     : sort === 'newest' ? (a, b) => String(b.addedDate || '').localeCompare(String(a.addedDate || ''))
-    : byStars);
+    : byStars;
+  const sorted = filtered.slice().sort(sortedCompare);
 
   const counts = new Map();
   for (const plugin of all) counts.set(plugin.category || 'other', (counts.get(plugin.category || 'other') || 0) + 1);
 
   const topDownloads = all.slice().sort(byDownloads).slice(0, 5);
   const topStars = all.slice().sort(byStars).slice(0, 5);
+
+  // 分类分区：只在不筛选分类、不搜索时算（发现页的首屏）；按数量取前 3 个分类，
+  // 每类给当前排序下的前 6 个——一屏两整行，客户端直接按 sections 渲染。
+  const sections = category === 'all' && !q
+    ? [...counts]
+        .filter(([name]) => name)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, MARKET_SECTION_CATEGORIES)
+        .map(([name, count]) => ({
+          category: name,
+          count,
+          plugins: all.filter(plugin => plugin && plugin.category === name).sort(sortedCompare).slice(0, MARKET_SECTION_CARDS),
+        }))
+    : [];
 
   return {
     ok: index.ok !== false,
@@ -4070,6 +4098,7 @@ export async function queryMarketplace(params = {}) {
     counts: [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
     categories: Array.isArray(index.categories) ? index.categories : [],
     plugins: sorted.slice(offset, offset + limit),
+    sections,
     featured: topDownloads.slice(0, 5),
     topDownloads,
     topStars,
@@ -4185,6 +4214,7 @@ export function apply(ctx) {
             json(res, 200, await queryMarketplace({
               q: url.searchParams.get('q') || '',
               category: url.searchParams.get('category') || 'all',
+              source: url.searchParams.get('source') || 'all',
               sort: url.searchParams.get('sort') || 'stars',
               limit: url.searchParams.get('limit'),
               offset: url.searchParams.get('offset'),
