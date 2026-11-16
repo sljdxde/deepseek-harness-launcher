@@ -796,7 +796,26 @@ await openInstalledPanel(runtime);
       return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
     }
     if (url.startsWith('/dsh-plugin-manager/marketplace')) {
-      return respond({ count: marketPlugins.length, official: 0, categories, indexedAt: '2026-09-22T11:00:00.000Z', stale: false, plugins: marketPlugins });
+      // 方案 B 后筛选在服务端：按 query 参数过滤/分页，客户端只渲染当前页。
+      const query = new URLSearchParams(url.split('?')[1] || '');
+      const category = query.get('category') || 'all';
+      const sort = query.get('sort') || 'stars';
+      const limit = Number(query.get('limit')) || 60;
+      const offset = Number(query.get('offset')) || 0;
+      const q = (query.get('q') || '').toLowerCase();
+      const filtered = marketPlugins.filter(plugin => {
+        if (category !== 'all' && plugin.category !== category) return false;
+        if (!q) return true;
+        return `${plugin.name} ${plugin.repo} ${plugin.descriptionEn}`.toLowerCase().includes(q);
+      });
+      filtered.sort((a, b) => sort === 'downloads' ? (b.downloads || 0) - (a.downloads || 0) : (b.stars || 0) - (a.stars || 0));
+      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count }));
+      return respond({
+        ok: true, stale: false, indexedAt: '2026-09-22T11:00:00.000Z',
+        total: filtered.length, allTotal: marketPlugins.length,
+        counts, categories, plugins: filtered.slice(offset, offset + limit),
+        featured: marketPlugins.slice(0, 5), topDownloads: marketPlugins.slice(0, 5), topStars: marketPlugins.slice(0, 5),
+      });
     }
     return respond({});
   };
@@ -1131,4 +1150,65 @@ await openInstalledPanel(runtime);
   await settle(runtime, 10);
   assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/sources/remove'), '删除发了 /sources/remove');
   console.log('场景14（插件源页 + 国内加速开关）通过');
+}
+
+/** 场景 15：源刷新是异步受理（202 + /sources/progress 轮询）。
+ *  回归：新后端把 POST /refresh 改成 202 受理后，客户端还按同步响应读
+ *  `v.count`，toast 显示「undefined 个插件」、列表也不刷新（实机复现）。
+ *  现在必须：轮询进度到 active=false → 重读 /marketplace → 用进度里的
+ *  真实计数出 toast。 */
+{
+  const calls = [];
+  let refreshStarted = false;
+  let progressPolls = 0;
+  const marketPlugins = [
+    { id: 'a', name: 'a-plugin', repo: 'o/a', author: 'o', category: 'tool', descriptionEn: 'a', downloads: 10, stars: 1, addedDate: null },
+  ];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url === '/dsh-plugin-manager/refresh') {
+      refreshStarted = true;
+      // 异步受理：202 + 只回 accepted，没有 count/official。
+      return Promise.resolve({ ok: true, status: 202, json: () => Promise.resolve({ ok: true, accepted: true }) });
+    }
+    if (url.startsWith('/dsh-plugin-manager/sources/progress')) {
+      progressPolls += 1;
+      // 前两次还在跑，第三次收尾并带每源计数。
+      const active = progressPolls < 3;
+      return respond({ progress: active
+        ? { active: true, total: 2, done: progressPolls - 1, current: 'awesome-dsh', results: [] }
+        : { active: false, total: 2, done: 2, finishedAt: '2026-11-16T00:00:00.000Z', results: [{ id: 'awesome-dsh', ok: true, count: 42 }, { id: 'src-x', ok: false, error: 'boom' }] } });
+    }
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({ ok: true, stale: false, count: marketPlugins.length, categories: ['tool'], indexedAt: null, plugins: marketPlugins });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  // 点发现页标题行的刷新按钮（图标按钮，title 说明用途）。
+  const refreshBtn = findAll(runtime.tree, node => node.type === 'button' && node.props.title === '重新拉取全部插件源的索引')[0];
+  assert.ok(refreshBtn, '发现页有刷新按钮');
+  refreshBtn.props.onClick();
+  // 轮询需要跨过几次 1.5s 延时：settle 的 setTimeout 是真实的，这里等足够久。
+  await new Promise(resolve => setTimeout(resolve, 6000));
+  await settle(runtime, 10);
+
+  assert.ok(refreshStarted, '点刷新发了 POST /refresh');
+  assert.ok(progressPolls >= 3, '客户端轮询了 /sources/progress 直到收尾，实际 ' + progressPolls);
+  const success = toasts(runtime.tree).filter(item => item.kind === 'success').map(item => item.text);
+  const info = toasts(runtime.tree).filter(item => item.kind === 'info').map(item => item.text);
+  const all = [...success, ...info];
+  assert.ok(all.some(text => text.includes('42 个插件')), 'toast 用进度里的真实计数（42），不再是 undefined：' + JSON.stringify(all));
+  assert.ok(all.some(text => text.includes('1 个源失败')), '失败的源在 toast 里点明：' + JSON.stringify(all));
+  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/marketplace')), '刷新结束后重读了市场索引（/marketplace/query）');
+  console.log('场景15（源刷新 202 + 进度轮询 + 真实计数）通过');
 }

@@ -3998,8 +3998,84 @@ export async function refreshPluginSources(deps = {}) {
     sourceRefreshProgress.active = false;
     sourceRefreshProgress.current = null;
     sourceRefreshProgress.finishedAt = new Date().toISOString();
+    invalidateMarketIndexCache();
   }
   return { sources: enabled.length, plugins: pluginCount, errors };
+}
+
+/** 市场索引的内存缓存：11k 插件时整包 9.6MB，每次请求都重新解析磁盘 JSON
+ *  会明显卡面板；3 秒 TTL 足够覆盖一次打开面板的多个请求，刷新结束时主动失效。 */
+let marketIndexCache = { at: 0, value: null };
+function invalidateMarketIndexCache() {
+  marketIndexCache = { at: 0, value: null };
+}
+
+async function marketplaceIndexCached() {
+  if (marketIndexCache.value && Date.now() - marketIndexCache.at < 3000) return marketIndexCache.value;
+  const value = await readMarketplaceAggregated();
+  marketIndexCache = { at: Date.now(), value };
+  return value;
+}
+
+const MARKET_PAGE_SIZE = 60;
+const MARKET_PAGE_MAX = 200;
+
+/**
+ * 分页 + 搜索/分类/排序的市场查询（面板的发现页走这里）。
+ *
+ * 背景：社区清单 1.1 万个插件时 `/marketplace` 整包 9.6MB，webview 每次打开面板
+ * 都要下载并解析一遍，表现为长时间「加载中…」。改为服务端筛选与分页：
+ * 客户端只拿当前页（默认 60 条）＋ 分类计数 ＋ 两张榜，搜索/切分类/换排序都重新
+ * 查一次（服务端有 3 秒索引缓存，代价很小）。
+ *
+ * 兼容：返回体仍带 `plugins`（当前页）与 `categories`（原样分类名数组），
+ * 旧客户端不传参数时等价于「第一页、全部、按星标」——字段名保持一致。
+ * @param {{q?:string,category?:string,sort?:string,limit?:number,offset?:number}} params
+ */
+export async function queryMarketplace(params = {}) {
+  const index = await marketplaceIndexCached();
+  const all = Array.isArray(index.plugins) ? index.plugins : [];
+  const q = String(params.q || '').trim().toLowerCase();
+  const category = typeof params.category === 'string' && params.category ? params.category : 'all';
+  const sort = params.sort === 'downloads' ? 'downloads' : params.sort === 'newest' ? 'newest' : 'stars';
+  const limit = Math.min(Math.max(Number(params.limit) || MARKET_PAGE_SIZE, 1), MARKET_PAGE_MAX);
+  const offset = Math.max(Number(params.offset) || 0, 0);
+
+  const match = (plugin) => {
+    if (!plugin) return false;
+    if (category !== 'all' && plugin.category !== category) return false;
+    if (!q) return true;
+    return [plugin.name, plugin.repo, plugin.author, plugin.descriptionEn, plugin.descriptionZh]
+      .filter(Boolean).join(' ').toLowerCase().includes(q);
+  };
+  const filtered = all.filter(match);
+  const byStars = (a, b) => (b.stars || 0) - (a.stars || 0);
+  const byDownloads = (a, b) => (b.downloads || 0) - (a.downloads || 0);
+  const sorted = filtered.slice().sort(sort === 'downloads' ? byDownloads
+    : sort === 'newest' ? (a, b) => String(b.addedDate || '').localeCompare(String(a.addedDate || ''))
+    : byStars);
+
+  const counts = new Map();
+  for (const plugin of all) counts.set(plugin.category || 'other', (counts.get(plugin.category || 'other') || 0) + 1);
+
+  const topDownloads = all.slice().sort(byDownloads).slice(0, 5);
+  const topStars = all.slice().sort(byStars).slice(0, 5);
+
+  return {
+    ok: index.ok !== false,
+    stale: Boolean(index.stale),
+    indexedAt: index.indexedAt ?? null,
+    total: filtered.length,
+    allTotal: all.length,
+    counts: [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+    categories: Array.isArray(index.categories) ? index.categories : [],
+    plugins: sorted.slice(offset, offset + limit),
+    featured: topDownloads.slice(0, 5),
+    topDownloads,
+    topStars,
+    sources: Array.isArray(index.sources) ? index.sources : [],
+    sourceRefresh: index.sourceRefresh ?? null,
+  };
 }
 
 /**
@@ -4099,6 +4175,21 @@ export function apply(ctx) {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
           // 聚合版：官方 + 默认源（主索引）+ 用户自定义源（各自缓存）合并去重。
           try { json(res, 200, await readMarketplaceAggregated()); } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 分页查询：q / category / sort / limit / offset。发现页走这里（11k 插件时
+        // 整包 9.6MB 不可接受）；不带参数时等价于第一页。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/marketplace/query', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          try {
+            const url = new URL(req.url || '/', 'http://127.0.0.1');
+            json(res, 200, await queryMarketplace({
+              q: url.searchParams.get('q') || '',
+              category: url.searchParams.get('category') || 'all',
+              sort: url.searchParams.get('sort') || 'stars',
+              limit: url.searchParams.get('limit'),
+              offset: url.searchParams.get('offset'),
+            }));
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/refresh', handler: async (req, res) => {
           if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }

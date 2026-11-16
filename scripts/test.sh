@@ -268,6 +268,13 @@ rg -Fq "'国内加速'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq "'/dsh-plugin-manager/china-mirror'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq '场景13（发现页：推荐位/双榜/分类/手动安装行）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -Fq '场景14（插件源页 + 国内加速开关）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 源刷新是 202 异步受理：客户端必须轮询 /sources/progress 再重载，不得按同步响应读 count。
+rg -Fq '场景15（源刷新 202 + 进度轮询 + 真实计数）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+rg -Fq 'waitForSourceRefresh' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 市场查询必须走服务端分页（11k 插件时整包 9.6MB 不可接受）。
+rg -Fq "'/dsh-plugin-manager/marketplace/query'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'queryMarketplace' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+rg -Fq 'marketQueryURL' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 发现页的推荐位/双榜/分类/手动安装行一个都不能少（用户明确要求的结构）。
 rg -Fq '今日推荐' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq '下载最多' "$ROOT/Plugins/DSHPluginManager/client/client.js"

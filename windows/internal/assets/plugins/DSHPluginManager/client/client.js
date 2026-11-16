@@ -22,7 +22,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-trigger-icon{display:inline-block;flex:0 0 16px;height:16px;position:relative;width:16px}
 .dsh-pm-trigger-icon:before{background:repeating-linear-gradient(0deg,currentColor 0 2px,transparent 2px 4px);border:1.75px solid currentColor;border-radius:4px;content:"";inset:0;position:absolute}
 .dsh-pm-backdrop{background:rgba(15,18,24,.32);inset:0;position:fixed;z-index:2147483000}
-.dsh-pm-page{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 20px 70px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;font-size:13px;left:50%;max-height:82vh;max-width:720px;position:fixed;top:50%;transform:translate(-50%,-50%);width:min(720px,calc(100vw - 32px));z-index:2147483001}
+.dsh-pm-page{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 20px 70px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;font-size:13px;left:50%;max-height:86vh;max-width:1040px;position:fixed;top:50%;transform:translate(-50%,-50%);width:min(1040px,calc(100vw - 48px));z-index:2147483001}
 .dsh-pm-header{align-items:center;border-bottom:1px solid var(--dsw-alias-border-l2);display:flex;gap:10px;padding:0 16px;height:52px;flex:none}
 .dsh-pm-back{background:transparent;border:0;border-radius:8px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:13px;line-height:20px;margin-left:-8px;padding:6px 10px}
 .dsh-pm-back:hover{background:var(--dsw-alias-button-ghost-active-fill);color:inherit}
@@ -104,23 +104,23 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-queue-text{color:var(--dsw-alias-label-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-pm-queue-text strong{color:var(--dsw-alias-label-primary);font-weight:600}
 @keyframes dsh-pm-spin{to{transform:rotate(360deg)}}
-/* 市场行：与已安装行同一套单容器样式；描述只留一行，完整描述在详情抽屉 */
-.dsh-pm-grid{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}
-.dsh-pm-card{align-items:center;box-sizing:border-box;cursor:pointer;display:flex;gap:12px;padding:11px 14px;width:100%}
-.dsh-pm-card + .dsh-pm-card{border-top:1px solid var(--dsw-alias-border-l2)}
-.dsh-pm-card:hover{background:var(--dsw-alias-bg-layer-2)}
-.dsh-pm-card-icon{align-items:center;background:var(--dsw-alias-bg-module-platform);border-radius:8px;display:flex;flex:0 0 32px;font-size:15px;height:32px;justify-content:center;width:32px}
-.dsh-pm-card-main{flex:1;min-width:0}
-.dsh-pm-card-title{font-size:13px;font-weight:600;line-height:19px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-pm-card-author{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:17px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-pm-card-desc{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;margin:3px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-pm-card-side{align-items:center;display:flex;flex:0 0 auto;gap:12px}
-.dsh-pm-card-meta{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;flex-direction:column;font-size:11px;gap:0;line-height:16px;text-align:right}
-.dsh-pm-card-actions{display:flex;gap:8px;align-items:center}
-.dsh-pm-install{box-sizing:border-box;background:var(--dsw-alias-button-primary-fill);border:0;border-radius:8px;color:var(--dsw-alias-label-primary-foreground);cursor:pointer;font:inherit;font-size:12px;line-height:18px;padding:6px 14px;white-space:nowrap}
+/* 市场卡片：竖版（magpie pm-card）——图标+名称+安装按钮一行、两行摘要、一行元信息 */
+.dsh-pm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.dsh-pm-card{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;gap:8px;min-width:0;padding:12px 13px 11px;transition:border-color .16s ease,box-shadow .16s ease}
+.dsh-pm-card:hover{border-color:color-mix(in srgb,var(--dsw-alias-label-primary) 16%,var(--dsw-alias-border-l2));box-shadow:0 4px 14px rgba(20,22,30,.08)}
+.dsh-pm-card-top{align-items:center;display:flex;gap:10px;min-width:0}
+.dsh-pm-card-icon{align-items:center;background:var(--dsw-alias-bg-layer-2);border-radius:10px;color:var(--dsw-alias-label-secondary);display:flex;flex:0 0 36px;height:36px;justify-content:center;width:36px}
+.dsh-pm-card-who{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0}
+.dsh-pm-card-name{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-pm-card-by{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;font-size:11px;gap:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-pm-card-sum{-webkit-box-orient:vertical;-webkit-line-clamp:2;color:var(--dsw-alias-label-secondary);display:-webkit-box;font-size:12px;line-height:1.45;margin:0;min-height:2.9em;overflow:hidden}
+.dsh-pm-card-meta{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;flex-wrap:wrap;font-size:11px;font-variant-numeric:tabular-nums;gap:8px;min-height:18px}
+.dsh-pm-card-ver{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10.5px}
+.dsh-pm-card-meta .dsh-pm-chip{align-items:center;background:var(--dsw-alias-bg-layer-2);border:0;border-radius:5px;color:var(--dsw-alias-label-secondary);display:inline-flex;font-size:10.5px;gap:3px;height:17px;padding:0 6px}
+.dsh-pm-install{box-sizing:border-box;background:var(--dsw-alias-button-primary-fill);border:0;border-radius:8px;color:var(--dsw-alias-label-primary-foreground);cursor:pointer;flex:none;font:inherit;font-size:12px;line-height:18px;padding:6px 14px;white-space:nowrap}
 .dsh-pm-install:hover{background:var(--dsw-alias-button-primary-hover)}
 .dsh-pm-install:disabled{cursor:not-allowed;opacity:.6}
-.dsh-pm-installed-tag{color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px;white-space:nowrap}
+.dsh-pm-installed-tag{color:var(--dsw-alias-state-success-primary);flex:none;font-size:12px;line-height:18px;white-space:nowrap}
 .dsh-pm-cat{color:var(--dsw-alias-label-tertiary);font-size:11px}
 .dsh-pm-drawer{background:var(--dsw-alias-bg-layer-1);border-left:1px solid var(--dsw-alias-border-l2);box-sizing:border-box;display:flex;flex-direction:column;height:100%;max-width:420px;min-width:300px;padding:18px;position:absolute;right:0;top:0;width:40%;z-index:2147483002}
 .dsh-pm-drawer-head{display:flex;gap:10px;align-items:center}
@@ -889,7 +889,20 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         setDisabledPlugins(map)
       })
       .catch(e => { if (aliveRef.current) toast('error', `读取插件停用状态失败：${String(e.message || e)}`) })
-    const loadMarket = () => fetch('/dsh-plugin-manager/marketplace', { cache: 'no-store' })
+    /// 市场查询（服务端分页）。overrides 用于「显示更多」按当前条件续页。
+    const marketQueryURL = (overrides = {}) => {
+      const params = [
+        ['limit', PAGE_SIZE],
+        ['offset', overrides.offset ?? 0],
+        ['q', overrides.q ?? search],
+        ['category', overrides.category ?? category],
+        ['sort', overrides.sort ?? sort],
+      ]
+      return '/dsh-plugin-manager/marketplace/query?' + params
+        .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
+        .join('&')
+    }
+    const loadMarket = (overrides = {}) => fetch(marketQueryURL(overrides), { cache: 'no-store' })
       .then(r => r.json()).then(v => {
         if (v.error) throw Error(v.error)
         setMarket(v)
@@ -902,9 +915,30 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         if (!autoRefreshed.current) { autoRefreshed.current = true; return refreshMarket() }
         setError(String(e.message || e)); setMarket(false)
       })
+    /// 「显示更多」：按当前条件续一页并追加（服务端 total 决定还有没有）。
+    const loadMoreMarket = () => {
+      if (loadingMore || !market || market === false) return
+      if (marketPlugins.length >= marketTotal) return
+      setLoadingMore(true)
+      fetch(marketQueryURL({ offset: marketPlugins.length }), { cache: 'no-store' })
+        .then(r => r.json()).then(v => {
+          if (v.error) throw Error(v.error)
+          setMarket(current => current && current !== false
+            ? { ...current, plugins: [...(current.plugins || []), ...(v.plugins || [])], total: v.total ?? current.total }
+            : v)
+        })
+        .catch(e => toast('error', `加载更多失败：${String(e.message || e)}`))
+        .finally(() => setLoadingMore(false))
+    }
     // loadInstalled 成功后顺带刷新停用状态，避免打开面板时重复请求 /disabled。
     React.useEffect(() => { loadInstalled() }, [])
     React.useEffect(() => { if (tab === 'discover') loadMarket() }, [tab])
+    // 搜索/分类/排序变化 → 重新查询（搜索防抖 250ms，避免逐字符打服务端）。
+    React.useEffect(() => {
+      if (tab !== 'discover') return undefined
+      const timer = setTimeout(() => { loadMarket() }, 250)
+      return () => clearTimeout(timer)
+    }, [search, category, sort])
     // 打开面板立刻读一次更新缓存；服务端若正在后台刷新（首轮检测），就等它跑完再显示。
     React.useEffect(() => { pollUpdates().then(applyUpdates) }, [])
     /// 插件源清单与国内加速状态：打开面板读一次；源页操作后重读。
@@ -981,23 +1015,49 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     /// 刷新市场：后台任务。不占用 busy，因此刷新期间面板能关、安装/卸载/切 tab
     /// 照常可用；只有「刷新市场」按钮本身置灰并显示「刷新中…」。面板在途中被关掉
     /// 也不取消请求——结果照常落到本地索引，下次打开就是新的。
+    /// 服务端是**异步受理**（202 + /sources/progress），所以这里必须轮询进度到
+    /// 收尾再重读索引：此前按同步响应读 v.count，toast 显示「undefined 个插件」，
+    /// 列表也没刷新（用户实测）。
     const refreshMarket = () => {
       if (refreshingRef.current) return
       refreshingRef.current = true
       if (aliveRef.current) setRefreshing(true)
       startMarketRefresh()
-        .then(r => r.json()).then(v => {
+        .then(r => r.json())
+        .then(v => {
           if (v.error) throw Error(v.error)
-          if (!aliveRef.current) return
-          toast('success', v.official > 0 ? `市场已刷新：${v.count} 个插件（含 ${v.official} 个 DeepSeek 官方）` : `市场已刷新：${v.count} 个插件`)
-          loadMarket()
+          return waitForSourceRefresh()
         })
-        .catch(e => { if (aliveRef.current) toast('error', `刷新市场失败：${String(e.message || e)}`) })
+        .then(progress => {
+          if (!aliveRef.current) return
+          const results = Array.isArray(progress?.results) ? progress.results : []
+          const total = results.reduce((sum, item) => sum + (Number(item.count) || 0), 0)
+          const failed = results.filter(item => item && item.ok === false)
+          if (failed.length > 0) {
+            toast('info', `插件源已同步：${total} 个插件（${failed.length} 个源失败，见插件源页）`)
+          } else {
+            toast('success', `插件源已同步：${total} 个插件`)
+          }
+          return loadMarket()
+        })
+        .catch(e => { if (aliveRef.current) toast('error', `刷新插件源失败：${String(e.message || e)}`) })
         .finally(() => {
           refreshingRef.current = false
           if (aliveRef.current) setRefreshing(false)
         })
     }
+    /// 轮询源刷新进度直到收尾（active=false）。最多约 3 分钟，超时就把最后一次
+    /// 读到的进度交回去（刷新仍会在后台跑完，索引下次读取就是新的）。
+    const waitForSourceRefresh = (attempt = 0) => fetch('/dsh-plugin-manager/sources/progress', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(v => {
+        const progress = v && v.progress
+        if (progress && progress.active === true && attempt < 120) {
+          return delay(1500).then(() => waitForSourceRefresh(attempt + 1))
+        }
+        return progress || null
+      })
+      .catch(() => null)
     // 安装队列：点按立即入队、顺序执行（magpie 式——进度是一条安静的
     // 状态条，全部结束后才给一条汇总 toast）。installStatus 记录每个
     // 插件的排队/执行态，供按钮文案与禁用使用。
@@ -1509,10 +1569,6 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         .catch(e => toast('error', `批量卸载失败：${String(e.message || e)}`)).finally(() => setBusy(''))
     }
 
-    // 渐进披露（magpie「Show more」式）：市场索引可能数千条，一次性渲染
-    // 全部 DOM 是面板卡顿的主因；首屏只渲染 PAGE_SIZE 行，往下翻再加载。
-    const [visibleCount, setVisibleCount] = React.useState(PAGE_SIZE)
-    React.useEffect(() => { setVisibleCount(PAGE_SIZE) }, [search, category])
     // 已安装索引：一次构建，市场卡片与详情抽屉只查数组（此前每卡片每次
     // render 都重扫 installed 并做字符串包含）。
     const installedIndex = React.useMemo(
@@ -1523,33 +1579,44 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       const repo = normalizeText(plugin.repo)
       return name === repo || name.endsWith('/' + repo) || (plugin.url && normalizeText(plugin.url).includes(name))
     })
-    // 筛选 + 排序只在输入变化时计算（此前每次 render 都全量 filter + sort）。
+    // 市场查询走服务端分页（/marketplace/query）：社区清单 1.1 万条时整包 9.6MB，
+    // webview 每次打开都要下载解析一遍，表现为长时间「加载中…」。服务端按
+    // q/category/sort 过滤并只回一页，同时带回分类计数与两张榜。
+    const [loadingMore, setLoadingMore] = React.useState(false)
     const marketPlugins = market?.plugins || []
-    const plugins = React.useMemo(() => {
-      const term = normalizeText(search)
-      const out = marketPlugins.filter(plugin => {
-        const inTerm = !term || normalizeText(plugin.name + ' ' + plugin.repo + ' ' + plugin.descriptionEn + ' ' + plugin.descriptionZh).includes(term)
-        const inCategory = category === 'all' || plugin.category === category
-        return inTerm && inCategory
-      })
-      if (sort === 'downloads') out.sort((a, b) => (b.downloads || 0) - (a.downloads || 0))
-      else if (sort === 'newest') out.sort((a, b) => String(b.addedDate || '').localeCompare(String(a.addedDate || '')))
-      else out.sort((a, b) => (b.stars || 0) - (a.stars || 0))
-      return out
-    }, [marketPlugins, search, category, sort])
-    // 分类展示：市场近 30 个分类，全部平铺是三排 chip 墙、横拉又要拖动（用户都嫌）。
-    // 按插件数量取前 10 平铺，其余收进带数量的「更多分类」下拉，两下都能到。
+    // 分类与榜单：服务端返回 counts/topDownloads/topStars；旧响应没有时从当前页推导
+    //（测试与旧服务端兼容）。
     const categoryCounts = React.useMemo(() => {
       const counts = new Map()
+      if (Array.isArray(market?.counts) && market.counts.length > 0) {
+        for (const item of market.counts) counts.set(item.name, item.count)
+        return counts
+      }
       for (const plugin of marketPlugins) counts.set(plugin.category, (counts.get(plugin.category) || 0) + 1)
       return counts
-    }, [marketPlugins])
-    const topCategories = React.useMemo(() =>
-      [...(market?.categories || [])].sort((a, b) => (categoryCounts.get(b) || 0) - (categoryCounts.get(a) || 0)).slice(0, 10),
-    [market, categoryCounts])
-    const tailCategories = React.useMemo(() =>
-      (market?.categories || []).filter(cat => !topCategories.includes(cat)),
-    [market, topCategories])
+    }, [market, marketPlugins])
+    const topCategories = React.useMemo(() => {
+      const names = Array.isArray(market?.categories) && market.categories.length > 0
+        ? market.categories
+        : [...categoryCounts.keys()]
+      return [...names].sort((a, b) => (categoryCounts.get(b) || 0) - (categoryCounts.get(a) || 0)).slice(0, 10)
+    }, [market, categoryCounts])
+    const tailCategories = React.useMemo(() => {
+      const names = Array.isArray(market?.categories) && market.categories.length > 0
+        ? market.categories
+        : [...categoryCounts.keys()]
+      return names.filter(cat => !topCategories.includes(cat))
+    }, [market, topCategories])
+    const marketTotal = Number(market?.total ?? marketPlugins.length) || 0
+    const marketFeatured = Array.isArray(market?.featured) && market.featured.length > 0
+      ? market.featured
+      : [...marketPlugins].sort((a, b) => (b.downloads || 0) - (a.downloads || 0)).slice(0, 5)
+    const marketTopDownloads = Array.isArray(market?.topDownloads) && market.topDownloads.length > 0
+      ? market.topDownloads
+      : [...marketPlugins].sort((a, b) => (b.downloads || 0) - (a.downloads || 0)).slice(0, 5)
+    const marketTopStars = Array.isArray(market?.topStars) && market.topStars.length > 0
+      ? market.topStars
+      : [...marketPlugins].sort((a, b) => (b.stars || 0) - (a.stars || 0)).slice(0, 5)
 
     const installedRows = installed.map((item, index) => {
       const selectable = !item.broken && item.source !== 'bundled'
@@ -1649,19 +1716,19 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             : h('button', { className: 'dsh-pm-row-action', disabled: busy === 'uninstall' || busy === 'uninstall-many' || batchRunning || busyOther || mutationActive, onClick: () => requestUninstall(item), title: mutationActive ? '安装/更新进行中，结束后再卸载' : batchRunning ? '批量更新进行中，等它结束后再卸载' : '卸载' }, '卸载'))
     })
 
-    const marketCards = plugins.slice(0, visibleCount).map(plugin => {
+    const marketCards = marketPlugins.map(plugin => {
       const isInstalled = isInstalledPlugin(plugin)
       const status = installStatus[plugin.id]
+      // 卡片竖版（magpie pm-card）：图标 + 名称/作者 + 安装按钮一行，摘要两行，元信息一行。
       return h('div', { className: 'dsh-pm-card', key: plugin.id, onClick: () => setDetail(plugin) },
-        h('div', { className: 'dsh-pm-card-icon' }, icon(categoryIcon(plugin.category), 16)),
-        h('div', { className: 'dsh-pm-card-main' },
-          h('div', { className: 'dsh-pm-card-title' }, plugin.repo || plugin.name),
-          h('div', { className: 'dsh-pm-card-author' }, `${plugin.author || plugin.name} · ${categoryLabel(plugin.category)}`),
-          h('div', { className: 'dsh-pm-card-desc' }, descOf(plugin, true) || descOf(plugin))),
-        h('div', { className: 'dsh-pm-card-side' },
-          h('div', { className: 'dsh-pm-card-meta' },
-            h('span', null, `★ ${formatNumber(plugin.stars)}`),
-            h('span', null, `↓ ${formatNumber(plugin.downloads)}`)),
+        h('div', { className: 'dsh-pm-card-top' },
+          h('div', { className: 'dsh-pm-card-icon' }, icon(categoryIcon(plugin.category), 17)),
+          h('div', { className: 'dsh-pm-card-who' },
+            h('div', { className: 'dsh-pm-card-name' }, plugin.repo || plugin.name),
+            h('div', { className: 'dsh-pm-card-by' },
+              plugin.category === 'official'
+                ? h('span', { className: 'dsh-pm-verified' }, icon('shield', 11), 'dsh 官方')
+                : h('span', null, plugin.author || plugin.name))),
           isInstalled
             ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
             : h('button', {
@@ -1669,7 +1736,13 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
                 disabled: batchRunning || Boolean(status),
                 onClick: (e) => { e.stopPropagation(); install(plugin) },
                 title: batchRunning ? '批量更新进行中，等它结束再安装' : status === 'queued' ? '已加入安装队列' : status === 'installing' ? '正在安装' : undefined,
-              }, status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装')))
+              }, status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装')),
+        h('p', { className: 'dsh-pm-card-sum' }, descOf(plugin, true) || descOf(plugin) || '暂无描述'),
+        h('div', { className: 'dsh-pm-card-meta' },
+          h('span', { className: 'dsh-pm-chip' }, icon(categoryIcon(plugin.category), 10), categoryLabel(plugin.category)),
+          h('span', null, `★ ${formatNumber(plugin.stars)}`),
+          h('span', null, `↓ ${formatNumber(plugin.downloads)}`),
+          plugin.version ? h('span', { className: 'dsh-pm-card-ver' }, `v${plugin.version}`) : null))
     })
 
     const notesModal = notes ? h('div', {
@@ -1723,13 +1796,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             queueView.length > 1 ? `，还有 ${queueView.length - 1} 个排队` : ''))
       : null
 
-    // ── 发现页：推荐位 + 双榜（右列）+ 分类筛选 + 分区卡片 + sticky 手动安装行 ──
-    // 推荐位取排序后第一个未安装插件（最热优先）；两张榜只取前 5。
-    const discoverList = plugins
-    const notInstalled = discoverList.filter(p => !isInstalledPlugin(p) && !installStatus[p.id])
-    const hero = notInstalled[0] || null
-    const topDownloads = [...discoverList].sort((a, b) => (b.downloads || 0) - (a.downloads || 0)).slice(0, 5)
-    const topStars = [...discoverList].sort((a, b) => (b.stars || 0) - (a.stars || 0)).slice(0, 5)
+    // ── 发现页：推荐位 + 双榜（右列）+ 分类筛选 + 卡片栅格 + sticky 手动安装行 ──
+    // 推荐位从服务端的「下载最多前 5」里挑第一个未安装的；两榜直接用服务端榜单。
+    const heroCandidates = marketFeatured.filter(p => p && !isInstalledPlugin(p) && !installStatus[p.id])
+    const hero = heroCandidates[0] || marketFeatured[0] || null
+    const topDownloads = marketTopDownloads
+    const topStars = marketTopStars
     const rankRow = (plugin, rank) => {
       const isInstalled = isInstalledPlugin(plugin)
       const status = installStatus[plugin.id]
@@ -1783,15 +1855,15 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
               }, installStatus[hero.id] === 'queued' ? '排队中…' : installStatus[hero.id] === 'installing' ? '安装中…' : '安装'),
               h('button', { className: 'dsh-pm-tool', style: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px' }, onClick: () => setDetail(hero) }, '详情'))))
       : null
-    // 分类分区（主列）：当前分类或「全部」下的卡片栅格（渐进披露沿用 PAGE_SIZE）。
-    const discoverGrid = plugins.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无插件')
+    // 卡片栅格（主列）：服务端分页，当前页已全部渲染；还有更多时按钮续页。
+    const discoverGrid = marketTotal === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无插件')
       : marketCards.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '没有匹配的插件')
       : h('div', null,
           h('div', { className: 'dsh-pm-grid' }, marketCards),
-          plugins.length > visibleCount
-            ? h('button', { className: 'dsh-pm-more', onClick: () => setVisibleCount(c => c + PAGE_SIZE) },
-                `显示更多（还有 ${plugins.length - visibleCount} 个）`)
-            : h('div', { className: 'dsh-pm-more', style: { cursor: 'default' } }, `已显示全部 ${plugins.length} 个`))
+          marketPlugins.length < marketTotal
+            ? h('button', { className: 'dsh-pm-more', disabled: loadingMore, onClick: loadMoreMarket },
+                loadingMore ? '加载中…' : `显示更多（还有 ${marketTotal - marketPlugins.length} 个）`)
+            : h('div', { className: 'dsh-pm-more', style: { cursor: 'default' } }, `已显示全部 ${marketPlugins.length} 个`))
     // sticky 手动安装行：npm 包名 / GitHub 仓库 / 本地文件夹（走现有 install 接口）。
     const manualRow = h('form', {
       className: 'dsh-pm-queue', style: { marginTop: '2px' },
@@ -1815,7 +1887,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
     const discoverTab = h('div', null,
       market === null ? h('div', { className: 'dsh-pm-empty' }, '加载中…') :
-      market === false ? h('div', { className: 'dsh-pm-empty' }, '市场数据未就绪，点左上角刷新试试') :
+      market === false ? h('div', { className: 'dsh-pm-empty' },
+        h('div', null, '市场索引还没有下载'),
+        h('button', { className: 'dsh-pm-install', style: { marginTop: '8px' }, disabled: refreshing, onClick: refreshMarket }, refreshing ? '同步中…' : '立即同步')) :
       h('div', null,
         queueStrip,
         h('div', { className: 'dsh-pm-mainhead' },
@@ -1825,6 +1899,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13)),
           h('label', { className: 'dsh-pm-find' }, icon('search', 13),
             h('input', { placeholder: '搜索插件和作者…', value: search, onChange: (e) => setSearch(e.target.value), 'aria-label': '搜索插件' }))),
+        // 左列 = 推荐位 + 分类 chips + 卡片栅格；右列 = 双榜 + 待更新。
+        // 1040px 弹层下左列约 620px，栅格 minmax(260px) 正好排 2 张卡。
         h('div', { className: 'dsh-pm-cols' },
           h('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px', minWidth: 0 } },
             heroCard,

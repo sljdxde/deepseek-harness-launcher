@@ -12,6 +12,7 @@ test.options ??= {};
 const serialTest = (name, options, fn) => test(name, { ...options, concurrency: false }, fn);
 import {
   DEFAULT_SOURCE_ID,
+  queryMarketplace,
   readSourcesConfig,
   addPluginSource,
   removePluginSource,
@@ -259,3 +260,52 @@ serialTest('readMirrorStateCached：镜像插件不可用按关闭，短缓存�
   assert.equal(calls, 1, '10 秒内只请求一次');
   resetMirrorCache();
 });
+
+serialTest('queryMarketplace：服务端分页 + 搜索 + 分类 + 排序 + 榜单', async () => {
+  await withTempHome(async (home) => {
+    // 直接写市场主索引（模拟已同步过默认源）。
+    const marketDir = join(home, 'plugin-market');
+    await mkdir(marketDir, { recursive: true });
+    const plugins = []
+    for (let i = 0; i < 130; i++) {
+      plugins.push({
+        id: 'p' + i, name: 'pkg-' + i, repo: 'o/pkg-' + i, author: 'o',
+        category: i % 2 === 0 ? 'tool' : 'data',
+        descriptionEn: i === 7 ? 'unique needle plugin' : 'plugin ' + i,
+        stars: i, downloads: 1000 - i, addedDate: '2026-01-01',
+      })
+    }
+    await writeFile(join(marketDir, 'index.json'), JSON.stringify({
+      version: 2, indexedAt: new Date().toISOString(), categories: ['tool', 'data'], plugins,
+    }))
+
+    // 第一页：默认 60 条、按星标降序、总数是全量。
+    const page1 = await queryMarketplace({});
+    assert.equal(page1.total, 130);
+    assert.equal(page1.plugins.length, 60);
+    assert.equal(page1.plugins[0].name, 'pkg-129', '默认按星标降序');
+    assert.equal(page1.counts.find(item => item.name === 'tool').count, 65);
+
+    // 第二页：offset 生效且不与第一页重叠。
+    const page2 = await queryMarketplace({ offset: 60 });
+    assert.equal(page2.plugins[0].name, 'pkg-69');
+    assert.ok(!page1.plugins.some(item => item.id === page2.plugins[0].id), '两页不重叠');
+
+    // 分类过滤 + 下载排序。
+    const dataOnly = await queryMarketplace({ category: 'data', sort: 'downloads' });
+    assert.equal(dataOnly.total, 65);
+    assert.ok(dataOnly.plugins.every(item => item.category === 'data'));
+    assert.equal(dataOnly.plugins[0].name, 'pkg-1', '下载量最高的是 pkg-1（1000-1）');
+
+    // 搜索：命中描述里的 needle。
+    const search = await queryMarketplace({ q: 'needle' });
+    assert.equal(search.total, 1);
+    assert.equal(search.plugins[0].name, 'pkg-7');
+
+    // 榜单与推荐位始终来自全量（不受当前筛选影响）。
+    assert.equal(search.topDownloads.length, 5);
+    assert.equal(search.topDownloads[0].name, 'pkg-0', '下载榜第一是 pkg-0（1000）');
+    assert.equal(search.topStars[0].name, 'pkg-129', '星标榜第一是 pkg-129');
+    assert.equal(search.featured.length, 5);
+  })
+})
