@@ -805,19 +805,20 @@ await openInstalledPanel(runtime);
     }
     if (url.startsWith('/dsh-plugin-manager/marketplace')) {
       const query = new URLSearchParams(url.split('?')[1] || '');
-      const category = query.get('category') || 'all';
+      const group = query.get('group') || 'all';
       const limit = Number(query.get('limit')) || 60;
       const offset = Number(query.get('offset')) || 0;
       const q = (query.get('q') || '').toLowerCase();
       const filtered = marketPlugins.filter(plugin => {
-        if (category !== 'all' && plugin.category !== category) return false;
+        if (group !== 'all' && plugin.category !== group) return false;
         if (!q) return true;
         return `${plugin.name} ${plugin.repo} ${plugin.descriptionEn}`.toLowerCase().includes(q);
       });
-      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
-      const sections = category === 'all' && !q
+      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, label: name, count })).sort((a, b) => b.count - a.count);
+      const sections = group === 'all' && !q
         ? ordered.slice(0, 3).map(name => ({
-            category: name,
+            group: name,
+            label: name,
             count: categoryCounts[name],
             plugins: marketPlugins.filter(plugin => plugin.category === name).slice(0, 6),
           }))
@@ -846,12 +847,12 @@ await openInstalledPanel(runtime);
   const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
   const crumbs = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-crumbs( |$)/.test(String(node.props.className || '')));
 
-  // 1. 首屏：分类条带数量、前 6 个平铺、其余进「更多分类」，旧的 select 下拉不复存在。
-  assert.equal(segs().length, 7, '全部 + 前 5 个分类 + 更多分类');
+  // 1. 首屏：分类条 = 全部 + 全部组（服务端已归并），没有「更多分类」展开按钮。
+  assert.equal(segs().length, 1 + ordered.length, '全部 + 每个组一颗胶囊');
   assert.ok(textOf(segByLabel('全部')).includes(String(marketPlugins.length)), '「全部」带总数');
-  assert.ok(textOf(segByLabel('b')).includes('5'), '分类胶囊带数量');
+  assert.ok(textOf(segByLabel('b')).includes('5'), '组胶囊带数量');
   assert.ok(/dsh-pm-seg on/.test(String(segByLabel('全部').props.className)), '默认选中「全部」');
-  assert.equal(findAll(runtime.tree, node => node.type === 'select' && /dsh-pm-cat-more/.test(String(node.props.className || ''))).length, 0, '旧「更多分类…」下拉已删除');
+  assert.equal(findAll(runtime.tree, node => node.type === 'button' && /dsh-pm-seg more/.test(String(node.props.className || ''))).length, 0, '不再有「更多分类」展开按钮');
   assert.ok(cards().length > 0, '首屏有分区卡片');
   assert.equal(crumbs().length, 0, '首屏没有面包屑');
 
@@ -870,22 +871,15 @@ await openInstalledPanel(runtime);
   assert.equal(crumbs().length, 0, '返回发现后面包屑消失');
   assert.ok(/dsh-pm-seg on/.test(String(segByLabel('全部').props.className)), '回到全部');
 
-  // 4. 「更多分类」原位展开：尾部分类出现（不是下拉）；再点收起。
-  const moreBtn = segs().find(node => /dsh-pm-seg more/.test(String(node.props.className || '')));
-  assert.ok(moreBtn, '有「更多分类」按钮');
-  moreBtn.props.onClick();
-  await settle(runtime, 10);
-  assert.ok(segByLabel('官方'), '展开后尾部分类平铺出来');
-  assert.equal(segs().filter(node => /dsh-pm-seg more/.test(String(node.props.className || ''))).length, 1, '展开后按钮变成「收起分类」');
-  // 尾部分类同样能进分类视图。
-  segByLabel('官方').props.onClick();
+  // 4. 组胶囊再点一次＝回全部；数量少的组也能直接点（不存在「收进下拉」的组）。
+  segByLabel('b').props.onClick();
   await settleQuery(runtime);
-  assert.equal(cards().length, categoryCounts.official, '尾部分类进分类视图');
-  // 「全部」也能从分类视图退回。
-  segByLabel('全部').props.onClick();
+  assert.equal(cards().length, categoryCounts.b, '组胶囊再进分类视图');
+  segByLabel('b').props.onClick();
   await settleQuery(runtime);
-  assert.equal(crumbs().length, 0, '点「全部」退回首屏');
-  console.log('场景10（分类条：分段/展开/分类视图/返回）通过');
+  assert.equal(crumbs().length, 0, '再点已选中的组胶囊回到全部');
+  assert.ok(segByLabel('a'), '每个组都有胶囊（不再有「更多分类」）');
+  console.log('场景10（分类条：分组/分类视图/返回）通过');
 }
 
 /** 场景 11：市场刷新是后台任务 —— 刷新中面板能关，安装/切 tab 照常可用。
@@ -1243,14 +1237,14 @@ await openInstalledPanel(runtime);
     }
     if (url.startsWith('/dsh-plugin-manager/marketplace')) {
       const query = new URLSearchParams(url.split('?')[1] || '');
-      const category = query.get('category') || 'all';
+      const category = query.get('group') || 'all';
       const limit = Number(query.get('limit')) || 60;
       const offset = Number(query.get('offset')) || 0;
       const filtered = marketPlugins.filter(plugin => category === 'all' || plugin.category === category);
-      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count }));
+      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, label: name, count }));
       const sections = category === 'all'
         ? Object.entries(categoryCounts).map(([name, count]) => ({
-            category: name, count,
+            group: name, label: name, count,
             plugins: marketPlugins.filter(plugin => plugin.category === name).slice(0, 6),
           }))
         : [];
@@ -1322,4 +1316,70 @@ await openInstalledPanel(runtime);
   await settle(runtime);
   assert.ok(!String(page().props.className).includes('dsh-pm-full'), '再点恢复窗口形态');
   console.log('场景17（全屏切换）通过');
+}
+
+/** 场景 18：描述找插件 —— 模型在预筛候选里挑 top5，结果行给出名称/下载/星标/版本；
+ *  模型不可用时降级为关键词结果并如实标注。 */
+{
+  const marketPlugins = [
+    { id: 'm1', name: 'session-export', repo: 'o/session-export', author: 'o', category: 'session', descriptionEn: 'export sessions to markdown', descriptionZh: '把会话导出成 Markdown', downloads: 5200, stars: 210, version: '1.2.0', addedDate: null },
+    { id: 'm2', name: 'session-replay', repo: 'o/session-replay', author: 'o', category: 'session', descriptionEn: 'replay a session', descriptionZh: '会话回放时间线', downloads: 3100, stars: 120, version: '0.5.0', addedDate: null },
+    { id: 'm3', name: 'tokenledger', repo: 'o/tokenledger', author: 'o', category: 'data', descriptionEn: 'token usage', descriptionZh: 'token 用量统计', downloads: 9000, stars: 540, version: '1.1.0', addedDate: null },
+  ];
+  let aiCalls = 0;
+  const fetchImpl = (url, options = {}) => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({ ok: true, stale: false, total: marketPlugins.length, allTotal: marketPlugins.length, counts: [], categories: [], plugins: marketPlugins, sections: [], featured: marketPlugins.slice(0, 5), topDownloads: marketPlugins.slice(0, 5), topStars: marketPlugins.slice(0, 5) });
+    }
+    if (url === '/dsh-plugin-manager/ai-search') {
+      aiCalls += 1;
+      const body = JSON.parse(options.body || '{}');
+      if (body.query.includes('降级')) {
+        return respond({ ok: true, items: [marketPlugins[0]], candidates: 1, fallback: true, note: '没有已配置的模型，按关键词匹配给出结果' });
+      }
+      return respond({
+        ok: true, candidates: 2, promptChars: 300, fallback: false,
+        model: { provider: 'magpie', model: 'group/free' },
+        items: [
+          { ...marketPlugins[0], group: 'session', reason: '导出会话正是你描述的用途' },
+          { ...marketPlugins[1], group: 'session', reason: '附带回放时间线' },
+        ],
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+
+  const bar = () => findAll(runtime.tree, node => node.type === 'form' && /dsh-pm-ai-bar/.test(String(node.props.className || '')))[0];
+  assert.ok(bar(), '发现页有「描述找插件」检索行');
+  const input = findAll(bar(), node => node.type === 'input')[0];
+  input.props.onChange({ target: { value: '把会话导出成 Markdown' } });
+  await settle(runtime);
+  // 提交走 form 的 onSubmit（按钮是 type=submit，没有自己的 onClick）。
+  bar().props.onSubmit({ preventDefault() {} });
+  await settle(runtime, 20);
+
+  assert.equal(aiCalls, 1, '提交后调用了 /ai-search');
+  const rows = () => findAll(runtime.tree, node => node.type === 'div' && /dsh-pm-ai-row/.test(String(node.props.className || '')));
+  assert.equal(rows().length, 2, '渲染模型挑出的结果行');
+  const text = textOf(runtime.tree);
+  assert.ok(text.includes('o/session-export'), '结果给出插件名');
+  assert.ok(text.includes('导出会话正是你描述的用途'), '结果给出挑选理由');
+  assert.ok(text.includes('↓ 5.2k/周') && text.includes('★ 210'), '结果给出下载量与星标');
+  assert.ok(text.includes('从 2 个候选中选出'), '标出候选规模（上下文受控）');
+
+  // 降级路径：模型不可用时如实标注。
+  input.props.onChange({ target: { value: '降级测试' } });
+  await settle(runtime);
+  bar().props.onSubmit({ preventDefault() {} });
+  await settle(runtime, 20);
+  assert.ok(textOf(runtime.tree).includes('关键词降级'), '降级结果有明确标注');
+  console.log('场景18（描述找插件：模型挑选 + 降级标注）通过');
 }

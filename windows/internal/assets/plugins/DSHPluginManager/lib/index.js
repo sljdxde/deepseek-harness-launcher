@@ -4027,6 +4027,32 @@ const MARKET_SECTION_CATEGORIES = 3;
 const MARKET_SECTION_CARDS = 6;
 
 /**
+ * 分类归并（v3.1）：社区清单有 30+ 个英文分类，用户明确「不需要这么多分类」。
+ * 服务端把原始 category 折成 6 个中文组，分类条/分区/筛选全部按组走；
+ * 原始分类仍保留在每条插件上（详情页用）。
+ */
+export const MARKET_GROUPS = [
+  { id: 'ui', label: '界面', categories: ['ui', 'panel', 'theme', 'market'] },
+  { id: 'session', label: '会话', categories: ['session', 'memory', 'notify'] },
+  { id: 'tools', label: '工具', categories: ['tools', 'tool', 'dev', 'cli', 'skill', 'search'] },
+  { id: 'auto', label: '自动化', categories: ['workflow', 'auto', 'mcp', 'agent', 'gateway', 'prompt'] },
+  { id: 'data', label: '数据', categories: ['data', 'storage', 'usage', 'model'] },
+  { id: 'other', label: '其他', categories: [] },
+];
+const GROUP_BY_CATEGORY = new Map();
+for (const group of MARKET_GROUPS) for (const category of group.categories) GROUP_BY_CATEGORY.set(category, group.id);
+
+/** 原始分类 → 组 id（未命中的归 other）。 */
+export function marketGroupOf(category) {
+  return GROUP_BY_CATEGORY.get(String(category || '').toLowerCase()) || 'other';
+}
+
+/** 组 id → 展示名。 */
+export function marketGroupLabel(id) {
+  return (MARKET_GROUPS.find(group => group.id === id) || {}).label || '其他';
+}
+
+/**
  * 分页 + 搜索/分类/排序的市场查询（面板的发现页走这里）。
  *
  * 背景：社区清单 1.1 万个插件时 `/marketplace` 整包 9.6MB，webview 每次打开面板
@@ -4043,6 +4069,8 @@ export async function queryMarketplace(params = {}) {
   const all = Array.isArray(index.plugins) ? index.plugins : [];
   const q = String(params.q || '').trim().toLowerCase();
   const category = typeof params.category === 'string' && params.category ? params.category : 'all';
+  // 分类条按「组」筛选（ui/session/tools/auto/data/other），原始 category 仍可单独用。
+  const group = typeof params.group === 'string' && params.group ? params.group : 'all';
   const source = typeof params.source === 'string' && params.source ? params.source : 'all';
   const sort = params.sort === 'downloads' ? 'downloads' : params.sort === 'newest' ? 'newest' : 'stars';
   const limit = Math.min(Math.max(Number(params.limit) || MARKET_PAGE_SIZE, 1), MARKET_PAGE_MAX);
@@ -4051,6 +4079,7 @@ export async function queryMarketplace(params = {}) {
   const match = (plugin) => {
     if (!plugin) return false;
     if (category !== 'all' && plugin.category !== category) return false;
+    if (group !== 'all' && marketGroupOf(plugin.category) !== group) return false;
     // 来源筛选：official（npm 官方）| community（awesome-dsh 默认源）| 自定义源 id。
     if (source !== 'all') {
       if (source === 'official' && plugin.source !== 'official') return false;
@@ -4070,22 +4099,26 @@ export async function queryMarketplace(params = {}) {
   const sorted = filtered.slice().sort(sortedCompare);
 
   const counts = new Map();
-  for (const plugin of all) counts.set(plugin.category || 'other', (counts.get(plugin.category || 'other') || 0) + 1);
+  for (const plugin of all) {
+    const id = marketGroupOf(plugin.category);
+    counts.set(id, (counts.get(id) || 0) + 1);
+  }
 
   const topDownloads = all.slice().sort(byDownloads).slice(0, 5);
   const topStars = all.slice().sort(byStars).slice(0, 5);
 
   // 分类分区：只在不筛选分类、不搜索时算（发现页的首屏）；按数量取前 3 个分类，
   // 每类给当前排序下的前 6 个——一屏两整行，客户端直接按 sections 渲染。
-  const sections = category === 'all' && !q
+  const sections = category === 'all' && group === 'all' && !q
     ? [...counts]
-        .filter(([name]) => name)
+        .filter(([id]) => id !== 'other')
         .sort((a, b) => b[1] - a[1])
         .slice(0, MARKET_SECTION_CATEGORIES)
-        .map(([name, count]) => ({
-          category: name,
+        .map(([id, count]) => ({
+          group: id,
+          label: marketGroupLabel(id),
           count,
-          plugins: all.filter(plugin => plugin && plugin.category === name).sort(sortedCompare).slice(0, MARKET_SECTION_CARDS),
+          plugins: all.filter(plugin => plugin && marketGroupOf(plugin.category) === id).sort(sortedCompare).slice(0, MARKET_SECTION_CARDS),
         }))
     : [];
 
@@ -4095,7 +4128,7 @@ export async function queryMarketplace(params = {}) {
     indexedAt: index.indexedAt ?? null,
     total: filtered.length,
     allTotal: all.length,
-    counts: [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+    counts: [...counts].map(([id, count]) => ({ name: id, label: marketGroupLabel(id), count })).sort((a, b) => b.count - a.count),
     categories: Array.isArray(index.categories) ? index.categories : [],
     plugins: sorted.slice(offset, offset + limit),
     sections,
@@ -4132,6 +4165,263 @@ export async function readMarketplaceAggregated() {
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// 描述找插件（模型检索）
+//
+// 用户用自然语言描述想要的插件 → 服务端先在本地索引里做关键词预筛（最多 40 条
+// 候选），再把**这 40 条**交给模型挑 top5。上下文注入严格受控：
+//   * 候选上限 40 条，每条描述截断 100 字，单条一行（约 120 字）；
+//   * 用户描述上限 500 字；
+//   * 整个 prompt 超过 12000 字符直接拒绝，不把索引灌进模型；
+//   * 模型只输出 JSON（编号 + 一句话理由），不生成插件信息本身。
+// 没有模型 / 模型失败时降级为关键词排序 top5，并如实标注 fallback。
+// ---------------------------------------------------------------------------
+
+const AI_SEARCH_MAX_CANDIDATES = 40;
+const AI_SEARCH_MAX_DESC = 100;
+const AI_SEARCH_MAX_QUERY = 500;
+const AI_SEARCH_MAX_PROMPT = 12000;
+const AI_SEARCH_LIMIT = 5;
+
+/** 关键词预筛：名称/仓库命中权重高，描述与分类次之；只保留有命中的条目。 */
+export function rankPluginsByKeywords(plugins, query) {
+  const text = String(query || '').trim().toLowerCase();
+  if (!text) return [];
+  const tokens = text.split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 2);
+  if (tokens.length === 0) return [];
+  const scored = [];
+  for (const plugin of Array.isArray(plugins) ? plugins : []) {
+    if (!plugin) continue;
+    const name = String(plugin.name || '').toLowerCase();
+    const repo = String(plugin.repo || '').toLowerCase();
+    const description = `${plugin.descriptionEn || ''} ${plugin.descriptionZh || ''}`.toLowerCase();
+    const category = String(plugin.category || '').toLowerCase();
+    let score = 0;
+    for (const token of tokens) {
+      if (name.includes(token)) score += 4;
+      if (repo.includes(token)) score += 3;
+      if (description.includes(token)) score += 2;
+      if (category.includes(token)) score += 1;
+    }
+    if (text.length >= 4 && description.includes(text)) score += 3;
+    if (score > 0) scored.push({ plugin, score });
+  }
+  scored.sort((a, b) => b.score - a.score
+    || (b.plugin.stars || 0) - (a.plugin.stars || 0)
+    || (b.plugin.downloads || 0) - (a.plugin.downloads || 0));
+  return scored.map(item => item.plugin);
+}
+
+/** 候选 → prompt（每行一条，描述截断，总长度受控）。 */
+export function buildPluginSearchPrompt(query, candidates) {
+  const lines = candidates.map((plugin, index) => {
+    const description = String(plugin.descriptionZh || plugin.descriptionEn || '').replace(/\s+/g, ' ').slice(0, AI_SEARCH_MAX_DESC);
+    const downloads = Number(plugin.downloads) || 0;
+    const stars = Number(plugin.stars) || 0;
+    return `${index + 1}. ${plugin.repo || plugin.name} | ${plugin.category || 'other'} | ↓${downloads} | ★${stars} | ${description}`;
+  });
+  const prompt = [
+    '你是 dsh 插件检索助手。用户用自然语言描述想要的能力，请从候选插件里挑出最相关的（最多 5 个，宁缺毋滥）。',
+    '候选格式：编号. 名称 | 分类 | 周下载 | 星标 | 描述',
+    lines.join('\n'),
+    `用户需求：${String(query).slice(0, AI_SEARCH_MAX_QUERY)}`,
+    '只输出 JSON，不要解释：{"picks":[{"i":1,"why":"一句话说明为什么符合"}]}，按相关度从高到低；没有相关的就输出 {"picks":[]}。',
+  ].join('\n');
+  return prompt;
+}
+
+/**
+ * 从模型输出里取出 picks。容错：```json 围栏、前后废话、`picks` 是数字数组、
+ * 键名写成 index/n/num、以及模型直接报名称而不是编号（按候选名/仓库名反查）。
+ * @param {string} text - 模型输出。
+ * @param {number} candidateCount - 候选条数（编号 1..n）。
+ * @param {{name?:string,repo?:string}[]} [candidates] - 供名称反查。
+ */
+export function parseSearchPicks(text, candidateCount, candidates = []) {
+  const raw = String(text || '');
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) return [];
+  let parsed = null;
+  try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { return []; }
+  const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.picks) ? parsed.picks : [];
+  const nameIndex = new Map();
+  for (let i = 0; i < candidates.length; i++) {
+    const plugin = candidates[i] || {};
+    for (const key of [plugin.name, plugin.repo]) {
+      if (typeof key === 'string' && key) nameIndex.set(key.toLowerCase(), i);
+    }
+  }
+  const resolve = (pick) => {
+    if (typeof pick === 'number') return pick;
+    if (typeof pick === 'string') {
+      const trimmed = pick.trim();
+      if (/^\d+$/.test(trimmed)) return Number(trimmed);
+      return nameIndex.has(trimmed.toLowerCase()) ? nameIndex.get(trimmed.toLowerCase()) + 1 : null;
+    }
+    if (!pick || typeof pick !== 'object') return null;
+    for (const key of ['i', 'index', 'n', 'num', 'id']) {
+      const value = pick[key];
+      if (typeof value === 'number') return value;
+      if (typeof value === 'string' && value) {
+        if (/^\d+$/.test(value)) return Number(value);
+        if (nameIndex.has(value.toLowerCase())) return nameIndex.get(value.toLowerCase()) + 1;
+      }
+    }
+    for (const key of ['name', 'repo', 'plugin']) {
+      const value = pick[key];
+      if (typeof value === 'string' && nameIndex.has(value.toLowerCase())) return nameIndex.get(value.toLowerCase()) + 1;
+    }
+    return null;
+  };
+  const seen = new Set();
+  const out = [];
+  for (const pick of list) {
+    const index = resolve(pick);
+    if (!Number.isInteger(index) || index < 1 || index > candidateCount || seen.has(index)) continue;
+    seen.add(index);
+    const why = pick && typeof pick === 'object' && typeof pick.why === 'string' ? pick.why.trim().slice(0, 120) : '';
+    out.push({ index: index - 1, why });
+    if (out.length >= AI_SEARCH_LIMIT) break;
+  }
+  return out;
+}
+
+/**
+ * 候选路由（有序）：`free` 型号优先，其次便宜型号（flash/mini/lite…），最后其余。
+ * 之所以要多条：用户机器上可能既有免费路由又有余额不足的付费路由（实测 402
+ * ACCOUNT_QUOTA），必须能换一条再试，而不是直接降级。
+ */
+export async function resolveSearchRoutes(llm, max = 4) {
+  const providers = typeof llm?.listProviders === 'function' ? llm.listProviders() : [];
+  const routes = [];
+  for (const provider of providers || []) {
+    const models = await Promise.resolve(llm.listModels(provider.id)).catch(() => []);
+    for (const model of Array.isArray(models) ? models : []) {
+      const modalities = model.inputModalities;
+      if (Array.isArray(modalities) && !modalities.includes('text')) continue;
+      routes.push({ provider: provider.id, model: model.id });
+    }
+  }
+  const rank = (route) => {
+    const id = String(route.model || '').toLowerCase();
+    if (id.includes('free')) return 0;
+    if (/flash|mini|lite|small|haiku/.test(id)) return 1;
+    return 2;
+  };
+  return routes
+    .map((route, index) => ({ route, index }))
+    .sort((a, b) => rank(a.route) - rank(b.route) || a.index - b.index)
+    .slice(0, max)
+    .map(item => item.route);
+}
+
+/** 单路由调用：返回 { text } 或 { error }（含终态 error finish 的原因）。 */
+async function streamSearchCompletion(llm, route, prompt, signal) {
+  const call = await llm.prepareCall({ provider: route.provider, model: route.model, maxTokens: 800 }, signal);
+  let text = '';
+  let finish = null;
+  for await (const chunk of call.stream({
+    ...call.config,
+    messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+    system: '你只输出 JSON，不要解释。',
+    maxTokens: 800,
+    signal,
+  })) {
+    if (!chunk || typeof chunk.type !== 'string') continue;
+    if (chunk.type === 'finish') finish = chunk;
+    if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text;
+    if (text.length > 4000) break;
+  }
+  if (finish && finish.reason && finish.reason.kind === 'error') {
+    const failure = finish.reason.failure || {};
+    return { error: String(failure.message || '模型调用失败') };
+  }
+  return { text };
+}
+
+/** 把候选映射成接口返回的条目。 */
+function searchItems(candidates, picks, fallback) {
+  const chosen = fallback
+    ? candidates.slice(0, AI_SEARCH_LIMIT).map((plugin, index) => ({ index, why: '' }))
+    : picks;
+  return chosen.map(pick => {
+    const plugin = candidates[pick.index];
+    if (!plugin) return null;
+    return {
+      id: plugin.id,
+      name: plugin.name,
+      repo: plugin.repo,
+      url: plugin.url,
+      category: plugin.category,
+      group: marketGroupOf(plugin.category),
+      description: plugin.descriptionZh || plugin.descriptionEn || '',
+      downloads: Number(plugin.downloads) || 0,
+      stars: Number(plugin.stars) || 0,
+      version: plugin.version || null,
+      reason: pick.why || '',
+    };
+  }).filter(Boolean);
+}
+
+/**
+ * 描述找插件。llm 为宿主 ctx.llm（没有就纯关键词降级）。
+ * @param {{query:string, llm?:object, timeoutMs?:number, deps?:object}} options
+ */
+export async function searchPluginsByDescription(options = {}) {
+  const query = String(options.query || '').trim();
+  if (!query) return { ok: false, error: '请描述你想要的插件' };
+  if (query.length > AI_SEARCH_MAX_QUERY) return { ok: false, error: `描述太长（上限 ${AI_SEARCH_MAX_QUERY} 字）` };
+  const index = await marketplaceIndexCached();
+  const all = Array.isArray(index.plugins) ? index.plugins : [];
+  const ranked = rankPluginsByKeywords(all, query).slice(0, AI_SEARCH_MAX_CANDIDATES);
+  if (ranked.length === 0) {
+    return { ok: true, items: [], candidates: 0, fallback: true, note: '插件库里没有匹配这条描述的插件，换个说法试试' };
+  }
+  const prompt = buildPluginSearchPrompt(query, ranked);
+  if (prompt.length > AI_SEARCH_MAX_PROMPT) {
+    return { ok: false, error: '候选上下文超出上限，请把描述写得更具体一点' };
+  }
+  const llm = options.llm;
+  if (!llm) {
+    return { ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true, note: '未找到可用模型，按关键词匹配给出结果' };
+  }
+  const routes = await resolveSearchRoutes(llm).catch(() => []);
+  if (routes.length === 0) {
+    return { ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true, note: '没有已配置的模型，按关键词匹配给出结果' };
+  }
+  let lastError = '';
+  let debugInfo = options.debug ? { routes } : {};
+  for (const route of routes) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Number(options.timeoutMs) || 30000);
+    try {
+      const outcome = await streamSearchCompletion(llm, route, prompt, controller.signal);
+      if (outcome.error) {
+        // 硬错误（余额不足 / 路由不可用）：换下一条路由，别把它当成「没有相关插件」。
+        lastError = outcome.error;
+        if (options.debug) debugInfo = { ...debugInfo, lastRouteError: { route, error: outcome.error } };
+        continue;
+      }
+      const picks = parseSearchPicks(outcome.text, ranked.length, ranked);
+      if (options.debug) debugInfo = { ...debugInfo, rawText: outcome.text.slice(0, 800), rawLength: outcome.text.length, picks };
+      if (picks.length === 0) {
+        return { ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true, note: '模型没有挑出相关插件，按关键词匹配给出结果', ...debugInfo };
+      }
+      return { ok: true, items: searchItems(ranked, picks, false), candidates: ranked.length, promptChars: prompt.length, model: route, fallback: false, ...debugInfo };
+    } catch (error) {
+      lastError = String(error?.message || error);
+      if (options.debug) debugInfo = { ...debugInfo, lastRouteError: { route, error: lastError } };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return {
+    ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true,
+    note: `模型检索失败（${lastError || '所有路由都不可用'}），按关键词匹配给出结果`, ...debugInfo,
+  };
+}
 
 function json(response, status, value) {
   response.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' });
@@ -4171,7 +4461,14 @@ export function ignoreEntriesFromBody(value) {
 }
 
 export const name = 'dsh-plugin-manager';
+
+/** 宿主模型服务：可选注入（未配置任何 provider 时保持 null，检索降级为关键词）。 */
+let hostLlm = null;
+
 export function apply(ctx) {
+  ctx.inject(['llm'], host => {
+    hostLlm = host.llm || null;
+  });
   ctx.inject(['webServer'], host => {
     host.effect(() => {
       const disposers = [
@@ -4214,6 +4511,7 @@ export function apply(ctx) {
             json(res, 200, await queryMarketplace({
               q: url.searchParams.get('q') || '',
               category: url.searchParams.get('category') || 'all',
+              group: url.searchParams.get('group') || 'all',
               source: url.searchParams.get('source') || 'all',
               sort: url.searchParams.get('sort') || 'stars',
               limit: url.searchParams.get('limit'),
@@ -4230,6 +4528,15 @@ export function apply(ctx) {
           void refreshPluginSources().catch(() => {});
         }}),
         // 源刷新进度（形态与 /updates 的 progress 对齐）：轮询到 active=false 即结束。
+        // 描述找插件：本地关键词预筛 ≤40 条候选 → 模型挑 top5（无模型时关键词降级）。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/ai-search', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            const result = await searchPluginsByDescription({ query: value?.query, llm: hostLlm, debug: value?.debug === true });
+            json(res, result.ok ? 200 : 400, result);
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources/progress', handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
           json(res, 200, { progress: readSourceRefreshProgress() });

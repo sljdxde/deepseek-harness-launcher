@@ -105,6 +105,8 @@
   用户源存 `~/.dsh/plugin-manager/sources.json`，每源缓存存 `sources-cache/<id>.json`；
   聚合顺序 = 官方 npm 查询 → awesome-dsh-plugin（内置默认源）→ 用户启用的自定义源，
   按 url 去重。刷新是后台任务（`POST /refresh` 回 202，进度读 `/sources/progress`）。
+- 插件分类在服务端归并成 6 组（界面/会话/工具/自动化/数据/其他，见 `MARKET_GROUPS`）：社区清单有 30+ 个英文分类，用户明确不要那么多，分类条/分区/筛选一律按组走，原始 category 只留在条目上。**分类条不许再加「更多分类」展开或下拉**（守卫会拦）。
+- 「描述找插件」是**本地预筛 + 模型挑选**：服务端先按关键词在索引里打分取 ≤40 条候选，再把候选（每条描述截断 100 字、整个 prompt < 12000 字符）交给 `ctx.llm` 挑 top5；模型只回 JSON 编号+理由，不生成插件信息。路由按 free→便宜型号排序，遇到 402/余额不足等硬错误换下一条路由；全失败才降级为关键词结果并标注「关键词降级」。**绝不允许把整份索引灌进模型上下文**（`AI_SEARCH_MAX_CANDIDATES` 等常量就是护栏）。
 - 国内加速是**独立插件** `Plugins/DSHChinaMirror`（Windows 内置，`assets.Plugins` 解出并
   链接，base patch 现场合成）。两个插件之间只允许一条协议：镜像插件提供
   `GET /dsh-china-mirror/state → { enabled, table }` 与 `POST /dsh-china-mirror/enabled`，

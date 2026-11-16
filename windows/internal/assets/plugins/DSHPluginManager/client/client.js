@@ -267,7 +267,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-card-icon.dsh-pm-hue-cyan,.dsh-pm-card-chip.dsh-pm-hue-cyan{background:color-mix(in srgb,#1b7fa8 13%,transparent);color:color-mix(in srgb,#1b7fa8 80%,var(--dsw-alias-label-primary))}
 .dsh-pm-card-icon.dsh-pm-hue-indigo,.dsh-pm-card-chip.dsh-pm-hue-indigo{background:color-mix(in srgb,#4f63d2 13%,transparent);color:color-mix(in srgb,#4f63d2 80%,var(--dsw-alias-label-primary))}
 .dsh-pm-card-chip{align-items:center;border-radius:5px;display:inline-flex;font-size:10.5px;font-weight:600;gap:3px;height:17px;padding:0 6px}
-/* 分类条：带数量的分段胶囊；「更多分类」在原位展开，不再用下拉 */
+/* 分类条：带数量的分段胶囊（服务端已归并成 6 组，直接平铺，无展开/无下拉） */
 .dsh-pm-catbar{align-items:center;display:flex;flex-wrap:wrap;gap:12px;padding-top:4px}
 .dsh-pm-segs{display:inline-flex;flex:1 1 0;flex-wrap:nowrap;gap:5px;min-width:0;overflow-x:auto;scrollbar-width:none}
 .dsh-pm-segs::-webkit-scrollbar{display:none}
@@ -295,6 +295,26 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-crumbs{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;font-size:12px;gap:6px}
 .dsh-pm-crumbs-back{align-items:center;background:none;border:0;border-radius:6px;color:var(--pm-accent);cursor:pointer;display:inline-flex;font:inherit;font-size:12px;font-weight:600;gap:4px;padding:2px 6px}
 .dsh-pm-crumbs-back:hover{background:color-mix(in srgb,var(--pm-accent) 10%,transparent)}
+/* 描述找插件：一条虚线检索行 + 结果面板（top5，带理由/下载/星标/版本） */
+.dsh-pm-ai-bar{align-items:center;background:color-mix(in srgb,var(--pm-accent) 5%,transparent);border:1px dashed color-mix(in srgb,var(--pm-accent) 35%,transparent);border-radius:12px;color:var(--pm-accent);display:flex;gap:10px;padding:11px 14px}
+.dsh-pm-ai-bar .inp{background:none;border:0;color:var(--dsw-alias-label-primary);flex:1;font:inherit;font-size:13px;min-width:0;outline:none}
+.dsh-pm-ai-bar .inp::placeholder{color:var(--dsw-alias-label-tertiary)}
+.dsh-pm-ai-go{background:var(--pm-accent);border:0;border-radius:15px;color:var(--pm-accent-fg);cursor:pointer;flex:none;font:inherit;font-size:12.5px;font-weight:600;height:30px;padding:0 16px;white-space:nowrap}
+.dsh-pm-ai-go:hover:not(:disabled){filter:brightness(1.06)}
+.dsh-pm-ai-go:disabled{cursor:default;opacity:.55}
+.dsh-pm-ai{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;display:flex;flex-direction:column;gap:10px;padding:16px 18px}
+.dsh-pm-ai-head{align-items:baseline;display:flex;flex-wrap:wrap;gap:10px}
+.dsh-pm-ai-head h3{color:var(--dsw-alias-label-primary);font-size:13.5px;font-weight:700;margin:0}
+.dsh-pm-ai-head .meta{color:var(--dsw-alias-label-tertiary);font-size:11.5px}
+.dsh-pm-ai-note{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}
+.dsh-pm-ai-note.bad{color:var(--dsw-alias-state-error-primary)}
+.dsh-pm-ai-list{border-top:1px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column}
+.dsh-pm-ai-row{align-items:center;border-bottom:1px solid var(--dsw-alias-border-l2);display:flex;gap:12px;padding:11px 2px}
+.dsh-pm-ai-row .rk{color:var(--pm-accent);flex:none;font-size:12px;font-weight:800;text-align:center;width:16px}
+.dsh-pm-ai-row .who{flex:1;min-width:0}
+.dsh-pm-ai-row .nm{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-pm-ai-row .why{color:var(--dsw-alias-label-tertiary);font-size:11.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-pm-ai-row .meta{color:var(--dsw-alias-label-tertiary);display:flex;flex:none;font-size:11px;font-variant-numeric:tabular-nums;gap:10px}
 .dsh-pm-pager{align-items:center;display:flex;gap:10px;justify-content:center;padding:6px 0 2px}
 .dsh-pm-pager .more{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:16px;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;font:inherit;font-size:12.5px;font-weight:600;gap:6px;height:32px;padding:0 18px}
 .dsh-pm-pager .more:hover{border-color:var(--pm-accent);color:var(--pm-accent)}
@@ -333,6 +353,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     expand: '<path d="M6 2.5H2.5V6M10 2.5h3.5V6M6 13.5H2.5V10M10 13.5h3.5V10"/>',
     collapse: '<path d="M2.5 6H6V2.5M13.5 6H10V2.5M2.5 10H6v3.5M13.5 10H10v3.5"/>',
     back: '<path d="M10 3.5 5.5 8 10 12.5"/>',
+    sparkle: '<path d="M8 1.8l1.1 2.9 2.9 1.1-2.9 1.1L8 9.8 6.9 6.9 4 5.8l2.9-1.1Z"/><path d="M12.4 10.4l.6 1.5 1.5.6-1.5.6-.6 1.5-.6-1.5-1.5-.6 1.5-.6Z"/>',
     download: '<path d="M8 2.5v7.5M8 10l2.8-2.8M8 10 5.2 7.2"/><path d="M2.5 13.5h11"/>',
     star: '<path d="M8 2.2l1.7 3.6 3.9.5-2.8 2.7.7 3.9L8 11l-3.5 1.9.7-3.9L2.4 6.3l3.9-.5Z"/>',
     cube: '<path d="M8 1.8 13.8 4.8v6.4L8 14.2 2.2 11.2V4.8Z"/><path d="M2.2 4.8 8 7.8l5.8-3M8 7.8v6.4"/>',
@@ -907,9 +928,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const [manualSpec, setManualSpec] = React.useState('')
     const [category, setCategory] = React.useState('all')
     const [sort, setSort] = React.useState('stars')
-    // 「更多分类」在原位展开（替代旧的下拉）；来源筛选：all | official | community | 自定义源 id。
-    const [catExpanded, setCatExpanded] = React.useState(false)
+    // 来源筛选：all | official | community | 自定义源 id。
     const [source, setSource] = React.useState('all')
+    // 描述找插件（模型检索）：输入、加载、结果。
+    const [aiQuery, setAiQuery] = React.useState('')
+    const [aiLoading, setAiLoading] = React.useState(false)
+    const [aiResult, setAiResult] = React.useState(null)
     // 全屏：面板铺满窗口（记住上次选择；localStorage 不可用时静默降级）。
     const [fullscreen, setFullscreen] = React.useState(() => {
       try { return window.localStorage.getItem('dsh-plugin-manager:fullscreen') === '1' } catch { return false }
@@ -986,7 +1010,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         ['limit', PAGE_SIZE],
         ['offset', overrides.offset ?? 0],
         ['q', overrides.q ?? search],
-        ['category', overrides.category ?? category],
+        ['group', overrides.group ?? category],
         ['source', overrides.source ?? source],
         ['sort', overrides.sort ?? sort],
       ]
@@ -1687,13 +1711,16 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       for (const plugin of marketPlugins) counts.set(plugin.category, (counts.get(plugin.category) || 0) + 1)
       return counts
     }, [market, marketPlugins])
-    // 分类条：按数量降序，前 5 个平铺（留出「更多分类」与右侧两个下拉），其余原位展开。
+    // 分类条：服务端已把 30+ 个原始分类折成 6 组（counts 里带 label），这里直接按
+    // 数量排序平铺（用户明确不要那么多分类，也不要横向展开）。
     const orderedCategories = React.useMemo(
       () => [...categoryCounts.keys()].filter(Boolean).sort((a, b) => (categoryCounts.get(b) || 0) - (categoryCounts.get(a) || 0)),
       [categoryCounts]
     )
-    const pinnedCategories = orderedCategories.slice(0, 5)
-    const tailCategories = orderedCategories.slice(6)
+    const groupLabel = (id) => {
+      const hit = Array.isArray(market?.counts) ? market.counts.find(item => item.name === id) : null
+      return (hit && hit.label) || categoryLabel(id)
+    }
     const marketTotal = Number(market?.total ?? marketPlugins.length) || 0
     const marketFeatured = Array.isArray(market?.featured) && market.featured.length > 0
       ? market.featured
@@ -1944,6 +1971,66 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
                   loadingMore ? '加载中…' : '显示更多', icon('chev', 12))
               : h('span', { className: 'meta' }, '已全部显示'),
             h('span', { className: 'meta' }, `已显示 ${marketPlugins.length} / ${marketTotal}`)))
+    // 描述找插件：把自然语言描述交给服务端（关键词预筛 ≤40 条 → 模型挑 top5）。
+    const runAiSearch = () => {
+      const query = aiQuery.trim()
+      if (!query || aiLoading) return
+      setAiLoading(true)
+      setAiResult(null)
+      fetch('/dsh-plugin-manager/ai-search', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }) })
+        .then(r => r.json())
+        .then(value => {
+          if (value.error) throw Error(value.error)
+          setAiResult(value)
+        })
+        .catch(error => setAiResult({ ok: false, error: String(error.message || error), items: [] }))
+        .finally(() => setAiLoading(false))
+    }
+    const aiRow = (item, index) => {
+      const isInstalled = isInstalledPlugin(item)
+      return h('div', { className: 'dsh-pm-ai-row', key: item.id },
+        h('span', { className: 'rk', 'aria-hidden': true }, String(index + 1)),
+        h('div', { className: `dsh-pm-card-icon ${categoryHue(item.category)}`, style: { flex: 'none', width: '32px', height: '32px', borderRadius: '9px' } }, icon(categoryIcon(item.category), 16)),
+        h('div', { className: 'who' },
+          h('div', { className: 'nm' }, item.repo || item.name),
+          item.reason ? h('div', { className: 'why' }, item.reason) : h('div', { className: 'why' }, item.description || '')),
+        h('div', { className: 'meta' },
+          h('span', null, `↓ ${formatNumber(item.downloads)}/周`),
+          h('span', null, `★ ${formatNumber(item.stars)}`),
+          item.version ? h('span', null, `v${item.version}`) : null),
+        isInstalled
+          ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
+          : h('button', { className: 'dsh-pm-install', onClick: () => install({ ...item, category: item.category }) }, '安装'))
+    }
+    const aiPanel = (aiLoading || aiResult)
+      ? h('div', { className: 'dsh-pm-ai' },
+          h('div', { className: 'dsh-pm-ai-head' },
+            h('h3', null, '描述检索'),
+            h('span', { className: 'meta' },
+              aiLoading ? '正在检索…'
+                : aiResult && aiResult.ok
+                  ? `${aiResult.items.length} 个结果 · 从 ${aiResult.candidates} 个候选中选出${aiResult.fallback ? ' · 关键词降级' : ''}`
+                  : ''),
+            h('span', { style: { flex: 1 } }),
+            h('button', { className: 'dsh-pm-tool', onClick: () => { setAiResult(null); setAiQuery('') }, 'aria-label': '关闭描述检索结果' }, icon('x', 13))),
+          aiResult && aiResult.error ? h('div', { className: 'dsh-pm-ai-note bad' }, aiResult.error) : null,
+          aiResult && aiResult.note ? h('div', { className: 'dsh-pm-ai-note' }, aiResult.note) : null,
+          aiResult && aiResult.items && aiResult.items.length > 0
+            ? h('div', { className: 'dsh-pm-ai-list' }, aiResult.items.map(aiRow))
+            : null)
+      : null
+    const aiSearchBar = h('form', {
+      className: 'dsh-pm-ai-bar',
+      onSubmit: (event) => { event.preventDefault(); runAiSearch() },
+    },
+      icon('sparkle', 14),
+      h('input', {
+        className: 'inp', value: aiQuery, onChange: (event) => setAiQuery(event.target.value),
+        placeholder: '描述你想要的插件，例如「把会话导出成 Markdown」',
+        'aria-label': '描述你想要的插件',
+      }),
+      h('button', { type: 'submit', className: 'dsh-pm-ai-go', disabled: aiLoading || !aiQuery.trim() }, aiLoading ? '检索中…' : '找插件'))
+
     // sticky 手动安装行：npm 包名 / GitHub 仓库 / 本地文件夹（走现有 install 接口）。
     const manualRow = h('form', {
       className: 'dsh-pm-queue', style: { marginTop: '2px' },
@@ -1980,16 +2067,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const categoryBar = h('div', { className: 'dsh-pm-catbar' },
       h('div', { className: 'dsh-pm-segs' },
         categorySeg('all', '全部', market && market.allTotal ? market.allTotal : marketTotal, category === 'all'),
-        pinnedCategories.map(name => categorySeg(name, categoryLabel(name), categoryCounts.get(name) || 0, category === name)),
-        tailCategories.length > 0
-          ? h('button', {
-              key: 'seg-more',
-              className: 'dsh-pm-seg more',
-              onClick: () => setCatExpanded(value => !value),
-              title: '其余分类（按插件数量）',
-            }, catExpanded ? '收起分类' : '更多分类', h('span', { className: 'n' }, catExpanded ? '−' : `+${tailCategories.length}`))
-          : null,
-        catExpanded ? tailCategories.map(name => categorySeg(name, categoryLabel(name), categoryCounts.get(name) || 0, category === name)) : null),
+        orderedCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name))),
       h('span', { className: 'dsh-pm-catbar-sp' }),
       h('select', { className: 'dsh-pm-select', value: source, onChange: (e) => setSource(e.target.value), title: '按插件来源过滤', 'aria-label': '按来源过滤' },
         h('option', { value: 'all' }, '来源：全部'),
@@ -2003,36 +2081,35 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
     // 分类分区：每区 6 张（三列两整行），分区头/尾各一个「查看全部 N 个」。
     const sectionView = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
-      marketSections.map(section => h('div', { className: 'dsh-pm-sec2', key: 'sec-' + section.category },
-        h('div', { className: 'dsh-pm-sechead2' },
-          h('h3', null, categoryLabel(section.category)),
-          h('span', { className: 'n' }, `${section.count} 个插件`),
-          h('span', { className: 'viewall', role: 'button', tabIndex: 0, onClick: () => setCategory(section.category) },
-            `查看全部 ${section.count} 个`, icon('chev', 12))),
-        h('div', { className: 'dsh-pm-grid' }, section.plugins.map(cardNode)),
-        h('div', { className: 'dsh-pm-morelink' },
-          h('button', { onClick: () => setCategory(section.category) },
-            `查看全部 ${section.count} 个${categoryLabel(section.category)}插件`, icon('chev', 12))))),
-      orderedCategories.length > 0
-        ? h('div', { className: 'dsh-pm-morelink' },
-            h('button', { onClick: () => setCatExpanded(true) },
-              `浏览全部 ${orderedCategories.length} 个分类 · ${market && market.allTotal ? market.allTotal : marketTotal} 个插件`, icon('chev', 12)))
-        : null)
+      marketSections.map(section => {
+        const id = section.group || section.category
+        const label = section.label || groupLabel(id)
+        return h('div', { className: 'dsh-pm-sec2', key: 'sec-' + id },
+          h('div', { className: 'dsh-pm-sechead2' },
+            h('h3', null, label),
+            h('span', { className: 'n' }, `${section.count} 个插件`),
+            h('span', { className: 'viewall', role: 'button', tabIndex: 0, onClick: () => setCategory(id) },
+              `查看全部 ${section.count} 个`, icon('chev', 12))),
+          h('div', { className: 'dsh-pm-grid' }, section.plugins.map(cardNode)),
+          h('div', { className: 'dsh-pm-morelink' },
+            h('button', { onClick: () => setCategory(id) },
+              `查看全部 ${section.count} 个${label}插件`, icon('chev', 12))))
+      }))
 
     // 分类视图：面包屑返回 + 该分类全量列表（服务端分页）+ 分类条保留。
     const categoryView = h('div', null,
       h('div', { className: 'dsh-pm-crumbs' },
         h('button', { className: 'dsh-pm-crumbs-back', onClick: () => setCategory('all') }, icon('back', 12), '返回发现'),
         h('span', { className: 'sep' }, '/'),
-        h('span', null, categoryLabel(category))),
+        h('span', null, groupLabel(category))),
       h('div', { className: 'dsh-pm-mainhead' },
-        h('h2', null, categoryLabel(category)),
+        h('h2', null, groupLabel(category)),
         h('span', { className: 'date' }, `${marketTotal} 个插件`),
         h('span', { style: { flex: 1 } }),
         refreshing ? h('span', { className: 'dsh-pm-footnote' }, '刷新中…') : null,
         h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13)),
         h('label', { className: 'dsh-pm-find' }, icon('search', 13),
-          h('input', { placeholder: `在「${categoryLabel(category)}」里搜索…`, value: search, onChange: (e) => setSearch(e.target.value), 'aria-label': '在当前分类里搜索' }))),
+          h('input', { placeholder: `在「${groupLabel(category)}」里搜索…`, value: search, onChange: (e) => setSearch(e.target.value), 'aria-label': '在当前分类里搜索' }))),
       categoryBar,
       discoverGrid,
       manualRow)
@@ -2046,6 +2123,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13)),
         h('label', { className: 'dsh-pm-find' }, icon('search', 13),
           h('input', { placeholder: '搜索插件和作者…', value: search, onChange: (e) => setSearch(e.target.value), 'aria-label': '搜索插件' }))),
+      aiSearchBar,
+      aiPanel,
       heroCard,
       h('div', { className: 'dsh-pm-cols2' },
         rankCard('下载最多', 'npm 上周', marketTopDownloads, 'dl'),

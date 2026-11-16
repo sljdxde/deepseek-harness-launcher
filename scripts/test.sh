@@ -160,6 +160,19 @@ rg -Fq 'dsh-pm-hue-brand' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq '场景10（分类条：分段/展开/分类视图/返回）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -Fq '场景16（分区查看全部 → 分类视图 + 分页）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -Fq '场景17（全屏切换）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+rg -Fq '场景18（描述找插件：模型挑选 + 降级标注）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 分类条已归并成 6 组（用户明确不要那么多分类，也不要横向展开）。
+rg -Fq 'MARKET_GROUPS' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'marketGroupOf' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+if rg -Fq 'dsh-pm-seg more' "$ROOT/Plugins/DSHPluginManager/client/client.js"; then
+  echo "分类条不许再有展开按钮（6 组直接平铺）" >&2
+  exit 1
+fi
+# 描述找插件：本地预筛 + 模型挑选，上下文上限必须有守卫。
+rg -Fq "'/dsh-plugin-manager/ai-search'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'AI_SEARCH_MAX_CANDIDATES' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'buildPluginSearchPrompt' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+rg -Fq 'dsh-pm-ai-bar' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 全屏：面板可铺满窗口（顶栏按钮 + localStorage 记忆）。
 rg -Fq 'dsh-pm-full' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'toggleFullscreen' "$ROOT/Plugins/DSHPluginManager/client/client.js"

@@ -13,6 +13,12 @@ const serialTest = (name, options, fn) => test(name, { ...options, concurrency: 
 import {
   DEFAULT_SOURCE_ID,
   queryMarketplace,
+  marketGroupOf,
+  marketGroupLabel,
+  rankPluginsByKeywords,
+  buildPluginSearchPrompt,
+  parseSearchPicks,
+  searchPluginsByDescription,
   readSourcesConfig,
   addPluginSource,
   removePluginSource,
@@ -309,3 +315,163 @@ serialTest('queryMarketplace：服务端分页 + 搜索 + 分类 + 排序 + 榜�
     assert.equal(search.featured.length, 5);
   })
 })
+
+serialTest('marketGroupOf：30+ 个原始分类折成 6 组，未命中的归 other', () => {
+  const cases = {
+    ui: 'ui', panel: 'ui', theme: 'ui', market: 'ui',
+    session: 'session', memory: 'session', notify: 'session',
+    tools: 'tools', tool: 'tools', dev: 'tools', cli: 'tools', skill: 'tools', search: 'tools',
+    workflow: 'auto', auto: 'auto', mcp: 'auto', agent: 'auto', gateway: 'auto', prompt: 'auto',
+    data: 'data', storage: 'data', usage: 'data', model: 'data',
+    browser: 'other', web: 'other', image: 'other', voice: 'other', official: 'other',
+    '': 'other', undefined: 'other',
+  };
+  for (const [category, group] of Object.entries(cases)) {
+    assert.equal(marketGroupOf(category), group, `category=${String(category)}`);
+  }
+  assert.equal(marketGroupLabel('ui'), '界面');
+  assert.equal(marketGroupLabel('nope'), '其他');
+});
+
+serialTest('queryMarketplace：group 过滤 + 按组计数 + 分区（每区 6 个）', async () => {
+  await withTempHome(async (home) => {
+    const marketDir = join(home, 'plugin-market');
+    await mkdir(marketDir, { recursive: true });
+    const plugins = [];
+    const add = (category, n) => {
+      for (let i = 0; i < n; i++) {
+        plugins.push({
+          id: `${category}-${i}`, name: `${category}-plugin-${i}`, repo: `o/${category}-${i}`,
+          author: 'o', category, descriptionEn: `${category} plugin ${i}`,
+          stars: 10 - i, downloads: 100 - i, addedDate: '2026-01-01',
+        });
+      }
+    };
+    add('ui', 8); add('session', 5); add('tools', 3); add('browser', 2);
+    await writeFile(join(marketDir, 'index.json'), JSON.stringify({
+      version: 2, indexedAt: new Date().toISOString(), categories: ['ui', 'session', 'tools', 'browser'], plugins,
+    }));
+
+    const all = await queryMarketplace({});
+    const counts = new Map(all.counts.map(item => [item.name, item.count]));
+    assert.equal(counts.get('ui'), 8, '界面组计数');
+    assert.equal(counts.get('session'), 5, '会话组计数');
+    assert.equal(counts.get('other'), 2, 'browser 归其他');
+    assert.equal(all.counts.length, 4, '只有出现过的组');
+    assert.deepEqual(all.sections.map(section => section.group), ['ui', 'session', 'tools'], '分区按数量取前三组');
+    assert.ok(all.sections.every(section => section.plugins.length <= 6), '每区最多 6 个');
+    assert.equal(all.sections[0].label, '界面', '分区带中文组名');
+
+    const uiOnly = await queryMarketplace({ group: 'ui' });
+    assert.equal(uiOnly.total, 8, 'group 过滤生效');
+    assert.ok(uiOnly.plugins.every(plugin => marketGroupOf(plugin.category) === 'ui'));
+
+    const otherOnly = await queryMarketplace({ group: 'other' });
+    assert.equal(otherOnly.total, 2, 'other 组包含未映射分类');
+
+    const searching = await queryMarketplace({ q: 'ui-plugin-1' });
+    assert.equal(searching.sections.length, 0, '搜索时不返回分区（省 payload）');
+  });
+});
+
+serialTest('rankPluginsByKeywords：名称命中优先于描述，无命中返回空', () => {
+  const plugins = [
+    { id: 'a', name: 'session-export', repo: 'o/session-export', descriptionEn: 'export sessions', stars: 10, downloads: 100 },
+    { id: 'b', name: 'random-tool', repo: 'o/random-tool', descriptionEn: 'export sessions to markdown', stars: 99, downloads: 900 },
+    { id: 'c', name: 'unrelated', repo: 'o/unrelated', descriptionEn: 'nothing here', stars: 1, downloads: 1 },
+  ];
+  const ranked = rankPluginsByKeywords(plugins, 'export');
+  assert.deepEqual(ranked.map(plugin => plugin.id), ['a', 'b'], '名称命中排在描述命中之前');
+  assert.deepEqual(rankPluginsByKeywords(plugins, 'zzz'), [], '无命中返回空');
+  assert.deepEqual(rankPluginsByKeywords(plugins, ''), [], '空查询返回空');
+});
+
+serialTest('buildPluginSearchPrompt：候选与描述都有上限（上下文受控）', () => {
+  const longDesc = '很长的描述'.repeat(200);
+  const candidates = Array.from({ length: 40 }, (_, i) => ({
+    id: 'p' + i, name: 'pkg-' + i, repo: 'o/pkg-' + i, category: 'ui',
+    descriptionZh: longDesc, downloads: 1000 + i, stars: i,
+  }));
+  const prompt = buildPluginSearchPrompt('把会话导出成 markdown', candidates);
+  assert.ok(prompt.length < 12000, 'prompt 长度受控：' + prompt.length);
+  const lines = prompt.split('\n').filter(line => /^\d+\. /.test(line));
+  assert.equal(lines.length, 40, '候选全部列出');
+  for (const line of lines) {
+    const parts = line.split(' | ');
+    assert.ok(parts[4].length <= 100, '单条描述截断到 100 字：' + parts[4].length);
+  }
+  assert.ok(prompt.includes('用户需求：把会话导出成 markdown'));
+  assert.ok(prompt.includes('{"picks"'), '要求模型只输出 JSON');
+});
+
+serialTest('parseSearchPicks：容忍围栏/废话、去重、越界丢弃、最多 5 个', () => {
+  const fenced = '好的，结果如下：\n```json\n{"picks":[{"i":2,"why":"a"},{"i":1,"why":"b"}]}\n```';
+  assert.deepEqual(parseSearchPicks(fenced, 3), [{ index: 1, why: 'a' }, { index: 0, why: 'b' }]);
+  const noisy = '{"picks":[{"i":1},{"i":1},{"i":9},{"i":0}]}';
+  assert.deepEqual(parseSearchPicks(noisy, 3), [{ index: 0, why: '' }], '去重 + 越界丢弃');
+  const many = '{"picks":[{"i":1},{"i":2},{"i":3},{"i":4},{"i":5},{"i":6}]}';
+  assert.equal(parseSearchPicks(many, 10).length, 5, '最多 5 个');
+  assert.deepEqual(parseSearchPicks('不是 JSON', 3), []);
+});
+
+serialTest('searchPluginsByDescription：模型在预筛候选里挑；无模型降级', async () => {
+  await withTempHome(async (home) => {
+    const marketDir = join(home, 'plugin-market');
+    await mkdir(marketDir, { recursive: true });
+    const plugins = [
+      { id: 'a', name: 'session-export', repo: 'o/session-export', author: 'o', category: 'session', descriptionEn: 'export sessions to markdown', descriptionZh: '把会话导出成 Markdown', stars: 210, downloads: 5200, version: '1.2.0' },
+      { id: 'b', name: 'session-replay', repo: 'o/session-replay', author: 'o', category: 'session', descriptionEn: 'replay sessions', descriptionZh: '会话回放', stars: 120, downloads: 3100, version: '0.5.0' },
+      { id: 'c', name: 'tokenledger', repo: 'o/tokenledger', author: 'o', category: 'data', descriptionEn: 'token usage', descriptionZh: 'token 用量', stars: 540, downloads: 9000, version: '1.1.0' },
+    ];
+    await writeFile(join(marketDir, 'index.json'), JSON.stringify({
+      version: 2, indexedAt: new Date().toISOString(), categories: ['session', 'data'], plugins,
+    }));
+
+    // 假 llm：只支持一个 provider，返回「选第 1 个」。
+    let seenPrompt = '';
+    const llm = {
+      listProviders: () => [{ id: 'magpie', name: 'Magpie' }],
+      listModels: async () => [{ provider: 'magpie', id: 'group/free', name: 'Free' }],
+      prepareCall: async (config) => ({
+        config: { ...config },
+        stream: async function* (options) {
+          seenPrompt = options.messages[0].content[0].text;
+          yield { type: 'text-delta', text: '{"picks":[{"i":1,"why":"导出会话正是这个用途"}]}' };
+        },
+      }),
+    };
+    const result = await searchPluginsByDescription({ query: '把会话导出成 markdown', llm });
+    assert.equal(result.ok, true);
+    assert.equal(result.fallback, false);
+    assert.equal(result.candidates, 2, '只把命中的 2 个候选给模型');
+    assert.ok(result.promptChars < 12000, 'prompt 受控');
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].name, 'session-export');
+    assert.equal(result.items[0].group, 'session');
+    assert.equal(result.items[0].reason, '导出会话正是这个用途');
+    assert.equal(result.items[0].downloads, 5200);
+    assert.ok(seenPrompt.includes('session-export'), '模型确实拿到了候选');
+    assert.ok(!seenPrompt.includes('tokenledger'), '无关插件不进上下文');
+
+    // 无模型：关键词降级，并说明原因。
+    const fallback = await searchPluginsByDescription({ query: '把会话导出成 markdown', llm: null });
+    assert.equal(fallback.fallback, true);
+    assert.match(fallback.note, /关键词/);
+    assert.equal(fallback.items[0].name, 'session-export', '降级仍给最相关的一个');
+
+    // 模型抛错：同样降级，不把错误抛给 UI。
+    const broken = {
+      listProviders: () => [{ id: 'p', name: 'P' }],
+      listModels: async () => [{ provider: 'p', id: 'm', name: 'M' }],
+      prepareCall: async () => { throw new Error('boom'); },
+    };
+    const degraded = await searchPluginsByDescription({ query: '会话导出', llm: broken });
+    assert.equal(degraded.fallback, true);
+    assert.match(degraded.note, /模型检索失败/);
+
+    // 无关键词命中：不硬凑结果。
+    const none = await searchPluginsByDescription({ query: '完全无关的词汇xyz', llm });
+    assert.deepEqual(none.items, []);
+    assert.equal(none.candidates, 0);
+  });
+});
