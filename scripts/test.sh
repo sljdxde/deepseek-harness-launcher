@@ -159,6 +159,10 @@ rg -Fq 'categoryHue' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'dsh-pm-hue-brand' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq '场景10（分类条：分段/展开/分类视图/返回）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -Fq '场景16（分区查看全部 → 分类视图 + 分页）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+rg -Fq '场景17（全屏切换）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 全屏：面板可铺满窗口（顶栏按钮 + localStorage 记忆）。
+rg -Fq 'dsh-pm-full' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'toggleFullscreen' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 发现页结构（v3）：本周推荐整行 → 双榜两列 → 分类条 → 分区（每区 6 张）。
 rg -Fq 'dsh-pm-cols2' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'MARKET_SECTION_CARDS' "$ROOT/Plugins/DSHPluginManager/lib/index.js"

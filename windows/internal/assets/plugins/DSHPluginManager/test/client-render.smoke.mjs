@@ -1293,3 +1293,33 @@ await openInstalledPanel(runtime);
   assert.ok(textOf(runtime.tree).includes('已全部显示'), '全部加载后提示');
   console.log('场景16（分区查看全部 → 分类视图 + 分页）通过');
 }
+
+/** 场景 17：全屏切换 —— 顶栏按钮把面板切到铺满窗口的形态，再点恢复。 */
+{
+  const fetchImpl = url => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) return respond({ ok: true, stale: false, total: 0, allTotal: 0, counts: [], categories: [], plugins: [], sections: [], featured: [], topDownloads: [], topStars: [] });
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+
+  const page = () => findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '').includes('dsh-pm-page'))[0];
+  const toggle = () => findAll(runtime.tree, node => node.type === 'button' && ['全屏显示', '退出全屏'].includes(node.props['aria-label']))[0];
+  assert.ok(page(), '面板存在');
+  assert.ok(!String(page().props.className).includes('dsh-pm-full'), '默认不是全屏');
+  assert.ok(toggle(), '顶栏有全屏按钮');
+  toggle().props.onClick();
+  await settle(runtime);
+  assert.ok(String(page().props.className).includes('dsh-pm-full'), '点全屏后进入铺满形态');
+  assert.equal(toggle().props['aria-label'], '退出全屏', '按钮变成「退出全屏」');
+  toggle().props.onClick();
+  await settle(runtime);
+  assert.ok(!String(page().props.className).includes('dsh-pm-full'), '再点恢复窗口形态');
+  console.log('场景17（全屏切换）通过');
+}
