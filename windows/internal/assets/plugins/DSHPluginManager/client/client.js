@@ -53,6 +53,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-check{accent-color:var(--dsw-alias-brand-primary);cursor:pointer;flex:0 0 16px;height:16px;margin:0;width:16px}
 .dsh-pm-bulkbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .dsh-pm-bulkbar .dsh-pm-tool{font-size:12px;padding:4px 10px}
+.dsh-pm-find{display:flex;align-items:center;gap:6px;height:30px;width:min(240px,46%);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);padding:0 10px;transition:box-shadow .14s ease,background .14s ease}
+.dsh-pm-find:focus-within{background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 1px var(--dsw-alias-brand-primary),0 0 0 3px color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent)}
+.dsh-pm-find input{flex:1;min-width:0;border:0;outline:none;background:none;color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px}
+.dsh-pm-find input::placeholder{color:var(--dsw-alias-label-tertiary)}
 .dsh-pm-search{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);border-radius:8px;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;flex:1 1 220px;min-width:180px;padding:7px 12px}
 .dsh-pm-search:focus{border-color:var(--dsw-alias-brand-primary);outline:none}
 .dsh-pm-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
@@ -175,11 +179,157 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-notes-md .dsh-pm-md-p{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px;margin:6px 0}
 .dsh-pm-notes-md .dsh-pm-md-ul{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px;margin:6px 0;padding-left:18px}
 .dsh-pm-notes-md .dsh-pm-md-ul li{margin:3px 0}
-.dsh-pm-notes-md .dsh-pm-md-code{background:var(--dsw-alias-bg-layer-2);border-radius:4px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;padding:1px 5px}`
-  const CATEGORY_EMOJI = { official: '🛡️', browser: '🌐', tool: '🛠️', ui: '🎨', storage: '🗄️', workflow: '🔀', agent: '🤖', search: '🔍', data: '📊', network: '🌍', dev: '💻', other: '🧩' }
-  // 市场分类显示名：官方来源是服务端合成的 'official' 分类，其余分类沿用远端给的原词。
-  const CATEGORY_LABELS = { official: '官方' }
+.dsh-pm-notes-md .dsh-pm-md-code{background:var(--dsw-alias-bg-layer-2);border-radius:4px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;padding:1px 5px}
+/* ── 方案 B 布局：页面内左栏（发现/内置/已安装/插件源）＋ 双列内容区 ──
+   颜色全部走宿主语义 token，深浅主题自动跟随。窄窗口（<860px）左栏收成
+   顶部一行、右列折到主列下方。 */
+.dsh-pm-frame{display:flex;flex:1;min-height:0}
+.dsh-pm-rail{flex:none;width:150px;border-right:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);padding:12px 8px;display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+.dsh-pm-rail-title{font-size:10.5px;font-weight:600;letter-spacing:.05em;color:var(--dsw-alias-label-tertiary);padding:6px 10px 4px;text-transform:uppercase}
+.dsh-pm-rail-item{align-items:center;background:none;border:0;border-radius:8px;box-sizing:border-box;color:var(--dsw-alias-label-secondary);cursor:pointer;display:flex;flex:0 0 auto;font:inherit;font-size:12.5px;gap:9px;height:34px;padding:0 10px;text-align:left;width:100%}
+.dsh-pm-rail-item:hover{background:var(--dsw-alias-button-ghost-active-fill);color:var(--dsw-alias-label-primary)}
+.dsh-pm-rail-item.on{background:var(--dsw-alias-bg-layer-1);box-shadow:0 1px 2px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.06);color:var(--dsw-alias-label-primary);font-weight:600}
+.dsh-pm-rail-item .n{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums;margin-left:auto}
+.dsh-pm-rail-item.dsh-pm-rail-updates{color:var(--dsw-alias-brand-primary)}
+.dsh-pm-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px;overflow-y:auto;padding:16px 18px 22px}
+/* SVG 线性图标：16 网格 / 1.5 描边 / currentColor，替代 emoji。 */
+.dsh-pm-ic{display:inline-flex;flex:none}
+/* 主列头部：标题 + 日期 + 搜索 + 刷新。 */
+.dsh-pm-mainhead{align-items:center;display:flex;gap:10px;flex:0 0 auto;flex-wrap:wrap}
+.dsh-pm-mainhead h2{color:var(--dsw-alias-label-primary);font-size:16px;font-weight:700;margin:0;letter-spacing:-.01em}
+.dsh-pm-mainhead .date{color:var(--dsw-alias-label-tertiary);font-size:12px}
+/* 推荐位（左）＋ 右列（下载榜/星标榜/待更新）。 */
+.dsh-pm-cols{align-items:start;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(240px,1fr);gap:14px;flex:0 0 auto}
+.dsh-pm-hero{background:radial-gradient(120% 140% at 0% 0%,color-mix(in srgb,var(--dsw-alias-brand-primary) 9%,transparent),transparent 55%),var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;display:flex;gap:12px;padding:14px}
+.dsh-pm-hero .who{flex:1;min-width:0}
+.dsh-pm-hero-tag{color:var(--dsw-alias-brand-primary);font-size:11px;font-weight:600}
+.dsh-pm-hero-name{align-items:center;color:var(--dsw-alias-label-primary);display:flex;flex-wrap:wrap;gap:7px;font-size:14.5px;font-weight:700}
+.dsh-pm-hero-desc{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5;margin:4px 0 8px}
+.dsh-pm-hero-stats{color:var(--dsw-alias-label-tertiary);display:flex;flex-wrap:wrap;gap:12px;font-size:11px;font-variant-numeric:tabular-nums}
+/* 榜单卡：标题行 + 行列表（名次着色）。 */
+.dsh-pm-rank{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;overflow:hidden}
+.dsh-pm-rank-head{align-items:baseline;display:flex;gap:8px;padding:11px 14px 9px}
+.dsh-pm-rank-head h3{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:650;margin:0}
+.dsh-pm-rank-head .sub{color:var(--dsw-alias-label-tertiary);font-size:11px}
+.dsh-pm-rank-row{align-items:center;display:flex;gap:10px;min-height:44px;padding:7px 14px}
+.dsh-pm-rank-row + .dsh-pm-rank-row{border-top:1px solid var(--dsw-alias-border-l2)}
+.dsh-pm-rank-row:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-pm-rank-row .rk{color:var(--dsw-alias-label-tertiary);flex:none;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;text-align:center;width:16px}
+.dsh-pm-rank-row:nth-child(-n+3) .rk{color:var(--dsw-alias-state-warn-primary)}
+.dsh-pm-rank-row .who{flex:1;min-width:0}
+.dsh-pm-rank-row .nm{color:var(--dsw-alias-label-primary);font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-pm-rank-row .sub{color:var(--dsw-alias-label-tertiary);font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 分类分区：标题 + 查看全部。 */
+.dsh-pm-sechead{align-items:baseline;display:flex;flex-wrap:wrap;gap:8px;margin-bottom:9px}
+.dsh-pm-sechead h3{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:650;margin:0}
+.dsh-pm-sechead .sub{color:var(--dsw-alias-label-tertiary);font-size:11.5px}
+.dsh-pm-sechead .viewall{color:var(--dsw-alias-brand-primary);cursor:pointer;font-size:12px;margin-left:auto}
+.dsh-pm-sechead .viewall:hover{text-decoration:underline}
+/* 已验证 / 来源徽章。 */
+.dsh-pm-verified{align-items:center;color:var(--dsw-alias-state-success-primary);display:inline-flex;flex:none;gap:3px;font-size:11px;font-weight:550}
+.dsh-pm-repl{background:none;box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary);font-weight:400}
+/* 待更新横条（右列底部）。 */
+.dsh-pm-updatestrip{background:var(--dsw-alias-brand-soft,var(--dsw-alias-state-business-tertiary,rgba(59,130,246,.12)));border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 28%,transparent);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:9px;font-size:12px}
+.dsh-pm-updatestrip .grow{color:var(--dsw-alias-label-secondary);flex:1;min-width:0}
+/* 插件源页行。 */
+.dsh-pm-srcrow{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;display:flex;gap:11px;padding:10px 13px}
+.dsh-pm-srcrow:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-pm-srcrow .who{flex:1;min-width:0}
+.dsh-pm-srcrow .nm{align-items:center;color:var(--dsw-alias-label-primary);display:flex;gap:7px;font-size:13px;font-weight:600}
+.dsh-pm-srcrow .spec{color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-pm-srcrow .meta{color:var(--dsw-alias-label-tertiary);font-size:11px;margin-top:2px}
+.dsh-pm-srcadd{display:flex;gap:8px;align-items:center}
+.dsh-pm-srcadd .inp{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;box-sizing:border-box;color:var(--dsw-alias-label-primary);flex:1;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;height:30px;min-width:160px;outline:none;padding:0 10px}
+.dsh-pm-srcadd .inp:focus{border-color:var(--dsw-alias-brand-primary)}
+.dsh-pm-footnote{color:var(--dsw-alias-label-tertiary);font-size:11.5px;line-height:1.5}
+/* 内置页说明行（magpie feat-say 式）。 */
+.dsh-pm-featsay{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5;margin:0 0 10px}
+/* 国内加速开关（顶栏内联，magpie pm-mirror 式）。 */
+.dsh-pm-mirror{align-items:center;background:none;border:0;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:12px;gap:7px;padding:2px 0;white-space:nowrap}
+.dsh-pm-mirror:hover,.dsh-pm-mirror.on{color:var(--dsw-alias-label-primary)}
+.dsh-pm-mirror:disabled{cursor:default;opacity:.6}
+.dsh-pm-mirror .track{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l3);border-radius:999px;box-sizing:border-box;display:inline-block;flex:none;height:16px;position:relative;transition:background .15s,width .15s;width:28px}
+.dsh-pm-mirror .track:after{background:var(--dsw-alias-label-tertiary);border-radius:50%;content:"";height:12px;left:1px;position:absolute;top:1px;transition:transform .15s,background .15s;width:12px}
+.dsh-pm-mirror.on .track{background:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-primary)}
+.dsh-pm-mirror.on .track:after{background:var(--dsw-alias-bg-layer-1);transform:translateX(12px)}
+/* 窄窗口：左栏收成顶部一行（内容区 < 860px 由容器查询兜不住时媒体查询兜底）。 */
+@media (max-width:860px){
+  .dsh-pm-frame{flex-direction:column}
+  .dsh-pm-rail{border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2);flex-direction:row;overflow-x:auto;padding:8px 10px;width:100%}
+  .dsh-pm-rail-title{display:none}
+  .dsh-pm-rail-item{flex:1 0 auto;justify-content:center;width:auto}
+  .dsh-pm-rail-item .n{margin-left:3px}
+  .dsh-pm-cols{grid-template-columns:1fr}
+}`
+  /* SVG 线性图标集（16 网格 / 1.5 描边 / currentColor）：分类、榜单与工具按钮
+     全部用矢量图标，不用 emoji（跨平台字形不一致、与宿主设计语言不搭）。 */
+  const ICON_PATHS = {
+    search: '<circle cx="6.5" cy="6.5" r="4.5"/><path d="m10.2 10.2 3.8 3.8"/>',
+    refresh: '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/>',
+    plus: '<path d="M8 3.5v9M3.5 8h9"/>',
+    check: '<path d="m3.5 8.5 3 3 6-7"/>',
+    shield: '<path d="M8 1.5 13.5 3.5v4c0 3.6-2.3 6-5.5 7-3.2-1-5.5-3.4-5.5-7v-4Z"/><path d="m5.8 7.7 1.6 1.6 2.8-3"/>',
+    x: '<path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/>',
+    chev: '<path d="m6 3.5 4.5 4.5L6 12.5"/>',
+    download: '<path d="M8 2.5v7.5M8 10l2.8-2.8M8 10 5.2 7.2"/><path d="M2.5 13.5h11"/>',
+    star: '<path d="M8 2.2l1.7 3.6 3.9.5-2.8 2.7.7 3.9L8 11l-3.5 1.9.7-3.9L2.4 6.3l3.9-.5Z"/>',
+    cube: '<path d="M8 1.8 13.8 4.8v6.4L8 14.2 2.2 11.2V4.8Z"/><path d="M2.2 4.8 8 7.8l5.8-3M8 7.8v6.4"/>',
+    compass: '<circle cx="8" cy="8" r="6"/><path d="M10.8 5.2 9.2 9.2 5.2 10.8 6.8 6.8Z"/>',
+    bell: '<path d="M8 2.2a4 4 0 0 0-4 4v2.6L2.6 11h10.8L12 8.8V6.2a4 4 0 0 0-4-4Z"/><path d="m6.2 13.2a1.9 1.9 0 0 0 3.6 0"/>',
+    globe: '<circle cx="8" cy="8" r="6"/><path d="M2 8h12"/><path d="M8 2c2.2 2.4 2.2 9.6 0 12-2.2-2.4-2.2-9.6 0-12Z"/>',
+    chart: '<path d="M3 13.5V9.5M8 13.5V4M13 13.5V6.5"/>',
+    zap: '<path d="M9.2 1.8 4 9h3.6L6.8 14.2 12 7H8.4Z"/>',
+    hdd: '<path d="M2.5 9.5h11v3.5h-11Z"/><path d="M2.5 9.5 4.2 4h7.6l1.7 5.5"/><path d="M5 11.2h.01"/>',
+    layers: '<path d="M8 2.2 13.8 5 8 7.8 2.2 5Z"/><path d="m2.2 8 5.8 2.8L13.8 8"/><path d="m2.2 10.5 5.8 2.8 5.8-2.8"/>',
+    server: '<rect x="2.5" y="2.5" width="11" height="4.5" rx="1.2"/><rect x="2.5" y="9" width="11" height="4.5" rx="1.2"/><path d="M5 4.75h.01M5 11.25h.01M10 4.75h1.5M10 11.25h1.5"/>',
+    puzzle: '<path d="M6 2.5h4v2.2a1.3 1.3 0 1 0 2.6 0V2.5H13.5v4h-2.2a1.3 1.3 0 1 0 0 2.6h2.2v4.4h-4v-2.2a1.3 1.3 0 1 0-2.6 0v2.2H2.5V9h2.2a1.3 1.3 0 1 0 0-2.6H2.5V2.5H6Z"/>',
+    archive: '<rect x="2" y="3" width="12" height="3" rx=".8"/><path d="M3.2 6v6.5A1.5 1.5 0 0 0 4.7 14h6.6a1.5 1.5 0 0 0 1.5-1.5V6"/><path d="M6.5 8.5h3"/>',
+    branch: '<circle cx="5" cy="3.5" r="1.7"/><circle cx="5" cy="12.5" r="1.7"/><circle cx="11.5" cy="5" r="1.7"/><path d="M5 5.2v5.6M11.5 6.7c0 3-2.9 4.8-6.5 4.8"/>',
+    message: '<path d="M2.5 3h11a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5H7.5L4.5 13.5v-2.5h-2a.5.5 0 0 1-.5-.5v-7a.5.5 0 0 1 .5-.5Z"/>',
+    palette: '<circle cx="8" cy="8" r="6"/><circle cx="6" cy="6" r="1"/><circle cx="10" cy="6" r="1"/><path d="M8 14c0-2 1.5-2.5 3-2.5"/>',
+    workflow: '<path d="M3 2.5v6a2 2 0 0 0 2 2h8"/><rect x="9" y="8.5" width="4.5" height="4.5" rx="1"/><circle cx="3" cy="11" r="1.5"/>',
+    robot: '<rect x="3" y="5" width="10" height="8" rx="2"/><path d="M8 2.5V5M6.5 9h.01M9.5 9h.01M6 11h4"/>',
+    gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.9 3.9l1.4 1.4M10.7 10.7l1.4 1.4M12.1 3.9l-1.4 1.4M5.3 10.7l-1.4 1.4"/>',
+  }
+  /**
+   * 渲染一个线性 SVG 图标节点。name 是 ICON_PATHS 的键；size 是像素边长。
+   * aria-hidden 恒真：图标永远伴随可见文字或 aria-label，不单独承载语义。
+   */
+  function icon(name, size = 14) {
+    const path = ICON_PATHS[name] || ICON_PATHS.puzzle
+    return h('span', { className: 'dsh-pm-ic', 'aria-hidden': true },
+      h('svg', { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', dangerouslySetInnerHTML: undefined },
+        // h() 是 createElement：path 内容直接用 dangerouslySetInnerHTML 会带来
+        // React 告警；这里 path 是本文件写死的字符串，用 <g> 包一层
+        // 或干脆用 innerHTML 都可以，但为了走 createElement，展开成子节点：
+        ...(function expand() {
+          // 极简 path 展开器：把 ICON_PATHS 的 d/rect/circle 标记转成 vnode 数组。
+          const nodes = []
+          const tokenRe = /<(path|rect|circle)\b([^>]*)\/?>|<path\b([^>]*)\/>/g
+          let m
+          const attrRe = /([a-zA-Z-]+)="([^"]*)"/g
+          while ((m = tokenRe.exec(path))) {
+            const tag = m[1]
+            const attrs = {}
+            let a
+            const attrText = m[2] ?? m[3] ?? ''
+            while ((a = attrRe.exec(attrText))) attrs[a[1]] = a[2]
+            nodes.push(h(tag, { key: nodes.length, ...attrs }))
+          }
+          return nodes
+        })()))
+  }
+
+  /* 分类 → 图标与展示名（与 magpie 的 kind chip 同思路：图标着色区分类型）。 */
+  const CATEGORY_ICONS = {
+    official: 'shield', browser: 'globe', tool: 'gear', ui: 'palette', storage: 'hdd',
+    workflow: 'workflow', agent: 'robot', search: 'search', data: 'chart',
+    network: 'globe', dev: 'cube', panel: 'layers', notify: 'bell', auto: 'zap',
+    message: 'message', store: 'archive', other: 'puzzle',
+  }
+  const CATEGORY_LABELS = { official: '官方', panel: '面板', auto: '自动化' }
   const categoryLabel = category => CATEGORY_LABELS[category] || category || '其他'
+  const categoryIcon = category => CATEGORY_ICONS[category] || 'puzzle'
   /** 市场列表首屏与每次「显示更多」的行数（渐进披露，性能关键路径）。 */
   const PAGE_SIZE = 60
 
@@ -664,10 +814,18 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
   function PluginManagerPage({ wide, t, onClose, store }) {
     ensureStyles()
-    const [tab, setTab] = React.useState('installed')
+    // 方案 B：默认落在「发现」（magpie 同构——打开插件页就是逛市场），
+    // 已安装/内置/插件源经左栏切换。tabs: discover | builtin | installed | sources
+    const [tab, setTab] = React.useState('discover')
+    // 插件源清单：GET /sources（builtin 默认源 + 用户自定义源，带每源缓存状态）。
+    const [sources, setSources] = React.useState(null)
+    // 国内加速状态：{ enabled, pluginPresent }；null = 还没读到。
+    const [mirror, setMirror] = React.useState(null)
+    const [mirrorSaving, setMirrorSaving] = React.useState(false)
     const [installed, setInstalled] = React.useState([])
     const [market, setMarket] = React.useState(null)
     const [search, setSearch] = React.useState('')
+    const [manualSpec, setManualSpec] = React.useState('')
     const [category, setCategory] = React.useState('all')
     const [sort, setSort] = React.useState('stars')
     const [detail, setDetail] = React.useState(null)
@@ -746,9 +904,66 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       })
     // loadInstalled 成功后顺带刷新停用状态，避免打开面板时重复请求 /disabled。
     React.useEffect(() => { loadInstalled() }, [])
-    React.useEffect(() => { if (tab === 'market') loadMarket() }, [tab])
+    React.useEffect(() => { if (tab === 'discover') loadMarket() }, [tab])
     // 打开面板立刻读一次更新缓存；服务端若正在后台刷新（首轮检测），就等它跑完再显示。
     React.useEffect(() => { pollUpdates().then(applyUpdates) }, [])
+    /// 插件源清单与国内加速状态：打开面板读一次；源页操作后重读。
+    const loadSources = () => fetch('/dsh-plugin-manager/sources', { cache: 'no-store' })
+      .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); setSources(v.sources || []) })
+      .catch(e => { if (aliveRef.current) setSources([]) })
+    const loadMirror = () => fetch('/dsh-plugin-manager/china-mirror', { cache: 'no-store' })
+      .then(r => r.json()).then(v => setMirror({ enabled: v.enabled === true, pluginPresent: v.pluginPresent !== false }))
+      .catch(() => setMirror({ enabled: false, pluginPresent: false }))
+    React.useEffect(() => { loadSources(); loadMirror() }, [])
+    React.useEffect(() => { if (tab === 'sources') loadSources() }, [tab])
+    /// 国内加速开关：转发给镜像插件（写盘立即生效），失败时如实说插件不可用。
+    const toggleMirror = () => {
+      if (mirrorSaving || !mirror) return
+      setMirrorSaving(true)
+      const next = !(mirror && mirror.enabled)
+      fetch('/dsh-plugin-manager/china-mirror/set', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: next }) })
+        .then(r => r.json()).then(v => {
+          if (v.error) throw Error(v.error)
+          setMirror({ enabled: v.enabled === true, pluginPresent: true })
+          toast('info', v.enabled ? '国内加速已开启：npm 与 GitHub 下载走国内镜像' : '国内加速已关闭：恢复直连')
+        })
+        .catch(e => toast('error', `切换国内加速失败：${String(e.message || e)}`))
+        .finally(() => setMirrorSaving(false))
+    }
+    /// 添加/删除/启停插件源：写完重读清单并刷新一次聚合索引（后台，不阻塞）。
+    const addSource = (kind, url) => {
+      setBusy('source-add')
+      fetch('/dsh-plugin-manager/sources/add', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, url }) })
+        .then(r => r.json()).then(v => {
+          if (v.error) throw Error(v.error)
+          toast('success', v.alreadyAdded ? '这个源已经添加过了' : `已添加源 ${v.source.url}，正在拉取索引…`)
+          startMarketRefresh().catch(() => {})
+          return loadSources()
+        })
+        .catch(e => toast('error', `添加源失败：${String(e.message || e)}`))
+        .finally(() => setBusy(''))
+    }
+    const removeSource = (id) => {
+      setBusy('source-remove')
+      fetch('/dsh-plugin-manager/sources/remove', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
+        .then(r => r.json()).then(v => {
+          if (v.error) throw Error(v.error)
+          toast('success', '已删除源（已安装的插件不受影响）')
+          return loadSources()
+        })
+        .catch(e => toast('error', `删除源失败：${String(e.message || e)}`))
+        .finally(() => setBusy(''))
+    }
+    const toggleSource = (source) => {
+      setBusy('source-toggle-' + source.id)
+      fetch('/dsh-plugin-manager/sources/set-enabled', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: source.id, enabled: !(source.enabled !== false) }) })
+        .then(r => r.json()).then(v => {
+          if (v.error) throw Error(v.error)
+          return loadSources()
+        })
+        .catch(e => toast('error', `切换源状态失败：${String(e.message || e)}`))
+        .finally(() => setBusy(''))
+    }
     // 异步批量更新结束（lastBatch.finishedAt）后弹一条汇总 toast；轮询、重开面板、
     // 强制检测都会重复读到同一批次，去重交给 store 的水印。
     React.useEffect(() => { if (updates && updates.lastBatch) announceBatchFinish(updates.lastBatch) }, [updates])
@@ -1438,7 +1653,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       const isInstalled = isInstalledPlugin(plugin)
       const status = installStatus[plugin.id]
       return h('div', { className: 'dsh-pm-card', key: plugin.id, onClick: () => setDetail(plugin) },
-        h('div', { className: 'dsh-pm-card-icon' }, CATEGORY_EMOJI[plugin.category] || '🧩'),
+        h('div', { className: 'dsh-pm-card-icon' }, icon(categoryIcon(plugin.category), 16)),
         h('div', { className: 'dsh-pm-card-main' },
           h('div', { className: 'dsh-pm-card-title' }, plugin.repo || plugin.name),
           h('div', { className: 'dsh-pm-card-author' }, `${plugin.author || plugin.name} · ${categoryLabel(plugin.category)}`),
@@ -1508,42 +1723,221 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             queueView.length > 1 ? `，还有 ${queueView.length - 1} 个排队` : ''))
       : null
 
-    const marketTab = h('div', null,
-      market === null ? h('div', { className: 'dsh-pm-empty' }, '加载中…') :
-      market === false ? h('div', { className: 'dsh-pm-empty' }, '市场数据未就绪') :
-      h('div', null,
-        queueStrip,
-        h('div', { className: 'dsh-pm-toolbar' },
-          h('input', { className: 'dsh-pm-search', placeholder: '搜索插件 / 作者 / 描述…', value: search, onChange: (e) => setSearch(e.target.value) }),
-          h('div', { className: 'dsh-pm-chips' },
-            h('button', { key: 'all', className: `dsh-pm-chip${category === 'all' ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory('all') }, '全部'),
-            // 已选中的 chip 再点一次＝取消筛选（与「全部」等价），省得用户找不到退出口。
-            topCategories.map(cat => h('button', { key: cat, className: `dsh-pm-chip${category === cat ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory(category === cat ? 'all' : cat) }, categoryLabel(cat))),
-            tailCategories.length > 0
-              ? h('select', {
-                  key: 'cat-more',
-                  className: `dsh-pm-cat-more${tailCategories.includes(category) ? ' dsh-pm-cat-more-active' : ''}`,
-                  value: tailCategories.includes(category) ? category : '',
-                  // 占位项「更多分类…」value 为空，选中它保持原样；真正的退出口是下面的「全部分类」。
-                  onChange: (e) => { if (e.target.value) setCategory(e.target.value) },
-                  title: '其余分类（按插件数量）；选「全部分类」取消筛选',
-                },
-                h('option', { value: '' }, '更多分类…'),
-                h('option', { value: 'all' }, '全部分类'),
-                tailCategories.map(cat => h('option', { key: cat, value: cat }, `${categoryLabel(cat)} · ${categoryCounts.get(cat) || 0}`)))
-              : null),
-          h('select', { className: 'dsh-pm-sort', value: sort, onChange: (e) => setSort(e.target.value), style: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px', padding: '5px 8px' } },
-            h('option', { value: 'stars' }, '按 ★ 排序'),
-            h('option', { value: 'downloads' }, '按下载量'),
-            h('option', { value: 'newest' }, '按最新'))),
-        market.plugins.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无插件') :
-        marketCards.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '没有匹配的插件') :
-        h('div', null,
+    // ── 发现页：推荐位 + 双榜（右列）+ 分类筛选 + 分区卡片 + sticky 手动安装行 ──
+    // 推荐位取排序后第一个未安装插件（最热优先）；两张榜只取前 5。
+    const discoverList = plugins
+    const notInstalled = discoverList.filter(p => !isInstalledPlugin(p) && !installStatus[p.id])
+    const hero = notInstalled[0] || null
+    const topDownloads = [...discoverList].sort((a, b) => (b.downloads || 0) - (a.downloads || 0)).slice(0, 5)
+    const topStars = [...discoverList].sort((a, b) => (b.stars || 0) - (a.stars || 0)).slice(0, 5)
+    const rankRow = (plugin, rank) => {
+      const isInstalled = isInstalledPlugin(plugin)
+      const status = installStatus[plugin.id]
+      return h('div', { className: 'dsh-pm-rank-row', key: plugin.id },
+        h('span', { className: 'rk', 'aria-hidden': true }, String(rank)),
+        h('div', { className: 'dsh-pm-card-icon', style: { flex: 'none', width: '28px', height: '28px', borderRadius: '8px', fontSize: '13px' } }, icon(categoryIcon(plugin.category), 14)),
+        h('div', { className: 'who' },
+          h('div', { className: 'nm' }, plugin.repo || plugin.name),
+          h('div', { className: 'sub' }, `${categoryLabel(plugin.category)} · ↓ ${formatNumber(plugin.downloads)}/周 · ★ ${formatNumber(plugin.stars)}`)),
+        isInstalled
+          ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
+          : h('button', {
+              className: 'dsh-pm-install',
+              disabled: batchRunning || Boolean(status),
+              onClick: (e) => { e.stopPropagation(); install(plugin) },
+              title: status === 'queued' ? '已加入安装队列' : status === 'installing' ? '正在安装' : undefined,
+            }, status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装'))
+    }
+    const rankCard = (title, sub, list, keyPrefix) => h('div', { className: 'dsh-pm-rank', key: keyPrefix },
+      h('div', { className: 'dsh-pm-rank-head' }, h('h3', null, title), h('span', { className: 'sub' }, sub)),
+      list.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无数据') : list.map((p, i) => rankRow(p, i + 1)))
+    // 待更新横条（右列底部）：与更新横条同数据源，跳转已安装页去处理。
+    const updatableNow = updates && Array.isArray(updates.inventory)
+      ? updates.inventory.filter(entry => entry && entry.status === 'update-available' && !entry.ignored)
+      : []
+    const updateStrip = updatableNow.length > 0
+      ? h('div', { className: 'dsh-pm-updatestrip' },
+          icon('download', 14),
+          h('span', { className: 'grow' }, updatableNow.length === 1
+            ? `${updatableNow[0].name} 有更新`
+            : `${updatableNow.slice(0, 2).map(item => item.name).join('、')}${updatableNow.length > 2 ? ` 等 ${updatableNow.length} 个` : ''} 有更新`),
+          h('button', { className: 'dsh-pm-install', onClick: () => setTab('installed') }, '去更新'))
+      : null
+    const heroCard = hero
+      ? h('div', { className: 'dsh-pm-hero' },
+          h('div', { className: 'dsh-pm-card-icon', style: { flex: 'none', width: '44px', height: '44px', borderRadius: '12px', fontSize: '20px' } }, icon(categoryIcon(hero.category), 22)),
+          h('div', { className: 'who' },
+            h('div', { className: 'dsh-pm-hero-tag' }, '今日推荐'),
+            h('div', { className: 'dsh-pm-hero-name' }, hero.repo || hero.name,
+              hero.category === 'official' ? h('span', { className: 'dsh-pm-verified' }, icon('shield', 11), 'dsh 官方') : null),
+            h('p', { className: 'dsh-pm-hero-desc' }, descOf(hero, true) || descOf(hero) || '暂无描述'),
+            h('div', { className: 'dsh-pm-hero-stats' },
+              h('span', null, `↓ ${formatNumber(hero.downloads)}/周`),
+              h('span', null, `★ ${formatNumber(hero.stars)}`),
+              hero.version ? h('span', null, `v${hero.version}`) : null),
+            h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' } },
+              h('button', {
+                className: 'dsh-pm-install',
+                disabled: batchRunning || Boolean(installStatus[hero.id]),
+                onClick: () => install(hero),
+              }, installStatus[hero.id] === 'queued' ? '排队中…' : installStatus[hero.id] === 'installing' ? '安装中…' : '安装'),
+              h('button', { className: 'dsh-pm-tool', style: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px' }, onClick: () => setDetail(hero) }, '详情'))))
+      : null
+    // 分类分区（主列）：当前分类或「全部」下的卡片栅格（渐进披露沿用 PAGE_SIZE）。
+    const discoverGrid = plugins.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无插件')
+      : marketCards.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '没有匹配的插件')
+      : h('div', null,
           h('div', { className: 'dsh-pm-grid' }, marketCards),
           plugins.length > visibleCount
             ? h('button', { className: 'dsh-pm-more', onClick: () => setVisibleCount(c => c + PAGE_SIZE) },
                 `显示更多（还有 ${plugins.length - visibleCount} 个）`)
-            : h('div', { className: 'dsh-pm-more', style: { cursor: 'default' } }, `已显示全部 ${plugins.length} 个`))))
+            : h('div', { className: 'dsh-pm-more', style: { cursor: 'default' } }, `已显示全部 ${plugins.length} 个`))
+    // sticky 手动安装行：npm 包名 / GitHub 仓库 / 本地文件夹（走现有 install 接口）。
+    const manualRow = h('form', {
+      className: 'dsh-pm-queue', style: { marginTop: '2px' },
+      onSubmit: (e) => {
+        e.preventDefault()
+        const spec = manualSpec.trim()
+        if (!spec || busy !== '' || batchRunning) return
+        install({ id: 'manual:' + spec, url: spec, name: spec, repo: spec, category: 'other' })
+        setManualSpec('')
+      },
+    },
+      h('span', { className: 'dsh-pm-footnote', style: { flex: 'none' } }, '已有想装的？'),
+      h('input', {
+        className: 'dsh-pm-srcadd-inp', value: manualSpec,
+        onChange: e => setManualSpec(e.target.value),
+        placeholder: 'npm 包名、GitHub 仓库（github:owner/repo）或本地文件夹',
+        style: { flex: 1, minWidth: '160px', height: '28px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px', background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)', font: 'ui-monospace,SFMono-Regular,monospace 12px', padding: '0 10px', outline: 'none' },
+        'aria-label': '手动安装插件',
+      }),
+      h('button', { type: 'submit', className: 'dsh-pm-install', disabled: busy !== '' || batchRunning }, '安装'))
+
+    const discoverTab = h('div', null,
+      market === null ? h('div', { className: 'dsh-pm-empty' }, '加载中…') :
+      market === false ? h('div', { className: 'dsh-pm-empty' }, '市场数据未就绪，点左上角刷新试试') :
+      h('div', null,
+        queueStrip,
+        h('div', { className: 'dsh-pm-mainhead' },
+          h('h2', null, '本周推荐'), h('span', { className: 'date' }, '每周日更新推荐位'),
+          h('span', { style: { flex: 1 } }),
+          refreshing ? h('span', { className: 'dsh-pm-footnote' }, '刷新中…') : null,
+          h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13)),
+          h('label', { className: 'dsh-pm-find' }, icon('search', 13),
+            h('input', { placeholder: '搜索插件和作者…', value: search, onChange: (e) => setSearch(e.target.value), 'aria-label': '搜索插件' }))),
+        h('div', { className: 'dsh-pm-cols' },
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px', minWidth: 0 } },
+            heroCard,
+            h('div', { className: 'dsh-pm-chips' },
+              h('button', { key: 'all', className: `dsh-pm-chip${category === 'all' ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory('all') }, '全部'),
+              // 已选中的 chip 再点一次＝取消筛选（与「全部」等价），省得用户找不到退出口。
+              topCategories.map(cat => h('button', { key: cat, className: `dsh-pm-chip${category === cat ? ' dsh-pm-chip-active' : ''}`, onClick: () => setCategory(category === cat ? 'all' : cat) }, categoryLabel(cat))),
+              tailCategories.length > 0
+                ? h('select', {
+                    key: 'cat-more',
+                    className: `dsh-pm-cat-more${tailCategories.includes(category) ? ' dsh-pm-cat-more-active' : ''}`,
+                    value: tailCategories.includes(category) ? category : '',
+                    // 占位项「更多分类…」value 为空，选中它保持原样；真正的退出口是下面的「全部分类」。
+                    onChange: (e) => { if (e.target.value) setCategory(e.target.value) },
+                    title: '其余分类（按插件数量）；选「全部分类」取消筛选',
+                  },
+                  h('option', { value: '' }, '更多分类…'),
+                  h('option', { value: 'all' }, '全部分类'),
+                  tailCategories.map(cat => h('option', { key: cat, value: cat }, `${categoryLabel(cat)} · ${categoryCounts.get(cat) || 0}`)))
+                : null,
+              h('select', { className: 'dsh-pm-sort', value: sort, onChange: (e) => setSort(e.target.value), style: { marginLeft: 'auto', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '8px', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px', padding: '5px 8px' } },
+                h('option', { value: 'stars' }, '排序：星标'),
+                h('option', { value: 'downloads' }, '排序：下载量'),
+                h('option', { value: 'newest' }, '排序：最新'))),
+            discoverGrid),
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', minWidth: 0 } },
+            rankCard('下载最多', '按下载量', topDownloads, 'dl'),
+            rankCard('星标最多', 'GitHub', topStars, 'st'),
+            updateStrip)),
+        manualRow))
+
+    // ── 内置页：开关列表（无可搜索/联网需求）。 ──
+    const builtinItems = installed.filter(item => item.source === 'bundled' && !item.broken)
+    const builtinTab = h('div', null,
+      h('p', { className: 'dsh-pm-featsay' }, '随启动器分发的内置插件。关掉一个，它的侧栏入口与页面就离开 dsh；dsh 本身不受影响。'),
+      builtinItems.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '没有内置插件') : h('div', { className: 'dsh-pm-list' },
+        builtinItems.map(item => {
+          const disableInfo = disabledPlugins[item.name] || null
+          const pluginOn = Boolean(disableInfo && disableInfo.disabled === false)
+          const switchDisabled = !disableInfo || !disableInfo.canDisable || busy === 'disable-' + item.name || busyOther || batchRunning
+          const switchTitle = !disableInfo ? '停用状态读取失败，重新打开面板再试'
+            : !disableInfo.canDisable ? (disableInfo.reason || '这个插件不支持停用')
+            : pluginOn ? '停用这个插件（重启 dsh 后生效）' : '启用这个插件（重启 dsh 后生效）'
+          const switchText = busy === 'disable-' + item.name ? '切换中…' : !disableInfo ? '状态未知' : pluginOn ? '已启用' : '已停用'
+          return h('div', { className: `dsh-pm-row${pluginOn === false && disableInfo ? ' dsh-pm-row-off' : ''}`, key: item.name },
+            h('div', { className: 'dsh-pm-card-icon' }, icon('puzzle', 16)),
+            h('div', { className: 'dsh-pm-row-main' },
+              h('div', { className: 'dsh-pm-row-title' }, item.name),
+              h('div', { className: 'dsh-pm-row-meta' }, item.description || '内置插件')),
+            h('span', { className: 'dsh-pm-badge' }, '内置'),
+            disableInfo && !disableInfo.canDisable ? null
+              : h('label', { className: 'dsh-pm-switch', title: switchTitle },
+                  h('input', {
+                    type: 'checkbox', role: 'switch', className: 'dsh-pm-switch-input',
+                    checked: pluginOn, disabled: switchDisabled, title: switchTitle,
+                    'aria-label': (pluginOn ? '停用 ' : '启用 ') + item.name,
+                    onChange: () => togglePluginDisabled(item, pluginOn),
+                  }),
+                  h('span', { className: 'dsh-pm-switch-track', 'aria-hidden': true }),
+                  h('span', { className: 'dsh-pm-switch-text' }, switchText)))
+        })))
+
+    // ── 插件源页：预设源一键加入 + 自定义 git/index 源 + 每源开关/删除。 ──
+    const [sourceInput, setSourceInput] = React.useState('')
+    const sourcesTab = h('div', null,
+      h('div', { className: 'dsh-pm-mainhead' },
+        h('h2', null, '插件源'),
+        h('span', { className: 'date' }, sources ? `${sources.length} 个源` : ''),
+        h('span', { style: { flex: 1 } }),
+        h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13), '全部同步')),
+      h('p', { className: 'dsh-pm-footnote' }, '源是一个含 index.json 的插件索引仓库（github:owner/repo）或直接的索引 JSON 地址。关闭一个源不会卸载已安装的插件。'),
+      sources === null ? h('div', { className: 'dsh-pm-empty' }, '加载中…') :
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+        sources.map(source => h('div', { className: 'dsh-pm-srcrow', key: source.id },
+          h('div', { className: 'dsh-pm-card-icon' }, icon(source.builtin ? 'shield' : 'server', 16)),
+          h('div', { className: 'who' },
+            h('div', { className: 'nm' },
+              source.builtin ? 'awesome-dsh 社区清单（内置默认源）' : source.url,
+              source.builtin ? h('span', { className: 'dsh-pm-badge' }, '内置') : null,
+              source.enabled === false ? h('span', { className: 'dsh-pm-badge' }, '已停用') : null),
+            h('div', { className: 'spec' }, source.url),
+            h('div', { className: 'meta' }, source.cache && source.cache.state !== 'disabled' && source.cache.state !== 'empty'
+              ? `${source.cache.count} 个插件 · ${source.cache.state === 'stale' ? '索引已过期' : '已同步'}` : '尚未同步')),
+          h('label', { className: 'dsh-pm-switch', title: source.enabled === false ? '启用这个源' : '停用这个源（已装插件不受影响）' },
+            h('input', {
+              type: 'checkbox', role: 'switch', className: 'dsh-pm-switch-input',
+              checked: source.enabled !== false,
+              disabled: busy === 'source-toggle-' + source.id,
+              'aria-label': (source.enabled === false ? '启用源 ' : '停用源 ') + source.url,
+              onChange: () => toggleSource(source),
+            }),
+            h('span', { className: 'dsh-pm-switch-track', 'aria-hidden': true })),
+          source.builtin ? null
+            : h('button', { className: 'dsh-pm-row-action', disabled: busy === 'source-remove', 'aria-label': '删除源 ' + source.url, title: '删除这个源' , onClick: () => removeSource(source.id) }, icon('x', 13)))),
+        h('div', { className: 'dsh-pm-srcadd' },
+          h('input', {
+            className: 'inp', value: sourceInput,
+            onChange: e => setSourceInput(e.target.value),
+            placeholder: 'github:owner/repo 或 https://…/index.json',
+            'aria-label': '插件源地址',
+          }),
+          h('button', {
+            className: 'dsh-pm-install', disabled: busy === 'source-add' || !sourceInput.trim(),
+            onClick: () => {
+              const value = sourceInput.trim()
+              const kind = /^https?:\/\//i.test(value) ? 'index' : 'git'
+              addSource(kind, value)
+              setSourceInput('')
+            },
+          }, icon('plus', 13), '添加源')),
+        h('div', { className: 'dsh-pm-footnote' }, '添加 git 源后会拉取仓库根目录的 index.json；添加 index 源则直接拉取该地址。')))
+
+    // 更新工具栏：接口不可用（updates === false）时整条不渲染，静默降级成原来的已安装页。
 
     // 更新工具栏：接口不可用（updates === false）时整条不渲染，静默降级成原来的已安装页。
     const clock = formatCheckedClock(updates && updates.checkedAt)
@@ -1605,77 +1999,109 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       h('button', { className: 'dsh-pm-tool', disabled: selectedNames.length === 0, onClick: () => { setSelected(new Set()); lastIndexRef.current = null }, title: '清空选择' }, '取消选择'),
       h('span', { className: 'dsh-pm-updates-time' }, clock ? `上次检测：${clock}` : '尚未检测'))
 
+    // ── 方案 B 外壳：顶部工具行（国内加速 + 关闭）+ 左栏四项 + 内容区。 ──
+    const builtinCount = installed.filter(item => item.source === 'bundled' && !item.broken).length
+    const updatableCount = updatesAvailableCount(updates)
+    const railItems = [
+      { id: 'discover', label: '发现', iconName: 'compass' },
+      { id: 'builtin', label: '内置', iconName: 'cube', count: builtinCount || null },
+      { id: 'installed', label: '已安装', iconName: 'download', count: installed.length || null },
+      { id: 'sources', label: '插件源', iconName: 'server', count: Array.isArray(sources) ? sources.length : null },
+    ]
+    const viewBody = tab === 'installed' ? h('div', null,
+        updatesBar,
+        updateQueueStrip,
+        batchStrip,
+        installed.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '还没有已安装的插件，去「发现」看看吧')
+          : h('div', null,
+              h('div', { className: 'dsh-pm-bulkbar' },
+                h('button', { className: 'dsh-pm-tool', onClick: toggleSelectAll }, manageable.length > 0 && selectedNames.length === manageable.length ? '取消全选' : '全选'),
+                h('button', { className: 'dsh-pm-tool', onClick: toggleInvert }, '反选'),
+                h('button', { className: 'dsh-pm-tool', disabled: selectedNames.length === 0 || busy === 'uninstall-many' || batchRunning || busyOther, onClick: () => setConfirmBatch(true), style: selectedNames.length > 0 ? { color: 'var(--dsw-alias-state-error-primary)' } : undefined }, `批量卸载${selectedNames.length ? ` (${selectedNames.length})` : ''}`)),
+              // 拖拽框选：在这块区域按下并拖动，实时把相交的行选上。
+              h('div', { className: 'dsh-pm-selectarea', ref: listAreaRef, onMouseDown: startBand },
+                h('div', { className: 'dsh-pm-list' }, installedRows),
+                band ? h('div', { className: 'dsh-pm-band', style: { height: `${band.height}px`, left: `${band.left}px`, top: `${band.top}px`, width: `${band.width}px` } }) : null)))
+      : tab === 'discover' ? discoverTab
+      : tab === 'builtin' ? builtinTab
+      : sourcesTab
+
     return h('div', null,
       h('div', { className: 'dsh-pm-backdrop', onClick: () => { if (closable) { onClose() } } }),
       h('div', { className: 'dsh-pm-page', role: 'dialog', 'aria-modal': 'true', 'aria-label': '插件管理' },
         h(Toasts, { store: toastStore }),
         h('div', { className: 'dsh-pm-header' },
           h('button', { className: 'dsh-pm-back', onClick: () => { if (closable) onClose() }, 'aria-label': '返回' }, '← 返回'),
-          h('strong', null, '插件管理'),
-          h('div', { className: 'dsh-pm-tabs' },
-            h('button', { className: `dsh-pm-tab${tab === 'installed' ? ' dsh-pm-tab-active' : ''}`, onClick: () => setTab('installed') }, `已安装${installed.length ? ` (${installed.length})` : ''}`),
-            h('button', { className: `dsh-pm-tab${tab === 'market' ? ' dsh-pm-tab-active' : ''}`, onClick: () => setTab('market') }, '插件市场')),
+          h('strong', null, '插件中心'),
           h('div', { className: 'dsh-pm-header-spacer' }),
-          tab === 'market' ? h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket }, refreshing ? '刷新中…' : '刷新市场') : null,
+          // 国内加速开关（magpie pm-mirror 式）：插件不存在时整枚隐藏。
+          mirror && mirror.pluginPresent
+            ? h('button', {
+                className: `dsh-pm-mirror${mirror.enabled ? ' on' : ''}`,
+                role: 'switch', 'aria-checked': mirror.enabled ? 'true' : 'false',
+                disabled: mirrorSaving, onClick: toggleMirror,
+                title: '开启后 npm registry、GitHub raw 与 git clone 走国内镜像，立即生效',
+                'aria-label': '国内加速',
+              }, '国内加速', h('span', { className: 'track', 'aria-hidden': true }))
+            : null,
           h('button', { className: 'dsh-pm-tool dsh-pm-close', onClick: () => { if (closable) onClose() }, 'aria-label': '关闭' }, '×')),
-        h('div', { className: 'dsh-pm-body' },
-          error && h('div', { className: 'dsh-pm-error' }, error),
-          confirmUninstall && h('div', { className: 'dsh-pm-confirm' },
-            h('div', { className: 'dsh-pm-confirm-title' }, `确认卸载 ${confirmUninstall.name}？`),
-            h('div', { className: 'dsh-pm-confirm-copy' }, '卸载后需要重启 dsh 才能生效。'),
-            h('div', { className: 'dsh-pm-confirm-actions' },
-              h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setConfirmUninstall(null), disabled: busy === 'uninstall' }, '取消'),
-              h('button', { className: 'dsh-pm-confirm-danger', onClick: confirmUninstallGo, disabled: busy === 'uninstall' }, busy === 'uninstall' ? '卸载中…' : '确认卸载'))),
-          confirmBatch && h('div', { className: 'dsh-pm-confirm' },
-            h('div', { className: 'dsh-pm-confirm-title' }, `确认卸载选中的 ${selectedNames.length} 个插件？`),
-            h('div', { className: 'dsh-pm-confirm-copy' }, '卸载后需要重启 dsh 才能生效。'),
-            h('div', { className: 'dsh-pm-confirm-actions' },
-              h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setConfirmBatch(false), disabled: busy === 'uninstall-many' }, '取消'),
-              h('button', { className: 'dsh-pm-confirm-danger', onClick: uninstallManyGo, disabled: busy === 'uninstall-many' }, busy === 'uninstall-many' ? '卸载中…' : '确认卸载'))),
-          restartPrompt && h('div', { className: 'dsh-pm-confirm' },
-            h('div', { className: 'dsh-pm-confirm-title' }, restartPrompt.title),
-            h('div', { className: 'dsh-pm-confirm-copy' }, restartPrompt.copy),
-            h('div', { className: 'dsh-pm-confirm-actions' },
-              h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setRestartPrompt(null) }, '稍后'),
-              h('button', { className: 'dsh-pm-confirm-primary', onClick: restartNow, disabled: busy === 'restart' }, busy === 'restart' ? '重启中…' : '立即重启'))),
-          devLinkedChoice && h('div', { className: 'dsh-pm-confirm' },
-            h('div', { className: 'dsh-pm-confirm-title' }, `选择 ${devLinkedChoice.name} 的更新方式`),
-            h('div', { className: 'dsh-pm-confirm-copy' },
-              '这个插件链接到你的本地开发目录，自动更新不会擅动它。两种方式二选一：',
-              h('br'), '· 更新本地目录：在目录里 git pull、装依赖并重新构建（会改动该目录，本地有未推送提交时会被拒绝）；',
-              h('br'), '· 切换为 npm 发行版：改用发布的版本，完全不碰本地目录。'),
-            h('div', { className: 'dsh-pm-confirm-actions' },
-              h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setDevLinkedChoice(null), disabled: busy === 'update-' + devLinkedChoice.name }, '取消'),
-              h('button', {
-                className: 'dsh-pm-confirm-cancel',
-                disabled: Boolean(busy),
-                onClick: () => updateOne({ name: devLinkedChoice.name }, 'switch-release'),
-                title: '改用 npm 上发布的版本，本地目录保持原样',
-              }, '切换为发行版'),
-              h('button', {
-                className: 'dsh-pm-confirm-primary',
-                disabled: Boolean(busy),
-                onClick: () => updateOne({ name: devLinkedChoice.name }, 'pull-local'),
-                title: '在本地目录里 git pull + 装依赖 + 重新构建',
-              }, '更新本地目录'))),
-          tab === 'installed'
-            ? h('div', null,
-                updatesBar,
-                updateQueueStrip,
-                batchStrip,
-                installed.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '还没有已安装的插件，去插件市场看看吧')
-                  : h('div', null,
-                      h('div', { className: 'dsh-pm-bulkbar' },
-                        h('button', { className: 'dsh-pm-tool', onClick: toggleSelectAll }, manageable.length > 0 && selectedNames.length === manageable.length ? '取消全选' : '全选'),
-                        h('button', { className: 'dsh-pm-tool', onClick: toggleInvert }, '反选'),
-                        h('button', { className: 'dsh-pm-tool', disabled: selectedNames.length === 0 || busy === 'uninstall-many' || batchRunning || busyOther, onClick: () => setConfirmBatch(true), style: selectedNames.length > 0 ? { color: 'var(--dsw-alias-state-error-primary)' } : undefined }, `批量卸载${selectedNames.length ? ` (${selectedNames.length})` : ''}`)),
-                      // 拖拽框选：在这块区域按下并拖动，实时把相交的行选上。
-                      h('div', { className: 'dsh-pm-selectarea', ref: listAreaRef, onMouseDown: startBand },
-                        h('div', { className: 'dsh-pm-list' }, installedRows),
-                        band ? h('div', { className: 'dsh-pm-band', style: { height: `${band.height}px`, left: `${band.left}px`, top: `${band.top}px`, width: `${band.width}px` } }) : null)))
-            : marketTab,
-          drawer,
-          notesModal)))
+        error && tab !== 'installed' && tab !== 'discover' ? h('div', { className: 'dsh-pm-error', style: { margin: '10px 18px 0' } }, error) : null,
+        h('div', { className: 'dsh-pm-frame' },
+          h('nav', { className: 'dsh-pm-rail', 'aria-label': '插件中心导航' },
+            h('div', { className: 'dsh-pm-rail-title' }, '插件中心'),
+            railItems.map(item => h('button', {
+              key: item.id,
+              className: `dsh-pm-rail-item${tab === item.id ? ' on' : ''}`,
+              onClick: () => setTab(item.id),
+              'aria-current': tab === item.id ? 'page' : undefined,
+            }, icon(item.iconName, 15), item.label, item.count ? h('span', { className: 'n' }, String(item.count)) : null)),
+            updatableCount > 0
+              ? h('button', { className: 'dsh-pm-rail-item dsh-pm-rail-updates', onClick: () => setTab('installed') },
+                  icon('download', 15), `${updatableCount} 个可更新`)
+              : null),
+          h('div', { className: 'dsh-pm-main' },
+            error && (tab === 'installed' || tab === 'discover') ? h('div', { className: 'dsh-pm-error' }, error) : null,
+            confirmUninstall && h('div', { className: 'dsh-pm-confirm' },
+              h('div', { className: 'dsh-pm-confirm-title' }, `确认卸载 ${confirmUninstall.name}？`),
+              h('div', { className: 'dsh-pm-confirm-copy' }, '卸载后需要重启 dsh 才能生效。'),
+              h('div', { className: 'dsh-pm-confirm-actions' },
+                h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setConfirmUninstall(null), disabled: busy === 'uninstall' }, '取消'),
+                h('button', { className: 'dsh-pm-confirm-danger', onClick: confirmUninstallGo, disabled: busy === 'uninstall' }, busy === 'uninstall' ? '卸载中…' : '确认卸载'))),
+            confirmBatch && h('div', { className: 'dsh-pm-confirm' },
+              h('div', { className: 'dsh-pm-confirm-title' }, `确认卸载选中的 ${selectedNames.length} 个插件？`),
+              h('div', { className: 'dsh-pm-confirm-copy' }, '卸载后需要重启 dsh 才能生效。'),
+              h('div', { className: 'dsh-pm-confirm-actions' },
+                h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setConfirmBatch(false), disabled: busy === 'uninstall-many' }, '取消'),
+                h('button', { className: 'dsh-pm-confirm-danger', onClick: uninstallManyGo, disabled: busy === 'uninstall-many' }, busy === 'uninstall-many' ? '卸载中…' : '确认卸载'))),
+            restartPrompt && h('div', { className: 'dsh-pm-confirm' },
+              h('div', { className: 'dsh-pm-confirm-title' }, restartPrompt.title),
+              h('div', { className: 'dsh-pm-confirm-copy' }, restartPrompt.copy),
+              h('div', { className: 'dsh-pm-confirm-actions' },
+                h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setRestartPrompt(null) }, '稍后'),
+                h('button', { className: 'dsh-pm-confirm-primary', onClick: restartNow, disabled: busy === 'restart' }, busy === 'restart' ? '重启中…' : '立即重启'))),
+            devLinkedChoice && h('div', { className: 'dsh-pm-confirm' },
+              h('div', { className: 'dsh-pm-confirm-title' }, `选择 ${devLinkedChoice.name} 的更新方式`),
+              h('div', { className: 'dsh-pm-confirm-copy' },
+                '这个插件链接到你的本地开发目录，自动更新不会擅动它。两种方式二选一：',
+                h('br'), '· 更新本地目录：在目录里 git pull、装依赖并重新构建（会改动该目录，本地有未推送提交时会被拒绝）；',
+                h('br'), '· 切换为 npm 发行版：改用发布的版本，完全不碰本地目录。'),
+              h('div', { className: 'dsh-pm-confirm-actions' },
+                h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setDevLinkedChoice(null), disabled: busy === 'update-' + devLinkedChoice.name }, '取消'),
+                h('button', {
+                  className: 'dsh-pm-confirm-cancel',
+                  disabled: Boolean(busy),
+                  onClick: () => updateOne({ name: devLinkedChoice.name }, 'switch-release'),
+                  title: '改用 npm 上发布的版本，本地目录保持原样',
+                }, '切换为发行版'),
+                h('button', {
+                  className: 'dsh-pm-confirm-primary',
+                  disabled: Boolean(busy),
+                  onClick: () => updateOne({ name: devLinkedChoice.name }, 'pull-local'),
+                  title: '在本地目录里 git pull + 装依赖 + 重新构建',
+                }, '更新本地目录'))),
+            viewBody)),
+        drawer,
+        notesModal))
   }
 
   // 插件管理面板常驻挂载在 body 上，由「更多」菜单打开；侧边栏 footer

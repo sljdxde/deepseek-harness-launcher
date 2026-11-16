@@ -72,6 +72,11 @@ node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-source-imports.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-mutation-safety.test.js"
 # 插件 peer 区间语义，以及「兼容性门禁已移除」的回归保护。
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-peer-compat.test.js"
+# 多插件源（sources.json / index.json / 聚合去重 / 异步刷新进度）+ 国内加速映射。
+node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+# 国内加速独立插件：镜像规则表、URL 映射、开关状态路由（临时 DSH_HOME）。
+node --check "$ROOT/Plugins/DSHChinaMirror/lib/index.js"
+node --test "$ROOT/Plugins/DSHChinaMirror/test/host.test.js"
 if rg -q 'npx |git clone|github.com' "$ROOT/Plugins/DSHPluginManager/lib/index.js" >/dev/null && ! rg -q 'installCandidates|git\+' "$ROOT/Plugins/DSHPluginManager/lib/index.js"; then
   echo "plugin manager must expose npm-first / git-fallback install candidates" >&2
   exit 1
@@ -222,6 +227,52 @@ if ! diff -rq "$ROOT/Plugins/DSHInterruptedDot" "$ROOT/windows/internal/assets/p
   echo "windows/internal/assets/plugins/DSHInterruptedDot 与 Plugins/DSHInterruptedDot 不同步" >&2
   exit 1
 fi
+# 国内加速独立插件（dsh-china-mirror）：资源列表 / 构建同步 / base patch 合成 /
+# bundled 识别 / 与 Plugins/ 源一致，一条都不能少。
+rg -Fq 'DSHChinaMirror' "$ROOT/windows/build.ps1" "$ROOT/windows/internal/assets/assets.go"
+rg -Fq "'DSHChinaMirror'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'DSHChinaMirror' "$ROOT/windows/internal/pluginisolation/pluginisolation.go"
+rg -Fq 'dsh-china-mirror' "$ROOT/Plugins/DSHChinaMirror/cordis.patch.yml"
+# 它是 Windows-only：写进共享 base patch 会让没有该包的 macOS 启动失败。
+if rg -q 'dsh-china-mirror' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"; then
+  echo "dsh-china-mirror 只能在 Windows 侧合成进 base patch，不能进 macOS 共享补丁" >&2
+  exit 1
+fi
+if ! diff -rq "$ROOT/Plugins/DSHChinaMirror" "$ROOT/windows/internal/assets/plugins/DSHChinaMirror" >/dev/null; then
+  echo "windows/internal/assets/plugins/DSHChinaMirror 与 Plugins/DSHChinaMirror 不同步" >&2
+  exit 1
+fi
+# 插件管理器与镜像插件的耦合只允许「状态文件 + 规则表」这一条协议：
+# 管理器读 /dsh-china-mirror/state 并用 table 做前缀替换，镜像插件不 import 管理器。
+rg -Fq "'/dsh-china-mirror/state'" "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHChinaMirror/lib/index.js"
+rg -Fq 'mirrorURLTable' "$ROOT/Plugins/DSHChinaMirror/lib/index.js"
+rg -Fq 'mirrorMapURL' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'npm_config_registry' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+# 多源聚合：sources.json 落盘、index.json 解析、聚合读接口、异步刷新受理（202）。
+rg -Fq 'sources.json' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'parseSourceIndex' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+rg -Fq 'readMarketplaceAggregated' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/sources/add'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/sources/remove'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/sources/set-enabled'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/sources/progress'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/sources'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 方案 B 的四个视图与国内加速开关必须在客户端真的接线（渲染冒烟 13/14 兜行为）。
+rg -Fq "tab === 'discover' ? discoverTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "tab === 'builtin' ? builtinTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "tab === 'sources' ? sourcesTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "className: 'dsh-pm-frame'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'dsh-pm-rail' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'aria-label' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "'国内加速'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "'/dsh-plugin-manager/china-mirror'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '场景13（发现页：推荐位/双榜/分类/手动安装行）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+rg -Fq '场景14（插件源页 + 国内加速开关）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 发现页的推荐位/双榜/分类/手动安装行一个都不能少（用户明确要求的结构）。
+rg -Fq '今日推荐' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '下载最多' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '星标最多' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '手动安装插件' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 页面存活心跳：标签页全关后 keep-alive 连接仍在，必须靠注入客户端的
 # presence（轮询心跳 + pagehide bye）判断是否需要新开页面。
 rg -q '/dsh-session-notify/presence' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Plugins/DSHSessionNotify/client/client.js" "$ROOT/Sources/main.swift"

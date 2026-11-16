@@ -17,7 +17,7 @@ const marketRepoDir = () => join(marketRoot(), 'repo');
 
 const MARKET_REPO_URL = 'https://github.com/awesome-dsh-plugin/awesome-dsh-plugin.git';
 /** Bundle the launcher ships with; symlink targets contain one of these names. */
-const BUNDLED_MARKERS = ['DSHArchiveManager', 'DSHPluginManager', 'DSHSessionNotify', 'DSHInterruptedDot', 'DSHSidebarDeck'];
+const BUNDLED_MARKERS = ['DSHArchiveManager', 'DSHPluginManager', 'DSHSessionNotify', 'DSHInterruptedDot', 'DSHChinaMirror', 'DSHSidebarDeck'];
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -934,9 +934,10 @@ async function pluginCommand(args) {
   await ensurePnpmWorkspace();
   const cli = dshCli();
   const [pathWithPnpm, note] = await ensurePnpmPath();
+  // 国内加速打开时注入 npm_config_registry，pnpm add/view 与安装链路整体走镜像。
   const { stdout, stderr } = await run(cli, ['plugin', '--profile', 'web', ...args], {
     timeout: 240000,
-    env: { ...process.env, PATH: pathWithPnpm },
+    env: await pnpmEnvironment().then(env => ({ ...env, PATH: pathWithPnpm })),
     cwd: dshHome()
   });
   return { stdout, stderr, note };
@@ -1067,7 +1068,7 @@ async function npmViewExists(name, timeoutMs = 8000) {
   try {
     await ensurePnpmPath();
     const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-    await run(cli, ['view', name, 'version'], { timeout: timeoutMs });
+    await run(cli, ['view', name, 'version'], { timeout: timeoutMs, env: await pnpmEnvironment() });
     return true;
   } catch (error) {
     const message = [error?.message, error?.stderr, error?.stdout].filter(Boolean).join(' ');
@@ -1104,7 +1105,7 @@ async function npmRepositoryOf(name, timeoutMs = 8000) {
   try {
     await ensurePnpmPath();
     const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-    const { stdout } = await run(cli, ['view', name, 'repository', '--json'], { timeout: timeoutMs });
+    const { stdout } = await run(cli, ['view', name, 'repository', '--json'], { timeout: timeoutMs, env: await pnpmEnvironment() });
     return JSON.parse(String(stdout).trim() || 'null');
   } catch { return null; }
 }
@@ -1210,7 +1211,8 @@ function describeUnresolvableImports(missing) {
  * @returns {Promise<{ok:boolean,dest?:string,packageName?:string,error?:string}>}
  */
 async function cloneToSources(ref, subdir) {
-  const repoUrl = `https://github.com/${ref.author}/${ref.repo}.git`;
+  // 国内加速打开时 clone 地址过镜像表；`probeGitHead` 等只读探测走 raw，不在此处。
+  const repoUrl = mirrorMapURL(`https://github.com/${ref.author}/${ref.repo}.git`, await activeMirrorTable());
   const sourcesDir = join(profilesWebModules(), '..', 'plugin-sources');
   const safeName = ((subdir ? subdir.split('/').pop() : ref.repo) || 'plugin').replace(/[^a-zA-Z0-9._-]/g, '-');
   const dest = join(sourcesDir, `${ref.author}-${ref.repo}${subdir ? '-' + safeName : ''}`);
@@ -1333,7 +1335,7 @@ export async function missingPackageEntries(dir, meta) {
 async function runPnpmInSource(dir, args, timeoutMs = 300000) {
   const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
   const [pathWithPnpm] = await ensurePnpmPath();
-  return run(cli, args, { cwd: dir, timeout: timeoutMs, env: { ...process.env, PATH: pathWithPnpm } });
+  return run(cli, args, { cwd: dir, timeout: timeoutMs, env: await pnpmEnvironment().then(env => ({ ...env, PATH: pathWithPnpm })) });
 }
 
 /**
@@ -1854,7 +1856,7 @@ export async function fetchTargetPeerDependencies(source, version, deps = {}) {
     if (remote.type === 'npm') {
       await ensurePnpmPath();
       const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-      const { stdout } = await run(cli, ['view', `${remote.package ?? source.name}@${version}`, 'peerDependencies', '--json'], { timeout: PROBE_TIMEOUT_MS });
+      const { stdout } = await run(cli, ['view', `${remote.package ?? source.name}@${version}`, 'peerDependencies', '--json'], { timeout: PROBE_TIMEOUT_MS, env: await pnpmEnvironment() });
       const parsed = JSON.parse(stdout);
       return parsed && typeof parsed === 'object' ? parsed : {};
     }
@@ -1949,13 +1951,14 @@ async function pullLocalUpdate(source, target) {
   const manifestAfter = await fs.readFile(join(dir, 'package.json'), 'utf8').catch(() => '');
   const depsChanged = manifestBefore !== manifestAfter;
   // package.json 变了：先在 checkout 里装依赖（link 依赖不会自动装子目录的依赖）。
+  const [pathWithPnpm] = await ensurePnpmPath();
+  const childEnv = await pnpmEnvironment().then(env => ({ ...env, PATH: pathWithPnpm }));
   if (depsChanged) {
     await ensurePnpmPath();
-    const [pathWithPnpm] = await ensurePnpmPath();
     const corepack = await hasCommandOnPath('corepack');
     const pnpmArgs = ['pnpm', 'install'];
     await run(process.execPath, [corepack, ...pnpmArgs], {
-      cwd: dir, timeout: 300000, env: { ...process.env, PATH: pathWithPnpm }
+      cwd: dir, timeout: 300000, env: childEnv
     });
   }
   // 构建：很多插件（dsh-genui 等）需要 build 后才生成 dist 与 client 产物。
@@ -1963,10 +1966,9 @@ async function pullLocalUpdate(source, target) {
   const script = meta?.scripts?.build ? 'build' : (meta?.scripts?.prepare ? 'prepare' : null);
   if (script) {
     await ensurePnpmPath();
-    const [pathWithPnpm] = await ensurePnpmPath();
     const corepack = await hasCommandOnPath('corepack');
     await run(process.execPath, [corepack, 'pnpm', 'run', script], {
-      cwd: dir, timeout: 300000, env: { ...process.env, PATH: pathWithPnpm }
+      cwd: dir, timeout: 300000, env: childEnv
     });
   }
   // 验收：版本号与入口文件。
@@ -2011,7 +2013,7 @@ async function switchToRelease(source, command) {
   const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
   const [pathWithPnpm] = await ensurePnpmPath();
   const view = await run(cli, ['view', source.name, 'version', '--json'], {
-    timeout: PROBE_TIMEOUT_MS, env: { ...process.env, PATH: pathWithPnpm }
+    timeout: PROBE_TIMEOUT_MS, env: await pnpmEnvironment().then(env => ({ ...env, PATH: pathWithPnpm }))
   }).catch(() => null);
   const npmVersion = view ? JSON.parse(String(view.stdout).trim() || 'null') : null;
   if (!npmVersion) {
@@ -2455,7 +2457,8 @@ export async function cleanupBrokenPlugin(name) {
 async function refreshMarketRepo() {
   await fs.rm(marketRepoDir(), { recursive: true, force: true });
   await fs.mkdir(marketRoot(), { recursive: true });
-  await run('git', ['clone', '--depth', '1', MARKET_REPO_URL, marketRepoDir()], { timeout: 300000 });
+  // 国内加速打开时 clone 地址过镜像表（ghfast 前缀代理）。
+  await run('git', ['clone', '--depth', '1', mirrorMapURL(MARKET_REPO_URL, await activeMirrorTable()), marketRepoDir()], { timeout: 300000 });
   return marketRepoDir();
 }
 
@@ -2485,7 +2488,8 @@ export async function fetchOfficialMarketPlugins(deps = {}) {
   const doFetch = deps.fetch ?? fetch;
   const found = new Map();
   for (const query of OFFICIAL_MARKET_QUERIES) {
-    const url = `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=${OFFICIAL_MARKET_SEARCH_SIZE}`;
+    // registry 查询走镜像感知通道（国内加速打开时映射到 npmmirror）。
+    const url = mirrorMapURL(`https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=${OFFICIAL_MARKET_SEARCH_SIZE}`, await activeMirrorTable());
     const result = await readRemoteJSON(url, PROBE_TIMEOUT_MS, doFetch).catch(() => ({ error: 'registry 搜索失败' }));
     if (result.error) continue;
     for (const object of result.value?.objects ?? []) {
@@ -2503,7 +2507,7 @@ export async function fetchOfficialMarketPlugins(deps = {}) {
     }
   }
   const rows = await mapWithConcurrency([...found.keys()], PROBE_CONCURRENCY, async name => {
-    const url = `https://registry.npmjs.org/${name.replace('/', '%2F')}/latest`;
+    const url = mirrorMapURL(`https://registry.npmjs.org/${name.replace('/', '%2F')}/latest`, await activeMirrorTable());
     const result = await readRemoteJSON(url, PROBE_TIMEOUT_MS, doFetch);
     const manifest = result.error ? null : result.value;
     if (!manifest?.dsh?.bundle) return null;
@@ -3131,7 +3135,7 @@ export async function probeNpmDistTags(packageName, timeoutMs = PROBE_TIMEOUT_MS
   try {
     await ensurePnpmPath();
     const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-    const { stdout } = await run(cli, ['view', packageName, 'dist-tags', '--json'], { timeout: timeoutMs });
+    const { stdout } = await run(cli, ['view', packageName, 'dist-tags', '--json'], { timeout: timeoutMs, env: await pnpmEnvironment() });
     const tags = JSON.parse(stdout);
     const latest = typeof tags?.latest === 'string' ? tags.latest : null;
     if (!latest) return { error: 'registry 没有 latest 标签' };
@@ -3209,7 +3213,9 @@ async function fetchRepoJSON(spec, timeoutMs = PROBE_TIMEOUT_MS, deps = {}) {
   if (!author || !repo) return { error: '缺少仓库信息' };
   const path = subdir ? `${String(subdir).replace(/^\/+|\/+$/g, '')}/${file}` : file;
   const doFetch = deps.fetch ?? fetch;
-  const raw = await readRemoteJSON(`https://raw.githubusercontent.com/${author}/${repo}/${commit}/${path}`, timeoutMs, doFetch);
+  // raw 在国内网络限速严重，镜像表打开时把 raw 域映射到国内镜像（api 兜底不动）。
+  const rawURL = mirrorMapURL(`https://raw.githubusercontent.com/${author}/${repo}/${commit}/${path}`, await activeMirrorTable());
+  const raw = await readRemoteJSON(rawURL, timeoutMs, doFetch);
   if (!raw.error) return raw;
   const viaAPI = await readRemoteJSON(
     `https://api.github.com/repos/${author}/${repo}/contents/${path}?ref=${commit}`, timeoutMs, doFetch, decodeAPIContent
@@ -3491,7 +3497,8 @@ async function readRemoteText(author, repo, ref, path, timeoutMs, doFetch) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const raw = await doFetch(`https://raw.githubusercontent.com/${author}/${repo}/${ref}/${path}`, {
+    const rawURL = mirrorMapURL(`https://raw.githubusercontent.com/${author}/${repo}/${ref}/${path}`, await activeMirrorTable());
+    const raw = await doFetch(rawURL, {
       signal: controller.signal, headers: { 'cache-control': 'no-cache' }
     });
     if (raw.ok) return { text: await raw.text() };
@@ -3599,6 +3606,428 @@ export async function fetchPluginReleaseNotes(name, version, deps = {}) {
   return value;
 }
 
+// ---------------------------------------------------------------------------
+// 插件源（多仓库源）管理
+//
+// 一个「源」= 一个含 index.json 的 Git 仓库，或一个直接给出索引 JSON 的 https
+// 地址。索引格式（version 1）：
+//   {
+//     "version": 1,
+//     "updatedAt": "2026-11-16T00:00:00.000Z",
+//     "plugins": [{
+//       "id": "dsh-tokenledger",
+//       "name": "yumc/dsh-tokenledger",
+//       "repo": "yumc/dsh-tokenledger",
+//       "url": "https://github.com/yumc/dsh-tokenledger",
+//       "category": "data",
+//       "description": { "en": "…", "zh": "…" },
+//       "stars": 540, "downloads": 165000,
+//       "verified": true
+//     }]
+//   }
+//
+// 源清单存 `$DSH_HOME/plugin-manager/sources.json`（用户配置，原子写），每源的
+// 索引缓存存 `$DSH_HOME/plugin-manager/sources-cache/<id>.json`。聚合顺序：
+// 官方 npm 查询 → awesome-dsh-plugin（内置默认源）→ 用户启用的自定义源，
+// 按 mergeMarketPlugins 的 url 去重。刷新是后台任务：受理后立刻返回，逐源
+// 拉取（并发 4，单源失败不拖垮其它源），进度对象挂内存，读 /marketplace 或
+// /sources/progress 可见。国内加速开关（dsh-china-mirror 插件）打开时，
+// 本模块所有出站 URL 先过镜像表。
+// ---------------------------------------------------------------------------
+
+/** 用户源配置文件（与 disabled.json 同目录）。 */
+const SOURCES_FILE = () => join(PLUGIN_MANAGER_DIR(), 'sources.json');
+const SOURCES_CACHE_DIR = () => join(PLUGIN_MANAGER_DIR(), 'sources-cache');
+const SOURCES_STATE_VERSION = 1;
+/** 内置默认社区源：awesome-dsh-plugin 仓库（沿用既有市场清单格式）。 */
+export const DEFAULT_SOURCE_ID = 'awesome-dsh';
+/** 单源拉取超时与并发（与更新检测同一量级）。 */
+const SOURCE_FETCH_TIMEOUT_MS = 20000;
+const SOURCE_FETCH_CONCURRENCY = 4;
+/** 源缓存有效期：过期只影响 stale 标记，不阻止读取（离线仍能看到上次索引）。 */
+const SOURCE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+// ---- 国内加速（dsh-china-mirror 插件）-----------------------------------
+
+/** 内存镜像表缓存：读一次用 10 秒，避免每次网络调用都打一回本地路由。 */
+let mirrorCache = { at: 0, table: null, enabled: false };
+const MIRROR_CACHE_TTL_MS = 10 * 1000;
+
+/**
+ * 读国内加速状态（短缓存）。镜像插件不存在 / 路由 404 / 请求失败都按「关闭」
+ * 处理——加速是加分项，任何故障都不能影响正常路径。
+ * @param {{fetch?:Function}} deps - 测试注入。
+ * @returns {Promise<{enabled:boolean,table:Array|null}>}
+ */
+export async function readMirrorStateCached(deps = {}) {
+  const doFetch = deps.fetch ?? fetch;
+  if (Date.now() - mirrorCache.at < MIRROR_CACHE_TTL_MS) return mirrorCache;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    const response = await doFetch('http://127.0.0.1:' + (process.env.DSH_PORT || '3080') + '/dsh-china-mirror/state', {
+      signal: controller.signal, headers: { 'cache-control': 'no-cache' }
+    });
+    clearTimeout(timer);
+    if (response.ok) {
+      const state = await response.json();
+      mirrorCache = { at: Date.now(), enabled: state?.enabled === true, table: Array.isArray(state?.table) ? state.table : null };
+      return mirrorCache;
+    }
+  } catch { /* 插件不存在或未启动：按关闭处理 */ }
+  mirrorCache = { at: Date.now(), enabled: false, table: null };
+  return mirrorCache;
+}
+
+/** 测试用：直接重置镜像缓存。 */
+export function resetMirrorCache() {
+  mirrorCache = { at: 0, table: null, enabled: false };
+}
+
+/**
+ * 当前镜像规则表（关闭时返回 null = 直连）。消费方拿到 null 不做任何替换。
+ * @param {{fetch?:Function}} deps - 测试注入。
+ */
+export async function activeMirrorTable(deps = {}) {
+  const state = await readMirrorStateCached(deps);
+  return state.enabled && state.table ? state.table : null;
+}
+
+/**
+ * 按镜像表映射 URL（表为 null 时原样返回）。映射是纯前缀替换，与镜像插件导出的
+ * mapURL 同一语义——两个包是独立的编译目标，不互相 require，规则表本身由镜像
+ * 插件下发，天然一致。
+ * @param {string} url
+ * @param {{match:string,replace:string}[]|null} table
+ */
+export function mirrorMapURL(url, table) {
+  const value = url == null ? '' : String(url);
+  if (!value || !table) return value;
+  for (const rule of table) {
+    if (rule.replace && value.startsWith(rule.replace)) return value;
+  }
+  for (const rule of table) {
+    if (rule.match && value.startsWith(rule.match)) return rule.replace + value.slice(rule.match.length);
+  }
+  return value;
+}
+
+/**
+ * 带镜像映射的一次 GET + JSON 解析（readRemoteJSON 的镜像感知版）。
+ * 超时/网络错误转 error 字段，语义与 readRemoteJSON 相同。
+ */
+async function readRemoteJSONMirrored(url, timeoutMs, doFetch, decode = payload => payload) {
+  const table = await activeMirrorTable();
+  return readRemoteJSON(mirrorMapURL(url, table), timeoutMs, doFetch, decode);
+}
+
+/**
+ * pnpm/npm 子进程环境：国内加速打开时注入 `npm_config_registry`，让 pnpm view/add
+ * 与安装链路天然走镜像（pnpm 尊重该环境变量）。镜像关闭或插件不可用时原样返回。
+ * @param {{fetch?:Function}} deps - 测试注入。
+ * @returns {Promise<object>} 环境对象（调用方展开进 child env）。
+ */
+export async function pnpmEnvironment(deps = {}) {
+  const table = await activeMirrorTable(deps);
+  if (!table) return process.env;
+  const rule = table.find(item => item.kind === 'registry' && item.match === 'https://registry.npmjs.org/');
+  if (!rule) return process.env;
+  return { ...process.env, npm_config_registry: rule.replace };
+}
+
+// ---- 源配置 CRUD ---------------------------------------------------------
+
+/**
+ * 读用户源配置。结构：{ version, sources: [{ id, kind, url, enabled, addedAt }] }。
+ * kind: 'index'（https JSON 地址）| 'git'（github:owner/repo，读仓库根 index.json）。
+ * 没有配置文件时返回只含内置默认源的清单（默认源与旧行为完全一致）。
+ * @returns {Promise<{version:number,sources:Array}>}
+ */
+export async function readSourcesConfig() {
+  const builtin = [{ id: DEFAULT_SOURCE_ID, kind: 'git', url: 'github:awesome-dsh-plugin/awesome-dsh-plugin', enabled: true, builtin: true, addedAt: null }];
+  try {
+    const raw = JSON.parse(await fs.readFile(SOURCES_FILE(), 'utf8'));
+    const sources = Array.isArray(raw?.sources) ? raw.sources.filter(item => item && typeof item.id === 'string') : [];
+    return { version: SOURCES_STATE_VERSION, sources: [...builtin, ...sources] };
+  } catch {
+    return { version: SOURCES_STATE_VERSION, sources: builtin };
+  }
+}
+
+/** 原子写源配置（tmp + rename，与 disabled.json 同一纪律）。 */
+async function writeSourcesConfig(config) {
+  const path = SOURCES_FILE();
+  await fs.mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}`;
+  await fs.writeFile(tmp, JSON.stringify(config, null, 2) + '\n', 'utf8');
+  await fs.rename(tmp, path);
+}
+
+/** 源 id 归一：git 源取 owner-repo，index 源取 URL 的稳定哈希。 */
+export function normalizeSourceId(kind, url) {
+  if (kind === 'git') {
+    const match = String(url || '').match(/github[:@/]+([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)/);
+    if (match) return `${match[1]}-${match[2]}`.toLowerCase();
+  }
+  let hash = 0;
+  const text = String(url || '');
+  for (let i = 0; i < text.length; i++) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  return 'src-' + Math.abs(hash).toString(36);
+}
+
+/**
+ * 添加一个源。重复 URL 幂等返回 alreadyAdded。
+ * @param {{kind:'git'|'index', url:string}} entry
+ * @returns {Promise<{ok:boolean,source?:object,alreadyAdded?:boolean,error?:string}>}
+ */
+export async function addPluginSource(entry) {
+  const kind = entry?.kind === 'git' ? 'git' : entry?.kind === 'index' ? 'index' : null;
+  const url = String(entry?.url ?? '').trim();
+  if (!kind) return { ok: false, error: 'kind 必须是 git 或 index' };
+  if (!url) return { ok: false, error: '缺少源地址' };
+  if (kind === 'index' && !/^https?:\/\//i.test(url)) return { ok: false, error: 'index 源必须是 http(s) 地址' };
+  if (kind === 'git' && !/^github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/i.test(url) && !/^https?:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+(\.git)?$/i.test(url)) {
+    return { ok: false, error: 'git 源地址格式：github:owner/repo 或 https://github.com/owner/repo' };
+  }
+  const config = await readSourcesConfig();
+  const normalizedUrl = kind === 'git' ? url.replace(/^https?:\/\/github\.com\//i, 'github:').replace(/\.git$/i, '') : url;
+  const existing = config.sources.find(item => item.url.toLowerCase() === normalizedUrl.toLowerCase());
+  if (existing) return { ok: true, source: existing, alreadyAdded: true };
+  const source = { id: normalizeSourceId(kind, normalizedUrl), kind, url: normalizedUrl, enabled: true, addedAt: new Date().toISOString() };
+  await writeSourcesConfig({ version: SOURCES_STATE_VERSION, sources: [...config.sources.filter(item => item.id !== source.id), source] });
+  return { ok: true, source };
+}
+
+/** 删除一个用户源（内置默认源拒绝删除）。 */
+export async function removePluginSource(id) {
+  const config = await readSourcesConfig();
+  if (id === DEFAULT_SOURCE_ID) return { ok: false, error: '内置默认源不能删除' };
+  const before = config.sources.length;
+  const next = config.sources.filter(item => item.id !== id);
+  if (next.length === before) return { ok: false, error: '没有这个源' };
+  await writeSourcesConfig({ version: SOURCES_STATE_VERSION, sources: next });
+  await fs.rm(join(SOURCES_CACHE_DIR(), `${id}.json`), { force: true }).catch(() => {});
+  return { ok: true, removed: id };
+}
+
+/** 启用/停用一个源（默认源同样可以停用——离线场景用户可能想关掉社区源）。 */
+export async function setPluginSourceEnabled(id, enabled) {
+  const config = await readSourcesConfig();
+  const source = config.sources.find(item => item.id === id);
+  if (!source) return { ok: false, error: '没有这个源' };
+  source.enabled = enabled === true;
+  await writeSourcesConfig({ version: SOURCES_STATE_VERSION, sources: config.sources });
+  return { ok: true, source };
+}
+
+// ---- 源索引拉取与缓存 ----------------------------------------------------
+
+/** git 源（github:owner/repo）→ 原始索引 JSON 地址（走 raw，镜像感知）。 */
+function sourceIndexURLs(source) {
+  if (source.kind === 'index') return [source.url];
+  const match = String(source.url).match(/github:([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/i);
+  if (!match) return [];
+  const [, owner, repo] = match;
+  return [
+    `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/index.json`,
+    `https://raw.githubusercontent.com/${owner}/${repo}/main/index.json`,
+    `https://raw.githubusercontent.com/${owner}/${repo}/master/index.json`,
+  ];
+}
+
+/**
+ * 把源索引的一个条目归一成市场插件条目（与 fetchOfficialMarketPlugins 输出同构）。
+ * 非法条目（缺 name）返回 null，不拖垮整源。
+ */
+export function sourceEntryToPlugin(entry, sourceId) {
+  if (!entry || typeof entry !== 'object') return null;
+  const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+  if (!name) return null;
+  const repo = typeof entry.repo === 'string' && entry.repo.trim() ? entry.repo.trim() : name;
+  const description = entry.description && typeof entry.description === 'object' ? entry.description : {};
+  const category = typeof entry.category === 'string' && entry.category.trim() ? entry.category.trim() : 'other';
+  return {
+    id: typeof entry.id === 'string' && entry.id ? `${sourceId}:${entry.id}` : `${sourceId}:${name}`,
+    url: typeof entry.url === 'string' && entry.url ? entry.url : name,
+    name,
+    repo,
+    author: repo.includes('/') ? repo.split('/')[0] : sourceId,
+    category,
+    source: sourceId,
+    descriptionEn: typeof description.en === 'string' ? description.en : '',
+    descriptionZh: typeof description.zh === 'string' ? description.zh : '',
+    downloads: Number(entry.downloads) || 0,
+    stars: Number(entry.stars) || 0,
+    verified: entry.verified === true,
+    screenshot: typeof entry.screenshot === 'string' ? entry.screenshot : null,
+    addedDate: typeof entry.updatedAt === 'string' ? entry.updatedAt : null,
+    version: typeof entry.version === 'string' ? entry.version : null,
+  };
+}
+
+/** 校验一个 index.json 文档的结构；返回 plugins 数组或 null。 */
+export function parseSourceIndex(document) {
+  if (!document || typeof document !== 'object') return null;
+  const plugins = Array.isArray(document.plugins) ? document.plugins : null;
+  if (!plugins) return null;
+  return plugins;
+}
+
+/** 拉一个源的最新索引（联网，镜像感知；全部地址失败返回 { error }）。 */
+export async function fetchSourceIndex(source, deps = {}) {
+  const doFetch = deps.fetch ?? fetch;
+  const urls = sourceIndexURLs(source);
+  if (urls.length === 0) return { error: '无法从源地址推出索引位置' };
+  let lastError = '源没有可用的索引地址';
+  for (const url of urls) {
+    const result = await readRemoteJSONMirrored(url, SOURCE_FETCH_TIMEOUT_MS, doFetch);
+    if (!result.error) {
+      const plugins = parseSourceIndex(result.value);
+      if (plugins) return { plugins, fetchedAt: new Date().toISOString() };
+      lastError = '索引里没有 plugins 数组';
+      continue;
+    }
+    lastError = result.error;
+  }
+  return { error: lastError };
+}
+
+/** 每源缓存路径。 */
+function sourceCacheFile(id) {
+  return join(SOURCES_CACHE_DIR(), `${id}.json`);
+}
+
+/** 读一个源的缓存索引（损坏/缺失返回 null）。 */
+export async function readSourceCache(id) {
+  try {
+    const raw = JSON.parse(await fs.readFile(sourceCacheFile(id), 'utf8'));
+    return Array.isArray(raw?.plugins) ? raw : null;
+  } catch { return null; }
+}
+
+/** 写一个源的缓存索引（原子写；失败不抛——缓存是加分项）。 */
+async function writeSourceCache(id, payload) {
+  try {
+    await fs.mkdir(SOURCES_CACHE_DIR(), { recursive: true });
+    const tmp = `${sourceCacheFile(id)}.tmp-${process.pid}`;
+    await fs.writeFile(tmp, JSON.stringify(payload), 'utf8');
+    await fs.rename(tmp, sourceCacheFile(id));
+  } catch { /* 缓存写失败不影响主流程 */ }
+}
+
+// ---- 聚合与异步刷新 ------------------------------------------------------
+
+/** 刷新进度对象（内存）：/sources/progress 读它；形态与 updateProgress 对齐。 */
+let sourceRefreshProgress = null;
+
+/** 当前的源刷新进度（没有进行中的刷新时是 null）。 */
+export function readSourceRefreshProgress() {
+  return sourceRefreshProgress;
+}
+
+/**
+ * 聚合全部启用源的缓存（不发网络）：官方 npm 查询的缓存走市场主索引，
+ * 这里只聚合 git/index 源。条目带 sourceId 供 UI 区分来源。
+ */
+export async function aggregateCachedSources() {
+  const config = await readSourcesConfig();
+  const aggregated = [];
+  const perSource = [];
+  for (const source of config.sources) {
+    if (source.id === DEFAULT_SOURCE_ID) continue; // 默认源走市场主索引
+    if (source.enabled === false) { perSource.push({ id: source.id, enabled: false, state: 'disabled', count: 0 }); continue; }
+    const cache = await readSourceCache(source.id);
+    if (!cache) { perSource.push({ id: source.id, enabled: true, state: 'empty', count: 0 }); continue; }
+    const stale = Date.now() - Date.parse(cache.fetchedAt ?? 0) > SOURCE_CACHE_MAX_AGE_MS;
+    const plugins = (cache.plugins ?? []).map(entry => sourceEntryToPlugin(entry, source.id)).filter(Boolean);
+    aggregated.push(...plugins);
+    perSource.push({ id: source.id, enabled: true, state: stale ? 'stale' : 'ok', count: plugins.length, fetchedAt: cache.fetchedAt });
+  }
+  return { plugins: aggregated, perSource };
+}
+
+/**
+ * 后台刷新全部启用源：受理后逐源拉取（并发 4），单源失败记录 error 不拖垮其它源；
+ * 默认源（awesome-dsh-plugin）沿用 refreshMarketplace 的仓库重建。进度对象全程可读，
+ * 结束时写 finishedAt。这是「刷新市场」按钮的异步受理路径。
+ * @returns {Promise<{sources:number,plugins:number,errors:string[]}>} 刷新汇总。
+ */
+export async function refreshPluginSources(deps = {}) {
+  const config = await readSourcesConfig();
+  const enabled = config.sources.filter(item => item.enabled !== false);
+  sourceRefreshProgress = {
+    active: true,
+    total: enabled.length,
+    done: 0,
+    current: null,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    results: [],
+  };
+  const errors = [];
+  let pluginCount = 0;
+  try {
+    await mapWithConcurrency(enabled, SOURCE_FETCH_CONCURRENCY, async source => {
+      sourceRefreshProgress.current = source.id;
+      if (source.id === DEFAULT_SOURCE_ID) {
+        // 内置默认源：主索引重建（clone awesome-dsh-plugin），沿用旧逻辑。
+        try {
+          const summary = await refreshMarketplaceOnce();
+          sourceRefreshProgress.results.push({ id: source.id, ok: true, count: summary.count });
+          pluginCount += summary.count;
+        } catch (error) {
+          errors.push(`${source.id}: ${String(error?.message || error)}`);
+          sourceRefreshProgress.results.push({ id: source.id, ok: false, error: String(error?.message || error) });
+        }
+        sourceRefreshProgress.done += 1;
+        return;
+      }
+      const result = await fetchSourceIndex(source, deps).catch(error => ({ error: String(error?.message || error) }));
+      if (result.error) {
+        errors.push(`${source.id}: ${result.error}`);
+        sourceRefreshProgress.results.push({ id: source.id, ok: false, error: result.error });
+      } else {
+        await writeSourceCache(source.id, { fetchedAt: result.fetchedAt, plugins: result.plugins });
+        const plugins = result.plugins.map(entry => sourceEntryToPlugin(entry, source.id)).filter(Boolean);
+        sourceRefreshProgress.results.push({ id: source.id, ok: true, count: plugins.length });
+        pluginCount += plugins.length;
+      }
+      sourceRefreshProgress.done += 1;
+    });
+  } finally {
+    sourceRefreshProgress.active = false;
+    sourceRefreshProgress.current = null;
+    sourceRefreshProgress.finishedAt = new Date().toISOString();
+  }
+  return { sources: enabled.length, plugins: pluginCount, errors };
+}
+
+/**
+ * 市场读接口（聚合版）：官方 + 默认源走市场主索引，自定义源走各自缓存，
+ * mergeMarketPlugins 去重合并。兼容旧响应字段（plugins/categories/count/stale）。
+ */
+export async function readMarketplaceAggregated() {
+  const base = await readMarketplace();
+  const extra = await aggregateCachedSources();
+  const plugins = mergeMarketPlugins(base.plugins ?? [], extra.plugins);
+  const categories = sortMarketCategories([
+    ...(base.categories ?? []),
+    ...new Set(extra.plugins.map(item => item.category)),
+  ]);
+  const stale = Boolean(base.stale) || extra.perSource.some(item => item.state === 'stale');
+  return {
+    ...base,
+    ok: base.ok !== false,
+    count: plugins.length,
+    categories,
+    plugins,
+    stale,
+    sources: extra.perSource,
+    sourceRefresh: sourceRefreshProgress,
+  };
+}
+
+
 function json(response, status, value) {
   response.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(value));
@@ -3668,11 +4097,85 @@ export function apply(ctx) {
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/marketplace', handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
-          try { json(res, 200, await readMarketplace()); } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+          // 聚合版：官方 + 默认源（主索引）+ 用户自定义源（各自缓存）合并去重。
+          try { json(res, 200, await readMarketplaceAggregated()); } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/refresh', handler: async (req, res) => {
           if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
-          try { json(res, 200, await refreshMarketplace()); } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+          // 异步受理：刷新可能几分钟（逐源拉取），先回 202，进度走 /sources/progress；
+          // 已有刷新在跑时幂等返回（不重复起）。
+          if (readSourceRefreshProgress()?.active) { json(res, 202, { ok: true, alreadyRunning: true }); return; }
+          json(res, 202, { ok: true, accepted: true });
+          void refreshPluginSources().catch(() => {});
+        }}),
+        // 源刷新进度（形态与 /updates 的 progress 对齐）：轮询到 active=false 即结束。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources/progress', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          json(res, 200, { progress: readSourceRefreshProgress() });
+        }}),
+        // 源清单：含内置默认源与用户自定义源（带每源缓存状态）。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          try {
+            const config = await readSourcesConfig();
+            const extra = await aggregateCachedSources();
+            const states = new Map(extra.perSource.map(item => [item.id, item]));
+            json(res, 200, {
+              ok: true,
+              sources: config.sources.map(source => ({ ...source, cache: states.get(source.id) ?? null })),
+            });
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources/add', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            const result = await addPluginSource({ kind: value?.kind, url: value?.url });
+            json(res, result.ok ? 200 : 400, result);
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources/remove', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            if (!value?.id) { json(res, 400, { error: '缺少源 id' }); return; }
+            const result = await removePluginSource(value.id);
+            json(res, result.ok ? 200 : 400, result);
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources/set-enabled', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            if (!value?.id || typeof value?.enabled !== 'boolean') { json(res, 400, { error: '缺少源 id 或 enabled' }); return; }
+            const result = await setPluginSourceEnabled(value.id, value.enabled);
+            json(res, result.ok ? 200 : 400, result);
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 国内加速开关透传：读镜像插件的状态（失败按关闭）；写开关转发给镜像插件。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/china-mirror', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          try {
+            resetMirrorCache();
+            const state = await readMirrorStateCached();
+            json(res, 200, { ok: true, enabled: state.enabled, table: state.table, pluginPresent: state.table !== null });
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/china-mirror/set', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            if (typeof value?.enabled !== 'boolean') { json(res, 400, { error: '缺少 enabled 布尔值' }); return; }
+            const result = await fetch('http://127.0.0.1:' + (process.env.DSH_PORT || '3080') + '/dsh-china-mirror/enabled', {
+              method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: value.enabled })
+            }).then(r => r.json()).catch(() => null);
+            if (!result || result.error) {
+              json(res, 502, { error: result?.error || '镜像插件不可用（未安装或未启动）' });
+              return;
+            }
+            resetMirrorCache();
+            json(res, 200, { ok: true, enabled: result.enabled === true, table: result.table ?? null });
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/install', handler: async (req, res) => {
           if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }

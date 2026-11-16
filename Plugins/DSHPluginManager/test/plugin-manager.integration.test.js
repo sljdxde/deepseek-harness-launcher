@@ -50,6 +50,8 @@ test('apply 注册全部插件管理路由', () => {
   const { routes } = boot();
   const paths = routes.map(route => route.path).sort();
   assert.deepEqual(paths, [
+    '/dsh-plugin-manager/china-mirror',
+    '/dsh-plugin-manager/china-mirror/set',
     '/dsh-plugin-manager/cleanup',
     '/dsh-plugin-manager/disabled',
     '/dsh-plugin-manager/ignore',
@@ -60,6 +62,11 @@ test('apply 注册全部插件管理路由', () => {
     '/dsh-plugin-manager/release-notes',
     '/dsh-plugin-manager/restart',
     '/dsh-plugin-manager/set-disabled',
+    '/dsh-plugin-manager/sources',
+    '/dsh-plugin-manager/sources/add',
+    '/dsh-plugin-manager/sources/progress',
+    '/dsh-plugin-manager/sources/remove',
+    '/dsh-plugin-manager/sources/set-enabled',
     '/dsh-plugin-manager/unignore',
     '/dsh-plugin-manager/uninstall',
     '/dsh-plugin-manager/uninstall-many',

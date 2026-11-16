@@ -142,6 +142,18 @@ const toasts = tree => findAll(tree, node => /dsh-pm-toast dsh-pm-toast-/.test(S
   kind: /toast-success/.test(node.props.className) ? 'success' : /toast-error/.test(node.props.className) ? 'error' : 'info',
   text: textOf(node.children && node.children[1] ? node.children[1] : node),
 }));
+// 方案 B：面板默认落在「发现」页；已安装相关场景先点左栏「已安装」切过去。
+// railItems 的渲染顺序固定：发现 / 内置 / 已安装 / 插件源，按文字找到目标项。
+// 每次点击后 repaint+settle：Runtime 的状态写入只标记 dirty，树要重画才是新的。
+const openPanelOn = async (runtime, view) => {
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  if (view) {
+    const item = findAll(runtime.tree, node => node.type === 'button' && textOf(node).includes(view))[0];
+    if (item) { item.props.onClick(); await settle(runtime); }
+  }
+};
+const openInstalledPanel = runtime => openPanelOn(runtime, '已安装');
 
 // ---------- 场景装配 ----------
 function makeDocument() {
@@ -243,7 +255,7 @@ const entry = (name, over) => ({
   await settle(runtime);
 
   // 2. 打开面板：工具栏 + 行内标记
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   let tree = runtime.tree;
   const text = textOf(tree);
@@ -336,7 +348,7 @@ const entry = (name, over) => ({
 
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill').length, 2, '两个插件都可更新');
 
@@ -376,7 +388,7 @@ const entry = (name, over) => ({
   const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime, 40);
   const failure = toasts(runtime.tree).find(item => item.kind === 'error');
   assert.ok(failure, '失败批次要有红色汇总，实际：' + JSON.stringify(toasts(runtime.tree)));
@@ -397,7 +409,7 @@ const entry = (name, over) => ({
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
   assert.equal(byClass(runtime.tree, 'dsh-pm-trigger-badge').length, 0, '降级时没有角标');
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   const text = textOf(runtime.tree);
   assert.ok(text.includes('dsh-notify'), '降级时仍显示已安装列表');
@@ -433,7 +445,7 @@ const entry = (name, over) => ({
   const { runtime, trigger, document: doc } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   let tree = runtime.tree;
   assert.ok(textOf(tree).includes('已选 0 个'), '工具栏显示已选计数');
@@ -546,7 +558,7 @@ const entry = (name, over) => ({
   const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => { delays.push(ms); return setTimeout(fn, ms <= 2500 ? 0 : ms); } });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime, 4);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime, 4);
   const text = textOf(runtime.tree);
   assert.ok(text.includes('正在下载并安装 v2.0.0…'), '当前更新行显示步骤，实际：' + text.slice(0, 400));
@@ -623,11 +635,11 @@ const entry = (name, over) => ({
     const badge = byClass(runtime.tree, 'dsh-pm-trigger-badge')[0];
     return badge ? textOf(badge) : '';
   };
-  const openPanel = () => findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  const openPanel = async () => await openInstalledPanel(runtime);
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
   assert.equal(badgeText(), '2', '两条可更新 → 角标 2');
-  openPanel();
+await openPanel();
   await settle(runtime);
   assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill').length, 2, '两条都是可更新胶囊');
   assert.equal(findByText(runtime.tree, 'button', '忽略选中 (0)').props.disabled, true, '没选中时「忽略选中 (0)」禁用');
@@ -658,7 +670,7 @@ const entry = (name, over) => ({
   assert.match(ignoredAllButton.props.title, /含已忽略的 2 个/);
 
   // 「取消忽略」：只恢复 dsh-a，角标回到 1；「全部更新」的名单里也就只剩 dsh-a
-  openPanel();
+await openPanel();
   await settle(runtime);
   findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '取消忽略')[0].props.onClick();
   await settle(runtime);
@@ -667,7 +679,7 @@ const entry = (name, over) => ({
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
   assert.equal(badgeText(), '1', '取消忽略一条后角标回到 1');
-  openPanel();
+await openPanel();
   await settle(runtime);
   assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill-ignored').length, 1, '只剩 dsh-b 还是已忽略');
   // 新语义：显式批量包含已忽略项（b 虽被忽略但仍有更新）→ 计数 2、名单含 b
@@ -701,7 +713,7 @@ const entry = (name, over) => ({
   const { runtime, trigger } = boot({ fetchImpl });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   findByText(runtime.tree, 'button', '更新内容').props.onClick({ stopPropagation() {} });
   await settle(runtime);
@@ -744,7 +756,7 @@ console.log('== 冒烟全部通过 ==');
   const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   findByText(runtime.tree, 'button', '更新').props.onClick({ stopPropagation() {} });
   await settle(runtime);
@@ -791,10 +803,14 @@ console.log('== 冒烟全部通过 ==');
   const { runtime, trigger } = boot({ fetchImpl });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
-  await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '插件市场')[0].props.onClick();
-  await settle(runtime, 10);
+await openInstalledPanel(runtime);
+  // 方案 B：「发现」是默认视图（原「插件市场」页签），打开面板即在其中；先切回
+  // 「发现」保证无论当前在哪一页都从发现页开始。
+  const gotoDiscover = async () => {
+    const item = findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '发现')[0];
+    if (item) { item.props.onClick(); await settle(runtime, 10); }
+  };
+  await gotoDiscover();
 
   const chips = () => findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-chip( |$)/.test(String(node.props.className || '')));
   const chipByLabel = label => chips().find(node => textOf(node) === label);
@@ -874,12 +890,14 @@ console.log('== 冒烟全部通过 ==');
   const { runtime, trigger } = boot({ fetchImpl });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
-  await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '插件市场')[0].props.onClick();
-  await settle(runtime, 10);
+await openInstalledPanel(runtime);
+  const gotoDiscover11 = async () => {
+    const item = findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '发现')[0];
+    if (item) { item.props.onClick(); await settle(runtime, 10); }
+  };
+  await gotoDiscover11();
   assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/refresh'), '过期市场索引自动触发后台刷新');
-  assert.ok(findByText(runtime.tree, 'button', '刷新中…'), '刷新进行中，刷新按钮显示「刷新中…」');
+  assert.ok(textOf(runtime.tree).includes('刷新中…'), '刷新进行中显示「刷新中…」（方案 B：标题行小字）');
   // 后台刷新不得阻塞用户操作：缓存的市场列表照常渲染，安装按钮可用、点了真的发请求
   //（此前刷新占 busy，install() 直接 return，按钮点了没反应＝静默失效）。
   const cards = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
@@ -895,7 +913,7 @@ console.log('== 冒烟全部通过 ==');
   assert.ok(closeButton, '面板有关闭按钮');
   closeButton.props.onClick();
   await settle(runtime);
-  assert.equal(findByText(runtime.tree, 'button', '插件市场'), undefined, '刷新市场进行中点关闭能关掉面板');
+  assert.equal(findByText(runtime.tree, 'button', '×'), undefined, '刷新市场进行中点关闭能关掉面板');
   console.log('场景11（刷新市场是后台任务：可关闭、不阻塞操作）通过');
 }
 
@@ -935,7 +953,7 @@ console.log('== 冒烟全部通过 ==');
   const { runtime, trigger } = boot({ fetchImpl });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
 
   const switches = () => findAll(runtime.tree, node => node.type === 'input' && node.props.role === 'switch');
@@ -987,4 +1005,130 @@ console.log('== 冒烟全部通过 ==');
   assert.ok(toasts(runtime.tree).some(item => item.kind === 'error' && /停用 dsh-flaky 失败/.test(item.text)), '失败要 toast 报错');
   assert.ok(!textOf(runtime.tree).includes('已停用 dsh-flaky'), '失败不弹重启确认');
   console.log('场景12（插件停用/启用开关 + 失败回滚 + 重启确认）通过');
+}
+
+/** 场景 13：发现页结构 —— 推荐位 / 双榜 / 分类 chips / sticky 手动安装行。
+ *  方案 B 的新默认视图：打开面板即落发现页；推荐位取第一个未安装插件，
+ *  两榜按下载/星标取前几名；手动安装行走现有 /install 接口。 */
+{
+  const marketPlugins = [
+    { id: 'hot', name: 'hot-plugin', repo: 'o/hot', author: 'o', category: 'tool', descriptionEn: 'hot', downloads: 900, stars: 10, addedDate: null },
+    { id: 'star', name: 'star-plugin', repo: 'o/star', author: 'o', category: 'data', descriptionEn: 'star', downloads: 100, stars: 500, addedDate: null },
+    { id: 'installed-one', name: 'dsh-notify', repo: 'o/dsh-notify', url: 'https://github.com/o/dsh-notify', author: 'o', category: 'notify', descriptionEn: 'installed', downloads: 50, stars: 5, addedDate: null },
+  ];
+  const fetchImpl = (url, options = {}) => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [{ name: 'dsh-notify', version: '1.0.0', description: '通知插件' }] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({ count: marketPlugins.length, official: 0, categories: ['tool', 'data'], indexedAt: null, stale: false, plugins: marketPlugins });
+    }
+    if (url.startsWith('/dsh-plugin-manager/install')) return respond({ ok: true, alreadyInstalled: false });
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null); // 默认即发现页
+
+  const text = textOf(runtime.tree);
+  // 推荐位：第一个未安装插件（hot），带「今日推荐」标签与安装/详情按钮。
+  assert.ok(text.includes('今日推荐'), '推荐位有「今日推荐」标签');
+  assert.ok(text.includes('o/hot'), '推荐位展示第一个未安装插件');
+  const heroButtons = findAll(runtime.tree, node => node.type === 'button' && (textOf(node) === '安装' || textOf(node) === '详情'));
+  assert.ok(heroButtons.length >= 2, '推荐位有安装与详情按钮');
+  // 双榜：下载最多（hot 第一）与星标最多（star 第一）。
+  const rankCards = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-rank( |$)/.test(String(node.props.className || '')));
+  assert.equal(rankCards.length, 2, '右列有两张榜单');
+  const rankText = textOf(rankCards[0]);
+  assert.ok(rankText.includes('下载最多') && rankText.includes('o/hot'), '下载榜第一是 hot');
+  assert.ok(textOf(rankCards[1]).includes('星标最多'), '第二张榜是星标榜');
+  // 已安装的插件在榜里显示「✓ 已安装」而不是安装按钮。
+  const rankRows = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-rank-row( |$)/.test(String(node.props.className || '')));
+  const installedRow = rankRows.find(row => textOf(row).includes('o/dsh-notify'));
+  assert.ok(installedRow && textOf(installedRow).includes('✓ 已安装'), '榜单里已安装的插件显示「✓ 已安装」胶囊');
+  // 手动安装行：输入 spec 提交不抛错（安装走入队泵）。
+  const manualInput = findAll(runtime.tree, node => node.type === 'input' && node.props['aria-label'] === '手动安装插件')[0];
+  assert.ok(manualInput, '发现页底部有手动安装输入行');
+  manualInput.props.onChange({ target: { value: 'github:o/new' } });
+  await settle(runtime);
+  const form = findAll(runtime.tree, node => node.type === 'form')[0];
+  form.props.onSubmit({ preventDefault() {} });
+  await settle(runtime, 10);
+  console.log('场景13（发现页：推荐位/双榜/分类/手动安装行）通过');
+}
+
+/** 场景 14：插件源页 + 国内加速开关。
+ *  源页：源清单行（内置默认源 + 自定义源）、添加/删除都打对应接口；
+ *  国内加速：顶栏开关切换 → POST /china-mirror/set。 */
+{
+  const calls = [];
+  const customSources = [
+    { id: 'awesome-dsh', kind: 'git', url: 'github:awesome-dsh-plugin/awesome-dsh-plugin', enabled: true, builtin: true, cache: { state: 'ok', count: 42 } },
+    { id: 'src-x', kind: 'index', url: 'https://example.com/i.json', enabled: true, cache: { state: 'stale', count: 3 } },
+  ];
+  let mirrorEnabled = false;
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) return respond({ count: 0, official: 0, categories: [], indexedAt: null, stale: false, plugins: [] });
+    if (url.startsWith('/dsh-plugin-manager/sources')) return respond({ ok: true, sources: customSources });
+    if (url.startsWith('/dsh-plugin-manager/sources/remove')) return respond({ ok: true, removed: 'src-x' });
+    if (url.startsWith('/dsh-plugin-manager/sources/add')) return respond({ ok: true, source: { id: 'src-new', kind: 'git', url: 'github:a/b', enabled: true } });
+    if (url.startsWith('/dsh-plugin-manager/china-mirror/set')) {
+      const body = JSON.parse(options.body || '{}');
+      mirrorEnabled = body.enabled;
+      return respond({ ok: true, enabled: mirrorEnabled });
+    }
+    if (url.startsWith('/dsh-plugin-manager/china-mirror')) return respond({ ok: true, enabled: mirrorEnabled, pluginPresent: true });
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null); // 打开面板（默认发现页，顶栏开关在这里）
+
+  // 1. 国内加速开关（顶栏，默认关闭）→ 点开 → 请求 /china-mirror/set 且开关变 on。
+  const mirrorButton = () => findAll(runtime.tree, node => node.type === 'button' && node.props['aria-label'] === '国内加速')[0];
+  if (!mirrorButton()) console.log('DEBUG buttons:', findAll(runtime.tree, node => node.type === 'button').map(b => JSON.stringify(textOf(b))).join(' | '));
+  assert.ok(mirrorButton(), '顶栏有国内加速开关');
+  assert.equal(mirrorButton().props['aria-checked'], 'false', '默认关闭');
+  mirrorButton().props.onClick();
+  await settle(runtime, 10);
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/china-mirror/set'), '切换发了 /china-mirror/set');
+  await settle(runtime, 10);
+  assert.equal(mirrorButton().props['aria-checked'], 'true', '开启后开关 on');
+
+  // 2. 插件源页：左栏切过去，两行源都在，内置源没有删除按钮。
+  const sourcesRail = () => findAll(runtime.tree, node => node.type === 'button' && textOf(node).includes('插件源') && !textOf(node).includes('返回'))[0];
+  sourcesRail().props.onClick();
+  await settle(runtime, 10);
+  const srcRows = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-srcrow( |$)/.test(String(node.props.className || '')));
+  assert.equal(srcRows().length, 2, '源页列出两行源');
+  const text = textOf(runtime.tree);
+  assert.ok(text.includes('awesome-dsh 社区清单（内置默认源）'), '内置默认源有说明名');
+  assert.ok(text.includes('https://example.com/i.json'), '自定义源展示地址');
+  assert.ok(text.includes('42 个插件'), '缓存状态展示插件数');
+  assert.ok(text.includes('索引已过期'), 'stale 缓存标注过期');
+  const removeButtons = () => findAll(runtime.tree, node => node.type === 'button' && String(node.props['aria-label'] || '').startsWith('删除源'));
+  assert.equal(removeButtons().length, 1, '内置源没有删除按钮，自定义源有');
+  // 3. 添加源：输入地址 → 添加 → 发 /sources/add（github: 短写按 git 走）。
+  const addrInput = findAll(runtime.tree, node => node.type === 'input' && node.props['aria-label'] === '插件源地址')[0];
+  addrInput.props.onChange({ target: { value: 'github:community/registry' } });
+  await settle(runtime);
+  const addBtn = findAll(runtime.tree, node => node.type === 'button' && textOf(node).includes('添加源'))[0];
+  addBtn.props.onClick();
+  await settle(runtime, 10);
+  const addCall = calls.find(call => call.url === '/dsh-plugin-manager/sources/add');
+  assert.ok(addCall, '添加源发了 /sources/add');
+  assert.deepEqual(JSON.parse(addCall.options.body), { kind: 'git', url: 'github:community/registry' }, 'github: 短写按 git 源提交');
+  // 4. 删除自定义源 → 发 /sources/remove。
+  removeButtons()[0].props.onClick();
+  await settle(runtime, 10);
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/sources/remove'), '删除发了 /sources/remove');
+  console.log('场景14（插件源页 + 国内加速开关）通过');
 }

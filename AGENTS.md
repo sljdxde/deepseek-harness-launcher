@@ -96,3 +96,17 @@
   自动化授权）；仅允许在 lsof 连接检测确认浏览器已连接后，用 AppleScript 精确选中
   标签，且必须保留降级路径（详见 `Sources/BrowserConnectionSupport.swift` 与
   `Sources/BrowserAutomationSupport.swift` 的注释）。
+- 插件中心（`Plugins/DSHPluginManager`）的 UI 是方案 B：页面内左栏四项
+  （发现 / 内置 / 已安装 / 插件源）+ 内容区；发现页 = 推荐位 + 下载榜 + 星标榜 +
+  分类 chips + sticky 手动安装行。图标一律 SVG 线性图标，不用 emoji。
+- 插件源协议（多仓库源）：源 = 含 `index.json` 的 Git 仓库（`github:owner/repo`）或
+  索引 JSON 地址；`index.json` 形如
+  `{ version: 1, plugins: [{ name, repo?, url?, category?, description: {en,zh}, stars, downloads, verified }] }`。
+  用户源存 `~/.dsh/plugin-manager/sources.json`，每源缓存存 `sources-cache/<id>.json`；
+  聚合顺序 = 官方 npm 查询 → awesome-dsh-plugin（内置默认源）→ 用户启用的自定义源，
+  按 url 去重。刷新是后台任务（`POST /refresh` 回 202，进度读 `/sources/progress`）。
+- 国内加速是**独立插件** `Plugins/DSHChinaMirror`（Windows 内置，`assets.Plugins` 解出并
+  链接，base patch 现场合成）。两个插件之间只允许一条协议：镜像插件提供
+  `GET /dsh-china-mirror/state → { enabled, table }` 与 `POST /dsh-china-mirror/enabled`，
+  管理器读 state 并用 table 做 URL 前缀替换（`mirrorMapURL`），开关即时生效、失败自动
+  直连；两边不互相 import。它同样不能进 macOS 共享的 `DSHArchiveManager/cordis.patch.yml`。
