@@ -78,6 +78,15 @@
   安装的 launcher/dsh**：安装器测试通过 `DHL_STOP_SCOPE=target` 把进程停止
   限定在临时目标目录内，禁止移除该作用域限制（否则每次跑测试都会杀掉用户
   正在使用的菜单栏应用，表现为"自动退出"）。
+- 插件单元测试与覆盖率门禁：`node scripts/coverage-check.mjs` 跑 `Plugins/` 下全部
+  单元测试并逐文件核对**行覆盖率 100%**，低于门槛直接失败；`scripts/test.sh` 在打包
+  前调用它（逻辑门禁，不该被 macOS 打包步骤挡住）。新增/修改插件代码必须同时补测试，
+  边界分支（错误路径、异常降级、空输入）也要覆盖 —— 不许用 `/* c8 ignore */`、
+  不许删分支、不许把断言改成永真。门禁自己解析 `NODE_V8_COVERAGE` 原始数据而不是
+  node 的报告表格：后者跨进程聚合时会按「函数名」合并区间，把别的进程没跑到
+  的函数算成已覆盖（塞一个没人调用的函数进去，单跑报 99.13%、合跑却报 100%）。
+  写测试时注意：node:test 的 `test(name, opts, fn)` 里 **fn 不能省**，
+  少传就变成「没有函数体」的空测试直接秒过（插件源测试曾因此集体空转）。
 - 提示框与窗口边界：所有 `NSAlert` 必须走统一入口——App 侧 `AlertDesign.run` / `runIfIdle`，
   安装器 `AlertBoundary.run`（两者是同一实现，安装器是独立编译目标链不了 `AlertDesign`）。
   动态长正文（shell 输出、插件清单、远端版本号）必须过 `setBoundedText`，`scripts/test.sh`

@@ -13,7 +13,11 @@
 // 合跑却报 100%（假绿灯）。所以门禁自己解析 NODE_V8_COVERAGE 原始数据：
 //   * 每个进程单独给每段代码的 count；
 //   * 跨进程按 (startOffset, endOffset) 聚合，count 取**最大值**
-//     —— 任一进程真的执行过就算覆盖过，这与「这段代码是否被测到」的语义一致。
+//     —— 任一进程真的执行过就算覆盖过，这与「这段代码是否被测到」的语义一致；
+//   * 再按 V8 区间的**嵌套**做差集：外层 count>0 的区间扣掉更具体的
+//     count=0 区间，剩下的字节才算真的被执行过。
+//
+// 输出统一用 ASCII：Windows 控制台默认 GBK，中文会被替换/截断，读起来像乱码。
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -54,14 +58,14 @@ for (const plugin of pluginDirs) {
   }
 }
 if (testFiles.length === 0) {
-  console.error('覆盖率：没找到任何测试文件');
+  console.error('coverage: no test files found');
   process.exit(1);
 }
 
 // 覆盖数据目录必须在仓库外：node --test 的每个 worker 各自写一份 JSON。
 const covDir = mkdtempSync(join(process.env.TEMP || process.env.TMP || '.', 'dsh-cov-'));
 
-console.log(`覆盖率：跑 ${testFiles.length} 个测试文件…`);
+console.log(`coverage: running ${testFiles.length} test files...`);
 if (process.env.COV_DEBUG_DIR) console.log('COV_DIR=' + covDir);
 const result = spawnSync(process.execPath, [
   '--test',
@@ -75,11 +79,11 @@ const result = spawnSync(process.execPath, [
 });
 
 if (result.status !== 0) {
-  console.error('覆盖率：测试本身没全绿，先修测试再谈覆盖率');
+  console.error('coverage: some tests failed - fix the tests first');
   const failures = ((result.stdout || '') + (result.stderr || '')).split('\n')
     .filter(line => /^\s*not ok /.test(line));
   if (failures.length) {
-    console.error(`失败用例 ${failures.length} 个：`);
+    console.error(`failing cases (${failures.length}):`);
     for (const line of failures) console.error('  ' + line.trim());
   } else {
     console.error(((result.stdout || '') + (result.stderr || '')).split('\n').slice(-40).join('\n'));
@@ -88,24 +92,27 @@ if (result.status !== 0) {
   process.exit(1);
 }
 
-// ---- 解析 V8 原始覆盖数据，跨进程聚合 ----
-/** 绝对路径 → Map<区间键, count> */
+// ---- parse raw V8 coverage data, aggregate across processes ----
+// absolute path -> Map<range key, count>
 const merged = new Map();
 for (const name of readdirSync(covDir)) {
   if (!name.endsWith('.json')) continue;
   let parsed;
   try { parsed = JSON.parse(readFileSync(join(covDir, name), 'utf8')); } catch { continue; }
   for (const entry of parsed.result || []) {
+    // V8's url is file:///D:/... (percent-encoded when the path has non-ASCII).
     let file;
-    try { file = fileURLToPath(entry.url); } catch { continue; }
-    file = resolve(file);
+    try {
+      file = resolve(decodeURIComponent(String(entry.url).replace(/^file:\/\//, '').replace(/^\//, '')));
+    } catch { continue; }
     let ranges = merged.get(file);
     if (!ranges) { ranges = new Map(); merged.set(file, ranges); }
     for (const fn of entry.functions || []) {
       for (const range of fn.ranges || []) {
         const key = `${range.startOffset}:${range.endOffset}`;
         const previous = ranges.get(key);
-        // 同一段代码在多个进程里出现：任一进程执行过（count>0）就算覆盖。
+        // The same code in several processes: if any process executed it
+        // (count>0), it counts as covered.
         ranges.set(key, previous === undefined ? range.count : Math.max(previous, range.count));
       }
     }
@@ -113,13 +120,13 @@ for (const name of readdirSync(covDir)) {
 }
 
 /**
- * 哪些行被覆盖。
+ * Which lines are covered.
  *
- * V8 给的区间是**嵌套**的：模块整体一个 count>0 的区间，函数体又是一个
- * count>0 的区间，函数体里没走到的分支则是更小的 count=0 区间。
- * 所以「这行落在某个 count>0 的区间里」永远成立（外层区间罩着整段）——
- * 必须按**区间嵌套**做差集：从 count>0 的区间里扣掉更具体的 count=0 区间，
- * 剩下的字节才算真的被执行过。
+ * V8's ranges are **nested**: the module has one count>0 range, the function
+ * body another count>0 range, and the branches inside it that never ran are
+ * smaller count=0 ranges. So "this line falls inside some count>0 range" is
+ * always true (the outer range covers everything) - we have to subtract the
+ * more specific count=0 ranges from the count>0 ones.
  */
 function coveredLines(source, ranges) {
   const covered = new Set();
@@ -139,7 +146,7 @@ function coveredLines(source, ranges) {
   };
   for (const span of spans) {
     if (span.count <= 0) continue;
-    // 这个已覆盖区间里，被更小的 count=0 区间挖走的部分仍未覆盖。
+    // Parts covered by a smaller count=0 range are still not covered.
     const holes = spans
       .filter(other => other.count === 0 && other.start >= span.start && other.end <= span.end)
       .map(other => [other.start, other.end])
@@ -159,33 +166,34 @@ let failed = false;
 const details = [];
 for (const target of TARGETS) {
   const abs = join(repoRoot, target);
-  if (!existsSync(abs)) { console.error(`  ✘ ${target}: 文件不存在`); failed = true; continue; }
+  if (!existsSync(abs)) { console.error(`  x ${target}: file missing`); failed = true; continue; }
   const ranges = merged.get(resolve(abs));
-  if (!ranges) { console.error(`  ✘ ${target}: 覆盖数据里没有这个文件（测试没加载它？）`); failed = true; continue; }
+  if (!ranges) { console.error(`  x ${target}: not present in coverage data (no test loaded it?)`); failed = true; continue; }
   const source = readFileSync(abs, 'utf8');
   const sourceLines = source.split('\n');
   const totalLines = sourceLines.length;
   const covered = coveredLines(source, ranges);
   const missed = [];
   for (let line = 1; line <= totalLines; line++) {
-    // 空行与纯注释行不算「未覆盖的行」：它们本来就没有可执行语句。
-    if (!covered.has(line) && sourceLines[line - 1].trim() !== '' && !/^\s*(\/\/|\/\*|\*)/.test(sourceLines[line - 1])) {
-      missed.push(line);
-    }
+    // Blank lines and pure-comment lines carry no executable statement:
+    // counting them as "uncovered" would be noise, not signal.
+    const text = sourceLines[line - 1];
+    const isComment = /^\s*(\/\/|\/\*|\*)/.test(text);
+    if (!covered.has(line) && text.trim() !== '' && !isComment) missed.push(line);
   }
   const pct = totalLines > 0 ? ((totalLines - missed.length) / totalLines) * 100 : 100;
   const ok = pct >= THRESHOLD;
-  console.log(`  ${ok ? '✔' : '✘'} ${target}: ${pct.toFixed(2)}% 行覆盖（${totalLines - missed.length}/${totalLines}）`);
+  console.log(`  ${ok ? 'ok' : 'x '} ${target}: ${pct.toFixed(2)}% line coverage (${totalLines - missed.length}/${totalLines})`);
   if (!ok) {
     failed = true;
-    // 合并成区间，便于人读
+    // Merge into ranges for readability.
     const rangesOut = [];
     for (const line of missed) {
       const last = rangesOut[rangesOut.length - 1];
       if (last && line === last[1] + 1) last[1] = line;
       else rangesOut.push([line, line]);
     }
-    details.push(`\n  ${target} 未覆盖行：${rangesOut.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(', ')}`);
+    details.push(`\n  ${target} uncovered lines: ${rangesOut.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(', ')}`);
   }
 }
 
@@ -193,13 +201,17 @@ for (const detail of details) console.log(detail);
 if (process.env.COV_REPORT === '1') {
   const reportPath = join(repoRoot, 'windows/docs/coverage-report.txt');
   mkdirSync(dirname(reportPath), { recursive: true });
-  writeFileSync(reportPath, details.join('\n') || '全部达标');
+  writeFileSync(reportPath, details.join('\n') || 'all targets met');
 }
 
-if (process.env.COV_KEEP_DIR) { console.log('KEEP_DIR=' + covDir); } else { rmSync(covDir, { recursive: true, force: true }); }
+if (process.env.COV_KEEP_DIR) {
+  console.log('KEEP_DIR=' + covDir);
+} else {
+  rmSync(covDir, { recursive: true, force: true });
+}
 
 if (failed) {
-  console.error(`\n覆盖率：低于 ${THRESHOLD}% 门槛`);
+  console.error(`\ncoverage: below the ${THRESHOLD}% threshold`);
   process.exit(1);
 }
-console.log(`覆盖率：全部目标文件行覆盖 ≥ ${THRESHOLD}%`);
+console.log(`coverage: all target files at or above ${THRESHOLD}% line coverage`);
