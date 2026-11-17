@@ -448,4 +448,3 @@ export function apply(ctx) {
     }, 'dsh-archive-manager: routes');
   });
 }
-

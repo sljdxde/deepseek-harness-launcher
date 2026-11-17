@@ -320,4 +320,3 @@ export async function pruneOperationLogs(profileDir, maxAgeMs = 7 * 24 * 3600 * 
     } catch {}
   }));
 }
-
