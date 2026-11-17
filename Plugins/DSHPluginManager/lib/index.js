@@ -58,6 +58,15 @@ function isAbsolutePath(value) {
 }
 /** Bundle the launcher ships with; symlink targets contain one of these names. */
 const BUNDLED_MARKERS = ['DSHArchiveManager', 'DSHPluginManager', 'DSHSessionNotify', 'DSHInterruptedDot', 'DSHChinaMirror', 'DSHSidebarDeck'];
+/**
+ * 启动器自己管理的内置插件，**不出现在插件管理里**。
+ *
+ * dsh-sidebar-deck 是实验性的接管型侧栏：开关在启动器设置里（默认关），
+ * 补丁由启动器单独 staging（Windows 侧 internal/pluginisolation）。
+ * 插件管理里再给一个「停用」开关是第二套控制路径，两处会互相打架；
+ * 用户明确：内置页不该出现它。
+ */
+const LAUNCHER_MANAGED_PLUGINS = new Set(['dsh-sidebar-deck']);
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -425,8 +434,10 @@ export async function listInstalledPlugins() {
     }
   }
 
-  out.sort(compareInstalledPlugins);
-  return out;
+  // 启动器管理的实验插件不在用户可管理的清单里（见 LAUNCHER_MANAGED_PLUGINS）。
+  const visible = out.filter(item => !LAUNCHER_MANAGED_PLUGINS.has(item.name));
+  visible.sort(compareInstalledPlugins);
+  return visible;
 }
 
 /**

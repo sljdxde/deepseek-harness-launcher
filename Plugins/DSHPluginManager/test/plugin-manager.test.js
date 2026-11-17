@@ -118,6 +118,11 @@ test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依�
     }));
     // 自带层的悬空软链（旧接口/软链判定失败）也不得列为 broken：用户既升不了也卸不掉。
     await linkDangling(join(modules, '@deepseek-ai', 'nonexistent-core-layer'), join(modules, '@deepseek-ai', 'dsh-experimental-voice-input-bundle'));
+    // dsh-sidebar-deck：启动器管理的实验插件（开关在启动器设置里），不出现在插件管理。
+    const deckFixture = join(dshHome, 'fixtures', 'DSHSidebarDeck');
+    await mkdir(deckFixture, { recursive: true });
+    await writeFile(join(deckFixture, 'package.json'), JSON.stringify({ name: 'dsh-sidebar-deck', version: '0.1.0', description: '实验侧栏' }));
+    await linkDir(deckFixture, join(modules, 'dsh-sidebar-deck'));
 
     const items = await listInstalledPlugins();
     const bundledItem = items.find(item => item.name === 'dsh-archive-manager');
@@ -125,6 +130,10 @@ test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依�
     assert.equal(bundledItem.source, 'bundled');
     assert.equal(userItem.source, 'user');
     assert.equal(userItem.version, '1.2.3');
+    // 启动器管理的实验插件不出现在用户可管理的清单里（开关在启动器设置里，
+    // 插件管理里再给一个停用开关是第二套控制路径，会互相打架）。
+    assert.equal(items.some(item => item.name === 'dsh-sidebar-deck'), false,
+      'dsh-sidebar-deck 不出现在插件管理清单里');
     assert.equal(items.some(item => item.name === 'junk-dir'), false);
     // lodash-es is a dependency, not a plugin — it must never appear
     assert.equal(items.some(item => item.name === 'lodash-es'), false);

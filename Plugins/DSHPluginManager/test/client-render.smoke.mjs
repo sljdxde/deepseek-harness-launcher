@@ -878,6 +878,11 @@ await openInstalledPanel(runtime);
   assert.equal(segs().length, 9, '前 8 个分类 + 折叠按钮，没有「全部」标签');
   assert.equal(segs().filter(node => /dsh-pm-seg more/.test(String(node.props.className||'')) === false && textOf(node).startsWith('全部')).length, 0, '分类条里没有「全部」标签（只有折叠按钮可以叫「全部 N 类」）');
   assert.ok(textOf(segByLabel('界面')).includes('8'), '分类胶囊带数量');
+  // 排版：筛选组（来源/排序）钉在第一行右侧，不再是会孤儿换行的两个独立 select。
+  const filters = findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '').includes('dsh-pm-filters'))[0];
+  assert.ok(filters, '筛选组存在');
+  assert.equal(findAll(filters, node => node.type === 'select').length, 2, '筛选组里是来源 + 排序两个 select');
+  assert.equal(findAll(runtime.tree, node => String(node.props.className || '') === 'dsh-pm-catbar-sp').length, 0, '旧版占位 spacer 已删');
   const moreBtn = () => segs().find(node => /dsh-pm-seg more/.test(String(node.props.className || '')));
   assert.ok(moreBtn(), '有折叠按钮');
   assert.ok(textOf(moreBtn()).includes('12'), '折叠按钮显示分类总数');
