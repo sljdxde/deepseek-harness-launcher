@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+// 建链接走跨平台助手（Windows 上 symlink 要管理员权限，junction 不用）。
+import { linkDir } from './helpers/link-helpers.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -204,9 +207,14 @@ test('用例3 classifyPluginSource 用来源标记（.dsh-source.json）反推�
     url: 'https://github.com/owner/repo.git',
     commit: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
   };
+  // 绝对路径按平台给：Windows 上 'C:\…' 才是绝对路径，
+  // '/opt/…' 在 Windows 上是相对路径（会被拼到 profile 目录后面）。
+  const absoluteDir = process.platform === 'win32'
+    ? 'C:\\opt\\dsh\\plugin-sources\\owner-repo-foo'
+    : '/opt/dsh/plugin-sources/owner-repo-foo';
   const source = classifyPluginSource({
     name: 'foo',
-    spec: 'file:/opt/dsh/plugin-sources/owner-repo-foo',
+    spec: `file:${absoluteDir}`,
     installedVersion: '1.0.0',
     installedCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     marker
@@ -215,13 +223,15 @@ test('用例3 classifyPluginSource 用来源标记（.dsh-source.json）反推�
   assert.equal(source.remote.author, 'owner');
   assert.equal(source.remote.repo, 'repo');
   assert.equal(source.remote.subdir, 'packages/foo');
-  assert.equal(source.remote.dir, '/opt/dsh/plugin-sources/owner-repo-foo');
+  assert.equal(source.remote.dir, absoluteDir, '绝对路径原样保留，不拼 profile 目录');
   // marker 里的 commit 优先于 lock 里解析出来的
   assert.equal(source.installedCommit, marker.commit);
 });
 
 test('用例3 classifyPluginSource：老克隆目录靠市场索引反推远端，反推不出才算 local', () => {
-  const dir = '/opt/dsh/plugin-sources/volcengine-OpenViking-dsh-memory-plugin';
+  const dir = process.platform === 'win32'
+    ? 'C:\\opt\\dsh\\plugin-sources\\volcengine-OpenViking-dsh-memory-plugin'
+    : '/opt/dsh/plugin-sources/volcengine-OpenViking-dsh-memory-plugin';
   const marketNames = new Set(['volcengine/openviking-dsh-memory-plugin']);
   const inferred = classifyPluginSource({
     name: 'dsh-memory',
@@ -1419,12 +1429,16 @@ test('忽略：checkPluginUpdates 读时打标（角标归零），取消忽略�
 test('原子写顺手收掉上次被杀留下的临时文件；活进程的 staging 不动', async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-pm-staging-'));
   const file = join(home, 'ignored.json');
+  // 「别的活进程」用真起一个子进程来代表：PID 1 在 POSIX 上是 init（kill 得 EPERM），
+  // 但 Windows 上根本没有 PID 1（kill 抛 ESRCH → 会被当成死进程删掉）。
+  // 起一个真进程最稳，两个平台语义一致。
+  const liveChild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
   try {
     // 实测形态：~/.dsh/profiles/web/.plugin-updates.json.11800.tmp —— 原子写写一半被
     // dsh 重启截断，之后没人清理。999999 在本机不可能是活进程（macOS PID 上限远低于它）。
     const dead = join(home, 'ignored.json.999999.tmp');
-    // PID 1 永远在（对本进程是 EPERM）→ 必须保留，宁可留一个别人的 staging 也不能删活进程的文件。
-    const live = join(home, 'ignored.json.1.tmp');
+    // 活进程的 staging 必须保留：宁可留一个别人的 staging 也不能删活进程的文件。
+    const live = join(home, `ignored.json.${liveChild.pid}.tmp`);
     // 别的文件的同后缀临时文件不该被顺手删掉。
     const unrelated = join(home, 'other.json.999998.tmp');
     await writeFile(dead, '{"half":', 'utf8');
@@ -1435,10 +1449,11 @@ test('原子写顺手收掉上次被杀留下的临时文件；活进程的 stag
 
     const names = await readdir(home);
     assert.equal(names.includes('ignored.json.999999.tmp'), false, '上次被杀留下的临时文件应被收掉');
-    assert.equal(names.includes('ignored.json.1.tmp'), true, '活进程的 staging 必须保留');
+    assert.equal(names.includes(`ignored.json.${liveChild.pid}.tmp`), true, '活进程的 staging 必须保留');
     assert.equal(names.includes('other.json.999998.tmp'), true, '别的文件的临时文件不归它管');
     assert.equal(JSON.parse(await readFile(file, 'utf8'))['dsh-a'].version, '1.0.0', '写入本身照常生效');
   } finally {
+    liveChild.kill();
     await rm(home, { recursive: true, force: true });
   }
 });
@@ -1468,7 +1483,7 @@ test('回归 9：node_modules 仍指向旧目录时，旧目录的缺口不算�
       author: 'o', repo: 'demo', subdir: null, url: 'https://github.com/o/demo.git', commit: 'b'.repeat(40)
     }), 'utf8');
     await mkdir(join(profile, 'node_modules'), { recursive: true });
-    await symlink(devDir, installedDir, 'dir');
+    await linkDir(devDir, installedDir);
     await writeFile(join(profile, 'package.json'), JSON.stringify({
       name: 'web', private: true,
       dependencies: { demo: `file:${sourcesDir}` },
@@ -1481,7 +1496,7 @@ test('回归 9：node_modules 仍指向旧目录时，旧目录的缺口不算�
       // 模拟实测的 pnpm 行为：`add file:<新目录>` 之后 node_modules 仍然链在旧目录上。
       await rm(installedDir, { recursive: true, force: true }).catch(() => {});
       await mkdir(join(profile, 'node_modules'), { recursive: true });
-      await symlink(devDir, installedDir, 'dir');
+      await linkDir(devDir, installedDir);
     };
     const clone = async () => {
       await mkdir(sourcesDir, { recursive: true });

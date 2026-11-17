@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, symlink, utimes } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, rm, writeFile, readFile, chmod, utimes } from 'node:fs/promises';
+// 建链接走跨平台助手：Windows 上 symlink 要管理员权限，普通用户建不了，
+// 目录 junction 任何用户都能建且语义等价（生产侧 Go 代码同款降级）。
+import { linkDir, linkDangling } from './helpers/link-helpers.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -89,7 +92,7 @@ test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依�
     await mkdir(bundleFixture, { recursive: true });
     await writeFile(join(bundleFixture, 'package.json'), JSON.stringify({ name: 'dsh-archive-manager', version: '0.1.0', description: 'Bundled fixture' }));
     const bundled = join(modules, 'dsh-archive-manager');
-    await symlink(bundleFixture, bundled);
+    await linkDir(bundleFixture, bundled);
     // user plugin (in bundles): a real directory with package.json
     const user = join(modules, 'dsh-community-tool');
     await mkdir(user, { recursive: true });
@@ -102,7 +105,7 @@ test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依�
     const junk = join(modules, 'junk-dir');
     await mkdir(junk, { recursive: true });
     // broken leftover: dangling symlink pointing at a nonexistent target
-    await symlink('../@volcengine/openviking#examples/dsh-memory-plugin', join(modules, 'dsh-memory-plugin'));
+    await linkDangling(join(modules, '@volcengine/openviking#examples/dsh-memory-plugin'), join(modules, 'dsh-memory-plugin'));
 
     // dsh 自带层（@deepseek-ai/*）跟着 dsh 版本分发：即使出现在 dsh.profile.bundles 里、
     // node_modules 里也有实体目录，也不是用户插件（实测升级后 9 个
@@ -114,7 +117,7 @@ test('listInstalledPlugins 只列 bundle 插件/内置/损坏，忽略普通依�
       peerDependencies: { '@deepseek-ai/dsh-llm': '>=99.0.0' }
     }));
     // 自带层的悬空软链（旧接口/软链判定失败）也不得列为 broken：用户既升不了也卸不掉。
-    await symlink('../../nonexistent-core-layer', join(modules, '@deepseek-ai', 'dsh-experimental-voice-input-bundle'));
+    await linkDangling(join(modules, '@deepseek-ai', 'nonexistent-core-layer'), join(modules, '@deepseek-ai', 'dsh-experimental-voice-input-bundle'));
 
     const items = await listInstalledPlugins();
     const bundledItem = items.find(item => item.name === 'dsh-archive-manager');
@@ -181,10 +184,10 @@ test('listInstalledPlugins 排序：用户插件按安装/更新时间倒序在�
     await mkdir(bundleFixture, { recursive: true });
     await writeFile(join(bundleFixture, 'package.json'), JSON.stringify({ name: 'dsh-bundled-one', version: '0.1.0', description: '内置' }));
     const bundledLink = join(modules, 'dsh-bundled-one');
-    await symlink(bundleFixture, bundledLink);
+    await linkDir(bundleFixture, bundledLink);
     await stamp(bundleFixture, '2026-10-29T10:00:00.000Z');
     // broken：悬空软链，取不到时间，排最后
-    await symlink(join(dshHome, 'nope'), join(modules, 'dsh-broken-one'));
+    await linkDangling(join(dshHome, 'nope'), join(modules, 'dsh-broken-one'));
 
     const items = await listInstalledPlugins();
     assert.deepEqual(items.map(item => item.name), ['dsh-new', 'dsh-marker', 'dsh-old', 'dsh-broken-one', 'dsh-bundled-one'],
@@ -249,7 +252,7 @@ test('cleanupBrokenPlugin 删除残留并拒绝路径穿越', async () => {
   try {
     const modules = join(dshHome, 'profiles', 'web', 'node_modules');
     await mkdir(modules, { recursive: true });
-    await symlink('/nonexistent/target', join(modules, 'dsh-memory-plugin'));
+    await linkDangling(join(modules, 'nonexistent-target'), join(modules, 'dsh-memory-plugin'));
     // profile manifest carries a stale dependency record that must be dropped
     const profileDir = join(dshHome, 'profiles', 'web');
     await writeFile(join(profileDir, 'package.json'), JSON.stringify({
@@ -308,7 +311,9 @@ test('ensurePnpmPath 在 PATH 已有 pnpm 时保持原 PATH', async () => {
   process.env.DSH_HOME = dshHome;
   const bin = join(dshHome, 'fake-bin');
   await mkdir(bin, { recursive: true });
-  await writeFile(join(bin, 'pnpm'), '#!/bin/sh\n', { mode: 0o755 });
+  // Windows 上命令要带 .cmd 扩展名才可直接执行（hasCommandOnPath 的判定）。
+  await writeFile(join(bin, process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'),
+    process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n', { mode: 0o755 });
   process.env.PATH = bin;
   try {
     const [pathWithPnpm, note] = await ensurePnpmPath();
@@ -329,18 +334,23 @@ test('ensurePnpmPath 无 pnpm 有 corepack 时创建转发 shim', async () => {
   process.env.DSH_HOME = dshHome;
   const bin = join(dshHome, 'fake-bin');
   await mkdir(bin, { recursive: true });
-  await writeFile(join(bin, 'corepack'), '#!/bin/sh\n', { mode: 0o755 });
+  await writeFile(join(bin, process.platform === 'win32' ? 'corepack.cmd' : 'corepack'),
+    process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n', { mode: 0o755 });
   process.env.PATH = bin;
   try {
     const [pathWithPnpm, note] = await ensurePnpmPath();
     assert.match(note, /pnpm shim/);
-    assert.ok(pathWithPnpm.startsWith(join(dshHome, 'pnpm-bin') + ':'));
-    const shim = join(dshHome, 'pnpm-bin', 'pnpm');
+    const sep = process.platform === 'win32' ? ';' : ':';
+    assert.ok(pathWithPnpm.startsWith(join(dshHome, 'pnpm-bin') + sep), 'shim 目录在 PATH 最前');
+    // Windows 上 shim 必须是 .cmd（cmd.exe 不认 #!/bin/sh 脚本）。
+    const shim = join(dshHome, 'pnpm-bin', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm');
     await access(shim);
     const content = await readFile(shim, 'utf8');
     assert.match(content, /corepack/);
-    const stat = await import('node:fs').then(m => m.statSync(shim));
-    assert.ok(stat.mode & 0o111);
+    if (process.platform !== 'win32') {
+      const stat = await import('node:fs').then(m => m.statSync(shim));
+      assert.ok(stat.mode & 0o111);
+    }
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previousHome;
@@ -374,12 +384,15 @@ test('hasCommandOnPath 只认可可执行文件', async () => {
   const dshHome = await mkdtemp(join(tmpdir(), 'dsh-pm-has-'));
   const bin = join(dshHome, 'bin');
   await mkdir(bin, { recursive: true });
-  await writeFile(join(bin, 'executable-tool'), '#!/bin/sh\n', { mode: 0o755 });
+  // Windows 上命令要带扩展名才可直接执行（hasCommandOnPath 的判定）：
+  // .cmd 算可执行，裸文件不算。
+  const execName = process.platform === 'win32' ? 'executable-tool.cmd' : 'executable-tool';
+  await writeFile(join(bin, execName), process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n', { mode: 0o755 });
   await writeFile(join(bin, 'non-executable-tool'), '#!/bin/sh\n');
   try {
     const hit = await hasCommandOnPath('executable-tool', bin);
-    assert.equal(hit, join(bin, 'executable-tool'));
-    assert.equal(await hasCommandOnPath('non-executable-tool', bin), null);
+    assert.equal(hit, join(bin, execName));
+    assert.equal(await hasCommandOnPath('non-executable-tool', bin), null, '裸文件不算可执行');
     assert.equal(await hasCommandOnPath('missing-tool', bin), null);
   } finally {
     process.env.PATH = previousPath;

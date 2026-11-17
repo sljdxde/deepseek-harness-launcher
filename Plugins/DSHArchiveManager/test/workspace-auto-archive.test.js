@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { workspaceAutoArchiveIds, patchWorkspaceDeleteForAutoArchive } from '../lib/index.js';
+import { runArchiveScenarios } from './helpers/archive-scenarios.js';
 
 const state = () => ({
   global: { archivedSessionIds: ['already-archived'] },
@@ -82,4 +83,11 @@ test('dispose 后恢复原始 delete；类原型方法也能正确还原', async
 test('registry 缺少 delete/archiveSession 时不打补丁，disposer 为空操作', () => {
   const dispose = patchWorkspaceDeleteForAutoArchive({}, async () => state());
   assert.doesNotThrow(dispose);
+});
+
+// 覆盖率合并是**跨进程取交集**（见 helpers/archive-scenarios.js 顶部的说明）：
+// 只要有一个加载了 lib/index.js 的测试进程没走到某条分支，合并后那条分支就
+// 算未覆盖。所以每个 import 了 lib/index.js 的测试文件都要把全部分支走一遍。
+test('全分支扫描：所有分支在这个进程里都走到', async () => {
+  await runArchiveScenarios();
 });

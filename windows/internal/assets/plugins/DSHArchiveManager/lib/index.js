@@ -294,7 +294,8 @@ function sessionHasWorkspace(state, id) {
  */
 export async function restoreArchives(services, rootIds) {
   const headers = await listHeaders(services.sessionPersistence, rootIds);
-  const requested = [...new Set(rootIds.map(String).filter(Boolean))];
+  // 归一：调用方可能传单个 id（行内「还原」按钮）而不是数组。
+  const requested = [...new Set((Array.isArray(rootIds) ? rootIds : [rootIds]).map(String).filter(Boolean))];
   const selected = new Set(requested);
   const roots = requested.filter(root => !hasSelectedAncestor(headers, root, selected));
   const ids = [...new Set(roots.flatMap(root => descendants(headers, root)))];
@@ -310,8 +311,11 @@ export async function restoreArchives(services, rootIds) {
   const archivedBefore = new Set((state.global?.archivedSessionIds || []).map(String));
   const stillArchived = ids.filter(id => archivedBefore.has(id));
   if (stillArchived.length) {
-    state.global = state.global || {};
-    state.global.archivedSessionIds = (state.global.archivedSessionIds || []).filter(id => !ids.includes(id));
+    // stillArchived 非空 ⟹ state.global.archivedSessionIds 一定是非空数组，
+    // 原来的 `state.global || {}` / `archivedSessionIds || []` 两处兜底永远
+    // 走不到（archivedBefore 就是从它算出来的），留着只会让人误以为这里的
+    // 状态可能不完整，删掉后行为不变。
+    state.global.archivedSessionIds = state.global.archivedSessionIds.filter(id => !ids.includes(id));
     await writeWorkspace(state);
     state = await readWorkspace();
   }

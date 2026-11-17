@@ -307,14 +307,19 @@ test('stripStaleLockEntry：只删目标包的 importers 记录，别的条目�
   await withRuntime({}, async home => {
     const lockPath = join(home, 'profiles', 'web', 'pnpm-lock.yaml');
     await mkdir(join(home, 'profiles', 'web'), { recursive: true });
+    // 真实 pnpm-lock.yaml 形状：importers → 2 空格的工程名 → 4 空格的
+    // dependencies → 6 空格的包名。包名在 6 空格那一层（早前实现匹配两空格，
+    // 那是工程名的位置 → 真实锁文件上一行都删不掉）。
     await writeFile(lockPath, [
       'lockfileVersion: 9.0',
       '', 'importers:', '',
-      "  '@changfenhuang/dsh-genui':",
-      '    specifier: file:/Users/x/dev/dsh-genui',
-      '    version: link:../../../004个人代码仓库/dsh-genui',
-      '', "  dsh-notify:", '    specifier: github:zhengjy01/dsh-notify',
-      '    version: github:zhengjy01/dsh-notify', '',
+      '  .:', '    dependencies:',
+      "      '@changfenhuang/dsh-genui':",
+      '        specifier: file:/Users/x/dev/dsh-genui',
+      '        version: link:../../../004个人代码仓库/dsh-genui',
+      '      dsh-notify:',
+      '        specifier: github:zhengjy01/dsh-notify',
+      '        version: github:zhengjy01/dsh-notify', '',
       'packages:', "  dsh-notify@1.0.0:", '    resolution: {integrity: sha512-x}',
     ].join('\n'), 'utf8');
     const changed = await stripStaleLockEntry('@changfenhuang/dsh-genui');

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { deleteTrees } from '../lib/index.js';
+import { runArchiveScenarios } from './helpers/archive-scenarios.js';
 
 test('确认删除后直接清理运行分支，不读取 Agent 状态或归档标记', async () => {
   const previousHome = process.env.DSH_HOME;
@@ -37,4 +38,11 @@ test('确认删除后直接清理运行分支，不读取 Agent 状态或归档�
     else process.env.DSH_HOME = previousHome;
     await rm(dshHome, { recursive: true, force: true });
   }
+});
+
+// 覆盖率合并是**跨进程取交集**（见 helpers/archive-scenarios.js 顶部的说明）：
+// 只要有一个加载了 lib/index.js 的测试进程没走到某条分支，合并后那条分支就
+// 算未覆盖。所以每个 import 了 lib/index.js 的测试文件都要把全部分支走一遍。
+test('全分支扫描：所有分支在这个进程里都走到', async () => {
+  await runArchiveScenarios();
 });

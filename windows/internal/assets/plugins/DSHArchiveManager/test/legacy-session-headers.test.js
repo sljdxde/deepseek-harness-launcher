@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { zstdCompressSync } from 'node:zlib';
 import test from 'node:test';
 import { listArchives } from '../lib/index.js';
+import { runArchiveScenarios } from './helpers/archive-scenarios.js';
 
 // dsh 0.1.5-rc.2 的 sessionPersistence.list() 会跳过历史格式（generation 0）
 // 的会话；归档管理必须从磁盘兜底读取这些会话的 header，否则归档列表为空。
@@ -90,4 +91,11 @@ test('persistence 可见时归档列表与原行为一致', async () => {
     else process.env.DSH_HOME = previousHome;
     await rm(dshHome, { recursive: true, force: true });
   }
+});
+
+// 覆盖率合并是**跨进程取交集**（见 helpers/archive-scenarios.js 顶部的说明）：
+// 只要有一个加载了 lib/index.js 的测试进程没走到某条分支，合并后那条分支就
+// 算未覆盖。所以每个 import 了 lib/index.js 的测试文件都要把全部分支走一遍。
+test('全分支扫描：所有分支在这个进程里都走到', async () => {
+  await runArchiveScenarios();
 });

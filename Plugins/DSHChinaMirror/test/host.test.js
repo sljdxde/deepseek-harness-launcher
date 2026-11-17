@@ -7,8 +7,16 @@ import { apply, mapURL, unmapURL, mirrorURLTable, readMirrorState, writeMirrorEn
  * webServer.register 门面，逐路由收集 handler，用假 req/res 直接调用。
  */
 function makeHarness(env) {
-  const prev = { ...process.env };
-  if (env) for (const [k, v] of Object.entries(env)) process.env[k] = v;
+  // 只备份/恢复自己改过的变量：整块替换 process.env 会让 os.homedir() 不再
+  // 跟随 USERPROFILE（Windows 上它会退回真实用户目录），后面的用例就管不到
+  // 「DSH_HOME 没设」的路径了。
+  const prev = {};
+  if (env) {
+    for (const [k, v] of Object.entries(env)) {
+      prev[k] = process.env[k];
+      process.env[k] = v;
+    }
+  }
   const routes = new Map();
   const teardown = [];
   const host = {
@@ -25,13 +33,18 @@ function makeHarness(env) {
     inject: (deps, callback) => { assert.deepEqual(deps, ['webServer']); callback(host); },
     logger: host.logger,
   };
-  const call = async (path, { method = 'GET', body } = {}) => {
+  const call = async (path, { method = 'GET', body, failOn } = {}) => {
     const handler = routes.get(path);
     assert.ok(handler, `route ${path} registered`);
     let status = 0;
     let responseBody = null;
     const res = {
-      writeHead: code => { status = code; },
+      writeHead: code => {
+        // failOn：模拟响应链路在写这个状态码时断掉（抛的不是 Error 对象，
+        // 好让路由里「没有 message 的异常」那条分支也被走到）
+        if (failOn === code) throw `写出 ${code} 失败`;
+        status = code;
+      },
       end: payload => { responseBody = payload ?? ''; },
     };
     const request = { method, url: path };
@@ -46,7 +59,12 @@ function makeHarness(env) {
     call,
     hasRoute: path => routes.has(path),
     dispose: () => teardown.forEach(fn => fn()),
-    restore: () => { process.env = prev; },
+    restore: () => {
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    },
   };
 }
 
@@ -171,5 +189,178 @@ test('状态文件写的是原子替换（tmp + rename），目录自动创建',
     harness.dispose();
     harness.restore();
     await import('node:fs/promises').then(fs => fs.rm(home, { recursive: true, force: true }));
+  }
+});
+
+// ── 状态文件读写与边界 ──────────────────────────────────────────────────
+
+/** 建一个隔离的 DSH_HOME，返回 { home, cleanup }。 */
+async function tempHome() {
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const home = await mkdtemp(join(tmpdir(), 'dsh-mirror-'));
+  return { home, cleanup: () => import('node:fs/promises').then(fs => fs.rm(home, { recursive: true, force: true })) };
+}
+
+/** 往 DSH_HOME/china-mirror/state.json 写一份状态。 */
+async function writeState(home, raw) {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  await mkdir(join(home, 'china-mirror'), { recursive: true });
+  await writeFile(join(home, 'china-mirror', 'state.json'), raw, 'utf8');
+}
+
+test('状态文件损坏：读回默认关闭，不抛错', async () => {
+  const { home, cleanup } = await tempHome();
+  const previous = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    await writeState(home, '{ 这不是 json');
+    const state = await readMirrorState();
+    assert.equal(state.enabled, false, '坏文件按关闭处理');
+    assert.equal(state.updatedAt, null);
+    assert.ok(state.table.length >= 4, '规则表照样给全');
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = previous;
+    await cleanup();
+  }
+});
+
+test('状态文件字段不合法：enabled 只认布尔值，updatedAt 只认字符串', async () => {
+  const { home, cleanup } = await tempHome();
+  const previous = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    await writeState(home, JSON.stringify({ enabled: 'yes', updatedAt: 123 }));
+    const state = await readMirrorState();
+    assert.equal(state.enabled, false, '非布尔值不算打开');
+    assert.equal(state.updatedAt, null, '非字符串时间戳按没有处理');
+
+    await writeState(home, 'null');
+    const nullState = await readMirrorState();
+    assert.equal(nullState.enabled, false, '整个文件是 null 也按关闭处理');
+    assert.equal(nullState.updatedAt, null);
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = previous;
+    await cleanup();
+  }
+});
+
+test('DSH_HOME 没设时读用户目录下的 .dsh/china-mirror/state.json', async () => {
+  const { join } = await import('node:path');
+  const { home, cleanup } = await tempHome();
+  const previousHome = process.env.DSH_HOME;
+  const previousProfile = process.env.USERPROFILE;
+  const previousUserHome = process.env.HOME;
+  try {
+    delete process.env.DSH_HOME;
+    // 把「用户目录」指到临时目录：os.homedir() 读 USERPROFILE / HOME
+    process.env.USERPROFILE = home;
+    process.env.HOME = home;
+    // 没设 DSH_HOME 时状态文件在 <用户目录>/.dsh/china-mirror/state.json
+    await writeState(join(home, '.dsh'), JSON.stringify({ enabled: true, updatedAt: '2026-01-01T00:00:00.000Z' }));
+    const state = await readMirrorState();
+    assert.equal(state.enabled, true, '没设 DSH_HOME 时读 ~/.dsh 下的状态');
+    assert.equal(state.updatedAt, '2026-01-01T00:00:00.000Z');
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = previousHome;
+    if (previousProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousProfile;
+    if (previousUserHome === undefined) delete process.env.HOME; else process.env.HOME = previousUserHome;
+    await cleanup();
+  }
+});
+
+test('unmapURL：null / undefined / 空串都安全', () => {
+  assert.equal(unmapURL(null), '');
+  assert.equal(unmapURL(undefined), '');
+  assert.equal(unmapURL(''), '');
+  assert.equal(unmapURL('https://example.com/x'), 'https://example.com/x');
+});
+
+test('GET /enabled 被 405 拒绝', async () => {
+  const { home, cleanup } = await tempHome();
+  const harness = makeHarness({ DSH_HOME: home });
+  try {
+    apply(harness.ctx);
+    const wrong = await harness.call('/dsh-china-mirror/enabled', { method: 'GET' });
+    assert.equal(wrong.status, 405);
+  } finally {
+    harness.dispose();
+    harness.restore();
+    await cleanup();
+  }
+});
+
+test('POST /enabled 的 body 不是 JSON 时返回 400', async () => {
+  const { home, cleanup } = await tempHome();
+  const harness = makeHarness({ DSH_HOME: home });
+  try {
+    apply(harness.ctx);
+    const bad = await harness.call('/dsh-china-mirror/enabled', { method: 'POST', body: 'enabled=true' });
+    assert.equal(bad.status, 400);
+    assert.match(bad.json().error, /enabled/);
+    // 空 body 同样按「缺少 enabled」处理
+    const empty = await harness.call('/dsh-china-mirror/enabled', { method: 'POST', body: '' });
+    assert.equal(empty.status, 400);
+  } finally {
+    harness.dispose();
+    harness.restore();
+    await cleanup();
+  }
+});
+
+test('写状态失败（目录被文件占住）时返回 500', async () => {
+  const { home, cleanup } = await tempHome();
+  const { writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  // china-mirror 目录被一个同名文件占住 → 建目录失败
+  await writeFile(join(home, 'china-mirror'), 'not a directory', 'utf8');
+  const harness = makeHarness({ DSH_HOME: home });
+  try {
+    apply(harness.ctx);
+    const response = await harness.call('/dsh-china-mirror/enabled', { method: 'POST', body: '{"enabled":true}' });
+    assert.equal(response.status, 500);
+    assert.ok(response.json().error, '500 响应带错误信息');
+  } finally {
+    harness.dispose();
+    harness.restore();
+    await cleanup();
+  }
+});
+
+test('写状态失败时错误信息里没有 message 也能读出来', async () => {
+  const { home, cleanup } = await tempHome();
+  const { promises: fs } = await import('node:fs');
+  const original = fs.mkdir;
+  // 模拟建目录时抛出的不是 Error 对象
+  fs.mkdir = async () => { throw '磁盘只读'; };
+  const harness = makeHarness({ DSH_HOME: home });
+  try {
+    apply(harness.ctx);
+    const response = await harness.call('/dsh-china-mirror/enabled', { method: 'POST', body: '{"enabled":true}' });
+    assert.equal(response.status, 500);
+    assert.equal(response.json().error, '磁盘只读', '不是 Error 对象的异常也能变成可读信息');
+  } finally {
+    fs.mkdir = original;
+    harness.dispose();
+    harness.restore();
+    await cleanup();
+  }
+});
+
+test('响应写不出去时 /state 返回 500', async () => {
+  const { home, cleanup } = await tempHome();
+  const harness = makeHarness({ DSH_HOME: home });
+  try {
+    apply(harness.ctx);
+    // 模拟响应链路在写 200 时断掉（writeHead 抛错）→ 路由应回落到 500
+    const broken = await harness.call('/dsh-china-mirror/state', { failOn: 200 });
+    assert.equal(broken.status, 500);
+    assert.ok(broken.json().error, '500 响应带错误信息');
+  } finally {
+    harness.dispose();
+    harness.restore();
+    await cleanup();
   }
 });

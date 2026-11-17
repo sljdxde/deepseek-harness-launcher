@@ -84,7 +84,10 @@ window.__ModuleLoader__.load({ id: "dsh-archive-manager", factory: (require) => 
     restore: '<path d="M2.5 6.5h3v-3"/><path d="M3.4 9.5a5 5 0 1 0 .9-4.6L2.5 6.5"/>',
   }
   function icon(name, size = 14) {
-    const path = ICON_PATHS[name] || ICON_PATHS.archive
+    // 图标名都是本文件里的字面量（archive / search），不设兜底：名字写错
+    // 会立刻渲染成空图标，一眼能看出问题。原来的 `|| ICON_PATHS.archive`
+    // 永远走不到，却会把拼写错误悄悄变成「显示成 archive 图标」。
+    const path = ICON_PATHS[name]
     const nodes = []
     const tokenRe = /<(path|rect|circle)\b([^>]*)\/?>/g
     const attrRe = /([a-zA-Z-]+)="([^"]*)"/g
@@ -127,7 +130,8 @@ window.__ModuleLoader__.load({ id: "dsh-archive-manager", factory: (require) => 
     const toggleAll = () => setSelectedIds(allSelected ? [] : visible.map(item => item.id))
     const requestDelete = (ids) => { if (ids.length > 0) { setError(''); setConfirmIds(ids) } }
     const confirmDelete = () => {
-      if (!confirmIds?.length) return
+      // 确认块只在 confirmIds 非空时渲染（requestDelete 也只收非空列表），
+      // 所以这里不需要再判空。
       setBusy(true)
       fetch('/dsh-archive-manager/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionIds: confirmIds }) })
         .then(r => r.json()).then(v => { if (v.error) throw Error(v.error); setItems(current => current.filter(x => !confirmIds.includes(x.id))); setSelectedIds(current => current.filter(x => !confirmIds.includes(x))); setConfirmIds(null) })
@@ -156,7 +160,7 @@ window.__ModuleLoader__.load({ id: "dsh-archive-manager", factory: (require) => 
               h('span', null, item.workspace),
               h('span', { className: 'sep' }, '·'),
               h('span', null, `${item.descendants} 个后代`))),
-          h('button', { className: 'dsh-archive-row-restore', disabled: busy, onClick: () => restore([item.id]), title: '取消归档，回到会话列表' }, '还原'),
+          h('button', { className: 'dsh-archive-row-restore', disabled: busy, onClick: () => restore(item.id), title: '取消归档，回到会话列表' }, '还原'),
           h('button', { className: 'dsh-archive-row-delete', disabled: busy, onClick: () => requestDelete([item.id]) }, '删除'))))
 
     const close = () => { if (onClose) onClose(); else setOpen(false) }

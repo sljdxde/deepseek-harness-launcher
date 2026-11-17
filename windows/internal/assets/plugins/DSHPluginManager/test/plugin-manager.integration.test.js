@@ -51,6 +51,7 @@ test('apply 注册全部插件管理路由', () => {
   const paths = routes.map(route => route.path).sort();
   assert.deepEqual(paths, [
     '/dsh-plugin-manager/ai-search',
+    '/dsh-plugin-manager/ai-search/stream',
     '/dsh-plugin-manager/china-mirror',
     '/dsh-plugin-manager/china-mirror/set',
     '/dsh-plugin-manager/cleanup',

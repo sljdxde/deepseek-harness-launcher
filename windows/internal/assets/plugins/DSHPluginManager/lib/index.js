@@ -1,12 +1,40 @@
 import { promises as fs } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { readJsonFile, withFileLock } from './atomic.js';
 import { getOperationQueue, readOperationLog, pruneOperationLogs } from './operations.js';
 
-const run = promisify(execFile);
+// node:child_process 的 CJS exports：单测靠替换它来做假实现，
+// 所以这里用 require 拿「当前」的 execFile，而不是 ESM 具名导入的快照
+// （具名导入在模块加载时就把值拷走了，之后替换不生效）。
+const nodeRequire = createRequire(import.meta.url);
+
+/**
+ * 跑一个外部命令（dsh CLI / pnpm / git）。
+ *
+ * Windows 上 `.cmd`/`.bat` **不能**被 execFile 直接执行（EINVAL）——
+ * 它们是批处理脚本，必须交给 shell。这不是可选优化：Windows 上的 pnpm
+ * 就是 `pnpm.cmd`，不这么处理就 spawn EINVAL，npm 版本探测恒失败。
+ *
+ * 用 shell:true 时 node 把参数原样拼进命令行（**不转义**），所以自己先转义：
+ * cmd 的元字符 & | < > ^ % ! " 都要封住，否则一个带 `&` 的包名就能注入命令。
+ * 转义后仍保持 (file, args) 形态 —— 单测正是按 args 匹配来断言调用点的。
+ */
+const CMD_METACHARS = /[&|<>^!"]/g;
+const escapeForCmd = value => String(value).replace(CMD_METACHARS, ch => `^${ch}`);
+
+const run = (file, args, options = {}) => {
+  const isWindows = process.platform === 'win32';
+  const isBatch = isWindows && /\.(cmd|bat)$/i.test(String(file || ''));
+  // 注意：这里**每次调用**才取 execFile，而不是在模块加载时捕获 ——
+  // 单测靠替换 node:child_process 的 execFile 来做假实现，加载时捕获就替换不掉了。
+  const execFileNow = nodeRequire('node:child_process').execFile;
+  if (!isBatch) return promisify(execFileNow)(file, args, options);
+  const safeArgs = args.map(escapeForCmd);
+  return promisify(execFileNow)(file, safeArgs, { ...options, shell: true });
+};
 
 const dshHome = () => process.env.DSH_HOME || join(homedir(), '.dsh');
 const profilesWebModules = () => join(dshHome(), 'profiles', 'web', 'node_modules');
@@ -16,6 +44,18 @@ const marketIndexFile = () => join(marketRoot(), 'index.json');
 const marketRepoDir = () => join(marketRoot(), 'repo');
 
 const MARKET_REPO_URL = 'https://github.com/awesome-dsh-plugin/awesome-dsh-plugin.git';
+/**
+ * 路径是不是绝对路径（跨平台）。
+ * POSIX：以 '/' 开头。Windows：'C:\…' 盘符，或 '\\server\share' UNC。
+ * node 的 path.isAbsolute 在 Windows 上按 win32 规则判断，但在 POSIX 上
+ * 判断 Windows 路径会返回 false，所以这里自己按平台判，不依赖运行平台。
+ */
+function isAbsolutePath(value) {
+  const text = String(value || '');
+  if (!text) return false;
+  if (process.platform === 'win32') return /^[a-zA-Z]:[\\/]/.test(text) || /^\\\\/.test(text);
+  return text.startsWith('/');
+}
 /** Bundle the launcher ships with; symlink targets contain one of these names. */
 const BUNDLED_MARKERS = ['DSHArchiveManager', 'DSHPluginManager', 'DSHSessionNotify', 'DSHInterruptedDot', 'DSHChinaMirror', 'DSHSidebarDeck'];
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -249,7 +289,20 @@ async function clearPinnedPackage(name) {
   return stripStaleLockEntry(name);
 }
 
-/** 从锁文件 importers 段删除一个顶层依赖的记录（名字行 + specifier/version 行）。 */
+/**
+ * 从锁文件 importers 段删除一个顶层依赖的记录（名字行 + specifier/version 行）。
+ *
+ * 缩进形状（真实 pnpm-lock.yaml）：
+ *   importers:            ← 0 空格
+ *     .:                  ← 2 空格：工程名
+ *       dependencies:     ← 4 空格：依赖分组名
+ *         dsh-workbuddy:  ← 6 空格：包名
+ *           specifier: …  ← 8 空格
+ *
+ * 包名行是 **6 空格**（分组名再深一层）。早前这里匹配的是两空格 ——
+ * 那正好是工程名那一行，于是「删包名」实际删的是工程名，包名行纹丝不动，
+ * 「pnpm 没物化 → 清钉重装」这条自愈路径恒为空操作。
+ */
 export async function stripStaleLockEntry(name) {
   const lockPath = join(profilesWebDir(), 'pnpm-lock.yaml');
   let text;
@@ -263,8 +316,12 @@ export async function stripStaleLockEntry(name) {
     if (/^importers:/.test(line)) { inImporters = true; out.push(line); continue; }
     if (inImporters && /^[^\s#]/.test(line)) { inImporters = false; skipping = false; } // 下一个顶层段
     if (inImporters) {
-      // importers 下的条目键是两空格缩进；specifier/version 等子行缩进更深
-      if (/^ {2}[^ ]/.test(line)) skipping = line.includes(name);
+      // 包名行：6 空格缩进（工程名 2 空格、依赖分组名 4 空格都不算）。
+      // YAML 里带 scope 的包名会加引号（'@scope/name':），比较前要脱掉引号。
+      if (/^ {6}\S/.test(line)) {
+        const key = line.trim().replace(/:$/, '').replace(/^['"]|['"]$/g, '');
+        skipping = key === name;
+      }
       if (skipping) { changed = true; continue; }
     }
     out.push(line);
@@ -894,16 +951,35 @@ export async function describeDisabledPlugins(options = {}) {
 
 const dshCli = () => join(dshHome(), 'runtime', 'node_modules', '.bin', 'dsh');
 
-/** Is a command resolvable on the given PATH? */
+/**
+ * 命令能否在给定 PATH 上解析出来。
+ *
+ * 跨平台两处坑（Windows 上踩过）：
+ *  1. PATH 分隔符：POSIX 用 ':'，Windows 用 ';'。按 ':' 切分在 Windows 上
+ *     永远切不开 → 整个 PATH 被当成一个目录 → 永远找不到命令。
+ *  2. 可执行位：POSIX 的 mode 带 0o111 执行位；Windows 的 mode 只反映
+ *     只读属性，没有执行位 → 即便文件在，也判不出「可执行」。
+ *     Windows 上改用扩展名判定（.exe/.cmd/.bat/.com 才是能直接执行的）。
+ */
 export async function hasCommandOnPath(name, path) {
   const pathValue = path ?? process.env.PATH ?? '';
-  const directories = pathValue.split(':').filter(Boolean);
+  const separator = process.platform === 'win32' ? ';' : ':';
+  const directories = pathValue.split(separator).filter(Boolean);
+  const isWindows = process.platform === 'win32';
+  // Windows 上命令要带扩展名才可直接执行；裸名要试常见的几个。
+  // 注意：裸名（无扩展名）**不算**可执行——cmd.exe 不认它。
+  const candidates = isWindows
+    ? (/\.(exe|cmd|bat|com)$/i.test(name) ? [name] : [name + '.exe', name + '.cmd', name + '.bat'])
+    : [name];
   for (const directory of directories) {
-    try {
-      const candidate = join(directory, name);
-      const stat = await fs.stat(candidate);
-      if (stat.isFile() && (stat.mode & 0o111)) return candidate;
-    } catch { /* keep looking */ }
+    for (const candidateName of candidates) {
+      try {
+        const candidate = join(directory, candidateName);
+        const stat = await fs.stat(candidate);
+        if (!stat.isFile()) continue;
+        if (isWindows || (stat.mode & 0o111)) return candidate;
+      } catch { /* keep looking */ }
+    }
   }
   return null;
 }
@@ -913,6 +989,10 @@ export async function hasCommandOnPath(name, path) {
  * PATH. When that happens we prepare a local shim that forwards to the pnpm
  * shipped by node's corepack, and prepend its directory to the PATH we hand to
  * the dsh CLI. Nothing outside ~/.dsh is modified.
+ *
+ * Windows 上 shim 必须是 .cmd（cmd.exe 不认 `#!/bin/sh` 脚本）：
+ * 用同样的名字做 .cmd 才能被 PATH 解析到——这与 hasCommandOnPath 的
+ * 扩展名判定是一套。
  * @returns {Promise<[string, string]>} [child PATH, note]
  */
 export async function ensurePnpmPath() {
@@ -922,12 +1002,39 @@ export async function ensurePnpmPath() {
   if (!corepack) return [process.env.PATH, 'pnpm unavailable: no pnpm and no corepack on PATH'];
   const binDir = join(dshHome(), 'pnpm-bin');
   await fs.mkdir(binDir, { recursive: true });
-  const shim = join(binDir, 'pnpm');
-  const forwarded = `#!/bin/sh\nexec "${process.execPath}" "${corepack}" pnpm "$@"\n`;
+  const isWindows = process.platform === 'win32';
+  const shimName = isWindows ? 'pnpm.cmd' : 'pnpm';
+  const shim = join(binDir, shimName);
+  const forwarded = isWindows
+    ? `@echo off\r\n"${process.execPath}" "${corepack}" pnpm %*\r\n`
+    : `#!/bin/sh\nexec "${process.execPath}" "${corepack}" pnpm "$@"\n`;
   if (await fs.readFile(shim, 'utf8').catch(() => '') !== forwarded) {
     await fs.writeFile(shim, forwarded, { mode: 0o755 });
   }
-  return [`${binDir}:${process.env.PATH}`, `pnpm shim prepared via corepack at ${binDir}`];
+  const separator = isWindows ? ';' : ':';
+  return [`${binDir}${separator}${process.env.PATH}`, `pnpm shim prepared via corepack at ${binDir}`];
+}
+
+/**
+ * 找到可执行的 pnpm，并给出跑它用的 PATH。
+ *
+ * 优先从 PATH 里解析（这是关键：Windows 上 shim 叫 pnpm.cmd，
+ * 且 pnpm 已经在 PATH 上时压根不建 shim —— 早前 6 处调用点都拼死路径
+ * `pnpm-bin/pnpm`，Windows 上必然 ENOENT，npm 探测与装依赖全都不成立）。
+ *
+ * PATH 里找不到时回落到 shim 目录（pnpm-bin/pnpm，或 Windows 的 pnpm.cmd）：
+ * 那是 ensurePnpmPath 在「只有 corepack」时造出来的转发脚本。
+ *
+ * @returns {Promise<{cli:string,path:string}|null>} 找不到返回 null。
+ */
+async function resolvePnpmCli() {
+  const [pathWithPnpm] = await ensurePnpmPath();
+  const onPath = await hasCommandOnPath('pnpm', pathWithPnpm);
+  if (onPath) return { cli: onPath, path: pathWithPnpm };
+  // PATH 里没有就回落 shim 目录里的那个（ensurePnpmPath 在「只有 corepack」
+  // 时造的转发脚本；Windows 上是 pnpm.cmd）。执行失败由调用方兜住。
+  const shim = join(dshHome(), 'pnpm-bin', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm');
+  return { cli: shim, path: pathWithPnpm };
 }
 
 async function pluginCommand(args) {
@@ -1066,9 +1173,12 @@ async function npmViewExists(name, timeoutMs = 8000) {
   /// 连不上（超时/DNS/拒连）。把「连不上」误报成「包不存在」会误导用户去排查
   /// 一个不存在的包名，真实的网络问题反而被掩盖。
   try {
-    await ensurePnpmPath();
-    const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-    await run(cli, ['view', name, 'version'], { timeout: timeoutMs, env: await pnpmEnvironment() });
+    const pnpm = await resolvePnpmCli();
+    if (!pnpm) return false;
+    await run(pnpm.cli, ['view', name, 'version'], {
+      timeout: timeoutMs,
+      env: await pnpmEnvironment().then(env => ({ ...env, PATH: pnpm.path })),
+    });
     return true;
   } catch (error) {
     const message = [error?.message, error?.stderr, error?.stdout].filter(Boolean).join(' ');
@@ -1103,9 +1213,12 @@ export function repoMatchesEntry(repository, ref) {
 /** 读 npm 包的 repository 字段（探不到/网络失败返回 null，由调用方保守处理）。 */
 async function npmRepositoryOf(name, timeoutMs = 8000) {
   try {
-    await ensurePnpmPath();
-    const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-    const { stdout } = await run(cli, ['view', name, 'repository', '--json'], { timeout: timeoutMs, env: await pnpmEnvironment() });
+    const pnpm = await resolvePnpmCli();
+    if (!pnpm) return null;
+    const { stdout } = await run(pnpm.cli, ['view', name, 'repository', '--json'], {
+      timeout: timeoutMs,
+      env: await pnpmEnvironment().then(env => ({ ...env, PATH: pnpm.path })),
+    });
     return JSON.parse(String(stdout).trim() || 'null');
   } catch { return null; }
 }
@@ -1333,9 +1446,13 @@ export async function missingPackageEntries(dir, meta) {
 
 /** 在插件源码目录里跑一条 pnpm 命令（装依赖 / 构建），走与安装链路同一个 pnpm shim。 */
 async function runPnpmInSource(dir, args, timeoutMs = 300000) {
-  const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-  const [pathWithPnpm] = await ensurePnpmPath();
-  return run(cli, args, { cwd: dir, timeout: timeoutMs, env: await pnpmEnvironment().then(env => ({ ...env, PATH: pathWithPnpm })) });
+  const pnpm = await resolvePnpmCli();
+  if (!pnpm) throw new Error('pnpm 不在 PATH 上，无法在源码目录里跑 pnpm');
+  return run(pnpm.cli, args, {
+    cwd: dir,
+    timeout: timeoutMs,
+    env: await pnpmEnvironment().then(env => ({ ...env, PATH: pnpm.path })),
+  });
 }
 
 /**
@@ -1508,14 +1625,32 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
   let lastError = '';
   // Probe candidates in parallel first: only `pnpm add` a name that really
   // exists, so a missing name never makes pnpm wait on a network failure.
-  const probes = await Promise.all(candidates.map(name => npmProbe(name)));
+  //
+  // 探测失败不能整个安装崩掉：npm 探测只是「优先走 npm」的优化，
+  // 探不通时应当降级到下面的 git 源码路径。所以逐个探测、失败记成
+  // 'unreachable' 继续，而不是让 Promise.all 直接 reject。
+  const probes = [];
+  for (const name of candidates) {
+    try {
+      probes.push(await npmProbe(name));
+    } catch (error) {
+      lastError = String(error?.message || error);
+      probes.push('unreachable');
+    }
+  }
   for (let i = 0; i < candidates.length; i++) {
-    if (probes[i] === 'unreachable') { lastError = `npm registry 暂时不可达，无法确认 ${candidates[i]}（网络恢复后会自动重试 git 源）`; continue; }
+    if (probes[i] === 'unreachable') { lastError = lastError || `npm registry 暂时不可达，无法确认 ${candidates[i]}（网络恢复后会自动重试 git 源）`; continue; }
     if (!probes[i]) { lastError = `npm 上没有 ${candidates[i]}`; continue; }
     // 无 scope 的候选名容易撞上别人的同名包（实测 dsh-genui 是另一个作者的包）：
     // repository 对不上就跳过，宁可变慢走 git 源码，也不能把插件装成别人的包。
     if (repoRef && !candidates[i].startsWith('@')) {
-      const repository = await repositoryOf(candidates[i]);
+      let repository = null;
+      try {
+        repository = await repositoryOf(candidates[i]);
+      } catch (error) {
+        lastError = String(error?.message || error);
+        continue;
+      }
       if (!repoMatchesEntry(repository, repoRef)) {
         lastError = `npm 上的 ${candidates[i]} 不是 ${repoRef.author}/${repoRef.repo} 发布的（repository 对不上），已跳过以免装错插件`;
         continue;
@@ -1535,7 +1670,15 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
   // the npm package name) or build the source and add it as a `file:`
   // dependency. A clone without entry files is refused instead of installed.
   if (repoRef && !repoRef.subdir) {
-    const src = await clone(repoRef, null);
+    // clone 抛错（真 git 失败、磁盘满）也要变成 ok:false，
+    // 不能让异常穿透成 500 —— 界面要拿到「安装失败：原因」。
+    let src = null;
+    try {
+      src = await clone(repoRef, null);
+    } catch (error) {
+      lastError = String(error?.message || error);
+      src = { ok: false, error: lastError };
+    }
     if (src.ok) {
       const materialized = await materializeClonedPlugin(src, {
         command,
@@ -1595,15 +1738,18 @@ export async function cleanupPluginSources(before, names) {
  * 就会觉得「也不知道卸没卸成功」。
  */
 async function verifyUninstalled(name) {
+  // name 必须是字符串：join() 收到非字符串会抛 TypeError，
+  // 整个卸载流程就崩在「验证」这一步（用户看到的是异常，不是「卸载失败」）。
+  const pluginName = String(name ?? '');
   const manifest = await readProfileManifest();
   const fields = [manifest?.dependencies, manifest?.devDependencies, manifest?.optionalDependencies];
-  const stillInManifest = fields.some(group => group && Object.prototype.hasOwnProperty.call(group, name));
-  const packageDir = join(profilesWebModules(), name);
+  const stillInManifest = fields.some(group => group && Object.prototype.hasOwnProperty.call(group, pluginName));
+  const packageDir = join(profilesWebModules(), pluginName);
   const stillOnDisk = await pathExists(packageDir);
   if (stillInManifest || stillOnDisk) {
     const leftovers = [
       stillInManifest ? 'package.json 里仍有依赖记录' : null,
-      stillOnDisk ? `node_modules/${name} 仍在磁盘上` : null
+      stillOnDisk ? `node_modules/${pluginName} 仍在磁盘上` : null
     ].filter(Boolean).join('；');
     return { ok: false, leftovers };
   }
@@ -1854,9 +2000,12 @@ export async function fetchTargetPeerDependencies(source, version, deps = {}) {
   const remote = source?.remote ?? {};
   try {
     if (remote.type === 'npm') {
-      await ensurePnpmPath();
-      const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-      const { stdout } = await run(cli, ['view', `${remote.package ?? source.name}@${version}`, 'peerDependencies', '--json'], { timeout: PROBE_TIMEOUT_MS, env: await pnpmEnvironment() });
+      const pnpm = await resolvePnpmCli();
+      if (!pnpm) return {};
+      const { stdout } = await run(pnpm.cli, ['view', `${remote.package ?? source.name}@${version}`, 'peerDependencies', '--json'], {
+        timeout: PROBE_TIMEOUT_MS,
+        env: await pnpmEnvironment().then(env => ({ ...env, PATH: pnpm.path })),
+      });
       const parsed = JSON.parse(stdout);
       return parsed && typeof parsed === 'object' ? parsed : {};
     }
@@ -2009,9 +2158,9 @@ async function pullLocalUpdate(source, target) {
  * 用户的本地 checkout 不动：pnpm add 会把 package.json 里的 link: 规格换成 npm 包。
  */
 async function switchToRelease(source, command) {
-  await ensurePnpmPath();
-  const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-  const [pathWithPnpm] = await ensurePnpmPath();
+  const pnpm = await resolvePnpmCli();
+  if (!pnpm) return { ok: false, error: 'pnpm 不在 PATH 上，无法切换到发行版' };
+  const { cli, path: pathWithPnpm } = pnpm;
   const view = await run(cli, ['view', source.name, 'version', '--json'], {
     timeout: PROBE_TIMEOUT_MS, env: await pnpmEnvironment().then(env => ({ ...env, PATH: pathWithPnpm }))
   }).catch(() => null);
@@ -2167,7 +2316,9 @@ export async function applyPluginUpdate(source, options = {}) {
         const builtGaps = await findUnresolvableLocalImports(clonedDest ?? remote.dir);
         if (builtGaps.length) throw new Error(describeUnresolvableImports(builtGaps));
         stepUpdateProgress(source.name, '正在同步 profile…');
-        await command(['add', `file:${cloned.dest}`]);
+        // 用 clonedDest ?? remote.dir（与上面几处一致）：clone 实现若没给 dest，
+        // 直接拼 cloned.dest 会装成 file:undefined。
+        await command(['add', `file:${clonedDest ?? remote.dir}`]);
       } catch (error) {
         if (hadSource && !(await restoreSourceBackup(backup, remote.dir))) {
           throw new Error(`${String(error?.message || error)}；旧版本没能从 ${backup.split('/').pop()} 放回原位，`
@@ -2315,8 +2466,11 @@ async function finalizeFileSourceUpdate(name, target, dest, command, backup, sou
 
 /** 只保留最近一个 `.bak-*` 备份，避免 plugin-sources 越滚越大。 */
 export async function pruneSourceBackups(dest) {
-  const dir = dest.replace(/\/[^/]+$/, '');
-  const name = dest.split('/').filter(Boolean).pop();
+  // 路径拆分要跨平台：Windows 的分隔符是 '\'，只按 '/' 拆会得到整个路径，
+  // 前缀匹配随之失效（.staged-* 清不掉、备份保留策略失效）。
+  const normalized = String(dest || '').replace(/[\\/]+$/, '');
+  const dir = normalized.replace(/[\\/][^\\/]*$/, '');
+  const name = normalized.split(/[\\/]/).filter(Boolean).pop();
   if (!dir || !name) return [];
   let entries = [];
   try { entries = await fs.readdir(dir); } catch { return []; }
@@ -2756,7 +2910,8 @@ export function classifyPluginSource(input) {
   const fileMatch = spec.match(/^(?:file|link):(.+)$/);
   if (fileMatch) {
     const raw = fileMatch[1];
-    const dir = raw.startsWith('/') ? raw : join(profilesWebDir(), raw);
+    // 绝对路径原样用，相对路径相对 profile 目录（跨平台判绝对，见 isAbsolutePath）。
+    const dir = isAbsolutePath(raw) ? raw : join(profilesWebDir(), raw);
     const marker = input?.marker;
     if (marker?.author && marker?.repo) {
       return {
@@ -2828,7 +2983,9 @@ export function classifyPluginSource(input) {
  * @returns {Array<{author:string,repo:string}>}
  */
 export function sourceCandidates(dir, marketNames) {
-  const base = String(dir ?? '').split('/').filter(Boolean).pop() ?? '';
+  // 取最后一段目录名：路径分隔符要跨平台（Windows 是 '\'），
+  // 只按 '/' 拆在 Windows 上拿不到目录名 → 候选全空 → 误判成 local。
+  const base = String(dir ?? '').split(/[\\/]/).filter(Boolean).pop() ?? '';
   if (!base) return [];
   const parts = base.split('-');
   const matches = [];
@@ -3133,9 +3290,16 @@ async function savePrunedUpdateCache(previous, inventory, cacheFile) {
 /** npm 包的 dist-tags（走 pnpm shim，和安装链路同一个 registry/网络栈）。 */
 export async function probeNpmDistTags(packageName, timeoutMs = PROBE_TIMEOUT_MS) {
   try {
-    await ensurePnpmPath();
-    const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-    const { stdout } = await run(cli, ['view', packageName, 'dist-tags', '--json'], { timeout: timeoutMs, env: await pnpmEnvironment() });
+    // pnpm 命令的位置要从 PATH 解析，不能自己拼 pnpm-bin/pnpm：
+    //  - Windows 上 shim 叫 pnpm.cmd（cmd.exe 不认无扩展名的脚本）；
+    //  - pnpm 已经在 PATH 上时压根不建 shim（自己拼路径必然 ENOENT）。
+    // 这样 Windows 与 macOS 的 npm 版本探测都能真的跑起来。
+    const pnpm = await resolvePnpmCli();
+    if (!pnpm) return { error: 'pnpm 不在 PATH 上，无法查询 npm 版本' };
+    const { stdout } = await run(pnpm.cli, ['view', packageName, 'dist-tags', '--json'], {
+      timeout: timeoutMs,
+      env: await pnpmEnvironment().then(env => ({ ...env, PATH: pnpm.path })),
+    });
     const tags = JSON.parse(stdout);
     const latest = typeof tags?.latest === 'string' ? tags.latest : null;
     if (!latest) return { error: 'registry 没有 latest 标签' };
@@ -3247,10 +3411,16 @@ export async function collectPluginSources() {
   for (const item of installed) {
     if (item.broken || item.source === 'bundled') continue;
     const spec = Object.prototype.hasOwnProperty.call(dependencies, item.name) ? dependencies[item.name] : null;
+    // file:/link: 指向的目录：绝对路径原样用，相对路径相对 profile 目录。
+    // 判「绝对」要跨平台：POSIX 是以 '/' 开头，Windows 是 'C:\'（盘符）或
+    // '\\' 开头（UNC）。只认 '/' 会把 Windows 的绝对路径当成相对路径，
+    // 读不到 .dsh-source.json → 插件被误判成 local 来源。
     const markerDir = typeof spec === 'string' && /^(?:file|link):/.test(spec)
-      ? (spec.replace(/^(?:file|link):/, '').startsWith('/')
-        ? spec.replace(/^(?:file|link):/, '')
-        : join(profilesWebDir(), spec.replace(/^(?:file|link):/, '')))
+      ? (() => {
+          const target = spec.replace(/^(?:file|link):/, '');
+          if (isAbsolutePath(target)) return target;
+          return join(profilesWebDir(), target);
+        })()
       : null;
     let marker = markerDir ? await readJsonQuiet(join(markerDir, SOURCE_MARKER_NAME)) : null;
     if (!marker && markerDir) {
@@ -3798,10 +3968,14 @@ async function writeSourcesConfig(config) {
   await fs.rename(tmp, path);
 }
 
-/** 源 id 归一：git 源取 owner-repo，index 源取 URL 的稳定哈希。 */
+/** 源 id 归一：git 源取 owner-repo，index 源取 URL 的稳定哈希。
+ *
+ * 只认 `github:owner/repo` 这种短写；长写（https://… / git@…）一律走 URL 哈希
+ * —— addPluginSource 会先把地址归一成短写再算 id，所以线上路径是一致的。
+ */
 export function normalizeSourceId(kind, url) {
   if (kind === 'git') {
-    const match = String(url || '').match(/github[:@/]+([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)/);
+    const match = String(url || '').match(/github[:@]([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)/);
     if (match) return `${match[1]}-${match[2]}`.toLowerCase();
   }
   let hash = 0;
@@ -4443,13 +4617,20 @@ export function parseSearchPicks(text, candidateCount, candidates = []) {
     while ((m = looseRe.exec(raw))) push(m[1], 1, m[2]);
   }
 
-  // 2) JSON 格式
+  // 2) JSON 格式：{"picks":[…]} 或裸数组 [1,2]（模型有时直接给编号数组）。
   if (collect.length === 0) {
+    // 裸数组没有 '{'，早前只用 indexOf('{') 找边界 → 数组分支永远进不去，
+    // 下面 typeof pick === 'number' 那条路成了死代码。这里按两种形状各试一次。
+    const attempts = [];
     const begin = raw.indexOf('{');
     const finish = raw.lastIndexOf('}');
-    if (begin >= 0 && finish > begin) {
+    if (begin >= 0 && finish > begin) attempts.push(raw.slice(begin, finish + 1));
+    const arrayBegin = raw.indexOf('[');
+    const arrayFinish = raw.lastIndexOf(']');
+    if (arrayBegin >= 0 && arrayFinish > arrayBegin) attempts.push(raw.slice(arrayBegin, arrayFinish + 1));
+    for (const text of attempts) {
       let parsed = null;
-      try { parsed = JSON.parse(raw.slice(begin, finish + 1)); } catch { parsed = null; }
+      try { parsed = JSON.parse(text); } catch { parsed = null; }
       const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.picks) ? parsed.picks : [];
       for (const pick of list) {
         if (typeof pick === 'number' || typeof pick === 'string') { push(pick, 1, ''); continue; }
@@ -4457,6 +4638,7 @@ export function parseSearchPicks(text, candidateCount, candidates = []) {
         const index = pick.i ?? pick.index ?? pick.n ?? pick.num ?? pick.id ?? pick.name ?? pick.repo;
         push(index, Number(pick.score ?? pick.relevance ?? 1), pick.why ?? pick.reason ?? '');
       }
+      if (collect.length > 0) break;
     }
   }
 

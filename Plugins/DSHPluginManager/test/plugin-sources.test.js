@@ -634,3 +634,12 @@ serialTest('检索模型记忆：原子写、无临时文件残留', async () =>
     assert.equal(files.filter(f => f.includes('.tmp-')).length, 0, '没有残留 tmp 文件');
   })
 })
+
+serialTest('parseSearchPicks：JSON 分支也认裸数组（模型给 [1,2] 时不能被静默忽略）', () => {
+  // 裸数组没有 '{'，早前只用 indexOf('{') 找边界 → 数组分支永远进不去，
+  // 下面 typeof pick === 'number' 那条路成了死代码。
+  assert.deepEqual(parseSearchPicks('[1,3]', 5).map(pick => pick.index), [0, 2], '裸编号数组能解析');
+  assert.deepEqual(parseSearchPicks('[{"i":2,"why":"x"}]', 5).map(pick => pick.index), [1], '数组里带对象也能解析');
+  assert.deepEqual(parseSearchPicks('{"picks":[{"i":2},{"i":1}]}', 5).map(pick => pick.index), [0, 1], '对象格式照旧');
+  assert.deepEqual(parseSearchPicks('[1,99]', 5).map(pick => pick.index), [0], '越界丢弃');
+});

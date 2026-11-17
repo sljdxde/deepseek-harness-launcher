@@ -40,6 +40,9 @@ node --test "$ROOT/Plugins/DSHArchiveManager/test/running-session-ids.test.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/legacy-session-headers.test.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/workspace-auto-archive.test.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/health-route.test.js"
+# 归档管理服务端全分支场景 + 客户端面板渲染（假 fetch / 极简 React，不发真实请求）。
+node --test "$ROOT/Plugins/DSHArchiveManager/test/archive-manager.test.js"
+node --test "$ROOT/Plugins/DSHArchiveManager/test/client-render.test.js"
 rg -q 'patchWorkspaceDeleteForAutoArchive' "$ROOT/Plugins/DSHArchiveManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/client/client.js"
@@ -74,6 +77,15 @@ node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-mutation-safety.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-peer-compat.test.js"
 # 多插件源（sources.json / index.json / 聚合去重 / 异步刷新进度）+ 国内加速映射。
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+# 覆盖率补测：下面几个文件把 lib/index.js、lib/atomic.js、lib/operations.js
+# 与 client/client.js 的分支走到 100%（门禁见脚本末尾）。
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-a-install.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-b-update.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-c-market.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-d-routes.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-e-atomic.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-f-operations.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/client-pure.test.js"
 # 国内加速独立插件：镜像规则表、URL 映射、开关状态路由（临时 DSH_HOME）。
 node --check "$ROOT/Plugins/DSHChinaMirror/lib/index.js"
 node --test "$ROOT/Plugins/DSHChinaMirror/test/host.test.js"
@@ -1013,5 +1025,11 @@ else
   "$ROOT/scripts/build-dmg.sh" >/dev/null
   test -s "$ROOT/dist/Deepseek Harness Launcher.dmg"
   hdiutil verify "$ROOT/dist/Deepseek Harness Launcher.dmg" >/dev/null
+fi
+# 覆盖率门禁：插件的每个源文件都要 100% 行覆盖。
+# 放在打包之前 —— 它是逻辑门禁，不该被 macOS 打包步骤挡住（Windows CI 上跳过打包
+# 时也要能跑）。判定直接用 node 自己的覆盖率报告（口径与 node 一致）。
+if [[ "${DHL_SKIP_COVERAGE:-0}" != "1" ]]; then
+  node "$ROOT/scripts/coverage-check.mjs"
 fi
 echo "Deepseek Harness Launcher regression checks passed"

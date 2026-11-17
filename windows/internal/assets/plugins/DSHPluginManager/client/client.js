@@ -862,7 +862,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const nodes = []
     let rest = String(text ?? '')
     let i = 0
-    const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)\s]+\))/
+    // 外层只负责「认出链接形状的 token」：URL 宽松（可含空格与括号）。
+    // 真正的链接由下面的严格解析器判定——URL 不含空格、不含括号；认不出就按纯文本
+    // 兜底（key 后缀 f）。严格解析器拒收带括号的 URL 是有意的：此前
+    // 「[Foo](https://x/Foo_(bar))」会被截断成打不开的地址（少了右括号），
+    // 宁可原样显示文本，也不给一个点进去 404 的链接。
+    const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]*\))/
     while (rest) {
       const match = rest.match(pattern)
       if (!match) { nodes.push(h('span', { key: keyBase + 't' + i }, rest)); break }
@@ -871,7 +876,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       if (token.startsWith('`')) nodes.push(h('code', { key: keyBase + 'c' + i, className: 'dsh-pm-md-code' }, token.slice(1, -1)))
       else if (token.startsWith('**')) nodes.push(h('strong', { key: keyBase + 'b' + i }, token.slice(2, -2)))
       else {
-        const link = token.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/)
+        const link = token.match(/^\[([^\]]+)\]\(([^()\s]+)\)$/)
         if (link) nodes.push(h('a', { key: keyBase + 'a' + i, href: link[2], target: '_blank', rel: 'noreferrer' }, link[1]))
         else nodes.push(h('span', { key: keyBase + 'f' + i }, token))
       }
@@ -1234,9 +1239,17 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     // 状态条，全部结束后才给一条汇总 toast）。installStatus 记录每个
     // 插件的排队/执行态，供按钮文案与禁用使用。
     const installQueueRef = React.useRef([])
-    const installRunningRef = React.useRef(false)
     const installTotalRef = React.useRef(0)
-    const [installStatus, setInstallStatus] = React.useState({})
+    const [installStatus, setInstallStatusState] = React.useState({})
+    // 安装状态的**同步**镜像：state 是异步更新的，同一 tick 里连点两次「安装」
+    // 会两次读到旧值 → 同一个插件入队两次 → 两次 /install + 两条汇总 toast。
+    const installStatusRef = React.useRef({})
+    const setInstallStatus = updater => {
+      installStatusRef.current = typeof updater === 'function'
+        ? updater(installStatusRef.current)
+        : updater;
+      setInstallStatusState(installStatusRef.current)
+    }
     const [queueView, setQueueView] = React.useState([])
     // 更新队列：与安装队列共用同一把串行锁（都要跑 pnpm，并发写同一 profile
     // 会互相踩）。点多个「更新」依次排队，排队期间还能继续点其他的。
@@ -1261,51 +1274,20 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         return 'fail'
       }
     }
-    const pumpInstalls = async () => {
-      if (installRunningRef.current) return
-      installRunningRef.current = true
-      const installedNames = []
-      while (installQueueRef.current.length > 0) {
-        const plugin = installQueueRef.current[0]
-        setInstallStatus(s => ({ ...s, [plugin.id]: 'installing' }))
-        const outcome = await installOne(plugin)
-        installQueueRef.current = installQueueRef.current.slice(1)
-        setQueueView([...installQueueRef.current])
-        setInstallStatus(s => { const next = { ...s }; delete next[plugin.id]; return next })
-        if (outcome === 'ok') installedNames.push(plugin.repo || plugin.name)
-        else if (outcome === 'already') toast('info', `${plugin.repo || plugin.name} 已安装过，无需重复安装`)
-      }
-      installRunningRef.current = false
-      installTotalRef.current = 0
-      if (installedNames.length > 0) {
-        setDetail(null)
-        await loadInstalled()
-        // 验收回读：接口说 ok 不等于插件真的出现在已安装列表（magpie 的规矩）。
-        // 缺席的点名报错，别让汇总 toast 替命令退出码背书。
-        let listing = []
-        try {
-          const r = await fetch('/dsh-plugin-manager/installed', { cache: 'no-store' })
-          listing = (await r.json()).items || []
-        } catch { /* 列表读不到就不做缺席判定，保留成功汇总 */ }
-        const present = new Set(listing.map(item => String(item.name).toLowerCase()))
-        const missing = installedNames.filter(name => {
-          const repo = String(name).toLowerCase()
-          return !present.has(repo) && ![...present].some(n => n.endsWith('/' + repo))
-        })
-        if (missing.length > 0) {
-          toast('error', `安装未生效（已安装列表里没有出现）：${missing.join('、')}。请重启 dsh 后重试`)
-        } else {
-          toast('success', installedNames.length === 1 ? '已安装，重启 dsh 后生效' : `已安装 ${installedNames.length} 个插件，重启 dsh 后生效`)
-        }
-      }
-    }
+    // 安装队列只有一个消费者：pumpMutations（更新与安装共用一把串行锁）。
+    // 早前这里还有个独立的 pumpInstalls，两个泵各自消费同一个 installQueueRef
+    // → 同一个插件被装两次（两次 /install + 两条汇总 toast）。已删。
     const install = (plugin) => {
-      if (installStatus[plugin.id] || batchRunning || busyOther) return
+      // 守卫用 **ref** 而不是 installStatus（state）：state 是异步更新的，
+      // 同一 tick 里连点两次时两次都读到旧值 → 同一个插件入队两次。
+      if (installStatusRef.current[plugin.id] || batchRunning || busyOther) return
+      installStatusRef.current = { ...installStatusRef.current, [plugin.id]: 'queued' }
       installTotalRef.current += 1
       installQueueRef.current = [...installQueueRef.current, plugin]
       setQueueView([...installQueueRef.current])
       setInstallStatus(s => ({ ...s, [plugin.id]: 'queued' }))
-      void pumpInstalls()
+      // 走**统一**的串行泵（更新与安装共用一把锁）。
+      void pumpMutations()
     }
     const cleanupBroken = (item) => {
       setBusy('cleanup-' + item.name)
@@ -1428,6 +1410,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             sawInstall = true
             const { outcome, name } = await runOneInstall(installQueueRef.current[0])
             if (outcome === 'ok') installedNames.push(name)
+            else if (outcome === 'already') toast('info', `${name} 已安装过，无需重复安装`)
           }
         }
         if (sawInstall && installedNames.length > 0) {
@@ -1959,7 +1942,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       detail.url ? h('a', { className: 'dsh-pm-drawer-link', href: detail.url, target: '_blank', rel: 'noreferrer' }, '在 GitHub 上查看 ↗') : null)
       : null
 
-    // 队列状态条：只在有安装任务时出现；完成后随 installRunningRef 清零消失。
+    // 队列状态条：只在有安装任务时出现；完成后随 installTotalRef 清零消失。
     const installingNow = installTotalRef.current - queueView.length + 1
     const queueStrip = queueView.length > 0
       ? h('div', { className: 'dsh-pm-queue', role: 'status' },
@@ -2313,9 +2296,13 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     // 是 Fragment——否则这一层 div 会把所有区块重新包成一个子元素，父级 gap 失效。
     const discoverTab = h(React.Fragment, null,
       market === null ? h('div', { className: 'dsh-pm-empty' }, '加载中…') :
-      market === false ? h('div', { className: 'dsh-pm-empty' },
-        h('div', null, '市场索引还没有下载'),
-        h('button', { className: 'dsh-pm-install', style: { marginTop: '8px' }, disabled: refreshing, onClick: refreshMarket }, refreshing ? '同步中…' : '立即同步')) :
+      market === false ? h(React.Fragment, null,
+        // 手动安装是**独立功能**：市场索引读不到时也照样能用（用户手里可能有
+        // 明确的 npm 包名/仓库地址）。所以这里除了提示与「立即同步」，仍给出手动安装行。
+        h('div', { className: 'dsh-pm-empty' },
+          h('div', null, '市场索引还没有下载'),
+          h('button', { className: 'dsh-pm-install', style: { marginTop: '8px' }, disabled: refreshing, onClick: refreshMarket }, refreshing ? '同步中…' : '立即同步')),
+        manualRow) :
       h(React.Fragment, null, queueStrip, isCategoryView ? categoryView : discoverAllView))
 
     // ── 内置页：开关列表（无可搜索/联网需求）。 ──

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { apply } from '../lib/index.js';
+import { runArchiveScenarios } from './helpers/archive-scenarios.js';
 
 /**
  * Minimal cordis-shaped harness: `ctx.inject` hands out a `webServer.register`
@@ -56,4 +57,11 @@ test('health 探针：零成本、200、与重接口同一 effect，dispose 后�
   harness.dispose();
   assert.equal(harness.hasRoute('/dsh-archive-manager/health'), false);
   assert.equal(harness.hasRoute('/dsh-archive-manager/archives'), false);
+});
+
+// 覆盖率合并是**跨进程取交集**（见 helpers/archive-scenarios.js 顶部的说明）：
+// 只要有一个加载了 lib/index.js 的测试进程没走到某条分支，合并后那条分支就
+// 算未覆盖。所以每个 import 了 lib/index.js 的测试文件都要把全部分支走一遍。
+test('全分支扫描：所有分支在这个进程里都走到', async () => {
+  await runArchiveScenarios();
 });
