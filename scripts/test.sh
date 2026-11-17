@@ -175,6 +175,10 @@ rg -Fq "'/dsh-plugin-manager/ai-search'" "$ROOT/Plugins/DSHPluginManager/lib/ind
 rg -Fq 'AI_SEARCH_MAX_CANDIDATES' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -Fq 'buildPluginSearchPrompt' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
 rg -Fq 'dsh-pm-ai-bar' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 检索走流式接口，UI 实时打印步骤与模型输出。
+rg -Fq '/dsh-plugin-manager/ai-search/stream' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'searchPluginsByDescriptionStream' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'dsh-pm-ai-log' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 全屏：面板可铺满窗口（顶栏按钮 + localStorage 记忆）。
 rg -Fq 'dsh-pm-full' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'toggleFullscreen' "$ROOT/Plugins/DSHPluginManager/client/client.js"

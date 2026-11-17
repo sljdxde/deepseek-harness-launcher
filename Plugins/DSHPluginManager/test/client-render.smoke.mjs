@@ -1333,7 +1333,7 @@ await openInstalledPanel(runtime);
     if (url.startsWith('/dsh-plugin-manager/marketplace')) {
       return respond({ ok: true, stale: false, total: marketPlugins.length, allTotal: marketPlugins.length, counts: [], categories: [], plugins: marketPlugins, sections: [], featured: marketPlugins.slice(0, 5), topDownloads: marketPlugins.slice(0, 5), topStars: marketPlugins.slice(0, 5) });
     }
-    if (url === '/dsh-plugin-manager/ai-search') {
+    if (url === '/dsh-plugin-manager/ai-search/stream' || url === '/dsh-plugin-manager/ai-search') {
       aiCalls += 1;
       const body = JSON.parse(options.body || '{}');
       if (body.query.includes('降级')) {
@@ -1364,7 +1364,7 @@ await openInstalledPanel(runtime);
   bar().props.onSubmit({ preventDefault() {} });
   await settle(runtime, 20);
 
-  assert.equal(aiCalls, 1, '提交后调用了 /ai-search');
+  assert.equal(aiCalls, 1, '提交后调用了流式 /ai-search/stream');
   const rows = () => findAll(runtime.tree, node => node.type === 'div' && /dsh-pm-ai-row/.test(String(node.props.className || '')));
   assert.equal(rows().length, 2, '渲染模型挑出的结果行');
   const text = textOf(runtime.tree);

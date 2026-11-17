@@ -4352,7 +4352,7 @@ export async function resolveSearchRoutes(llm, max = 4) {
 }
 
 /** 单路由调用：返回 { text } 或 { error }（含终态 error finish 的原因）。 */
-async function streamSearchCompletion(llm, route, prompt, signal) {
+async function streamSearchCompletion(llm, route, prompt, signal, onChunk) {
   const call = await llm.prepareCall({ provider: route.provider, model: route.model, maxTokens: 800 }, signal);
   let text = '';
   let finish = null;
@@ -4365,14 +4365,17 @@ async function streamSearchCompletion(llm, route, prompt, signal) {
   })) {
     if (!chunk || typeof chunk.type !== 'string') continue;
     if (chunk.type === 'finish') finish = chunk;
-    if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text;
+    if (chunk.type === 'text-delta' && typeof chunk.text === 'string') {
+      text += chunk.text;
+      if (typeof onChunk === 'function') onChunk(chunk.text, text);
+    }
     if (text.length > 4000) break;
   }
   if (finish && finish.reason && finish.reason.kind === 'error') {
     const failure = finish.reason.failure || {};
     return { error: String(failure.message || '模型调用失败') };
   }
-  return { text };
+  return { text, finish };
 }
 
 /** 把候选映射成接口返回的条目。 */
@@ -4455,6 +4458,105 @@ export async function searchPluginsByDescription(options = {}) {
     ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true,
     note: `模型检索失败（${lastError || '所有路由都不可用'}），按关键词匹配给出结果`, ...debugInfo,
   };
+}
+
+/**
+ * 流式版描述检索：把每个阶段通过 onEvent(step, data) 推给调用方。
+ *
+ * 流程（与用户要求一致）：拼接提示词 → 调系统配置的模型判断 → 模型给 top5；
+ * 模型未配置 / 不可用 / 超时 / 输出解析失败时，走本地关键词匹配兜底。
+ * 每一步都发事件，UI 可以实时打印「正在做什么 + 模型关键输出」。
+ *
+ * @param {{query:string, llm?:object, timeoutMs?:number, onEvent?:Function}} options
+ */
+export async function searchPluginsByDescriptionStream(options = {}) {
+  const emit = (step, data = {}) => {
+    if (typeof options.onEvent === 'function') options.onEvent(step, data);
+  };
+  const query = String(options.query || '').trim();
+  if (!query) return { ok: false, error: '请描述你想要的插件' };
+  if (query.length > AI_SEARCH_MAX_QUERY) return { ok: false, error: `描述太长（上限 ${AI_SEARCH_MAX_QUERY} 字）` };
+
+  emit('start', { query });
+  const index = await marketplaceIndexCached();
+  const all = Array.isArray(index.plugins) ? index.plugins : [];
+  emit('index', { total: all.length });
+
+  // 关键词预筛：把候选范围压到 <=40 条，控制注入模型的上下文。
+  const ranked = rankPluginsByKeywords(all, query).slice(0, AI_SEARCH_MAX_CANDIDATES);
+  emit('candidates', {
+    count: ranked.length,
+    names: ranked.slice(0, 6).map(plugin => plugin.repo || plugin.name),
+    truncated: rankPluginsByKeywords(all, query).length > AI_SEARCH_MAX_CANDIDATES,
+  });
+  if (ranked.length === 0) {
+    const result = { ok: true, items: [], candidates: 0, fallback: true, note: '插件库里没有匹配这条描述的插件，换个说法试试' };
+    emit('done', result);
+    return result;
+  }
+
+  const prompt = buildPluginSearchPrompt(query, ranked);
+  emit('prompt', { chars: prompt.length, limit: AI_SEARCH_MAX_PROMPT, preview: prompt.slice(0, 160) });
+  if (prompt.length > AI_SEARCH_MAX_PROMPT) {
+    const result = { ok: false, error: '候选上下文超出上限，请把描述写得更具体一点' };
+    emit('done', result);
+    return result;
+  }
+
+  const llm = options.llm;
+  const routes = llm ? await resolveSearchRoutes(llm).catch(() => []) : [];
+  if (routes.length === 0) {
+    emit('fallback', { reason: llm ? '没有已配置的模型' : '没有模型服务' });
+    const result = { ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true, note: '没有已配置的模型，按关键词匹配给出结果' };
+    emit('done', result);
+    return result;
+  }
+  emit('routes', { count: routes.length, models: routes.map(route => `${route.provider}/${route.model}`) });
+
+  let lastError = '';
+  for (let ri = 0; ri < routes.length; ri++) {
+    const route = routes[ri];
+    emit('model-try', { index: ri + 1, total: routes.length, model: `${route.provider}/${route.model}` });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Number(options.timeoutMs) || 30000);
+    try {
+      // 模型的关键输出（JSON 片段）实时推送给 UI 打印。
+      let firstChunk = true;
+      const outcome = await streamSearchCompletion(llm, route, prompt, controller.signal, (delta, full) => {
+        if (firstChunk) { emit('model-first-token', { model: `${route.provider}/${route.model}` }); firstChunk = false; }
+        emit('model-delta', { text: delta, length: full.length });
+      });
+      if (outcome.error) {
+        lastError = outcome.error;
+        emit('model-error', { model: `${route.provider}/${route.model}`, error: outcome.error });
+        continue;
+      }
+      emit('model-output', { chars: outcome.text.length, raw: outcome.text.slice(0, 300) });
+      const picks = parseSearchPicks(outcome.text, ranked.length, ranked);
+      emit('parsed', { picks: picks.map(pick => ({ name: ranked[pick.index] && (ranked[pick.index].repo || ranked[pick.index].name), why: pick.why })) });
+      if (picks.length === 0) {
+        emit('fallback', { reason: '模型没有挑出相关插件' });
+        const result = { ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true, note: '模型没有挑出相关插件，按关键词匹配给出结果' };
+        emit('done', result);
+        return result;
+      }
+      const result = { ok: true, items: searchItems(ranked, picks, false), candidates: ranked.length, promptChars: prompt.length, model: route, fallback: false };
+      emit('done', result);
+      return result;
+    } catch (error) {
+      lastError = String(error?.message || error);
+      emit('model-error', { model: `${route.provider}/${route.model}`, error: lastError });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  emit('fallback', { reason: lastError || '所有路由都不可用' });
+  const result = {
+    ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true,
+    note: `模型检索失败（${lastError || '所有路由都不可用'}），按关键词匹配给出结果`,
+  };
+  emit('done', result);
+  return result;
 }
 
 function json(response, status, value) {
@@ -4570,6 +4672,25 @@ export function apply(ctx) {
             const result = await searchPluginsByDescription({ query: value?.query, llm: hostLlm, debug: value?.debug === true });
             json(res, result.ok ? 200 : 400, result);
           } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 流式版：NDJSON（每行一个事件），UI 实时打印检索步骤与模型输出。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/ai-search/stream', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            res.writeHead(200, {
+              'cache-control': 'no-cache, no-transform',
+              'content-type': 'application/x-ndjson; charset=utf-8',
+              'x-accel-buffering': 'no',
+            });
+            const send = (step, data) => {
+              try { res.write(JSON.stringify({ step, data, at: Date.now() }) + '\n'); } catch { /* 客户端断开 */ }
+            };
+            await searchPluginsByDescriptionStream({ query: value?.query, llm: hostLlm, timeoutMs: Number(value?.timeoutMs) || 30000, onEvent: send });
+            res.end();
+          } catch (error) {
+            try { res.write(JSON.stringify({ step: 'error', data: { error: String(error?.message || error) } }) + '\n'); res.end(); } catch { /* 已断开 */ }
+          }
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources/progress', handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }

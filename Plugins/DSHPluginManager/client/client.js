@@ -301,14 +301,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-crumbs-back{align-items:center;background:none;border:0;border-radius:6px;color:var(--pm-accent);cursor:pointer;display:inline-flex;font:inherit;font-size:12px;font-weight:600;gap:4px;padding:2px 6px}
 .dsh-pm-crumbs-back:hover{background:color-mix(in srgb,var(--pm-accent) 10%,transparent)}
 /* 描述找插件：一条虚线检索行 + 结果面板（top5，带理由/下载/星标/版本） */
-.dsh-pm-ai-bar{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;color:var(--dsw-alias-label-tertiary);display:flex;gap:10px;height:46px;padding:0 8px 0 14px;transition:border-color .15s ease,box-shadow .15s ease}
+.dsh-pm-ai-bar{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;color:var(--dsw-alias-label-tertiary);display:flex;gap:10px;height:46px;padding:0 0 0 14px;transition:border-color .15s ease,box-shadow .15s ease}
 /* 主搜索入口：聚焦时整条边框变品牌色并外发光 */
 .dsh-pm-ai-bar:focus-within{border-color:var(--pm-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--pm-accent) 14%,transparent)}
 .dsh-pm-ai-bar .spark{color:var(--pm-accent)}
 .dsh-pm-ai-badge{background:color-mix(in srgb,var(--pm-accent) 12%,transparent);border-radius:5px;color:var(--pm-accent);flex:none;font-size:10.5px;font-weight:700;height:18px;line-height:18px;padding:0 6px}
 .dsh-pm-ai-bar .inp{background:none;border:0;color:var(--dsw-alias-label-primary);flex:1;font:inherit;font-size:13.5px;min-width:0;outline:none}
 .dsh-pm-ai-bar .inp::placeholder{color:var(--dsw-alias-label-secondary)}
-.dsh-pm-ai-go{background:var(--pm-accent);border:0;border-radius:10px;color:var(--pm-accent-fg);cursor:pointer;flex:none;font:inherit;font-size:13px;font-weight:650;height:34px;padding:0 20px;white-space:nowrap}
+.dsh-pm-ai-go{align-self:stretch;background:var(--pm-accent);border:0;border-radius:0 11px 11px 0;color:var(--pm-accent-fg);cursor:pointer;flex:none;font:inherit;font-size:13px;font-weight:650;padding:0 22px;white-space:nowrap}
 .dsh-pm-ai-go:hover:not(:disabled){filter:brightness(1.06)}
 .dsh-pm-ai-go:disabled{cursor:default;opacity:.55}
 .dsh-pm-ai{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;display:flex;flex-direction:column;gap:10px;padding:16px 18px}
@@ -318,6 +318,13 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-ai-note{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}
 .dsh-pm-ai-note.bad{color:var(--dsw-alias-state-error-primary)}
 .dsh-pm-ai-list{border-top:1px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column}
+/* 流式检索日志：等宽字体逐行打印步骤与模型输出，最新在最下 */
+.dsh-pm-ai-log{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;display:flex;flex-direction:column;font:11.5px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;gap:3px;max-height:150px;overflow-y:auto;padding:9px 11px}
+.dsh-pm-ai-log-line{display:flex;gap:9px;min-width:0}
+.dsh-pm-ai-log-line .tag{color:var(--pm-accent);flex:none;font-weight:700;min-width:88px;opacity:.85}
+.dsh-pm-ai-log-line .txt{color:var(--dsw-alias-label-secondary);min-width:0;overflow-wrap:anywhere}
+.dsh-pm-ai-log-line.bad .tag,.dsh-pm-ai-log-line.bad .txt{color:var(--dsw-alias-state-error-primary)}
+.dsh-pm-ai-log-line.warn .tag,.dsh-pm-ai-log-line.warn .txt{color:var(--dsw-alias-state-warn-primary)}
 .dsh-pm-ai-row{align-items:center;border-bottom:1px solid var(--dsw-alias-border-l2);display:flex;gap:12px;padding:11px 2px}
 .dsh-pm-ai-row .rk{color:var(--pm-accent);flex:none;font-size:12px;font-weight:800;text-align:center;width:16px}
 .dsh-pm-ai-row .who{flex:1;min-width:0}
@@ -945,6 +952,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const [aiQuery, setAiQuery] = React.useState('')
     const [aiLoading, setAiLoading] = React.useState(false)
     const [aiResult, setAiResult] = React.useState(null)
+    // 检索过程日志：流式事件逐条打印（步骤 + 模型输出片段），检索完保留供回看。
+    const [aiLog, setAiLog] = React.useState([])
+    const aiLogRef = React.useRef(null)
     // 全屏：面板铺满窗口（记住上次选择；localStorage 不可用时静默降级）。
     const [fullscreen, setFullscreen] = React.useState(() => {
       try { return window.localStorage.getItem('dsh-plugin-manager:fullscreen') === '1' } catch { return false }
@@ -1984,18 +1994,76 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
                   loadingMore ? '加载中…' : '显示更多', icon('chev', 12))
               : h('span', { className: 'meta' }, '已全部显示'),
             h('span', { className: 'meta' }, `已显示 ${marketPlugins.length} / ${marketTotal}`)))
-    // 描述找插件：把自然语言描述交给服务端（关键词预筛 ≤40 条 → 模型挑 top5）。
+    // 描述找插件（流式）：服务端拼提示词 → 调系统模型判断 → 逐阶段回传日志，
+    // 模型不可用/超时/解析失败时自动走本地关键词兜底；日志实时打印在面板里。
+    const AI_STEP_LABELS = {
+      start: '开始检索', index: '读取插件库', candidates: '关键词预筛候选', prompt: '构造提示词',
+      routes: '发现可用模型', 'model-try': '尝试模型', 'model-first-token': '模型开始输出',
+      'model-delta': '模型输出', 'model-output': '模型输出完成', parsed: '解析结果',
+      'model-error': '模型报错', fallback: '降级到本地匹配', done: '检索完成', error: '出错',
+    }
+    const pushAiLog = (step, data) => {
+      const label = AI_STEP_LABELS[step] || step
+      let text = label
+      if (step === 'index') text = `插件库共 ${data.total} 个插件`
+      else if (step === 'candidates') text = `预筛 ${data.count} 个候选${data.truncated ? '（已截断到 40 个）' : ''}：${(data.names || []).join('、')}`
+      else if (step === 'prompt') text = `提示词 ${data.chars} 字符：${data.preview}…`
+      else if (step === 'routes') text = `可用模型 ${data.count} 个：${(data.models || []).join('、')}`
+      else if (step === 'model-try') text = `尝试模型 ${data.model}（${data.index}/${data.total}）`
+      else if (step === 'model-first-token') text = `${data.model} 开始输出`
+      else if (step === 'model-delta') text = `模型输出：${data.text}`
+      else if (step === 'model-output') text = `模型输出 ${data.chars} 字符：${data.raw}`
+      else if (step === 'parsed') text = `解析出 ${data.picks.length} 个结果：${data.picks.map(p => `${p.name}（${p.why}）`).join('；')}`
+      else if (step === 'model-error') text = `${data.model} 报错：${data.error}`
+      else if (step === 'fallback') text = `降级原因：${data.reason}`
+      else if (step === 'error') text = `出错：${data.error}`
+      const entry = { step, text }
+      setAiLog(current => [...current.slice(-60), entry])
+      return entry
+    }
     const runAiSearch = () => {
       const query = aiQuery.trim()
       if (!query || aiLoading) return
       setAiLoading(true)
       setAiResult(null)
-      fetch('/dsh-plugin-manager/ai-search', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }) })
-        .then(r => r.json())
-        .then(value => {
+      setAiLog([])
+      fetch('/dsh-plugin-manager/ai-search/stream', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }),
+      }).then(async response => {
+        if (!response.ok) throw Error(`HTTP ${response.status}`)
+        const reader = response.body && response.body.getReader
+          ? response.body.getReader()
+          : null
+        if (!reader) {
+          // 不支持流时退回一次性接口
+          const value = await response.json()
           if (value.error) throw Error(value.error)
           setAiResult(value)
-        })
+          return
+        }
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let done = null
+        for (;;) {
+          const { value, done: ended } = await reader.read()
+          if (ended) break
+          buffer += decoder.decode(value, { stream: true })
+          let index
+          while ((index = buffer.indexOf('\n')) >= 0) {
+            const line = buffer.slice(0, index).trim()
+            buffer = buffer.slice(index + 1)
+            if (!line) continue
+            try {
+              const event = JSON.parse(line)
+              if (event.step === 'error') { pushAiLog('error', event.data); continue }
+              pushAiLog(event.step, event.data || {})
+              if (event.step === 'done') done = event.data
+            } catch { /* 忽略半行 */ }
+          }
+        }
+        if (done) setAiResult(done)
+        else setAiResult({ ok: false, error: '流提前结束，没有收到结果', items: [] })
+      })
         .catch(error => setAiResult({ ok: false, error: String(error.message || error), items: [] }))
         .finally(() => setAiLoading(false))
     }
@@ -2028,6 +2096,18 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             h('button', { className: 'dsh-pm-tool', onClick: () => { setAiResult(null); setAiQuery('') }, 'aria-label': '关闭描述检索结果' }, icon('x', 13))),
           aiResult && aiResult.error ? h('div', { className: 'dsh-pm-ai-note bad' }, aiResult.error) : null,
           aiResult && aiResult.note ? h('div', { className: 'dsh-pm-ai-note' }, aiResult.note) : null,
+          // 流式日志：检索过程 + 模型关键输出实时打印；新日志自动滚到底。
+          aiLog.length > 0
+            ? h('div', {
+                className: 'dsh-pm-ai-log', role: 'log', 'aria-live': 'polite',
+                ref: node => {
+                  aiLogRef.current = node
+                  if (node) node.scrollTop = node.scrollHeight
+                },
+              }, aiLog.map((entry, i) => h('div', { key: i, className: `dsh-pm-ai-log-line${entry.step === 'error' || entry.step === 'model-error' ? ' bad' : ''}${entry.step === 'fallback' ? ' warn' : ''}` },
+                h('span', { className: 'tag' }, AI_STEP_LABELS[entry.step] || entry.step),
+                h('span', { className: 'txt' }, entry.text))))
+            : null,
           aiResult && aiResult.items && aiResult.items.length > 0
             ? h('div', { className: 'dsh-pm-ai-list' }, aiResult.items.map(aiRow))
             : null)
