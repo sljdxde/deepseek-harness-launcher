@@ -83,12 +83,24 @@ Push-Location $winDir
 # keeps using the copy already committed under internal/assets/plugins/
 # instead of syncing it from Plugins/ — until the Windows side follows suit.
 $pluginsOut = Join-Path $winDir "internal\assets\plugins"
-New-Item $pluginsOut -ItemType Directory -Force | Out-Null
+New-Item $pluginsOut -ItemType "Directory" -Force | Out-Null
 foreach ($name in @("DSHArchiveManager", "DSHPluginManager", "DSHSessionNotify", "DSHInterruptedDot", "DSHChinaMirror")) {
-    Remove-Item (Join-Path $pluginsOut $name) -Recurse -Force -ErrorAction SilentlyContinue
-    Copy-Item (Join-Path $repoRoot "Plugins\$name") $pluginsOut -Recurse -Force
+    $src = Join-Path $repoRoot "Plugins\$name"
+    $dst = Join-Path $pluginsOut $name
+    Remove-Item $dst -Recurse -Force -ErrorAction SilentlyContinue
+    Copy-Item $src $dst -Recurse -Force
+    # 发行包只带运行时文件：测试与空的 Sources 占位目录不进 exe
+    # （macOS 侧 build-app.sh 用 rsync --exclude 'test/' --exclude 'Sources/'，
+    #  这里保持一致，否则几千行测试代码会被 go:embed 打进 exe）。
+    # 先删目标再复制：Copy-Item $src $dst 在 $dst 已存在时会把 $src 当子目录复制
+    # （Plugins/X/ → Plugins/X/X/），所以顺序不能反。
+    Write-Host ("DBG name=[" + $name + "] src=[" + $src + "] dst=[" + $dst + "]")
+    $testPath = Join-Path $dst "test"
+    if (Test-Path $testPath) { Remove-Item $testPath -Recurse -Force }
+    $sourcesPath = Join-Path $dst "Sources"
+    if (Test-Path $sourcesPath) { Remove-Item $sourcesPath -Recurse -Force }
 }
-Write-Host "==> plugins synced into windows/internal/assets/plugins"
+Write-Host "==> plugins synced into windows/internal/assets/plugins (test/ excluded)"
 
 # the dsh runtime spec is embedded too: the lockfile decides which dsh the
 # installer pulls, so it must come from the repo's single copy
