@@ -311,7 +311,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-ai-go{align-self:stretch;background:var(--pm-accent);border:0;border-radius:0 11px 11px 0;color:var(--pm-accent-fg);cursor:pointer;flex:none;font:inherit;font-size:13px;font-weight:650;padding:0 22px;white-space:nowrap}
 .dsh-pm-ai-go:hover:not(:disabled){filter:brightness(1.06)}
 .dsh-pm-ai-go:disabled{cursor:default;opacity:.55}
-.dsh-pm-ai{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;display:flex;flex-direction:column;gap:10px;padding:16px 18px}
+.dsh-pm-ai{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;display:flex;flex-direction:column;gap:14px;padding:18px 20px}
 .dsh-pm-ai-head{align-items:baseline;display:flex;flex-wrap:wrap;gap:10px}
 .dsh-pm-ai-head h3{color:var(--dsw-alias-label-primary);font-size:13.5px;font-weight:700;margin:0}
 .dsh-pm-ai-head .meta{color:var(--dsw-alias-label-tertiary);font-size:11.5px}
@@ -319,13 +319,32 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-ai-note.bad{color:var(--dsw-alias-state-error-primary)}
 .dsh-pm-ai-list{border-top:1px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column}
 /* 流式检索日志：等宽字体逐行打印步骤与模型输出，最新在最下 */
-.dsh-pm-ai-log{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;display:flex;flex-direction:column;font:11.5px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;gap:3px;max-height:150px;overflow-y:auto;padding:9px 11px}
-.dsh-pm-ai-log-line{display:flex;gap:9px;min-width:0}
-.dsh-pm-ai-log-line .tag{color:var(--pm-accent);flex:none;font-weight:700;min-width:88px;opacity:.85}
-.dsh-pm-ai-log-line .txt{color:var(--dsw-alias-label-secondary);min-width:0;overflow-wrap:anywhere}
-.dsh-pm-ai-log-line.bad .tag,.dsh-pm-ai-log-line.bad .txt{color:var(--dsw-alias-state-error-primary)}
-.dsh-pm-ai-log-line.warn .tag,.dsh-pm-ai-log-line.warn .txt{color:var(--dsw-alias-state-warn-primary)}
-.dsh-pm-ai-row{align-items:center;border-bottom:1px solid var(--dsw-alias-border-l2);display:flex;gap:12px;padding:11px 2px}
+/* 检索过程：时间线（圆点 + 竖线），不再是灰底日志框。
+   每条 = 圆点 + 步骤名 + 内容；完成绿、降级琥珀、错误红、进行中呼吸。 */
+.dsh-pm-ai-steps{display:flex;flex-direction:column;gap:0;max-height:190px;overflow-y:auto;padding-right:2px}
+.dsh-pm-ai-step{display:flex;gap:11px;min-width:0;padding:3px 0;position:relative}
+.dsh-pm-ai-step::before{content:"";position:absolute;left:4px;top:14px;bottom:-3px;width:1px;background:var(--dsw-alias-border-l2)}
+.dsh-pm-ai-step:last-child::before{display:none}
+.dsh-pm-ai-step .dot{background:var(--dsw-alias-border-l3);border-radius:50%;flex:none;height:9px;margin-top:5px;position:relative;width:9px;z-index:1}
+.dsh-pm-ai-step.ok .dot{background:var(--dsw-alias-state-success-primary)}
+.dsh-pm-ai-step.warn .dot{background:var(--dsw-alias-state-warn-primary)}
+.dsh-pm-ai-step.bad .dot{background:var(--dsw-alias-state-error-primary)}
+.dsh-pm-ai-step.live .dot{animation:dsh-pm-pulse 1.1s ease-in-out infinite;background:var(--pm-accent)}
+@keyframes dsh-pm-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.8)}}
+.dsh-pm-ai-step .body{display:flex;flex-direction:column;gap:1px;min-width:0;padding-bottom:3px}
+.dsh-pm-ai-step .name{color:var(--dsw-alias-label-primary);font-size:12px;font-weight:600;line-height:18px}
+.dsh-pm-ai-step .detail{color:var(--dsw-alias-label-tertiary);font-size:11.5px;line-height:17px;overflow-wrap:anywhere}
+.dsh-pm-ai-step .detail.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px}
+.dsh-pm-ai-step.warn .name{color:var(--dsw-alias-state-warn-primary)}
+.dsh-pm-ai-step.bad .name{color:var(--dsw-alias-state-error-primary)}
+/* 结果摘要条：一句话说明检索方式与命中数 */
+.dsh-pm-ai-summary{align-items:center;border-radius:10px;display:flex;font-size:12px;gap:8px;line-height:18px;padding:8px 12px}
+.dsh-pm-ai-summary.ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 9%,transparent);color:var(--dsw-alias-label-secondary)}
+.dsh-pm-ai-summary.warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 11%,transparent);color:var(--dsw-alias-label-secondary)}
+.dsh-pm-ai-summary .ic{flex:none}
+.dsh-pm-ai-summary.ok .ic{color:var(--dsw-alias-state-success-primary)}
+.dsh-pm-ai-summary.warn .ic{color:var(--dsw-alias-state-warn-primary)}
+.dsh-pm-ai-row{align-items:center;border-bottom:1px solid var(--dsw-alias-border-l2);display:flex;gap:12px;padding:13px 2px}
 .dsh-pm-ai-row .rk{color:var(--pm-accent);flex:none;font-size:12px;font-weight:800;text-align:center;width:16px}
 .dsh-pm-ai-row .who{flex:1;min-width:0}
 .dsh-pm-ai-row .nm{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -2083,30 +2102,39 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
           : h('button', { className: 'dsh-pm-install', onClick: () => install({ ...item, category: item.category }) }, '安装'))
     }
+    // 步骤 → 圆点状态：错误红、降级琥珀、其余完成绿；最后一条检索中时呼吸。
+    const stepState = (entry, index) => {
+      if (entry.step === 'error' || entry.step === 'model-error') return 'bad'
+      if (entry.step === 'fallback') return 'warn'
+      if (aiLoading && index === aiLog.length - 1) return 'live'
+      return 'ok'
+    }
     const aiPanel = (aiLoading || aiResult)
       ? h('div', { className: 'dsh-pm-ai' },
           h('div', { className: 'dsh-pm-ai-head' },
-            h('h3', null, '描述检索'),
-            h('span', { className: 'meta' },
-              aiLoading ? '正在检索…'
-                : aiResult && aiResult.ok
-                  ? `${aiResult.items.length} 个结果 · 从 ${aiResult.candidates} 个候选中选出${aiResult.fallback ? ' · 关键词降级' : ''}`
-                  : ''),
+            h('h3', null, 'AI 检索过程'),
+            h('span', { className: 'meta' }, aiLoading ? '进行中…' : aiResult ? '已完成' : ''),
             h('span', { style: { flex: 1 } }),
-            h('button', { className: 'dsh-pm-tool', onClick: () => { setAiResult(null); setAiQuery('') }, 'aria-label': '关闭描述检索结果' }, icon('x', 13))),
+            h('button', { className: 'dsh-pm-tool', onClick: () => { setAiResult(null); setAiQuery(''); setAiLog([]) }, 'aria-label': '关闭描述检索结果' }, icon('x', 13))),
           aiResult && aiResult.error ? h('div', { className: 'dsh-pm-ai-note bad' }, aiResult.error) : null,
-          aiResult && aiResult.note ? h('div', { className: 'dsh-pm-ai-note' }, aiResult.note) : null,
-          // 流式日志：检索过程 + 模型关键输出实时打印；新日志自动滚到底。
+          // 时间线：每一步一行，模型输出单独用等宽字体展示。
           aiLog.length > 0
             ? h('div', {
-                className: 'dsh-pm-ai-log', role: 'log', 'aria-live': 'polite',
-                ref: node => {
-                  aiLogRef.current = node
-                  if (node) node.scrollTop = node.scrollHeight
-                },
-              }, aiLog.map((entry, i) => h('div', { key: i, className: `dsh-pm-ai-log-line${entry.step === 'error' || entry.step === 'model-error' ? ' bad' : ''}${entry.step === 'fallback' ? ' warn' : ''}` },
-                h('span', { className: 'tag' }, AI_STEP_LABELS[entry.step] || entry.step),
-                h('span', { className: 'txt' }, entry.text))))
+                className: 'dsh-pm-ai-steps', role: 'log', 'aria-live': 'polite',
+                ref: node => { aiLogRef.current = node; if (node) node.scrollTop = node.scrollHeight },
+              }, aiLog.map((entry, i) => h('div', { key: i, className: `dsh-pm-ai-step ${stepState(entry, i)}` },
+                h('span', { className: 'dot', 'aria-hidden': true }),
+                h('div', { className: 'body' },
+                  h('div', { className: 'name' }, AI_STEP_LABELS[entry.step] || entry.step),
+                  h('div', { className: `detail${entry.step === 'model-output' || entry.step === 'model-delta' ? ' mono' : ''}` }, entry.text)))))
+            : null,
+          // 结果摘要：一句话说清「谁挑的、挑了几个、是否降级」。
+          aiResult && aiResult.ok
+            ? h('div', { className: `dsh-pm-ai-summary ${aiResult.fallback ? 'warn' : 'ok'}` },
+                h('span', { className: 'ic' }, icon(aiResult.fallback ? 'refresh' : 'check', 13)),
+                h('span', null, aiResult.fallback
+                  ? `${aiResult.note || '按关键词匹配给出结果'}（共 ${aiResult.items.length} 个）`
+                  : `模型从 ${aiResult.candidates} 个候选中挑出 ${aiResult.items.length} 个最相关的`))
             : null,
           aiResult && aiResult.items && aiResult.items.length > 0
             ? h('div', { className: 'dsh-pm-ai-list' }, aiResult.items.map(aiRow))

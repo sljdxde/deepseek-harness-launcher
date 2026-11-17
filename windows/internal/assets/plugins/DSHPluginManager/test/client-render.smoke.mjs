@@ -1371,13 +1371,15 @@ await openInstalledPanel(runtime);
   assert.ok(text.includes('o/session-export'), '结果给出插件名');
   assert.ok(text.includes('导出会话正是你描述的用途'), '结果给出挑选理由');
   assert.ok(text.includes('↓ 5.2k/周') && text.includes('★ 210'), '结果给出下载量与星标');
-  assert.ok(text.includes('从 2 个候选中选出'), '标出候选规模（上下文受控）');
+  assert.ok(text.includes('从 2 个候选中挑出'), '标出候选规模（上下文受控）');
 
   // 降级路径：模型不可用时如实标注。
   input.props.onChange({ target: { value: '降级测试' } });
   await settle(runtime);
   bar().props.onSubmit({ preventDefault() {} });
   await settle(runtime, 20);
-  assert.ok(textOf(runtime.tree).includes('关键词降级'), '降级结果有明确标注');
+  const after = textOf(runtime.tree);
+  assert.ok(after.includes('按关键词匹配给出结果') || after.includes('关键词降级'), '降级结果有明确标注');
+  assert.ok(after.includes('AI 检索过程'), '检索过程时间线在结果上方展示');
   console.log('场景18（描述找插件：模型挑选 + 降级标注）通过');
 }

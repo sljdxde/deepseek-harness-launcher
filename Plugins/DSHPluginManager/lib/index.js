@@ -4249,18 +4249,45 @@ export function rankPluginsByKeywords(plugins, query) {
 
 /** 候选 → prompt（每行一条，描述截断，总长度受控）。 */
 export function buildPluginSearchPrompt(query, candidates) {
-  const lines = candidates.map((plugin, index) => {
+  const rows = candidates.map((plugin, index) => {
     const description = String(plugin.descriptionZh || plugin.descriptionEn || '').replace(/\s+/g, ' ').slice(0, AI_SEARCH_MAX_DESC);
     const downloads = Number(plugin.downloads) || 0;
     const stars = Number(plugin.stars) || 0;
-    return `${index + 1}. ${plugin.repo || plugin.name} | ${plugin.category || 'other'} | ↓${downloads} | ★${stars} | ${description}`;
+    return `[${index + 1}] ${plugin.repo || plugin.name} | 分类：${plugin.category || 'other'} | ${description || '（无描述）'} | 周下载 ${downloads}，星标 ${stars}`;
   });
+  // listwise rerank 提示词，结构对齐 LlamaIndex LLMRerank 的
+  // DEFAULT_CHOICE_SELECT_PROMPT（业界最常用的 listwise 精排模板）：
+  //   编号列表 → 相关性定义 → 「没有相关就给 0」的退出口 → 逐行打分格式 → 示例。
+  // 与通用 RAG rerank 的差异只有两点：① 打 0-10 分而不是只挑 5 个，
+  // 让模型必须先判断再排序；② 附一句 20 字理由，UI 直接展示给用户。
   const prompt = [
-    '你是 dsh 插件检索助手。用户用自然语言描述想要的能力，请从候选插件里挑出最相关的（最多 5 个，宁缺毋滥）。',
-    '候选格式：编号. 名称 | 分类 | 周下载 | 星标 | 描述',
-    lines.join('\n'),
+    '你是一个插件检索精排器。下面给出用户需求和一批候选插件（已按粗排顺序编号），',
+    '请逐个判断每个插件与用户需求的相关程度，然后按相关度从高到低给出最相关的前 5 个。',
+    '',
+    '相关性定义（重要）：',
+    '- 用户需求常是「想达到的效果」，插件描述常是「提供的能力」，两者措辞不同但语义相同也算相关。',
+    '  例：「侧边栏管理」与「侧栏面板管理」「sidebar manager」「侧边栏会话置顶/折叠」都是同一件事。',
+    '- 一个插件只要覆盖需求的一部分，就属于相关（分数 4-7）；完全覆盖则高分（8-10）。',
+    '- 插件名/分类出现相关词可加分，但不要只凭名字判断。',
+    '- 下载量与星标只作参考，不相关的高下载插件不能入选。',
+    '- 完全无关的插件给 0 分，不要为了凑数而给分。',
+    '',
+    '候选插件（每行格式：[编号] 名称 | 分类 | 描述 | 周下载，星标）：',
+    ...rows,
+    '',
     `用户需求：${String(query).slice(0, AI_SEARCH_MAX_QUERY)}`,
-    '只输出 JSON，不要解释：{"picks":[{"i":1,"why":"一句话说明为什么符合"}]}，按相关度从高到低；没有相关的就输出 {"picks":[]}。',
+    '',
+    '请按下面的格式逐行输出（每个候选一行，按相关度降序；只输出相关度大于 0 的行）：',
+    'answer_num: <编号>, answer_relevance: <0-10 的数字>, why: <20 字以内的中文理由>',
+    '',
+    '示例：',
+    '用户需求：把会话导出成 markdown',
+    '候选：[1] a/b | 分类：session | 会话回放时间线 | 周下载 100，星标 5',
+    '候选：[2] c/d | 分类：session | 导出会话为 Markdown 与 HTML | 周下载 80，星标 3',
+    '输出：',
+    'answer_num: 2, answer_relevance: 9, why: 直接导出会话为 Markdown 和 HTML，完全匹配',
+    '',
+    '现在开始输出，不要任何解释或标题：',
   ].join('\n');
   return prompt;
 }
@@ -4272,51 +4299,75 @@ export function buildPluginSearchPrompt(query, candidates) {
  * @param {number} candidateCount - 候选条数（编号 1..n）。
  * @param {{name?:string,repo?:string}[]} [candidates] - 供名称反查。
  */
+/**
+ * 解析模型的精排输出。同时支持两种格式（模型两种都可能给）：
+ *   1) listwise 行格式（LlamaIndex LLMRerank 风格）：
+ *        answer_num: 3, answer_relevance: 9, why: 直接导出会话
+ *   2) JSON：{"picks":[{"i":3,"why":"…"}]} / 数字数组 / 名称指名
+ * 统一按相关度降序、去重、越界丢弃，最多 5 条。
+ * @param {string} text - 模型原始输出。
+ * @param {number} candidateCount - 候选条数（编号 1..n）。
+ * @param {{name?:string,repo?:string}[]} [candidates] - 供名称反查。
+ */
 export function parseSearchPicks(text, candidateCount, candidates = []) {
   const raw = String(text || '');
-  const start = raw.indexOf('{');
-  const end = raw.lastIndexOf('}');
-  if (start < 0 || end <= start) return [];
-  let parsed = null;
-  try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { return []; }
-  const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.picks) ? parsed.picks : [];
   const nameIndex = new Map();
   for (let i = 0; i < candidates.length; i++) {
     const plugin = candidates[i] || {};
     for (const key of [plugin.name, plugin.repo]) {
-      if (typeof key === 'string' && key) nameIndex.set(key.toLowerCase(), i);
+      if (typeof key === 'string' && key) nameIndex.set(key.toLowerCase(), i + 1);
     }
   }
-  const resolve = (pick) => {
-    if (typeof pick === 'number') return pick;
-    if (typeof pick === 'string') {
-      const trimmed = pick.trim();
-      if (/^\d+$/.test(trimmed)) return Number(trimmed);
-      return nameIndex.has(trimmed.toLowerCase()) ? nameIndex.get(trimmed.toLowerCase()) + 1 : null;
-    }
-    if (!pick || typeof pick !== 'object') return null;
-    for (const key of ['i', 'index', 'n', 'num', 'id']) {
-      const value = pick[key];
-      if (typeof value === 'number') return value;
-      if (typeof value === 'string' && value) {
-        if (/^\d+$/.test(value)) return Number(value);
-        if (nameIndex.has(value.toLowerCase())) return nameIndex.get(value.toLowerCase()) + 1;
+  const normalizeIndex = (value) => {
+    if (typeof value === 'number') return value;
+    const trimmed = String(value ?? '').trim();
+    if (/^\d+$/.test(trimmed)) return Number(trimmed);
+    const byName = nameIndex.get(trimmed.toLowerCase());
+    return byName === undefined ? null : byName;
+  };
+  const collect = [];
+  const push = (index, score, why) => {
+    const n = normalizeIndex(index);
+    if (!Number.isInteger(n) || n < 1 || n > candidateCount) return;
+    collect.push({ index: n - 1, score: Number.isFinite(score) ? score : 1, why: String(why || '').trim().slice(0, 120) });
+  };
+
+  // 1) 行格式：answer_num: 3, answer_relevance: 9, why: …
+  const lineRe = /answer_num\s*[:：]\s*(\d+)\s*[,，]?\s*answer_relevance\s*[:：]\s*([\d.]+)(?:\s*[,，]?\s*why\s*[:：]\s*(.+))?/gi;
+  let m;
+  while ((m = lineRe.exec(raw))) push(m[1], Number(m[2]), m[3]);
+  // 宽松兜底：只有 answer_num 没有 relevance 的行
+  if (collect.length === 0) {
+    const looseRe = /answer_num\s*[:：]\s*(\d+)(?:[^\n]*?why\s*[:：]\s*([^\n]+))?/gi;
+    while ((m = looseRe.exec(raw))) push(m[1], 1, m[2]);
+  }
+
+  // 2) JSON 格式
+  if (collect.length === 0) {
+    const begin = raw.indexOf('{');
+    const finish = raw.lastIndexOf('}');
+    if (begin >= 0 && finish > begin) {
+      let parsed = null;
+      try { parsed = JSON.parse(raw.slice(begin, finish + 1)); } catch { parsed = null; }
+      const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.picks) ? parsed.picks : [];
+      for (const pick of list) {
+        if (typeof pick === 'number' || typeof pick === 'string') { push(pick, 1, ''); continue; }
+        if (!pick || typeof pick !== 'object') continue;
+        const index = pick.i ?? pick.index ?? pick.n ?? pick.num ?? pick.id ?? pick.name ?? pick.repo;
+        push(index, Number(pick.score ?? pick.relevance ?? 1), pick.why ?? pick.reason ?? '');
       }
     }
-    for (const key of ['name', 'repo', 'plugin']) {
-      const value = pick[key];
-      if (typeof value === 'string' && nameIndex.has(value.toLowerCase())) return nameIndex.get(value.toLowerCase()) + 1;
-    }
-    return null;
-  };
+  }
+
+  if (collect.length === 0) return [];
+  // 按相关度降序，同分保持模型给的先后顺序；同一插件只留最高分那条。
+  collect.sort((a, b) => b.score - a.score || a.index - b.index);
   const seen = new Set();
   const out = [];
-  for (const pick of list) {
-    const index = resolve(pick);
-    if (!Number.isInteger(index) || index < 1 || index > candidateCount || seen.has(index)) continue;
-    seen.add(index);
-    const why = pick && typeof pick === 'object' && typeof pick.why === 'string' ? pick.why.trim().slice(0, 120) : '';
-    out.push({ index: index - 1, why });
+  for (const item of collect) {
+    if (seen.has(item.index)) continue;
+    seen.add(item.index);
+    out.push({ index: item.index, why: item.why, score: item.score });
     if (out.length >= AI_SEARCH_LIMIT) break;
   }
   return out;
@@ -4353,14 +4404,30 @@ export async function resolveSearchRoutes(llm, max = 4) {
 
 /** 单路由调用：返回 { text } 或 { error }（含终态 error finish 的原因）。 */
 async function streamSearchCompletion(llm, route, prompt, signal, onChunk) {
-  const call = await llm.prepareCall({ provider: route.provider, model: route.model, maxTokens: 800 }, signal);
+  // 推理型模型（如 group/free）会把 maxTokens 全花在思考上，正文 0 字符。
+  // 但**不能对所有模型硬写 reasoningEffort**——不支持该参数的模型会直接报错
+  // （实测 4 个路由里 3 个报 "does not support reasoning effort low"）。
+  // 用 configure 回调读模型元数据，只在它真的声明了 efforts 时才选最低档。
+  const call = await llm.prepareCall(
+    { provider: route.provider, model: route.model, maxTokens: 3000 },
+    signal,
+    (controls, model) => {
+      const efforts = model && model.reasoning && Array.isArray(model.reasoning.efforts)
+        ? model.reasoning.efforts
+        : [];
+      const lowest = efforts.length > 0 && efforts[0] && efforts[0].id ? efforts[0].id : undefined;
+      return lowest === undefined
+        ? { ...controls, maxTokens: 3000 }
+        : { ...controls, reasoningEffort: lowest, maxTokens: 3000 };
+    },
+  );
   let text = '';
   let finish = null;
   for await (const chunk of call.stream({
     ...call.config,
     messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-    system: '你只输出 JSON，不要解释。',
-    maxTokens: 800,
+    system: '你是插件检索排序器，按指定行格式输出，不要输出任何解释文字。',
+    maxTokens: 3000,
     signal,
   })) {
     if (!chunk || typeof chunk.type !== 'string') continue;
@@ -4373,7 +4440,13 @@ async function streamSearchCompletion(llm, route, prompt, signal, onChunk) {
   }
   if (finish && finish.reason && finish.reason.kind === 'error') {
     const failure = finish.reason.failure || {};
-    return { error: String(failure.message || '模型调用失败') };
+    return { error: String(failure.message || '模型调用失败'), finish };
+  }
+  // 0 字符且 finish 是 max-tokens：推理把额度吃光了（推理模型常见）。
+  // 交给调用方换下一条路由，而不是当成「模型认为没有相关插件」。
+  if (text.length === 0) {
+    const kind = finish && finish.reason && finish.reason.kind ? finish.reason.kind : 'empty';
+    return { error: `模型没有返回正文（finish=${kind}）`, finish, empty: true };
   }
   return { text, finish };
 }
@@ -4412,9 +4485,11 @@ export async function searchPluginsByDescription(options = {}) {
   if (query.length > AI_SEARCH_MAX_QUERY) return { ok: false, error: `描述太长（上限 ${AI_SEARCH_MAX_QUERY} 字）` };
   const index = await marketplaceIndexCached();
   const all = Array.isArray(index.plugins) ? index.plugins : [];
-  const ranked = rankPluginsByKeywords(all, query).slice(0, AI_SEARCH_MAX_CANDIDATES);
+  const keywordHits = rankPluginsByKeywords(all, query);
+  const ranked = (keywordHits.length > 0 ? keywordHits : all.slice().sort((a, b) => (b.downloads || 0) - (a.downloads || 0)))
+    .slice(0, AI_SEARCH_MAX_CANDIDATES);
   if (ranked.length === 0) {
-    return { ok: true, items: [], candidates: 0, fallback: true, note: '插件库里没有匹配这条描述的插件，换个说法试试' };
+    return { ok: true, items: [], candidates: 0, fallback: true, note: '插件库为空，先同步插件源试试' };
   }
   const prompt = buildPluginSearchPrompt(query, ranked);
   if (prompt.length > AI_SEARCH_MAX_PROMPT) {
@@ -4432,7 +4507,8 @@ export async function searchPluginsByDescription(options = {}) {
   let debugInfo = options.debug ? { routes } : {};
   for (const route of routes) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Number(options.timeoutMs) || 30000);
+    // 推理模型首个正文 token 常要 20-40 秒，30 秒会把还在思考的模型 abort 掉。
+    const timer = setTimeout(() => controller.abort(), Number(options.timeoutMs) || 75000);
     try {
       const outcome = await streamSearchCompletion(llm, route, prompt, controller.signal);
       if (outcome.error) {
@@ -4483,14 +4559,19 @@ export async function searchPluginsByDescriptionStream(options = {}) {
   emit('index', { total: all.length });
 
   // 关键词预筛：把候选范围压到 <=40 条，控制注入模型的上下文。
-  const ranked = rankPluginsByKeywords(all, query).slice(0, AI_SEARCH_MAX_CANDIDATES);
+  // 关键词一条都没命中时，不能让模型面对空候选——退化成「最热门的 40 个」，
+  // 由模型来判断（用户描述和插件措辞不同时，关键词匹配经常全落空）。
+  const keywordHits = rankPluginsByKeywords(all, query);
+  const ranked = (keywordHits.length > 0 ? keywordHits : all.slice().sort((a, b) => (b.downloads || 0) - (a.downloads || 0)))
+    .slice(0, AI_SEARCH_MAX_CANDIDATES);
   emit('candidates', {
     count: ranked.length,
     names: ranked.slice(0, 6).map(plugin => plugin.repo || plugin.name),
-    truncated: rankPluginsByKeywords(all, query).length > AI_SEARCH_MAX_CANDIDATES,
+    truncated: keywordHits.length > AI_SEARCH_MAX_CANDIDATES,
+    keywordHits: keywordHits.length,
   });
   if (ranked.length === 0) {
-    const result = { ok: true, items: [], candidates: 0, fallback: true, note: '插件库里没有匹配这条描述的插件，换个说法试试' };
+    const result = { ok: true, items: [], candidates: 0, fallback: true, note: '插件库为空，先同步插件源试试' };
     emit('done', result);
     return result;
   }
@@ -4518,7 +4599,8 @@ export async function searchPluginsByDescriptionStream(options = {}) {
     const route = routes[ri];
     emit('model-try', { index: ri + 1, total: routes.length, model: `${route.provider}/${route.model}` });
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Number(options.timeoutMs) || 30000);
+    // 推理模型首个正文 token 常要 20-40 秒，30 秒会把还在思考的模型 abort 掉。
+    const timer = setTimeout(() => controller.abort(), Number(options.timeoutMs) || 75000);
     try {
       // 模型的关键输出（JSON 片段）实时推送给 UI 打印。
       let firstChunk = true;
@@ -4531,7 +4613,11 @@ export async function searchPluginsByDescriptionStream(options = {}) {
         emit('model-error', { model: `${route.provider}/${route.model}`, error: outcome.error });
         continue;
       }
-      emit('model-output', { chars: outcome.text.length, raw: outcome.text.slice(0, 300) });
+      emit('model-output', {
+        chars: outcome.text.length,
+        raw: outcome.text.slice(0, 300),
+        finish: outcome.finish && outcome.finish.reason ? outcome.finish.reason.kind : null,
+      });
       const picks = parseSearchPicks(outcome.text, ranked.length, ranked);
       emit('parsed', { picks: picks.map(pick => ({ name: ranked[pick.index] && (ranked[pick.index].repo || ranked[pick.index].name), why: pick.why })) });
       if (picks.length === 0) {
@@ -4686,7 +4772,7 @@ export function apply(ctx) {
             const send = (step, data) => {
               try { res.write(JSON.stringify({ step, data, at: Date.now() }) + '\n'); } catch { /* 客户端断开 */ }
             };
-            await searchPluginsByDescriptionStream({ query: value?.query, llm: hostLlm, timeoutMs: Number(value?.timeoutMs) || 30000, onEvent: send });
+            await searchPluginsByDescriptionStream({ query: value?.query, llm: hostLlm, timeoutMs: Number(value?.timeoutMs) || 75000, onEvent: send });
             res.end();
           } catch (error) {
             try { res.write(JSON.stringify({ step: 'error', data: { error: String(error?.message || error) } }) + '\n'); res.end(); } catch { /* 已断开 */ }
