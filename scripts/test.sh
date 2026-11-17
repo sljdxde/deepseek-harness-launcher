@@ -85,6 +85,8 @@ node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-c-market.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-d-routes.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-e-atomic.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-f-operations.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-g-client.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-h-gaps.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/client-pure.test.js"
 # 国内加速独立插件：镜像规则表、URL 映射、开关状态路由（临时 DSH_HOME）。
 node --check "$ROOT/Plugins/DSHChinaMirror/lib/index.js"

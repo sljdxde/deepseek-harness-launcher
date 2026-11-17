@@ -386,6 +386,25 @@ test('updateVersionLabel：无版本时用占位符', async () => {
   assert.equal(plugin.updateVersionLabel(null), '—');
 });
 
+// updatableNames：空清单走的是「提前返回」那条路，正常清单的过滤分支
+// （只取 status === 'update-available' 且有名字的条目）也必须走到——
+// 「全部更新」按钮的禁用状态就靠它。
+test('updatableNames：只取可更新且有名字的条目', async () => {
+  const plugin = await loadPlugin();
+  const names = plain(plugin.updatableNames({
+    inventory: [
+      { name: 'a', status: 'update-available' },
+      { name: 'b', status: 'update-available' },
+      { name: 'c', status: 'up-to-date' },
+      { name: '', status: 'update-available' },
+      { status: 'update-available' },
+      null
+    ]
+  }));
+  assert.deepEqual(names, ['a', 'b'], '只有可更新且有名字的条目算进去');
+  assert.deepEqual(plain(plugin.updatableNames({ inventory: 'not-array' })), [], '清单不是数组时按空处理');
+});
+
 test('formatCheckedClock：非法时间串返回空串', async () => {
   const plugin = await loadPlugin();
   assert.equal(plugin.formatCheckedClock('not-a-date'), '');

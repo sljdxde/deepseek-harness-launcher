@@ -92,48 +92,51 @@ if (result.status !== 0) {
   process.exit(1);
 }
 
-// ---- parse raw V8 coverage data, aggregate across processes ----
-// absolute path -> Map<range key, count>
-const merged = new Map();
+// ---- parse raw V8 coverage data ----
+// Per process: absolute path -> list of {start, end, count} intervals.
+// Processes are kept separate on purpose: each process has its own V8 counters
+// and its own interval division (divided along the path it actually took).
+// Mixing intervals across processes and then subtracting "count=0" holes
+// would wrongly mark code as uncovered - one process took that branch while
+// another did not, and the hole from the second would cancel out the
+// coverage from the first.
+// The correct aggregation is: compute the covered set **per process**
+// (subtracting that process's own count=0 holes), then take the **union**
+// across processes.
+const perProcess = [];   // [{ file -> [{start,end,count}] }]
 for (const name of readdirSync(covDir)) {
   if (!name.endsWith('.json')) continue;
   let parsed;
   try { parsed = JSON.parse(readFileSync(join(covDir, name), 'utf8')); } catch { continue; }
+  const byFile = new Map();
   for (const entry of parsed.result || []) {
     // V8's url is file:///D:/... (percent-encoded when the path has non-ASCII).
     let file;
     try {
       file = resolve(decodeURIComponent(String(entry.url).replace(/^file:\/\//, '').replace(/^\//, '')));
     } catch { continue; }
-    let ranges = merged.get(file);
-    if (!ranges) { ranges = new Map(); merged.set(file, ranges); }
+    let spans = byFile.get(file);
+    if (!spans) { spans = []; byFile.set(file, spans); }
     for (const fn of entry.functions || []) {
       for (const range of fn.ranges || []) {
-        const key = `${range.startOffset}:${range.endOffset}`;
-        const previous = ranges.get(key);
-        // The same code in several processes: if any process executed it
-        // (count>0), it counts as covered.
-        ranges.set(key, previous === undefined ? range.count : Math.max(previous, range.count));
+        spans.push({ start: range.startOffset, end: range.endOffset, count: range.count });
       }
     }
   }
+  perProcess.push(byFile);
 }
 
 /**
  * Which lines are covered.
  *
- * V8's ranges are **nested**: the module has one count>0 range, the function
+ * V8's intervals are **nested**: the module has one count>0 range, the function
  * body another count>0 range, and the branches inside it that never ran are
  * smaller count=0 ranges. So "this line falls inside some count>0 range" is
  * always true (the outer range covers everything) - we have to subtract the
  * more specific count=0 ranges from the count>0 ones.
  */
-function coveredLines(source, ranges) {
+function coveredLines(source, spans) {
   const covered = new Set();
-  const spans = [...ranges.entries()].map(([key, count]) => {
-    const [start, end] = key.split(':').map(Number);
-    return { start, end, count };
-  });
   if (spans.length === 0) return covered;
   const lineOf = new Int32Array(source.length + 1);
   let line = 1;
@@ -167,12 +170,20 @@ const details = [];
 for (const target of TARGETS) {
   const abs = join(repoRoot, target);
   if (!existsSync(abs)) { console.error(`  x ${target}: file missing`); failed = true; continue; }
-  const ranges = merged.get(resolve(abs));
-  if (!ranges) { console.error(`  x ${target}: not present in coverage data (no test loaded it?)`); failed = true; continue; }
   const source = readFileSync(abs, 'utf8');
   const sourceLines = source.split('\n');
   const totalLines = sourceLines.length;
-  const covered = coveredLines(source, ranges);
+  // Union across processes: each process computes its own covered set
+  // (subtracting its own count=0 holes), then we take the union.
+  const covered = new Set();
+  let seen = false;
+  for (const byFile of perProcess) {
+    const spans = byFile.get(resolve(abs));
+    if (!spans) continue;
+    seen = true;
+    for (const line of coveredLines(source, spans)) covered.add(line);
+  }
+  if (!seen) { console.error(`  x ${target}: not present in coverage data (no test loaded it?)`); failed = true; continue; }
   const missed = [];
   for (let line = 1; line <= totalLines; line++) {
     // Blank lines and pure-comment lines carry no executable statement:

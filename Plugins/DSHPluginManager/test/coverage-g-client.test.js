@@ -141,6 +141,24 @@ async function settle(runtime, rounds = 12) {
   return runtime.tree;
 }
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+/**
+ * 轮询等待条件成立（最多 timeoutMs）。
+ *
+ * 用它在时序相关的断言上代替固定延时：机器负载高时固定延时会偶发不够，
+ * 轮询则只等「真的发生了」为止。
+ *
+ * 注意：这里**同时驱动重渲染**（runtime.repaint）——被测代码的串行泵是靠
+ * setState → 重渲染才看到 busy 变化的，只等不重绘会死锁。
+ */
+async function waitFor(predicate, { timeoutMs = 5000, stepMs = 25, runtime = null } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (predicate()) return true;
+    if (Date.now() > deadline) return false;
+    await wait(stepMs);
+    if (runtime) runtime.repaint();
+  }
+}
 function findAll(node, predicate, out = []) {
   if (!node || typeof node !== 'object') return out;
   if (Array.isArray(node)) { for (const child of node) findAll(child, predicate, out); return out; }
@@ -499,7 +517,9 @@ test('卸载在途时点更新：串行泵等卸载/清理这类破坏性操作�
 
   // 放行卸载：泵的等待结束，更新才真正发出去。
   releaseUninstall();
-  await wait(600);
+  // 泵每 250ms 轮询一次 busy 状态，所以这里**轮询等**更新请求出现，
+  // 而不是赌一个固定延时 —— 固定延时在机器负载高时会偶发失败。
+  await waitFor(() => calls.some(call => call.url === '/dsh-plugin-manager/update'), { runtime });
   await settle(runtime, 12);
 
   assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/uninstall')), '发了卸载请求');

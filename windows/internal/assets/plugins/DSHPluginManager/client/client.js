@@ -999,7 +999,16 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       return next
     })
     const [detail, setDetail] = React.useState(null)
-    const [busy, setBusy] = React.useState('')
+    const [busy, setBusyState] = React.useState('')
+    // busy 的**同步**镜像：串行泵的 waitWhileDestructive 靠它决定「有没有破坏性
+    // 操作在途」。原来只在渲染时同步 busyRef.current = busy —— setBusy('') 之后
+    // 要等下一次渲染才生效，泵在两次渲染之间会一直等下去。改成 setter 里同步。
+    const busyRef = React.useRef('')
+    const setBusy = value => {
+      const next = typeof value === 'function' ? value(busyRef.current) : value;
+      busyRef.current = next;
+      setBusyState(next);
+    }
     // 市场刷新是后台任务，独立于 busy：进行中只锁「刷新市场」按钮本身，不锁关闭、
     // 不锁安装/卸载等其它操作（用户报告：刷新期间点关闭关不上，只能干等）。
     const [refreshing, setRefreshing] = React.useState(false)
@@ -1254,13 +1263,20 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     // 更新队列：与安装队列共用同一把串行锁（都要跑 pnpm，并发写同一 profile
     // 会互相踩）。点多个「更新」依次排队，排队期间还能继续点其他的。
     const updateQueueRef = React.useRef([])
-    const [updateStatus, setUpdateStatus] = React.useState({}) // name -> 'queued' | 'updating'
+    const [updateStatus, setUpdateStatusState] = React.useState({}) // name -> 'queued' | 'updating'
+    // 更新状态的**同步**镜像：state 是异步更新的，同一 tick 里连点两次「更新」
+    // 会两次读到旧值 → 同一个插件入队两次 → 更新发两次（和 install 侧同一个坑）。
+    const updateStatusRef = React.useRef({})
+    const setUpdateStatus = updater => {
+      updateStatusRef.current = typeof updater === 'function'
+        ? updater(updateStatusRef.current)
+        : updater;
+      setUpdateStatusState(updateStatusRef.current)
+    }
     const [updateQueueView, setUpdateQueueView] = React.useState([])
     const updateTotalRef = React.useRef(0)
     const mutationRunningRef = React.useRef(false)
     const [mutationActive, setMutationActive] = React.useState(false)
-    const busyRef = React.useRef('')
-    busyRef.current = busy
     /// 单个安装请求；返回 'ok' | 'already' | 'fail'。失败当场 toast（读错误需要时间）。
     const installOne = async (plugin) => {
       try {
@@ -1355,7 +1371,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     }
     const updateOne = (item, mode) => {
       // 入队即返回：更新走与安装同一把串行锁，点多个依次执行，互不阻塞。
-      if (updateStatus[item.name] || batchRunning) return
+      // 守卫读 ref 而不是 state：state 异步更新，同一 tick 连点两次会两次读到旧值。
+      if (updateStatusRef.current[item.name] || batchRunning) return
       updateTotalRef.current += 1
       updateQueueRef.current = [...updateQueueRef.current, { item, mode }]
       setUpdateQueueView([...updateQueueRef.current])
