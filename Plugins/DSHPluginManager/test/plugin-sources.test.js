@@ -19,6 +19,10 @@ import {
   buildPluginSearchPrompt,
   parseSearchPicks,
   searchPluginsByDescription,
+  readPreferredSearchRoute,
+  readPreferredSearchRoutes,
+  writePreferredSearchRoute,
+  resolveSearchRoutes,
   readSourcesConfig,
   addPluginSource,
   removePluginSource,
@@ -475,3 +479,81 @@ serialTest('searchPluginsByDescription：模型在预筛候选里挑；无模型
     assert.equal(none.candidates, 0);
   });
 });
+
+serialTest('检索模型记忆：按上次耗时排序，最快的排第一', async () => {
+  await withTempHome(async () => {
+    assert.equal(await readPreferredSearchRoute(), null, '默认没有记录');
+
+    // 慢的成功过，后记；快的也成功过，先记——读回要按耗时升序，不能按写入顺序。
+    await writePreferredSearchRoute({ provider: 'p1', model: 'slow-group/model' }, 41000);
+    await writePreferredSearchRoute({ provider: 'p1', model: 'fast-flash' }, 19000);
+    const list = await readPreferredSearchRoutes();
+    assert.deepEqual(list.map(r => r.model), ['fast-flash', 'slow-group/model'], '快的在前');
+    assert.equal(list[0].ms, 19000);
+
+    const saved = await readPreferredSearchRoute();
+    assert.equal(saved.provider, 'p1');
+    assert.equal(saved.model, 'fast-flash', '兼容接口返回最快的那条');
+
+    // resolveSearchRoutes 把已验证模型按耗时顺序提到最前。
+    const llm = {
+      listProviders: () => [{ id: 'p1', name: 'P1' }],
+      listModels: async () => [
+        { provider: 'p1', id: 'slow-group/model', name: 'Slow' },
+        { provider: 'p1', id: 'fast-flash', name: 'Fast' },
+        { provider: 'p1', id: 'untested', name: 'Untested' },
+      ],
+    };
+    const routes = await resolveSearchRoutes(llm);
+    assert.equal(routes[0].model, 'fast-flash', '已验证最快的排第一');
+    assert.equal(routes[1].model, 'slow-group/model', '已验证较慢的排第二');
+    assert.equal(routes[2].model, 'untested', '未验证的排后面');
+
+    // 同一模型再成功一次取更快的耗时，不会重复入表。
+    await writePreferredSearchRoute({ provider: 'p1', model: 'slow-group/model' }, 12000);
+    const refreshed = await readPreferredSearchRoutes();
+    assert.equal(refreshed.length, 2, '同模型不重复记录');
+    assert.equal(refreshed[0].model, 'slow-group/model', '耗时刷新后排到最前');
+    assert.equal(refreshed[0].ms, 12000);
+
+    // 抖动变慢不能把最快记录覆盖掉（22s → 60s 那次抖动就是这么坑的）。
+    await writePreferredSearchRoute({ provider: 'p1', model: 'slow-group/model' }, 60000);
+    const jitter = await readPreferredSearchRoutes();
+    assert.equal(jitter[0].ms, 12000, '保留最快的一次，不被慢的抖动覆盖');
+
+    // 记录一个不存在的模型时不影响排序（仍然按快慢）。
+    await writePreferredSearchRoute({ provider: 'p9', model: 'gone' }, 1000);
+    const fallback = await resolveSearchRoutes(llm);
+    assert.equal(fallback[0].model, 'slow-group/model', '记忆里不存在的路由被跳过，剩余按耗时排');
+  })
+})
+
+serialTest('检索模型记忆：兼容 v1 单条格式', async () => {
+  await withTempHome(async (home) => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    const dir = join(home, 'plugin-manager');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'search-route.json'),
+      JSON.stringify({ provider: 'p1', model: 'legacy-model', at: '2026-01-01T00:00:00.000Z' }), 'utf8');
+    const list = await readPreferredSearchRoutes();
+    assert.equal(list.length, 1, 'v1 记录能读出来');
+    assert.equal(list[0].model, 'legacy-model');
+    assert.equal(list[0].ms, Number.MAX_SAFE_INTEGER, '没有耗时按最慢排，仍会先试它');
+
+    // 再成功一次就升级成 v2，耗时可比。
+    await writePreferredSearchRoute({ provider: 'p1', model: 'legacy-model' }, 8000);
+    const upgraded = await readPreferredSearchRoutes();
+    assert.equal(upgraded.length, 1);
+    assert.equal(upgraded[0].ms, 8000);
+  })
+})
+
+serialTest('检索模型记忆：原子写、无临时文件残留', async () => {
+  await withTempHome(async (home) => {
+    await writePreferredSearchRoute({ provider: 'p', model: 'm' });
+    const { readdir } = await import('node:fs/promises');
+    const files = await readdir(join(home, 'plugin-manager'));
+    assert.ok(files.includes('search-route.json'));
+    assert.equal(files.filter(f => f.includes('.tmp-')).length, 0, '没有残留 tmp 文件');
+  })
+})

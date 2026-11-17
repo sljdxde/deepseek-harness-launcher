@@ -4193,6 +4193,12 @@ const AI_SEARCH_MAX_DESC = 100;
 const AI_SEARCH_MAX_QUERY = 500;
 const AI_SEARCH_MAX_PROMPT = 12000;
 const AI_SEARCH_LIMIT = 5;
+// 记忆里已验证的模型先单独试，但最多等这么久；超时就把其它模型也并发起来。
+// 实测同一个模型在 22 秒和 60 秒之间浮动，死等会白耗 40 秒。
+const AI_SEARCH_HEDGE_MS = 20000;
+
+/** 等 ms 毫秒（用于给直连模型设对冲窗口）。 */
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * 把一个 token 拆成匹配用的变体：CJK 长 token 额外给出一组重叠双字
@@ -4394,6 +4400,70 @@ export function parseSearchPicks(text, candidateCount, candidates = []) {
  * 之所以要多条：用户机器上可能既有免费路由又有余额不足的付费路由（实测 402
  * ACCOUNT_QUOTA），必须能换一条再试，而不是直接降级。
  */
+/**
+ * 上次检索成功的模型：存 $DSH_HOME/plugin-manager/search-route.json。
+ * 检索一次要并发试几个模型（余额不足/限频/超时），记住成功的那个能让
+ * 第二次检索直接用它，不必再从第一条开始试——这是「第二次不该重头测」。
+ */
+const SEARCH_ROUTE_FILE = () => join(PLUGIN_MANAGER_DIR(), 'search-route.json');
+
+/**
+ * 读「已验证可用」的检索模型，按耗时升序（快的在前）。
+ * 记录里带 ms（该模型上次成功耗时），所以第二次检索可以先用最快的那个，
+ * 而不是碰巧先成功的那个——实测本机 autoclaw-cn 要 41-46 秒，
+ * workbuddy-ai 只要 19 秒，不记耗时会一直用慢的。
+ * @returns {Promise<{provider:string,model:string,ms:number}[]>}
+ */
+export async function readPreferredSearchRoutes() {
+  try {
+    const raw = JSON.parse(await fs.readFile(SEARCH_ROUTE_FILE(), 'utf8'));
+    const list = Array.isArray(raw?.routes) ? raw.routes : [];
+    const normalized = list
+      .filter(item => item && typeof item.provider === 'string' && typeof item.model === 'string')
+      .map(item => ({ provider: item.provider, model: item.model, ms: Number(item.ms) || Number.MAX_SAFE_INTEGER }));
+    // 兼容 v1 单条格式（{ provider, model, at }）：没有耗时，按最慢排，
+    // 这样升级后第一次检索还能直接命中，不至于又从头竞速一遍。
+    if (normalized.length === 0 && raw && typeof raw.provider === 'string' && typeof raw.model === 'string') {
+      normalized.push({ provider: raw.provider, model: raw.model, ms: Number.MAX_SAFE_INTEGER });
+    }
+    return normalized.sort((a, b) => a.ms - b.ms);
+  } catch { return []; }
+}
+
+/** 兼容旧接口：返回最快的那条。 */
+export async function readPreferredSearchRoute() {
+  const list = await readPreferredSearchRoutes();
+  return list.length > 0 ? list[0] : null;
+}
+
+/**
+ * 记录一次成功：把 (provider, model) 的耗时写进列表，最多保留 6 条。
+ * 同一模型保留**最快的一次**——耗时是模型/网络抖动的，记最后一次会让
+ * 一次 60 秒的抖动把 22 秒的模型挤到后面（实测确实发生过）。
+ * 原子写；失败不影响检索。
+ * @param {{provider:string,model:string}} route
+ * @param {number} [ms] - 本次成功耗时（毫秒）。
+ */
+export async function writePreferredSearchRoute(route, ms) {
+  if (!route || !route.provider || !route.model) return false;
+  try {
+    const existing = await readPreferredSearchRoutes();
+    const duration = Number(ms) > 0 ? Number(ms) : Number.MAX_SAFE_INTEGER;
+    const previous = existing.find(item => item.provider === route.provider && item.model === route.model);
+    const best = previous ? Math.min(previous.ms, duration) : duration;
+    const next = existing
+      .filter(item => !(item.provider === route.provider && item.model === route.model));
+    next.push({ provider: route.provider, model: route.model, ms: best });
+    next.sort((a, b) => a.ms - b.ms);
+    const path = SEARCH_ROUTE_FILE();
+    await fs.mkdir(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp-${process.pid}`;
+    await fs.writeFile(tmp, JSON.stringify({ version: 2, routes: next.slice(0, 6), at: new Date().toISOString() }, null, 2) + '\n', 'utf8');
+    await fs.rename(tmp, path);
+    return true;
+  } catch { return false; }
+}
+
 export async function resolveSearchRoutes(llm, max = 6) {
   const providers = typeof llm?.listProviders === 'function' ? llm.listProviders() : [];
   const routes = [];
@@ -4420,11 +4490,22 @@ export async function resolveSearchRoutes(llm, max = 6) {
     if (isFlash) return 2;               // 路由组但名字是 flash
     return 3;                            // 其余路由组
   };
-  return routes
+  const ordered = routes
     .map((route, index) => ({ route, index }))
     .sort((a, b) => rank(a.route) - rank(b.route) || a.index - b.index)
-    .slice(0, max)
     .map(item => item.route);
+  // 已验证可用的模型按「上次成功耗时」升序排到最前：第二次检索直接用最快的，
+  // 不必再从头试错。未验证过的模型按 rank 排在后面。
+  const preferred = await readPreferredSearchRoutes();
+  if (preferred.length > 0) {
+    const known = [];
+    for (const item of preferred) {
+      const hit = ordered.findIndex(route => route.provider === item.provider && route.model === item.model);
+      if (hit >= 0) known.push(...ordered.splice(hit, 1));
+    }
+    ordered.unshift(...known);
+  }
+  return ordered.slice(0, max);
 }
 
 /** 单路由调用：返回 { text } 或 { error }（含终态 error finish 的原因）。 */
@@ -4636,6 +4717,7 @@ export async function searchPluginsByDescriptionStream(options = {}) {
 
   const attempt = async (route, ri) => {
     emit('model-try', { index: ri + 1, total: routes.length, model: `${route.provider}/${route.model}` });
+    const attemptStarted = Date.now();
     const controller = new AbortController();
     // 推理型路由（group/*、GLM）首个正文 token 可能要 20-40 秒；快模型 25 秒足够。
     const isReasoning = /glm|group\/|auto\/|qwen3/i.test(String(route.model || ''));
@@ -4659,7 +4741,7 @@ export async function searchPluginsByDescriptionStream(options = {}) {
       const picks = parseSearchPicks(outcome.text, ranked.length, ranked);
       emit('parsed', { picks: picks.map(pick => ({ name: ranked[pick.index] && (ranked[pick.index].repo || ranked[pick.index].name), why: pick.why })) });
       if (picks.length === 0) return null;
-      return { route, picks };
+      return { route, picks, ms: Date.now() - attemptStarted };
     } catch (error) {
       emit('model-error', { model: `${route.provider}/${route.model}`, error: String(error?.message || error) });
       return null;
@@ -4668,33 +4750,65 @@ export async function searchPluginsByDescriptionStream(options = {}) {
     }
   };
 
-  // 前 RACE_WIDTH 条并发，其余留给后续补位（某条失败后立刻补上下一条）。
-  const queue = routes.map((route, index) => ({ route, index }));
-  const running = new Set();
+  // 有「上次成功的模型」时先单独试它：命中就立刻返回，省掉其它模型的调用。
+  // 但不能死等——实测同一个模型在 22 秒和 60 秒之间浮动，死等会白耗 40 秒。
+  // 所以给它一个 AI_SEARCH_HEDGE_MS 的对冲窗口：窗口内返回就用它，
+  // 超时就把其它模型并发起来，谁先给出可用结果用谁。
   let winner = null;
-  const startNext = () => {
-    const next = queue.shift();
-    if (!next) return;
-    const task = attempt(next.route, next.index)
+  const running = new Set();
+  const queue = [];
+  const spawn = entry => {
+    const task = attempt(entry.route, entry.index)
       .then(result => {
-        if (result && !settled) {
-          settled = true;
-          winner = result;
-        }
+        if (result && !settled) { settled = true; winner = result; }
       })
       .catch(() => {})
       .finally(() => {
         running.delete(task);
-        if (!settled) startNext();
+        if (!settled) fillSlots();
       });
     running.add(task);
   };
-  for (let i = 0; i < RACE_WIDTH; i++) startNext();
+  const fillSlots = () => {
+    while (!settled && running.size < RACE_WIDTH) {
+      const next = queue.shift();
+      if (!next) break;
+      spawn(next);
+    }
+  };
+
+  const preferred = await readPreferredSearchRoutes();
+  const direct = preferred
+    .map(item => ({ item, index: routes.findIndex(route => route.provider === item.provider && route.model === item.model) }))
+    .find(entry => entry.index >= 0);
+  for (const [index, route] of routes.entries()) {
+    if (direct && index === direct.index) continue;
+    queue.push({ route, index });
+  }
+
+  if (direct) {
+    emit('preferred-hit', { model: `${direct.item.provider}/${direct.item.model}`, ms: direct.item.ms });
+    spawn({ route: routes[direct.index], index: direct.index });
+    await Promise.race([Promise.race([...running]), sleep(AI_SEARCH_HEDGE_MS)]);
+    if (!settled && running.size > 0) {
+      emit('preferred-miss', {
+        model: 'slow',
+        note: `已验证模型 ${Math.round(AI_SEARCH_HEDGE_MS / 1000)} 秒还没返回，同时并发其它模型`,
+      });
+    }
+  }
+
+  // 前 RACE_WIDTH 条并发，其余留给后续补位（某条失败后立刻补上下一条）。
+  fillSlots();
   while (running.size > 0 && !settled) {
     await Promise.race([...running]);
   }
 
   if (winner) {
+    // 记住这个模型 + 本次耗时：下次检索按耗时升序优先用最快的已验证模型，
+    // 而不是碰巧先成功的那个（本机 autoclaw-cn 要 41-46 秒，workbuddy-ai 只要 19 秒）。
+    await writePreferredSearchRoute(winner.route, winner.ms);
+    emit('preferred', { model: `${winner.route.provider}/${winner.route.model}`, ms: winner.ms });
     const result = { ok: true, items: searchItems(ranked, winner.picks, false), candidates: ranked.length, promptChars: prompt.length, model: winner.route, fallback: false };
     emit('done', result);
     return result;

@@ -302,14 +302,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-crumbs-back:hover{background:color-mix(in srgb,var(--pm-accent) 10%,transparent)}
 /* 描述找插件：一条虚线检索行 + 结果面板（top5，带理由/下载/星标/版本） */
 /* 搜索条：整条是可点击输入区（点图标/空白都能聚焦），右侧按钮内嵌不贴边 */
-.dsh-pm-ai-bar{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-shadow:0 1px 2px rgba(15,17,21,.04);color:var(--dsw-alias-label-tertiary);cursor:text;display:flex;gap:11px;height:52px;padding:0 8px 0 16px;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
+.dsh-pm-ai-bar{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-shadow:0 1px 2px rgba(15,17,21,.04);color:var(--dsw-alias-label-tertiary);cursor:text;display:flex;flex:0 0 auto;gap:11px;height:52px;min-height:52px;padding:0 0 0 16px;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
 .dsh-pm-ai-bar:hover{border-color:color-mix(in srgb,var(--fg) 18%,var(--dsw-alias-border-l2))}
 .dsh-pm-ai-bar:focus-within{background:var(--dsw-alias-bg-layer-1);border-color:var(--pm-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--pm-accent) 13%,transparent)}
 .dsh-pm-ai-bar .spark{color:var(--pm-accent);flex:none}
 .dsh-pm-ai-badge{background:color-mix(in srgb,var(--pm-accent) 11%,transparent);border-radius:6px;color:var(--pm-accent);flex:none;font-size:10.5px;font-weight:700;height:19px;letter-spacing:.02em;line-height:19px;padding:0 7px}
 .dsh-pm-ai-bar .inp{background:none;border:0;color:var(--dsw-alias-label-primary);cursor:text;flex:1;font:inherit;font-size:14px;min-width:0;outline:none}
 .dsh-pm-ai-bar .inp::placeholder{color:var(--dsw-alias-label-tertiary)}
-.dsh-pm-ai-go{align-items:center;background:var(--pm-accent);border:0;border-radius:10px;color:var(--pm-accent-fg);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:13px;font-weight:650;gap:5px;height:38px;justify-content:center;padding:0 18px;white-space:nowrap;transition:filter .14s ease,opacity .14s ease}
+.dsh-pm-ai-go{align-items:center;align-self:center;background:var(--pm-accent);border:0;border-radius:0 13px 13px 0;color:var(--pm-accent-fg);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:13px;font-weight:650;gap:6px;height:38px;justify-content:center;margin:0 -1px 0 0;padding:0 22px;white-space:nowrap;transition:filter .14s ease,opacity .14s ease}
 .dsh-pm-ai-go:hover:not(:disabled){filter:brightness(1.07)}
 .dsh-pm-ai-go:disabled{cursor:default;opacity:.4}
 /* 检索中：按钮内小转圈 */
@@ -2023,7 +2023,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     // 模型不可用/超时/解析失败时自动走本地关键词兜底；日志实时打印在面板里。
     const AI_STEP_LABELS = {
       start: '开始检索', index: '读取插件库', candidates: '关键词预筛候选', prompt: '构造提示词',
-      routes: '发现可用模型', 'model-try': '尝试模型', 'model-first-token': '模型开始输出',
+      routes: '发现可用模型', 'preferred-hit': '复用已验证模型', 'preferred-miss': '已验证模型不可用',
+      preferred: '记住检索模型', 'model-try': '尝试模型', 'model-first-token': '模型开始输出',
       'model-delta': '模型输出', 'model-output': '模型输出完成', parsed: '解析结果',
       'model-error': '模型报错', fallback: '降级到本地匹配', done: '检索完成', error: '出错',
     }
@@ -2034,6 +2035,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       else if (step === 'candidates') text = `预筛 ${data.count} 个候选${data.truncated ? '（已截断到 40 个）' : ''}：${(data.names || []).join('、')}`
       else if (step === 'prompt') text = `提示词 ${data.chars} 字符：${data.preview}…`
       else if (step === 'routes') text = `可用模型 ${data.count} 个：${(data.models || []).join('、')}`
+      else if (step === 'preferred-hit') text = `直接复用上次成功的模型 ${data.model}${data.ms && data.ms < 1e7 ? `（上次 ${Math.round(data.ms / 1000)} 秒）` : ''}`
+      else if (step === 'preferred-miss') text = (data.model === 'all' || data.model === 'slow') ? data.note : `${data.model} 这次不可用，${data.note}`
+      else if (step === 'preferred') text = `记住 ${data.model}${data.ms ? `（耗时 ${(data.ms / 1000).toFixed(1)} 秒）` : ''}，下次直接用`
       else if (step === 'model-try') text = `尝试模型 ${data.model}（${data.index}/${data.total}）`
       else if (step === 'model-first-token') text = `${data.model} 开始输出`
       else if (step === 'model-delta') text = `模型输出：${data.text}`
