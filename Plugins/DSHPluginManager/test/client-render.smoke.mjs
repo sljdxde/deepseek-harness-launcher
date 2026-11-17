@@ -860,6 +860,7 @@ await openInstalledPanel(runtime);
   moreBtn().props.onClick();
   await settle(runtime, 10);
   assert.ok(segByLabel('git'), '展开后折叠分类可见');
+  assert.equal(segs().filter(node => /dsh-pm-seg more/.test(String(node.props.className || ''))).length, 0, '展开后「全部 N 类」按钮消失，只剩分类 chips');
   // 3. 选一个折叠里的分类 → 进分类视图（且折叠区自动展开让选中态可见）。
   segByLabel('git').props.onClick();
   await settleQuery(runtime);

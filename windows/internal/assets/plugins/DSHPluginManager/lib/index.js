@@ -4042,9 +4042,19 @@ export const MARKET_GROUPS = [
 const GROUP_BY_CATEGORY = new Map();
 for (const group of MARKET_GROUPS) for (const category of group.categories) GROUP_BY_CATEGORY.set(category, group.id);
 
+/**
+ * 规范化分类：社区清单是 PR 提交的，个别条目把模板注释写进了 category
+ * （如 "tools # see the category list below / 见下方分类列表 2"、"official 9"）。
+ * 这类不是真分类，只接受「纯英文短词」，其余一律归 other——分类条不会出现脏胶囊。
+ */
+export function normalizeCategory(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  return /^[a-z][a-z0-9_-]{0,19}$/.test(raw) ? raw : 'other';
+}
+
 /** 原始分类 → 组 id（未命中的归 other）。 */
 export function marketGroupOf(category) {
-  return GROUP_BY_CATEGORY.get(String(category || '').toLowerCase()) || 'other';
+  return GROUP_BY_CATEGORY.get(normalizeCategory(category)) || 'other';
 }
 
 /** 组 id → 展示名。 */
@@ -4078,7 +4088,7 @@ export async function queryMarketplace(params = {}) {
 
   const match = (plugin) => {
     if (!plugin) return false;
-    if (category !== 'all' && plugin.category !== category) return false;
+    if (category !== 'all' && normalizeCategory(plugin.category) !== category) return false;
     if (group !== 'all' && marketGroupOf(plugin.category) !== group) return false;
     // 来源筛选：official（npm 官方）| community（awesome-dsh 默认源）| 自定义源 id。
     if (source !== 'all') {
@@ -4100,7 +4110,7 @@ export async function queryMarketplace(params = {}) {
 
   const counts = new Map();
   for (const plugin of all) {
-    const id = String(plugin.category || '').toLowerCase() || 'other';
+    const id = normalizeCategory(plugin.category);
     counts.set(id, (counts.get(id) || 0) + 1);
   }
 
@@ -4118,7 +4128,7 @@ export async function queryMarketplace(params = {}) {
           group: id,
           label: marketGroupLabel(id),
           count,
-          plugins: all.filter(plugin => plugin && String(plugin.category || '').toLowerCase() === id).sort(sortedCompare).slice(0, MARKET_SECTION_CARDS),
+          plugins: all.filter(plugin => plugin && normalizeCategory(plugin.category) === id).sort(sortedCompare).slice(0, MARKET_SECTION_CARDS),
         }))
     : [];
 

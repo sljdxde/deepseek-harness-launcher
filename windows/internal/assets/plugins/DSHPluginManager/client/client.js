@@ -278,6 +278,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-seg.more{background:color-mix(in srgb,var(--pm-accent) 8%,transparent);border-color:color-mix(in srgb,var(--pm-accent) 40%,transparent);color:var(--pm-accent);font-weight:600}
 .dsh-pm-seg.more.expanded{background:var(--pm-accent);border-color:var(--pm-accent);color:var(--pm-accent-fg)}
 .dsh-pm-seg.more.expanded .n{color:var(--pm-accent-fg)}
+/* 展开后收起入口：低调文字，不再是胶囊，展开区只展示纯分类 chips */
+.dsh-pm-collapse{background:none;border:0;border-radius:8px;color:var(--dsw-alias-label-tertiary);cursor:pointer;display:inline-flex;font:inherit;font-size:12px;align-items:center;gap:4px;height:34px;padding:0 8px}
+.dsh-pm-collapse:hover{color:var(--pm-accent);background:var(--accent-soft)}
 /* 展开区：独立一行、换行排列，与收起按钮留 8px */
 .dsh-pm-segs-open{padding:0;width:100%;margin-top:2px}
 .dsh-pm-catbar-sp{flex:0 0 auto;width:0}
@@ -2081,17 +2084,26 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       h('div', { className: 'dsh-pm-segs' },
         categorySeg('all', '全部', market && market.allTotal ? market.allTotal : marketTotal, category === 'all'),
         pinnedCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name)),
-        tailCategories.length > 0
+        // 「全部 N 类」只在收起态显示：展开后它自己消失，用户要收起时
+        // 用展开分类行末尾那个低调的文字「收起」（不再是醒目的胶囊按钮）。
+        tailCategories.length > 0 && !catExpanded
           ? h('button', {
               key: 'seg-more',
-              className: `dsh-pm-seg more${catExpanded ? ' expanded' : ''}`,
-              onClick: () => setCatExpanded(value => !value),
-              'aria-expanded': catExpanded ? 'true' : 'false',
-              title: catExpanded ? '收起分类' : `还有 ${tailCategories.length} 个分类`,
-            }, catExpanded ? '收起分类' : `全部 ${orderedCategories.length} 类`, icon('chev', 11))
+              className: 'dsh-pm-seg more',
+              onClick: () => setCatExpanded(true),
+              'aria-expanded': 'false',
+              title: `还有 ${tailCategories.length} 个分类，点击展开`,
+            }, `全部 ${orderedCategories.length} 类`, icon('chev', 11))
           : null),
       catExpanded ? h('div', { className: 'dsh-pm-segs dsh-pm-segs-open' },
-        tailCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name))) : null,
+        tailCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name)),
+        // 收起入口：低调文字，不再是「全部 N 类」胶囊，也不抢占分类视觉。
+        h('button', {
+          key: 'seg-collapse',
+          className: 'dsh-pm-collapse',
+          onClick: () => setCatExpanded(false),
+          'aria-label': '收起分类',
+        }, '收起', icon('back', 11))) : null,
       h('span', { className: 'dsh-pm-catbar-sp' }),
       h('select', { className: 'dsh-pm-select', value: source, onChange: (e) => setSource(e.target.value), title: '按插件来源过滤', 'aria-label': '按来源过滤' },
         h('option', { value: 'all' }, '来源：全部'),

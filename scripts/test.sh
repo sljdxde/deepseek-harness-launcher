@@ -167,6 +167,8 @@ rg -Fq 'marketGroupOf' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plug
 # 分类条：原始分类折叠（前 8 平铺 + 「全部 N 类」按钮），但下拉必须保持删除。
 rg -Fq 'dsh-pm-seg more' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'dsh-pm-segs-open' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 展开后「全部 N 类」胶囊消失，收起入口用低调文字 dsh-pm-collapse。
+rg -Fq 'dsh-pm-collapse' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'keywordVariants' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
 # 描述找插件：本地预筛 + 模型挑选，上下文上限必须有守卫。
 rg -Fq "'/dsh-plugin-manager/ai-search'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
