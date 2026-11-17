@@ -4100,7 +4100,7 @@ export async function queryMarketplace(params = {}) {
 
   const counts = new Map();
   for (const plugin of all) {
-    const id = marketGroupOf(plugin.category);
+    const id = String(plugin.category || '').toLowerCase() || 'other';
     counts.set(id, (counts.get(id) || 0) + 1);
   }
 
@@ -4111,14 +4111,14 @@ export async function queryMarketplace(params = {}) {
   // 每类给当前排序下的前 6 个——一屏两整行，客户端直接按 sections 渲染。
   const sections = category === 'all' && group === 'all' && !q
     ? [...counts]
-        .filter(([id]) => id !== 'other')
+        .filter(([id]) => id && id !== 'other')
         .sort((a, b) => b[1] - a[1])
         .slice(0, MARKET_SECTION_CATEGORIES)
         .map(([id, count]) => ({
           group: id,
           label: marketGroupLabel(id),
           count,
-          plugins: all.filter(plugin => plugin && marketGroupOf(plugin.category) === id).sort(sortedCompare).slice(0, MARKET_SECTION_CARDS),
+          plugins: all.filter(plugin => plugin && String(plugin.category || '').toLowerCase() === id).sort(sortedCompare).slice(0, MARKET_SECTION_CARDS),
         }))
     : [];
 
@@ -4128,7 +4128,7 @@ export async function queryMarketplace(params = {}) {
     indexedAt: index.indexedAt ?? null,
     total: filtered.length,
     allTotal: all.length,
-    counts: [...counts].map(([id, count]) => ({ name: id, label: marketGroupLabel(id), count })).sort((a, b) => b.count - a.count),
+    counts: [...counts].map(([id, count]) => ({ name: id, count })).sort((a, b) => b.count - a.count),
     categories: Array.isArray(index.categories) ? index.categories : [],
     plugins: sorted.slice(offset, offset + limit),
     sections,
@@ -4184,12 +4184,36 @@ const AI_SEARCH_MAX_QUERY = 500;
 const AI_SEARCH_MAX_PROMPT = 12000;
 const AI_SEARCH_LIMIT = 5;
 
+/**
+ * 把一个 token 拆成匹配用的变体：CJK 长 token 额外给出一组重叠双字
+ * （侧边栏管理 → 侧边/边栏/管理），因为中文没有空格，整词匹配会漏掉
+ * 「描述里只有『侧边栏』」的插件；英文/数字 token 原样保留。
+ */
+export function keywordVariants(token) {
+  const value = String(token || '');
+  if (value.length < 2) return [];
+  const variants = [value];
+  if (/\p{Script=Han}/u.test(value) && value.length >= 3) {
+    for (let i = 0; i + 2 <= value.length; i++) variants.push(value.slice(i, i + 2));
+  }
+  return variants;
+}
+
 /** 关键词预筛：名称/仓库命中权重高，描述与分类次之；只保留有命中的条目。 */
 export function rankPluginsByKeywords(plugins, query) {
   const text = String(query || '').trim().toLowerCase();
   if (!text) return [];
   const tokens = text.split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 2);
   if (tokens.length === 0) return [];
+  // 每个 token 的变体（CJK 有双字变体），整词命中权重 2 倍于双字命中。
+  const matchers = [];
+  for (const token of tokens) {
+    const variants = keywordVariants(token);
+    for (const variant of variants) {
+      matchers.push({ variant, weight: variant === token ? 2 : 1 });
+    }
+  }
+  if (matchers.length === 0) return [];
   const scored = [];
   for (const plugin of Array.isArray(plugins) ? plugins : []) {
     if (!plugin) continue;
@@ -4198,11 +4222,11 @@ export function rankPluginsByKeywords(plugins, query) {
     const description = `${plugin.descriptionEn || ''} ${plugin.descriptionZh || ''}`.toLowerCase();
     const category = String(plugin.category || '').toLowerCase();
     let score = 0;
-    for (const token of tokens) {
-      if (name.includes(token)) score += 4;
-      if (repo.includes(token)) score += 3;
-      if (description.includes(token)) score += 2;
-      if (category.includes(token)) score += 1;
+    for (const { variant, weight } of matchers) {
+      if (name.includes(variant)) score += 4 * weight;
+      if (repo.includes(variant)) score += 3 * weight;
+      if (description.includes(variant)) score += 2 * weight;
+      if (category.includes(variant)) score += 1 * weight;
     }
     if (text.length >= 4 && description.includes(text)) score += 3;
     if (score > 0) scored.push({ plugin, score });

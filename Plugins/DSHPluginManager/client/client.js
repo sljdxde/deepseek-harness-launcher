@@ -928,6 +928,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const [manualSpec, setManualSpec] = React.useState('')
     const [category, setCategory] = React.useState('all')
     const [sort, setSort] = React.useState('stars')
+    // 分类条折叠：超过 8 个分类时其余收进「全部 N 类」按钮，点击在位展开。
+    const [catExpanded, setCatExpanded] = React.useState(false)
     // 来源筛选：all | official | community | 自定义源 id。
     const [source, setSource] = React.useState('all')
     // 描述找插件（模型检索）：输入、加载、结果。
@@ -1711,12 +1713,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       for (const plugin of marketPlugins) counts.set(plugin.category, (counts.get(plugin.category) || 0) + 1)
       return counts
     }, [market, marketPlugins])
-    // 分类条：服务端已把 30+ 个原始分类折成 6 组（counts 里带 label），这里直接按
-    // 数量排序平铺（用户明确不要那么多分类，也不要横向展开）。
+    // 分类条：原始分类按数量降序；超过 8 个时只平铺前 8 个，其余收进
+    // 「全部 N 类」按钮，点击在分类条下方换行展开全部（不做下拉、不做横向滚动）。
     const orderedCategories = React.useMemo(
       () => [...categoryCounts.keys()].filter(Boolean).sort((a, b) => (categoryCounts.get(b) || 0) - (categoryCounts.get(a) || 0)),
       [categoryCounts]
     )
+    const pinnedCategories = orderedCategories.slice(0, 8)
+    const tailCategories = orderedCategories.slice(8)
     const groupLabel = (id) => {
       const hit = Array.isArray(market?.counts) ? market.counts.find(item => item.name === id) : null
       return (hit && hit.label) || categoryLabel(id)
@@ -2061,13 +2065,26 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       key: 'seg-' + name,
       className: `dsh-pm-seg${active ? ' on' : ''}`,
       onClick: () => setCategory(active ? 'all' : name),
+      // 选中的分类若在折叠区里，先展开折叠区让选中态可见。
+      onMouseDown: () => { if (!active && tailCategories.includes(name)) setCatExpanded(true) },
       title: active ? '再点一次回到全部' : `只看「${label}」`,
     }, label, count != null ? h('span', { className: 'n' }, String(count)) : null)
 
     const categoryBar = h('div', { className: 'dsh-pm-catbar' },
       h('div', { className: 'dsh-pm-segs' },
         categorySeg('all', '全部', market && market.allTotal ? market.allTotal : marketTotal, category === 'all'),
-        orderedCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name))),
+        pinnedCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name)),
+        tailCategories.length > 0
+          ? h('button', {
+              key: 'seg-more',
+              className: `dsh-pm-seg more${catExpanded ? ' expanded' : ''}`,
+              onClick: () => setCatExpanded(value => !value),
+              'aria-expanded': catExpanded ? 'true' : 'false',
+              title: catExpanded ? '收起分类' : `还有 ${tailCategories.length} 个分类`,
+            }, catExpanded ? '收起分类' : `全部 ${orderedCategories.length} 类`, icon('chev', 11))
+          : null),
+      catExpanded ? h('div', { className: 'dsh-pm-segs dsh-pm-segs-open' },
+        tailCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name))) : null,
       h('span', { className: 'dsh-pm-catbar-sp' }),
       h('select', { className: 'dsh-pm-select', value: source, onChange: (e) => setSource(e.target.value), title: '按插件来源过滤', 'aria-label': '按来源过滤' },
         h('option', { value: 'all' }, '来源：全部'),
@@ -2138,7 +2155,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       market === false ? h('div', { className: 'dsh-pm-empty' },
         h('div', null, '市场索引还没有下载'),
         h('button', { className: 'dsh-pm-install', style: { marginTop: '8px' }, disabled: refreshing, onClick: refreshMarket }, refreshing ? '同步中…' : '立即同步')) :
-      h('div', null, queueStrip, isCategoryView ? categoryView : discoverAllView))
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '18px' } }, queueStrip, isCategoryView ? categoryView : discoverAllView))
 
     // ── 内置页：开关列表（无可搜索/联网需求）。 ──
     const builtinItems = installed.filter(item => item.source === 'bundled' && !item.broken)

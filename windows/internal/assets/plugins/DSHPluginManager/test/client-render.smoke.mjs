@@ -780,11 +780,10 @@ await openInstalledPanel(runtime);
   console.log('场景9（dev-linked 二选一）通过');
 }
 
-/** 场景 10：分类条（v3）——分段胶囊带数量、「更多分类」原位展开、点分类进分类视图、
- *  「返回发现」/「全部」都能退回首屏。旧的「更多分类…」下拉已删除。 */
+/** 场景 10：分类条 —— 原始分类按数量降序；超过 8 个只平铺前 8，其余收进
+ *  「全部 N 类」按钮在下方换行展开；点分类进分类视图，「全部」/面包屑回首屏。 */
 {
-  // 12 个分类：前 6 个平铺，其余进「更多分类」；official 只有 1 个插件便于断言。
-  const categoryCounts = { official: 1, a: 1, b: 5, c: 5, d: 5, e: 5, f: 5, g: 5, h: 5, i: 5, j: 5, k: 5 };
+  const categoryCounts = { ui: 8, tools: 6, session: 5, data: 4, workflow: 3, dev: 2, theme: 1, notify: 1, browser: 1, git: 1, fun: 1, docs: 1 };
   const categories = Object.keys(categoryCounts);
   const marketPlugins = [];
   for (const cat of categories) {
@@ -814,11 +813,10 @@ await openInstalledPanel(runtime);
         if (!q) return true;
         return `${plugin.name} ${plugin.repo} ${plugin.descriptionEn}`.toLowerCase().includes(q);
       });
-      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, label: name, count })).sort((a, b) => b.count - a.count);
+      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
       const sections = group === 'all' && !q
-        ? ordered.slice(0, 3).map(name => ({
+        ? ordered.filter(name => name !== 'other').slice(0, 3).map(name => ({
             group: name,
-            label: name,
             count: categoryCounts[name],
             plugins: marketPlugins.filter(plugin => plugin.category === name).slice(0, 6),
           }))
@@ -847,39 +845,39 @@ await openInstalledPanel(runtime);
   const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
   const crumbs = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-crumbs( |$)/.test(String(node.props.className || '')));
 
-  // 1. 首屏：分类条 = 全部 + 全部组（服务端已归并），没有「更多分类」展开按钮。
-  assert.equal(segs().length, 1 + ordered.length, '全部 + 每个组一颗胶囊');
+  // 1. 首屏：全部 + 前 8 个分类 + 折叠按钮（12 类 → 收起 4 个）。
+  assert.equal(segs().length, 10, '全部 + 前 8 个分类 + 折叠按钮');
   assert.ok(textOf(segByLabel('全部')).includes(String(marketPlugins.length)), '「全部」带总数');
-  assert.ok(textOf(segByLabel('b')).includes('5'), '组胶囊带数量');
+  assert.ok(textOf(segByLabel('界面')).includes('8'), '分类胶囊带数量');
   assert.ok(/dsh-pm-seg on/.test(String(segByLabel('全部').props.className)), '默认选中「全部」');
-  assert.equal(findAll(runtime.tree, node => node.type === 'button' && /dsh-pm-seg more/.test(String(node.props.className || ''))).length, 0, '不再有「更多分类」展开按钮');
+  const moreBtn = () => segs().find(node => /dsh-pm-seg more/.test(String(node.props.className || '')));
+  assert.ok(moreBtn(), '有折叠按钮');
+  assert.ok(textOf(moreBtn()).includes('12'), '折叠按钮显示分类总数');
+  assert.equal(segByLabel('git'), undefined, '折叠里的分类默认不可见');
   assert.ok(cards().length > 0, '首屏有分区卡片');
-  assert.equal(crumbs().length, 0, '首屏没有面包屑');
 
-  // 2. 点分类 → 进分类视图（面包屑 + 该分类全量）。
-  segByLabel('b').props.onClick();
+  // 2. 展开：其余分类在下方换行出现。
+  moreBtn().props.onClick();
+  await settle(runtime, 10);
+  assert.ok(segByLabel('git'), '展开后折叠分类可见');
+  // 3. 选一个折叠里的分类 → 进分类视图（且折叠区自动展开让选中态可见）。
+  segByLabel('git').props.onClick();
   await settleQuery(runtime);
-  assert.equal(crumbs().length, 1, '进分类视图出现面包屑');
-  assert.ok(textOf(crumbs()[0]).includes('返回发现'), '面包屑有返回入口');
-  assert.equal(cards().length, categoryCounts.b, '分类视图只列该分类');
-  assert.ok(/dsh-pm-seg on/.test(String(segByLabel('b').props.className)), '当前分类胶囊高亮');
-  assert.equal(/dsh-pm-seg on/.test(String(segByLabel('全部').props.className)), false, '「全部」不再高亮');
-
-  // 3. 面包屑返回 → 回首屏。
+  assert.equal(cards().length, categoryCounts.git, '折叠分类进分类视图');
+  assert.ok(segByLabel('git'), '折叠区保持展开，选中态可见');
+  assert.equal(crumbs().length, 1, '出现面包屑');
+  // 4. 面包屑返回。
   findAll(crumbs()[0], node => node.type === 'button')[0].props.onClick();
   await settleQuery(runtime);
-  assert.equal(crumbs().length, 0, '返回发现后面包屑消失');
-  assert.ok(/dsh-pm-seg on/.test(String(segByLabel('全部').props.className)), '回到全部');
-
-  // 4. 组胶囊再点一次＝回全部；数量少的组也能直接点（不存在「收进下拉」的组）。
-  segByLabel('b').props.onClick();
+  assert.equal(crumbs().length, 0, '返回后面包屑消失');
+  // 5. 平铺分类直接点 → 分类视图；再点一次回全部。
+  segByLabel('工具').props.onClick();
   await settleQuery(runtime);
-  assert.equal(cards().length, categoryCounts.b, '组胶囊再进分类视图');
-  segByLabel('b').props.onClick();
+  assert.equal(cards().length, categoryCounts.tools, '平铺分类进分类视图');
+  segByLabel('工具').props.onClick();
   await settleQuery(runtime);
-  assert.equal(crumbs().length, 0, '再点已选中的组胶囊回到全部');
-  assert.ok(segByLabel('a'), '每个组都有胶囊（不再有「更多分类」）');
-  console.log('场景10（分类条：分组/分类视图/返回）通过');
+  assert.equal(crumbs().length, 0, '再点已选中的分类回到全部');
+  console.log('场景10（分类条：折叠/展开/分类视图/返回）通过');
 }
 
 /** 场景 11：市场刷新是后台任务 —— 刷新中面板能关，安装/切 tab 照常可用。
@@ -1241,10 +1239,10 @@ await openInstalledPanel(runtime);
       const limit = Number(query.get('limit')) || 60;
       const offset = Number(query.get('offset')) || 0;
       const filtered = marketPlugins.filter(plugin => category === 'all' || plugin.category === category);
-      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, label: name, count }));
+      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count }));
       const sections = category === 'all'
         ? Object.entries(categoryCounts).map(([name, count]) => ({
-            group: name, label: name, count,
+            group: name, count,
             plugins: marketPlugins.filter(plugin => plugin.category === name).slice(0, 6),
           }))
         : [];
