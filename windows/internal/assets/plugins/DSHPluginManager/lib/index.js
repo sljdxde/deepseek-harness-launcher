@@ -3661,7 +3661,11 @@ const MIRROR_CACHE_TTL_MS = 10 * 1000;
  */
 export async function readMirrorStateCached(deps = {}) {
   const doFetch = deps.fetch ?? fetch;
-  if (Date.now() - mirrorCache.at < MIRROR_CACHE_TTL_MS) return mirrorCache;
+  // 注入了 fetch（单测沙箱）时不走缓存：缓存是给生产路径省网络往返的，
+  // 注入方每次都想要自己那份确定答案（曾经测试间串味：上一个用例缓存的
+  // 「关闭」状态让下一个用例拿不到「开启」）。
+  const injected = typeof deps.fetch === 'function';
+  if (!injected && Date.now() - mirrorCache.at < MIRROR_CACHE_TTL_MS) return mirrorCache;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 2000);
@@ -3746,23 +3750,51 @@ export async function pnpmEnvironment(deps = {}) {
  * 没有配置文件时返回只含内置默认源的清单（默认源与旧行为完全一致）。
  * @returns {Promise<{version:number,sources:Array}>}
  */
-export async function readSourcesConfig() {
-  const builtin = [{ id: DEFAULT_SOURCE_ID, kind: 'git', url: 'github:awesome-dsh-plugin/awesome-dsh-plugin', enabled: true, builtin: true, addedAt: null }];
+/** 读落盘的源条目（不含现拼的内置源）。读不到返回空数组。 */
+async function readStoredSources() {
   try {
     const raw = JSON.parse(await fs.readFile(SOURCES_FILE(), 'utf8'));
-    const sources = Array.isArray(raw?.sources) ? raw.sources.filter(item => item && typeof item.id === 'string') : [];
-    return { version: SOURCES_STATE_VERSION, sources: [...builtin, ...sources] };
+    return Array.isArray(raw?.sources) ? raw.sources.filter(item => item && typeof item.id === 'string') : [];
   } catch {
-    return { version: SOURCES_STATE_VERSION, sources: builtin };
+    return [];
   }
 }
 
-/** 原子写源配置（tmp + rename，与 disabled.json 同一纪律）。 */
+export async function readSourcesConfig() {
+  const builtin = { id: DEFAULT_SOURCE_ID, kind: 'git', url: 'github:awesome-dsh-plugin/awesome-dsh-plugin', enabled: true, builtin: true, addedAt: null };
+  try {
+    const raw = JSON.parse(await fs.readFile(SOURCES_FILE(), 'utf8'));
+    const stored = Array.isArray(raw?.sources) ? raw.sources.filter(item => item && typeof item.id === 'string') : [];
+    // 内置默认源可能被停用（离线场景用户想关掉社区源），这个状态要能持久化：
+    // 落盘时它会带着 builtin:true 标记，读回来时**替换**掉现拼的那份，而不是追加
+    // ——追加会让源列表翻倍（曾经的真 bug：加 2 个源读回来是 5 个）。
+    const override = stored.find(item => item.id === DEFAULT_SOURCE_ID);
+    const rest = stored.filter(item => item.id !== DEFAULT_SOURCE_ID);
+    const head = override ? { ...builtin, enabled: override.enabled !== false } : builtin;
+    return { version: SOURCES_STATE_VERSION, sources: [head, ...rest] };
+  } catch {
+    return { version: SOURCES_STATE_VERSION, sources: [builtin] };
+  }
+}
+
+/**
+ * 原子写源配置（tmp + rename，与 disabled.json 同一纪律）。
+ *
+ * 内置默认源只在被**显式停用**时落盘（只记 enabled，不重复记 builtin 定义），
+ * 其余情况只写用户自定义源。否则读回来时又会拼一个 builtin → 源列表翻倍
+ * （曾经的真 bug：加 2 个源读回来是 5 个）。
+ */
 async function writeSourcesConfig(config) {
   const path = SOURCES_FILE();
+  const all = Array.isArray(config?.sources) ? config.sources : [];
+  const builtin = all.find(item => item && item.id === DEFAULT_SOURCE_ID);
+  const rest = all.filter(item => item && item.id !== DEFAULT_SOURCE_ID);
+  const sources = builtin && builtin.enabled === false
+    ? [{ id: DEFAULT_SOURCE_ID, enabled: false }, ...rest]
+    : rest;
   await fs.mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}`;
-  await fs.writeFile(tmp, JSON.stringify(config, null, 2) + '\n', 'utf8');
+  await fs.writeFile(tmp, JSON.stringify({ version: config?.version ?? SOURCES_STATE_VERSION, sources }, null, 2) + '\n', 'utf8');
   await fs.rename(tmp, path);
 }
 
@@ -3801,10 +3833,20 @@ export async function addPluginSource(entry) {
   return { ok: true, source };
 }
 
-/** 删除一个用户源（内置默认源拒绝删除）。 */
+/**
+ * 删除一个用户源（内置默认源拒绝删除）。
+ * 内置默认源被显式停用后，它的覆盖项还在配置里；这里把它删掉等于「恢复默认启用」，
+ * 而不是删掉这个源本身（默认源不可删是产品约定）。
+ */
 export async function removePluginSource(id) {
   const config = await readSourcesConfig();
-  if (id === DEFAULT_SOURCE_ID) return { ok: false, error: '内置默认源不能删除' };
+  if (id === DEFAULT_SOURCE_ID) {
+    // 只有当它被显式停用过（落盘了覆盖项）时，这个调用才有意义：恢复默认启用。
+    const stored = await readStoredSources();
+    if (!stored.some(item => item.id === DEFAULT_SOURCE_ID)) return { ok: false, error: '内置默认源不能删除' };
+    await writeSourcesConfig({ version: SOURCES_STATE_VERSION, sources: config.sources.map(item => (item.id === DEFAULT_SOURCE_ID ? { ...item, enabled: true } : item)) });
+    return { ok: true, removed: id, restored: true };
+  }
   const before = config.sources.length;
   const next = config.sources.filter(item => item.id !== id);
   if (next.length === before) return { ok: false, error: '没有这个源' };
@@ -3812,7 +3854,6 @@ export async function removePluginSource(id) {
   await fs.rm(join(SOURCES_CACHE_DIR(), `${id}.json`), { force: true }).catch(() => {});
   return { ok: true, removed: id };
 }
-
 /** 启用/停用一个源（默认源同样可以停用——离线场景用户可能想关掉社区源）。 */
 export async function setPluginSourceEnabled(id, enabled) {
   const config = await readSourcesConfig();
@@ -3953,11 +3994,15 @@ export async function aggregateCachedSources() {
  * 后台刷新全部启用源：受理后逐源拉取（并发 4），单源失败记录 error 不拖垮其它源；
  * 默认源（awesome-dsh-plugin）沿用 refreshMarketplace 的仓库重建。进度对象全程可读，
  * 结束时写 finishedAt。这是「刷新市场」按钮的异步受理路径。
+ *
+ * @param {object} [deps] - { fetch, refreshMarketplace }：测试注入点。
+ *   默认源要 clone 整个仓库，单测里必须替换掉，否则测试会发真实网络请求并挂住。
  * @returns {Promise<{sources:number,plugins:number,errors:string[]}>} 刷新汇总。
  */
 export async function refreshPluginSources(deps = {}) {
   const config = await readSourcesConfig();
   const enabled = config.sources.filter(item => item.enabled !== false);
+  const refreshMarketplace = deps.refreshMarketplace ?? refreshMarketplaceOnce;
   sourceRefreshProgress = {
     active: true,
     total: enabled.length,
@@ -3975,7 +4020,7 @@ export async function refreshPluginSources(deps = {}) {
       if (source.id === DEFAULT_SOURCE_ID) {
         // 内置默认源：主索引重建（clone awesome-dsh-plugin），沿用旧逻辑。
         try {
-          const summary = await refreshMarketplaceOnce();
+          const summary = await refreshMarketplace();
           sourceRefreshProgress.results.push({ id: source.id, ok: true, count: summary.count });
           pluginCount += summary.count;
         } catch (error) {
@@ -4007,16 +4052,21 @@ export async function refreshPluginSources(deps = {}) {
 }
 
 /** 市场索引的内存缓存：11k 插件时整包 9.6MB，每次请求都重新解析磁盘 JSON
- *  会明显卡面板；3 秒 TTL 足够覆盖一次打开面板的多个请求，刷新结束时主动失效。 */
-let marketIndexCache = { at: 0, value: null };
+ *  会明显卡面板；3 秒 TTL 足够覆盖一次打开面板的多个请求，刷新结束时主动失效。
+ *  缓存**按 DSH_HOME 分键**：换了 home（多 profile / 单测临时目录）必须重新读，
+ *  否则会拿到上一个 home 的索引（曾经导致单测串味、分类计数对不上）。 */
+let marketIndexCache = { at: 0, value: null, home: null };
 function invalidateMarketIndexCache() {
-  marketIndexCache = { at: 0, value: null };
+  marketIndexCache = { at: 0, value: null, home: null };
 }
 
 async function marketplaceIndexCached() {
-  if (marketIndexCache.value && Date.now() - marketIndexCache.at < 3000) return marketIndexCache.value;
+  const home = dshHome();
+  if (marketIndexCache.value && marketIndexCache.home === home && Date.now() - marketIndexCache.at < 3000) {
+    return marketIndexCache.value;
+  }
   const value = await readMarketplaceAggregated();
-  marketIndexCache = { at: Date.now(), value };
+  marketIndexCache = { at: Date.now(), value, home };
   return value;
 }
 
@@ -4060,6 +4110,30 @@ export function marketGroupOf(category) {
 /** 组 id → 展示名。 */
 export function marketGroupLabel(id) {
   return (MARKET_GROUPS.find(group => group.id === id) || {}).label || '其他';
+}
+
+/**
+ * 原始分类 → 中文名（分类条胶囊与分区标题用）。
+ *
+ * 客户端原来只有一份同名表放在 client.js 里，两边各写一份必然会漂移
+ * （曾经「分区标题」就对不上：服务端拿 group id 去查组名，原始分类
+ * 只能落到「其他」）。名字统一由服务端产出，客户端只消费。
+ */
+const MARKET_CATEGORY_LABELS = {
+  official: '官方', ui: '界面', panel: '界面', theme: '主题', market: '市场',
+  session: '会话', memory: '记忆', notify: '通知',
+  tools: '工具', tool: '工具', dev: '开发', cli: '命令行', skill: '技能', search: '搜索',
+  workflow: '工作流', auto: '自动化', mcp: 'MCP', agent: '智能体', gateway: '网关', prompt: '提示词',
+  data: '数据', storage: '存储', usage: '用量', model: '模型',
+  browser: '浏览器', docs: '文档', vision: '视觉', git: 'Git', voice: '语音',
+  identity: '身份', security: '安全', remote: '远程', fun: '娱乐', wsl: 'WSL', agi: 'AGI',
+  image: '图像', web: '网页', plugin: '插件', other: '其他',
+};
+
+/** 原始分类 → 中文名（未知分类回落到分类 id 本身，不显示英文之外的东西）。 */
+export function marketCategoryLabel(id) {
+  const key = normalizeCategory(id);
+  return MARKET_CATEGORY_LABELS[key] || key;
 }
 
 /**
@@ -4119,14 +4193,19 @@ export async function queryMarketplace(params = {}) {
 
   // 分类分区：只在不筛选分类、不搜索时算（发现页的首屏）；按数量取前 3 个分类，
   // 每类给当前排序下的前 6 个——一屏两整行，客户端直接按 sections 渲染。
+  //
+  // 这里的 id 是**原始分类**（不是分组 id）：分区头「查看全部 N 个」点进去后
+  // 客户端按 category= 精确筛选该分类，N 必须等于点进去看到的数量。
+  // 早前这里放的是分组 id，客户端却又按 group= 传原始分类名，
+  // 两边口径错位 → 「工作流」这类只存在于原始分类里的条目点进去是 0 个。
   const sections = category === 'all' && group === 'all' && !q
     ? [...counts]
         .filter(([id]) => id && id !== 'other')
         .sort((a, b) => b[1] - a[1])
         .slice(0, MARKET_SECTION_CATEGORIES)
         .map(([id, count]) => ({
-          group: id,
-          label: marketGroupLabel(id),
+          category: id,
+          label: marketCategoryLabel(id),
           count,
           plugins: all.filter(plugin => plugin && normalizeCategory(plugin.category) === id).sort(sortedCompare).slice(0, MARKET_SECTION_CARDS),
         }))
@@ -4138,7 +4217,7 @@ export async function queryMarketplace(params = {}) {
     indexedAt: index.indexedAt ?? null,
     total: filtered.length,
     allTotal: all.length,
-    counts: [...counts].map(([id, count]) => ({ name: id, count })).sort((a, b) => b.count - a.count),
+    counts: [...counts].map(([id, count]) => ({ name: id, count, label: marketCategoryLabel(id) })).sort((a, b) => b.count - a.count),
     categories: Array.isArray(index.categories) ? index.categories : [],
     plugins: sorted.slice(offset, offset + limit),
     sections,
@@ -4611,7 +4690,7 @@ export async function searchPluginsByDescription(options = {}) {
   }
   let lastError = '';
   let debugInfo = options.debug ? { routes } : {};
-  for (const route of routes) {
+  for (const [ri, route] of routes.entries()) {
     const controller = new AbortController();
     // 分级超时：前面的快模型 25 秒不出正文就换下一个（它们通常 3-8 秒出结果）；
     // 最后一条路由用长超时兜底（推理模型首个正文 token 可能要 20-40 秒）。

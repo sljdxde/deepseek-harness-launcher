@@ -451,12 +451,16 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     network: 'globe', dev: 'cube', panel: 'layers', notify: 'bell', auto: 'zap',
     message: 'message', store: 'archive', other: 'puzzle',
   }
+  // 分类中文名的**兜底表**：服务端 /marketplace/query 的 counts[].label 是权威来源
+  // （见 lib/index.js 的 MARKET_CATEGORY_LABELS），这张表只用于旧响应或卡片上的
+  // 原始分类标签。两边要保持一致：新增分类时两边一起加。
   const CATEGORY_LABELS = {
     official: '官方', ui: '界面', panel: '界面', tools: '工具', tool: '工具', session: '会话',
     workflow: '工作流', auto: '自动化', dev: '开发', usage: '用量', model: '模型',
     memory: '记忆', theme: '主题', skill: '技能', notify: '通知', browser: '浏览器',
     storage: '存储', data: '数据', search: '搜索', network: '网络', agent: '智能体', other: '其他',
     market: '市场', mcp: 'MCP', prompt: '提示词', web: '网页', image: '图像', voice: '语音', cli: '命令行', gateway: '网关', plugin: '插件',
+    docs: '文档', vision: '视觉', git: 'Git', identity: '身份', security: '安全', remote: '远程', fun: '娱乐', wsl: 'WSL', agi: 'AGI',
   }
   const categoryLabel = category => CATEGORY_LABELS[category] || category || '其他'
   const categoryIcon = category => CATEGORY_ICONS[category] || 'puzzle'
@@ -1051,12 +1055,18 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       })
       .catch(e => { if (aliveRef.current) toast('error', `读取插件停用状态失败：${String(e.message || e)}`) })
     /// 市场查询（服务端分页）。overrides 用于「显示更多」按当前条件续页。
+    ///
+    /// 分类参数用 category=（精确匹配原始分类），**不是** group=：
+    /// group 是服务端内部的 6 个分组 id（ui/session/tools/auto/data/other），
+    /// 而分类条上显示的是原始分类（工作流/开发/用量…）。早前把原始分类塞进
+    /// group=，服务端按分组 id 解释 → 「工作流」这类只存在于原始分类里的条目
+    /// 匹配不到任何插件，点进去就是「0 个插件」（胶囊上的数字却还在）。
     const marketQueryURL = (overrides = {}) => {
       const params = [
         ['limit', PAGE_SIZE],
         ['offset', overrides.offset ?? 0],
         ['q', overrides.q ?? search],
-        ['group', overrides.group ?? category],
+        ['category', overrides.category ?? category],
         ['source', overrides.source ?? source],
         ['sort', overrides.sort ?? sort],
       ]
@@ -2244,9 +2254,11 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         h('option', { value: 'newest' }, '排序：最新')))
 
     // 分类分区：每区 6 张（三列两整行），分区头/尾各一个「查看全部 N 个」。
+    // 服务端分区给的是**原始分类** id（category）：点「查看全部 N 个」后按该分类
+    // 精确筛选，N 必须等于点进去看到的数量。
     const sectionView = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
       marketSections.map(section => {
-        const id = section.group || section.category
+        const id = section.category || section.group
         const label = section.label || groupLabel(id)
         return h('div', { className: 'dsh-pm-sec2', key: 'sec-' + id },
           h('div', { className: 'dsh-pm-sechead2' },

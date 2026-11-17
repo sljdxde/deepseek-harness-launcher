@@ -796,6 +796,19 @@ await openInstalledPanel(runtime);
     }
   }
   const ordered = Object.entries(categoryCounts).sort((a, b) => b[1] - a[1]).map(([name]) => name);
+  // 分组映射：与服务端 MARKET_GROUPS 一致（原始分类 → 6 组 id）。
+  // 假服务端必须**忠实复刻真实服务端**的参数语义，否则测试会替实现掩盖 bug：
+  // 早前它把 group= 当原始分类过滤，而真实服务端 group= 只认分组 id，
+  // 于是「原始分类塞进 group=」这个错位在测试里永远是绿的。
+  const GROUP_OF = {
+    ui: 'ui', panel: 'ui', theme: 'ui', market: 'ui',
+    session: 'session', memory: 'session', notify: 'session',
+    tools: 'tools', tool: 'tools', dev: 'tools', cli: 'tools', skill: 'tools', search: 'tools',
+    workflow: 'auto', auto: 'auto', mcp: 'auto', agent: 'auto', gateway: 'auto', prompt: 'auto',
+    data: 'data', storage: 'data', usage: 'data', model: 'data',
+  };
+  const groupOf = category => GROUP_OF[category] || 'other';
+  const CATEGORY_LABEL = { ui: '界面', session: '会话', tools: '工具', data: '数据', workflow: '工作流', dev: '开发', theme: '主题', notify: '通知', browser: '浏览器', git: 'Git', fun: '娱乐', docs: '文档' };  const marketCalls = [];
   const fetchImpl = url => {
     const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
     if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
@@ -803,20 +816,26 @@ await openInstalledPanel(runtime);
       return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
     }
     if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      marketCalls.push(String(url));
       const query = new URLSearchParams(url.split('?')[1] || '');
+      const category = query.get('category') || 'all';
       const group = query.get('group') || 'all';
       const limit = Number(query.get('limit')) || 60;
       const offset = Number(query.get('offset')) || 0;
       const q = (query.get('q') || '').toLowerCase();
       const filtered = marketPlugins.filter(plugin => {
-        if (group !== 'all' && plugin.category !== group) return false;
+        if (category !== 'all' && plugin.category !== category) return false;
+        if (group !== 'all' && groupOf(plugin.category) !== group) return false;
         if (!q) return true;
         return `${plugin.name} ${plugin.repo} ${plugin.descriptionEn}`.toLowerCase().includes(q);
       });
-      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
-      const sections = group === 'all' && !q
+      const counts = Object.entries(categoryCounts)
+        .map(([name, count]) => ({ name, count, label: CATEGORY_LABEL[name] || name }))
+        .sort((a, b) => b.count - a.count);
+      const sections = category === 'all' && group === 'all' && !q
         ? ordered.filter(name => name !== 'other').slice(0, 3).map(name => ({
-            group: name,
+            category: name,
+            label: CATEGORY_LABEL[name] || name,
             count: categoryCounts[name],
             plugins: marketPlugins.filter(plugin => plugin.category === name).slice(0, 6),
           }))
@@ -852,20 +871,31 @@ await openInstalledPanel(runtime);
   const moreBtn = () => segs().find(node => /dsh-pm-seg more/.test(String(node.props.className || '')));
   assert.ok(moreBtn(), '有折叠按钮');
   assert.ok(textOf(moreBtn()).includes('12'), '折叠按钮显示分类总数');
-  assert.equal(segByLabel('git'), undefined, '折叠里的分类默认不可见');
+  assert.equal(segByLabel('Git'), undefined, '折叠里的分类默认不可见');
   assert.ok(cards().length > 0, '首屏有分区卡片');
 
   // 2. 展开：其余分类在下方换行出现。
   moreBtn().props.onClick();
   await settle(runtime, 10);
-  assert.ok(segByLabel('git'), '展开后折叠分类可见');
+  assert.ok(segByLabel('Git'), '展开后折叠分类可见');
   assert.equal(segs().filter(node => /dsh-pm-seg more/.test(String(node.props.className || ''))).length, 0, '展开后「全部 N 类」按钮消失，只剩分类 chips');
   // 3. 选一个折叠里的分类 → 进分类视图（且折叠区自动展开让选中态可见）。
-  segByLabel('git').props.onClick();
+  segByLabel('Git').props.onClick();
   await settleQuery(runtime);
   assert.equal(cards().length, categoryCounts.git, '折叠分类进分类视图');
-  assert.ok(segByLabel('git'), '折叠区保持展开，选中态可见');
+  assert.ok(segByLabel('Git'), '折叠区保持展开，选中态可见');
   assert.equal(crumbs().length, 1, '出现面包屑');
+  // ── 关键护栏：分类筛选必须用 category=（精确分类），不能塞进 group= ──
+  // 用户报的现象：胶囊上写着「工作流 674」，点进去却是 0 个插件。
+  // 根因就是客户端把原始分类塞进了 group=（服务端只认 6 个分组 id）。
+  const lastMarketCall = marketCalls[marketCalls.length - 1] || '';
+  assert.ok(lastMarketCall.includes('category=git'), '分类筛选走 category= 参数：' + lastMarketCall);
+  assert.ok(!/[?&]group=/.test(lastMarketCall), '分类筛选不再误用 group= 参数：' + lastMarketCall);
+  // 胶囊上的数字必须等于点进去之后的卡片数（数字与结果一致）。
+  const gitChip = segByLabel('Git');
+  const chipNumber = Number((textOf(gitChip).match(/\d+/) || ['0'])[0]);
+  assert.equal(chipNumber, categoryCounts.git, '胶囊数字就是该分类的插件数');
+  assert.equal(cards().length, chipNumber, '点进去看到的卡片数 = 胶囊上的数字');
   // 4. 面包屑返回。
   findAll(crumbs()[0], node => node.type === 'button')[0].props.onClick();
   await settleQuery(runtime);
@@ -1235,14 +1265,15 @@ await openInstalledPanel(runtime);
     }
     if (url.startsWith('/dsh-plugin-manager/marketplace')) {
       const query = new URLSearchParams(url.split('?')[1] || '');
-      const category = query.get('group') || 'all';
+      // 忠实复刻真实服务端：category= 精确匹配原始分类。
+      const category = query.get('category') || 'all';
       const limit = Number(query.get('limit')) || 60;
       const offset = Number(query.get('offset')) || 0;
       const filtered = marketPlugins.filter(plugin => category === 'all' || plugin.category === category);
-      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count }));
+      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count, label: name === 'ui' ? '界面' : '工具' }));
       const sections = category === 'all'
         ? Object.entries(categoryCounts).map(([name, count]) => ({
-            group: name, count,
+            category: name, label: name === 'ui' ? '界面' : '工具', count,
             plugins: marketPlugins.filter(plugin => plugin.category === name).slice(0, 6),
           }))
         : [];

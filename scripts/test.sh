@@ -169,6 +169,18 @@ rg -Fq 'dsh-pm-seg more' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'dsh-pm-segs-open' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 展开后「全部 N 类」胶囊消失，收起入口用低调文字 dsh-pm-collapse。
 rg -Fq 'dsh-pm-collapse' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 分类筛选参数：客户端必须用 category=（精确匹配原始分类），
+# 不许再塞进 group=（服务端 group 只认 6 个分组 id，塞原始分类名会匹配不到
+# 任何插件 → 用户报的现象：胶囊上写着「工作流 674」，点进去却是 0 个插件）。
+if rg -Fq "['group', overrides" "$ROOT/Plugins/DSHPluginManager/client/client.js"; then
+  echo "分类筛选不许用 group= 参数（那是服务端内部的分组 id）" >&2
+  exit 1
+fi
+rg -Fq "['category', overrides.category ?? category]" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '分类筛选走 category= 参数' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 冒烟里的假服务端必须忠实复刻真实服务端语义（category= 精确分类），
+# 否则它会替实现把「原始分类塞进 group=」这类错位掩盖成绿的。
+rg -Fq "query.get('category')" "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -Fq 'keywordVariants' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
 # 描述找插件：本地预筛 + 模型挑选，上下文上限必须有守卫。
 rg -Fq "'/dsh-plugin-manager/ai-search'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"

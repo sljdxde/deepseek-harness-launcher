@@ -8,8 +8,16 @@ import test from 'node:test';
 // 这些测试都要改 process.env.DSH_HOME 并写同一个临时目录布局，必须串行：
 // node:test 默认并发跑同一文件里的用例，环境会被互相踩（本文件独占 env，
 // 其余测试文件不受影响）。
-test.options ??= {};
-const serialTest = (name, options, fn) => test(name, { ...options, concurrency: false }, fn);
+//
+// serialTest 同时接受 (name, fn) 和 (name, options, fn)。
+// 之前它只写成 (name, options, fn)，而下面 21 处调用全是 (name, fn)：
+// 于是 options 收到了函数、fn 是 undefined，展开函数得到 {}，
+// test(name, { concurrency: false }, undefined) 建出一个**没有函数体**的空测试，
+// 直接秒过 —— 全部断言从未执行过（分类 bug 长期没被测出来就是这个原因）。
+const serialTest = (name, options, fn) => {
+  if (typeof options === 'function') return test(name, { concurrency: false }, options);
+  return test(name, { ...options, concurrency: false }, fn);
+};
 import {
   DEFAULT_SOURCE_ID,
   queryMarketplace,
@@ -184,9 +192,12 @@ serialTest('aggregateCachedSources + refreshPluginSources：缓存聚合、失�
       }),
       'https://bad.example/i.json': () => ({ ok: false, status: 500 }),
     });
+    // 内置默认源会 clone 整个 awesome-dsh-plugin 仓库——单测里必须替换掉，
+    // 否则测试会发真实网络请求并挂住（之前就是这样卡住的）。
+    const refreshMarketplace = async () => ({ count: 0, official: 0, categories: [], indexedAt: null });
 
-    const summary = await refreshPluginSources({ fetch: fetchImpl });
-    assert.equal(summary.sources, 3, '默认源 + 2 个自定义（默认源不在 fakeFetch 里会失败并被记录）');
+    const summary = await refreshPluginSources({ fetch: fetchImpl, refreshMarketplace });
+    assert.equal(summary.sources, 3, '默认源 + 2 个自定义');
     assert.equal(summary.plugins, 2);
     assert.ok(summary.errors.some(line => line.startsWith('bad.example') || line.includes('src-')), '坏源单独报错');
     const progress = readSourceRefreshProgress();
@@ -216,7 +227,7 @@ serialTest('setPluginSourceEnabled=false 后：聚合跳过该源', async () => 
         ok: true, status: 200, json: async () => ({ plugins: [{ name: 'off/x' }] }),
       }),
     });
-    await refreshPluginSources({ fetch: fetchImpl });
+    await refreshPluginSources({ fetch: fetchImpl, refreshMarketplace: async () => ({ count: 0, official: 0, categories: [], indexedAt: null }) });
     await setPluginSourceEnabled(added.source.id, false);
     const aggregated = await aggregateCachedSources();
     assert.deepEqual(aggregated.plugins, [], '停用的源不参与聚合');
@@ -255,7 +266,7 @@ serialTest('pnpmEnvironment：关闭时原 env，打开时注入 npm_config_regi
   }
 });
 
-serialTest('readMirrorStateCached：镜像插件不可用按关闭，短缓存生效', async () => {
+serialTest('readMirrorStateCached：镜像插件不可用按关闭；注入 fetch 时不缓存', async () => {
   resetMirrorCache();
   let calls = 0;
   const fetchImpl = async () => {
@@ -267,7 +278,9 @@ serialTest('readMirrorStateCached：镜像插件不可用按关闭，短缓存�
   assert.equal(first.table, null);
   const second = await readMirrorStateCached({ fetch: fetchImpl });
   assert.equal(second.enabled, false);
-  assert.equal(calls, 1, '10 秒内只请求一次');
+  // 注入 fetch 时每次都真发请求：缓存是给生产路径省往返的，
+  // 注入方（单测）要的是自己那份确定答案，不能被上一个用例缓存的状态污染。
+  assert.equal(calls, 2, '注入 fetch 时不走缓存');
   resetMirrorCache();
 });
 
@@ -337,7 +350,54 @@ serialTest('marketGroupOf：30+ 个原始分类折成 6 组，未命中的归 ot
   assert.equal(marketGroupLabel('nope'), '其他');
 });
 
-serialTest('queryMarketplace：group 过滤 + 按组计数 + 分区（每区 6 个）', async () => {
+serialTest('queryMarketplace：分类条的数字必须等于点进去看到的数量', async () => {
+  await withTempHome(async (home) => {
+    const marketDir = join(home, 'plugin-market');
+    await mkdir(marketDir, { recursive: true });
+    const plugins = [];
+    const add = (category, n) => {
+      for (let i = 0; i < n; i++) {
+        plugins.push({
+          id: `${category}-${i}`, name: `${category}-plugin-${i}`, repo: `o/${category}-${i}`,
+          author: 'o', category, descriptionEn: `${category} plugin ${i}`,
+          stars: 10 - i, downloads: 100 - i, addedDate: '2026-01-01',
+        });
+      }
+    };
+    // 故意混着「既是原始分类、又是分组 id」的 ui/tools/session，和只在原始分类里
+    // 出现的 workflow/dev/usage —— 后者正是用户报 bug 的那批：胶囊上写着数字，
+    // 点进去却一个都没有。
+    add('ui', 8); add('session', 5); add('tools', 3); add('workflow', 4); add('dev', 2); add('usage', 1);
+    await writeFile(join(marketDir, 'index.json'), JSON.stringify({
+      version: 2, indexedAt: new Date().toISOString(), categories: ['ui', 'session', 'tools', 'workflow', 'dev', 'usage'], plugins,
+    }));
+
+    const all = await queryMarketplace({});
+    const counts = new Map(all.counts.map(item => [item.name, item.count]));
+    assert.equal(counts.get('ui'), 8, 'ui 的计数');
+    assert.equal(counts.get('workflow'), 4, 'workflow 的计数（原始分类）');
+    assert.equal(counts.get('usage'), 1, 'usage 的计数');
+
+    // ── 核心不变量：胶囊上写 N，点进去就必须是 N 个 ──
+    for (const [name, count] of counts) {
+      const filtered = await queryMarketplace({ category: name });
+      assert.equal(filtered.total, count, `分类 ${name}：计数 ${count} 与筛选结果一致`);
+      assert.equal(filtered.plugins.length, Math.min(count, 60), `分类 ${name}：首页返回数量一致`);
+    }
+
+    // 分类视图（分组）同样要能筛出东西：group=auto 覆盖 workflow 等原始分类。
+    const autoOnly = await queryMarketplace({ group: 'auto' });
+    assert.equal(autoOnly.total, 4, 'group=auto 命中 workflow');
+    assert.ok(autoOnly.plugins.every(plugin => marketGroupOf(plugin.category) === 'auto'));
+
+    // 未知分类返回 0 而不是报错（前端会显示「暂无插件」）。
+    const unknown = await queryMarketplace({ category: 'no-such-category' });
+    assert.equal(unknown.total, 0, '未知分类返回 0 个');
+    assert.equal(unknown.error, undefined, '未知分类不是错误');
+  });
+});
+
+serialTest('queryMarketplace：分组过滤 + 按组计数 + 分区（每区 6 个）', async () => {
   await withTempHome(async (home) => {
     const marketDir = join(home, 'plugin-market');
     await mkdir(marketDir, { recursive: true });
@@ -358,13 +418,13 @@ serialTest('queryMarketplace：group 过滤 + 按组计数 + 分区（每区 6 �
 
     const all = await queryMarketplace({});
     const counts = new Map(all.counts.map(item => [item.name, item.count]));
-    assert.equal(counts.get('ui'), 8, '界面组计数');
-    assert.equal(counts.get('session'), 5, '会话组计数');
-    assert.equal(counts.get('other'), 2, 'browser 归其他');
-    assert.equal(all.counts.length, 4, '只有出现过的组');
-    assert.deepEqual(all.sections.map(section => section.group), ['ui', 'session', 'tools'], '分区按数量取前三组');
+    assert.equal(counts.get('ui'), 8, 'ui 的计数');
+    assert.equal(counts.get('session'), 5, 'session 的计数');
+    assert.equal(counts.get('browser'), 2, 'browser 归 other');
+    assert.equal(all.counts.length, 4, '只有出现过的分类');
+    assert.deepEqual(all.sections.map(section => section.category), ['ui', 'session', 'tools'], '分区按数量取前三类');
     assert.ok(all.sections.every(section => section.plugins.length <= 6), '每区最多 6 个');
-    assert.equal(all.sections[0].label, '界面', '分区带中文组名');
+    assert.equal(all.sections[0].label, '界面', '分区带中文名');
 
     const uiOnly = await queryMarketplace({ group: 'ui' });
     assert.equal(uiOnly.total, 8, 'group 过滤生效');
@@ -398,21 +458,36 @@ serialTest('buildPluginSearchPrompt：候选与描述都有上限（上下文受
   }));
   const prompt = buildPluginSearchPrompt('把会话导出成 markdown', candidates);
   assert.ok(prompt.length < 12000, 'prompt 长度受控：' + prompt.length);
-  const lines = prompt.split('\n').filter(line => /^\d+\. /.test(line));
+  // 候选行格式：[编号] 名称 | 分类 | 描述 | 周下载，星标
+  const lines = prompt.split('\n').filter(line => /^\[\d+\] /.test(line));
   assert.equal(lines.length, 40, '候选全部列出');
   for (const line of lines) {
     const parts = line.split(' | ');
-    assert.ok(parts[4].length <= 100, '单条描述截断到 100 字：' + parts[4].length);
+    assert.equal(parts.length, 4, '候选行四段：' + line.slice(0, 40));
+    assert.ok(parts[2].length <= 100, '单条描述截断到 100 字：' + parts[2].length);
   }
   assert.ok(prompt.includes('用户需求：把会话导出成 markdown'));
-  assert.ok(prompt.includes('{"picks"'), '要求模型只输出 JSON');
+  // listwise 精排：逐行打分格式 + 允许 0 分退出 + few-shot 示例。
+  assert.ok(prompt.includes('answer_num:'), '要求模型按行输出编号');
+  assert.ok(prompt.includes('answer_relevance:'), '要求模型给相关度分数');
+  assert.ok(prompt.includes('完全无关的插件给 0 分'), '允许 0 分作为「没有相关」的出口');
 });
 
 serialTest('parseSearchPicks：容忍围栏/废话、去重、越界丢弃、最多 5 个', () => {
+  // 当前协议是逐行打分（answer_num / answer_relevance / why），同时兼容旧的 JSON。
+  const lines = 'answer_num: 2, answer_relevance: 9, why: 直接导出\nanswer_num: 1, answer_relevance: 7, why: 部分相关';
+  const parsed = parseSearchPicks(lines, 3);
+  assert.equal(parsed.length, 2, '两行都解析出来');
+  assert.equal(parsed[0].index, 1, '编号按 1-based 转成 0-based');
+  assert.equal(parsed[0].score, 9, '带相关度分数');
+  assert.equal(parsed[0].why, '直接导出');
+  assert.equal(parsed[1].index, 0);
+  assert.equal(parsed[1].score, 7);
+
   const fenced = '好的，结果如下：\n```json\n{"picks":[{"i":2,"why":"a"},{"i":1,"why":"b"}]}\n```';
-  assert.deepEqual(parseSearchPicks(fenced, 3), [{ index: 1, why: 'a' }, { index: 0, why: 'b' }]);
+  assert.deepEqual(parseSearchPicks(fenced, 3).map(pick => pick.index), [0, 1], '围栏 + JSON 也能解析');
   const noisy = '{"picks":[{"i":1},{"i":1},{"i":9},{"i":0}]}';
-  assert.deepEqual(parseSearchPicks(noisy, 3), [{ index: 0, why: '' }], '去重 + 越界丢弃');
+  assert.deepEqual(parseSearchPicks(noisy, 3).map(pick => pick.index), [0], '去重 + 越界丢弃');
   const many = '{"picks":[{"i":1},{"i":2},{"i":3},{"i":4},{"i":5},{"i":6}]}';
   assert.equal(parseSearchPicks(many, 10).length, 5, '最多 5 个');
   assert.deepEqual(parseSearchPicks('不是 JSON', 3), []);
@@ -473,10 +548,12 @@ serialTest('searchPluginsByDescription：模型在预筛候选里挑；无模型
     assert.equal(degraded.fallback, true);
     assert.match(degraded.note, /模型检索失败/);
 
-    // 无关键词命中：不硬凑结果。
+    // 关键词一条都没命中：不能硬凑空结果——退化成「最热门的候选」交给模型判断
+    // （用户描述与插件措辞不同是常态，全落空时更需要一个兜底而不是空列表）。
     const none = await searchPluginsByDescription({ query: '完全无关的词汇xyz', llm });
-    assert.deepEqual(none.items, []);
-    assert.equal(none.candidates, 0);
+    assert.equal(none.candidates, 3, '无关键词命中时退回热门候选');
+    assert.equal(none.items.length, 1, '模型在热门候选里挑了 1 个');
+    assert.equal(none.items[0].name, 'tokenledger', '热门候选按星标降序，tokenledger 星标最高');
   });
 });
 
