@@ -193,7 +193,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-rail-item.on{background:var(--dsw-alias-bg-layer-1);box-shadow:0 1px 2px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.06);color:var(--dsw-alias-label-primary);font-weight:600}
 .dsh-pm-rail-item .n{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums;margin-left:auto}
 .dsh-pm-rail-item.dsh-pm-rail-updates{color:var(--pm-accent)}
-.dsh-pm-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:20px;margin:0 auto;max-width:1360px;overflow-y:auto;padding:24px 28px 32px;width:100%}
+.dsh-pm-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:24px;margin:0 auto;max-width:1360px;overflow-y:auto;padding:26px 30px 40px;width:100%}
 /* SVG 线性图标：16 网格 / 1.5 描边 / currentColor，替代 emoji。 */
 .dsh-pm-ic{display:inline-flex;flex:none}
 /* 主列头部：标题 + 日期 + 搜索 + 刷新。 */
@@ -267,19 +267,21 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-card-icon.dsh-pm-hue-cyan,.dsh-pm-card-chip.dsh-pm-hue-cyan{background:color-mix(in srgb,#1b7fa8 13%,transparent);color:color-mix(in srgb,#1b7fa8 80%,var(--dsw-alias-label-primary))}
 .dsh-pm-card-icon.dsh-pm-hue-indigo,.dsh-pm-card-chip.dsh-pm-hue-indigo{background:color-mix(in srgb,#4f63d2 13%,transparent);color:color-mix(in srgb,#4f63d2 80%,var(--dsw-alias-label-primary))}
 .dsh-pm-card-chip{align-items:center;border-radius:5px;display:inline-flex;font-size:10.5px;font-weight:600;gap:3px;height:17px;padding:0 6px}
-/* 分类条：带数量的分段胶囊（服务端已归并成 6 组，直接平铺，无展开/无下拉） */
-.dsh-pm-catbar{align-items:center;display:flex;flex-wrap:wrap;gap:12px;padding-top:4px}
-.dsh-pm-segs{display:inline-flex;flex:1 1 0;flex-wrap:nowrap;gap:5px;min-width:0;overflow-x:auto;scrollbar-width:none}
-.dsh-pm-segs::-webkit-scrollbar{display:none}
-.dsh-pm-seg{flex:none}
-.dsh-pm-seg{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:16px;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;font:inherit;font-size:12.5px;gap:6px;height:32px;padding:0 13px}
+/* 分类条：原始分类按数量平铺；超过 8 个收进「全部 N 类」，点击在下方换行展开。 */
+.dsh-pm-catbar{align-items:flex-start;display:flex;flex-wrap:wrap;gap:12px;padding:0}
+.dsh-pm-segs{display:flex;flex:1 1 auto;flex-wrap:wrap;gap:8px;min-width:0}
+.dsh-pm-seg{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:17px;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:12.5px;gap:6px;height:34px;padding:0 14px;white-space:nowrap}
 .dsh-pm-seg:hover{border-color:var(--dsw-alias-label-tertiary);color:var(--dsw-alias-label-primary)}
 .dsh-pm-seg.on{background:var(--pm-accent);border-color:var(--pm-accent);color:var(--pm-accent-fg);font-weight:600}
 .dsh-pm-seg .n{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
 .dsh-pm-seg.on .n{color:color-mix(in srgb,var(--pm-accent-fg) 75%,transparent)}
-.dsh-pm-seg.more{background:color-mix(in srgb,var(--pm-accent) 8%,transparent);border-color:color-mix(in srgb,var(--pm-accent) 30%,transparent);border-style:dashed;color:var(--pm-accent)}
+.dsh-pm-seg.more{background:color-mix(in srgb,var(--pm-accent) 8%,transparent);border-color:color-mix(in srgb,var(--pm-accent) 40%,transparent);color:var(--pm-accent);font-weight:600}
+.dsh-pm-seg.more.expanded{background:var(--pm-accent);border-color:var(--pm-accent);color:var(--pm-accent-fg)}
+.dsh-pm-seg.more.expanded .n{color:var(--pm-accent-fg)}
+/* 展开区：独立一行、换行排列，与收起按钮留 8px */
+.dsh-pm-segs-open{padding:0;width:100%;margin-top:2px}
 .dsh-pm-catbar-sp{flex:0 0 auto;width:0}
-.dsh-pm-select{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;height:30px;padding:0 8px}
+.dsh-pm-select{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:9px;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;height:34px;padding:0 10px}
 .dsh-pm-select:hover{border-color:var(--dsw-alias-label-tertiary)}
 /* 分区：标题行 + 三列栅格（每区 6 张 = 两整行）+ 分区尾部入口 */
 .dsh-pm-sec2{display:flex;flex-direction:column;gap:12px}
@@ -2119,7 +2121,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       }))
 
     // 分类视图：面包屑返回 + 该分类全量列表（服务端分页）+ 分类条保留。
-    const categoryView = h('div', null,
+    const categoryView = h(React.Fragment, null,
       h('div', { className: 'dsh-pm-crumbs' },
         h('button', { className: 'dsh-pm-crumbs-back', onClick: () => setCategory('all') }, icon('back', 12), '返回发现'),
         h('span', { className: 'sep' }, '/'),
@@ -2137,7 +2139,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       manualRow)
 
     // 发现页首屏：推荐位 + 双榜 + 分类条 + 分区（搜索时退化成扁平结果）。
-    const discoverAllView = h('div', null,
+    const discoverAllView = h(React.Fragment, null,
       h('div', { className: 'dsh-pm-mainhead' },
         h('h2', null, '本周推荐'), h('span', { className: 'date' }, '每周日更新推荐位'),
         h('span', { style: { flex: 1 } }),
@@ -2155,12 +2157,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       searchTerm ? discoverGrid : (marketSections.length > 0 ? sectionView : discoverGrid),
       manualRow)
 
-    const discoverTab = h('div', null,
+    // Fragment 一路到底：discoverAllView/categoryView 是 Fragment，这里也必须
+    // 是 Fragment——否则这一层 div 会把所有区块重新包成一个子元素，父级 gap 失效。
+    const discoverTab = h(React.Fragment, null,
       market === null ? h('div', { className: 'dsh-pm-empty' }, '加载中…') :
       market === false ? h('div', { className: 'dsh-pm-empty' },
         h('div', null, '市场索引还没有下载'),
         h('button', { className: 'dsh-pm-install', style: { marginTop: '8px' }, disabled: refreshing, onClick: refreshMarket }, refreshing ? '同步中…' : '立即同步')) :
-      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '18px' } }, queueStrip, isCategoryView ? categoryView : discoverAllView))
+      h(React.Fragment, null, queueStrip, isCategoryView ? categoryView : discoverAllView))
 
     // ── 内置页：开关列表（无可搜索/联网需求）。 ──
     const builtinItems = installed.filter(item => item.source === 'bundled' && !item.broken)
@@ -2314,7 +2318,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       { id: 'installed', label: '已安装', iconName: 'download', count: installed.length || null },
       { id: 'sources', label: '插件源', iconName: 'server', count: Array.isArray(sources) ? sources.length : null },
     ]
-    const viewBody = tab === 'installed' ? h('div', null,
+    const viewBody = tab === 'installed' ? h(React.Fragment, null,
         updatesBar,
         updateQueueStrip,
         batchStrip,
