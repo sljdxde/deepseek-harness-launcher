@@ -1030,7 +1030,9 @@ else
 fi
 # 覆盖率门禁：插件的每个源文件都要 100% 行覆盖。
 # 放在打包之前 —— 它是逻辑门禁，不该被 macOS 打包步骤挡住（Windows CI 上跳过打包
-# 时也要能跑）。判定直接用 node 自己的覆盖率报告（口径与 node 一致）。
+# 时也要能跑）。判定由 coverage-check.mjs 自己解 V8 原始覆盖数据得出
+# （不用 node 的报告表格：它跨进程聚合时会掩盖「某个进程没跑到」的分支，
+#  给出假绿灯 —— 详见那个脚本里的说明）。
 if [[ "${DHL_SKIP_COVERAGE:-0}" != "1" ]]; then
   node "$ROOT/scripts/coverage-check.mjs"
 fi
