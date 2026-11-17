@@ -2082,7 +2082,6 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
     const categoryBar = h('div', { className: 'dsh-pm-catbar' },
       h('div', { className: 'dsh-pm-segs' },
-        categorySeg('all', '全部', market && market.allTotal ? market.allTotal : marketTotal, category === 'all'),
         pinnedCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name)),
         // 「全部 N 类」只在收起态显示：展开后它自己消失，用户要收起时
         // 用展开分类行末尾那个低调的文字「收起」（不再是醒目的胶囊按钮）。
@@ -2379,7 +2378,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             railItems.map(item => h('button', {
               key: item.id,
               className: `dsh-pm-rail-item${tab === item.id ? ' on' : ''}`,
-              onClick: () => setTab(item.id),
+              onClick: () => { setTab(item.id); if (item.id === 'discover') setCategory('all') },
               'aria-current': tab === item.id ? 'page' : undefined,
             }, icon(item.iconName, 15), item.label, item.count ? h('span', { className: 'n' }, String(item.count)) : null)),
             updatableCount > 0

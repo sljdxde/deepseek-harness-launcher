@@ -845,11 +845,10 @@ await openInstalledPanel(runtime);
   const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
   const crumbs = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-crumbs( |$)/.test(String(node.props.className || '')));
 
-  // 1. 首屏：全部 + 前 8 个分类 + 折叠按钮（12 类 → 收起 4 个）。
-  assert.equal(segs().length, 10, '全部 + 前 8 个分类 + 折叠按钮');
-  assert.ok(textOf(segByLabel('全部')).includes(String(marketPlugins.length)), '「全部」带总数');
+  // 1. 首屏：分类条只有真实分类（无「全部」标签）+ 折叠按钮（12 类 → 收起 4 个）。
+  assert.equal(segs().length, 9, '前 8 个分类 + 折叠按钮，没有「全部」标签');
+  assert.equal(segs().filter(node => /dsh-pm-seg more/.test(String(node.props.className||'')) === false && textOf(node).startsWith('全部')).length, 0, '分类条里没有「全部」标签（只有折叠按钮可以叫「全部 N 类」）');
   assert.ok(textOf(segByLabel('界面')).includes('8'), '分类胶囊带数量');
-  assert.ok(/dsh-pm-seg on/.test(String(segByLabel('全部').props.className)), '默认选中「全部」');
   const moreBtn = () => segs().find(node => /dsh-pm-seg more/.test(String(node.props.className || '')));
   assert.ok(moreBtn(), '有折叠按钮');
   assert.ok(textOf(moreBtn()).includes('12'), '折叠按钮显示分类总数');
