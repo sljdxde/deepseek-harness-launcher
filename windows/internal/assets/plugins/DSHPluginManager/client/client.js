@@ -301,17 +301,21 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-crumbs-back{align-items:center;background:none;border:0;border-radius:6px;color:var(--pm-accent);cursor:pointer;display:inline-flex;font:inherit;font-size:12px;font-weight:600;gap:4px;padding:2px 6px}
 .dsh-pm-crumbs-back:hover{background:color-mix(in srgb,var(--pm-accent) 10%,transparent)}
 /* 描述找插件：一条虚线检索行 + 结果面板（top5，带理由/下载/星标/版本） */
-.dsh-pm-ai-bar{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;color:var(--dsw-alias-label-tertiary);display:flex;gap:10px;height:46px;padding:0 0 0 14px;transition:border-color .15s ease,box-shadow .15s ease}
-/* 主搜索入口：聚焦时整条边框变品牌色并外发光 */
-.dsh-pm-ai-bar:focus-within{border-color:var(--pm-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--pm-accent) 14%,transparent)}
-.dsh-pm-ai-bar .spark{color:var(--pm-accent)}
-.dsh-pm-ai-badge{background:color-mix(in srgb,var(--pm-accent) 12%,transparent);border-radius:5px;color:var(--pm-accent);flex:none;font-size:10.5px;font-weight:700;height:18px;line-height:18px;padding:0 6px}
-.dsh-pm-ai-bar .inp{background:none;border:0;color:var(--dsw-alias-label-primary);flex:1;font:inherit;font-size:13.5px;min-width:0;outline:none}
-.dsh-pm-ai-bar .inp::placeholder{color:var(--dsw-alias-label-secondary)}
-.dsh-pm-ai-go{align-self:stretch;background:var(--pm-accent);border:0;border-radius:0 11px 11px 0;color:var(--pm-accent-fg);cursor:pointer;flex:none;font:inherit;font-size:13px;font-weight:650;padding:0 22px;white-space:nowrap}
-.dsh-pm-ai-go:hover:not(:disabled){filter:brightness(1.06)}
-.dsh-pm-ai-go:disabled{cursor:default;opacity:.55}
-.dsh-pm-ai{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;display:flex;flex-direction:column;gap:14px;padding:18px 20px}
+/* 搜索条：整条是可点击输入区（点图标/空白都能聚焦），右侧按钮内嵌不贴边 */
+.dsh-pm-ai-bar{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-shadow:0 1px 2px rgba(15,17,21,.04);color:var(--dsw-alias-label-tertiary);cursor:text;display:flex;gap:11px;height:52px;padding:0 8px 0 16px;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
+.dsh-pm-ai-bar:hover{border-color:color-mix(in srgb,var(--fg) 18%,var(--dsw-alias-border-l2))}
+.dsh-pm-ai-bar:focus-within{background:var(--dsw-alias-bg-layer-1);border-color:var(--pm-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--pm-accent) 13%,transparent)}
+.dsh-pm-ai-bar .spark{color:var(--pm-accent);flex:none}
+.dsh-pm-ai-badge{background:color-mix(in srgb,var(--pm-accent) 11%,transparent);border-radius:6px;color:var(--pm-accent);flex:none;font-size:10.5px;font-weight:700;height:19px;letter-spacing:.02em;line-height:19px;padding:0 7px}
+.dsh-pm-ai-bar .inp{background:none;border:0;color:var(--dsw-alias-label-primary);cursor:text;flex:1;font:inherit;font-size:14px;min-width:0;outline:none}
+.dsh-pm-ai-bar .inp::placeholder{color:var(--dsw-alias-label-tertiary)}
+.dsh-pm-ai-go{align-items:center;background:var(--pm-accent);border:0;border-radius:10px;color:var(--pm-accent-fg);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:13px;font-weight:650;gap:5px;height:38px;justify-content:center;padding:0 18px;white-space:nowrap;transition:filter .14s ease,opacity .14s ease}
+.dsh-pm-ai-go:hover:not(:disabled){filter:brightness(1.07)}
+.dsh-pm-ai-go:disabled{cursor:default;opacity:.4}
+/* 检索中：按钮内小转圈 */
+.dsh-pm-ai-go .spin{animation:dsh-pm-spin .8s linear infinite;border:1.6px solid currentColor;border-radius:50%;border-right-color:transparent;height:11px;width:11px}
+@keyframes dsh-pm-spin{to{transform:rotate(360deg)}}
+.dsh-pm-ai{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;display:flex;flex-direction:column;gap:12px;padding:16px 18px}
 .dsh-pm-ai-head{align-items:baseline;display:flex;flex-wrap:wrap;gap:10px}
 .dsh-pm-ai-head h3{color:var(--dsw-alias-label-primary);font-size:13.5px;font-weight:700;margin:0}
 .dsh-pm-ai-head .meta{color:var(--dsw-alias-label-tertiary);font-size:11.5px}
@@ -319,22 +323,24 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-ai-note.bad{color:var(--dsw-alias-state-error-primary)}
 .dsh-pm-ai-list{border-top:1px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column}
 /* 流式检索日志：等宽字体逐行打印步骤与模型输出，最新在最下 */
-/* 检索过程：时间线（圆点 + 竖线），不再是灰底日志框。
-   每条 = 圆点 + 步骤名 + 内容；完成绿、降级琥珀、错误红、进行中呼吸。 */
-.dsh-pm-ai-steps{display:flex;flex-direction:column;gap:0;max-height:190px;overflow-y:auto;padding-right:2px}
-.dsh-pm-ai-step{display:flex;gap:11px;min-width:0;padding:3px 0;position:relative}
-.dsh-pm-ai-step::before{content:"";position:absolute;left:4px;top:14px;bottom:-3px;width:1px;background:var(--dsw-alias-border-l2)}
-.dsh-pm-ai-step:last-child::before{display:none}
-.dsh-pm-ai-step .dot{background:var(--dsw-alias-border-l3);border-radius:50%;flex:none;height:9px;margin-top:5px;position:relative;width:9px;z-index:1}
+/* 检索过程：逐条流动。只保留最近 3 条（更早的自动淡出），新的从底部滑入并
+   高亮一下——既能看清「正在做什么」，又不会像日志那样越堆越高。 */
+.dsh-pm-ai-steps{display:flex;flex-direction:column;gap:0;min-height:0;overflow:hidden}
+.dsh-pm-ai-step{align-items:flex-start;animation:dsh-pm-step-in .26s cubic-bezier(.2,.7,.2,1) both;display:flex;gap:10px;min-width:0;padding:2px 0}
+@keyframes dsh-pm-step-in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+/* 越早的越淡：第 3 条 60%，更早的已经不渲染 */
+.dsh-pm-ai-step.old{opacity:.55}
+.dsh-pm-ai-step .dot{background:var(--dsw-alias-border-l3);border-radius:50%;flex:none;height:7px;margin-top:7px;width:7px}
 .dsh-pm-ai-step.ok .dot{background:var(--dsw-alias-state-success-primary)}
 .dsh-pm-ai-step.warn .dot{background:var(--dsw-alias-state-warn-primary)}
 .dsh-pm-ai-step.bad .dot{background:var(--dsw-alias-state-error-primary)}
 .dsh-pm-ai-step.live .dot{animation:dsh-pm-pulse 1.1s ease-in-out infinite;background:var(--pm-accent)}
-@keyframes dsh-pm-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.8)}}
-.dsh-pm-ai-step .body{display:flex;flex-direction:column;gap:1px;min-width:0;padding-bottom:3px}
-.dsh-pm-ai-step .name{color:var(--dsw-alias-label-primary);font-size:12px;font-weight:600;line-height:18px}
-.dsh-pm-ai-step .detail{color:var(--dsw-alias-label-tertiary);font-size:11.5px;line-height:17px;overflow-wrap:anywhere}
-.dsh-pm-ai-step .detail.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px}
+@keyframes dsh-pm-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.75)}}
+/* 一行显示：步骤名 + 详情（详情单行省略，鼠标悬停看全文） */
+.dsh-pm-ai-step .line{align-items:baseline;display:flex;gap:8px;min-width:0;flex:1}
+.dsh-pm-ai-step .name{color:var(--dsw-alias-label-primary);flex:none;font-size:12px;font-weight:600;line-height:18px;white-space:nowrap}
+.dsh-pm-ai-step .detail{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-pm-ai-step .detail.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px}
 .dsh-pm-ai-step.warn .name{color:var(--dsw-alias-state-warn-primary)}
 .dsh-pm-ai-step.bad .name{color:var(--dsw-alias-state-error-primary)}
 /* 结果摘要条：一句话说明检索方式与命中数 */
@@ -2117,16 +2123,24 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             h('span', { style: { flex: 1 } }),
             h('button', { className: 'dsh-pm-tool', onClick: () => { setAiResult(null); setAiQuery(''); setAiLog([]) }, 'aria-label': '关闭描述检索结果' }, icon('x', 13))),
           aiResult && aiResult.error ? h('div', { className: 'dsh-pm-ai-note bad' }, aiResult.error) : null,
-          // 时间线：每一步一行，模型输出单独用等宽字体展示。
+          // 逐条流动：只渲染最近 3 条（更早的淡出，不堆叠占空间），
+          // 每条单行显示「步骤名 + 详情」，详情省略、hover 看全文。
           aiLog.length > 0
-            ? h('div', {
-                className: 'dsh-pm-ai-steps', role: 'log', 'aria-live': 'polite',
-                ref: node => { aiLogRef.current = node; if (node) node.scrollTop = node.scrollHeight },
-              }, aiLog.map((entry, i) => h('div', { key: i, className: `dsh-pm-ai-step ${stepState(entry, i)}` },
-                h('span', { className: 'dot', 'aria-hidden': true }),
-                h('div', { className: 'body' },
-                  h('div', { className: 'name' }, AI_STEP_LABELS[entry.step] || entry.step),
-                  h('div', { className: `detail${entry.step === 'model-output' || entry.step === 'model-delta' ? ' mono' : ''}` }, entry.text)))))
+            ? h('div', { className: 'dsh-pm-ai-steps', role: 'log', 'aria-live': 'polite' },
+                aiLog.slice(-3).map((entry, i, arr) => {
+                  const index = aiLog.length - arr.length + i
+                  return h('div', {
+                    key: index,
+                    className: `dsh-pm-ai-step ${stepState(entry, index)}${i < arr.length - 1 ? ' old' : ''}`,
+                  },
+                    h('span', { className: 'dot', 'aria-hidden': true }),
+                    h('div', { className: 'line' },
+                      h('span', { className: 'name' }, AI_STEP_LABELS[entry.step] || entry.step),
+                      h('span', {
+                        className: `detail${entry.step === 'model-output' || entry.step === 'model-delta' ? ' mono' : ''}`,
+                        title: entry.text,
+                      }, entry.text)))
+                }))
             : null,
           // 结果摘要：一句话说清「谁挑的、挑了几个、是否降级」。
           aiResult && aiResult.ok
@@ -2151,7 +2165,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         placeholder: '描述你想要的插件，例如「把会话导出成 Markdown」',
         'aria-label': '描述你想要的插件',
       }),
-      h('button', { type: 'submit', className: 'dsh-pm-ai-go', disabled: aiLoading || !aiQuery.trim() }, aiLoading ? '检索中…' : '找插件'))
+      h('button', { type: 'submit', className: 'dsh-pm-ai-go', disabled: aiLoading || !aiQuery.trim() },
+        aiLoading
+          ? h(React.Fragment, null, h('span', { className: 'spin', 'aria-hidden': true }), '检索中')
+          : h(React.Fragment, null, icon('search', 13), '找插件')))
 
     // sticky 手动安装行：npm 包名 / GitHub 仓库 / 本地文件夹（走现有 install 接口）。
     const manualRow = h('form', {

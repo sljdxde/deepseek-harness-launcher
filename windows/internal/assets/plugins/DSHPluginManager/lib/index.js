@@ -4188,7 +4188,7 @@ export async function readMarketplaceAggregated() {
 // 没有模型 / 模型失败时降级为关键词排序 top5，并如实标注 fallback。
 // ---------------------------------------------------------------------------
 
-const AI_SEARCH_MAX_CANDIDATES = 40;
+const AI_SEARCH_MAX_CANDIDATES = 60;
 const AI_SEARCH_MAX_DESC = 100;
 const AI_SEARCH_MAX_QUERY = 500;
 const AI_SEARCH_MAX_PROMPT = 12000;
@@ -4215,33 +4215,49 @@ export function rankPluginsByKeywords(plugins, query) {
   if (!text) return [];
   const tokens = text.split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 2);
   if (tokens.length === 0) return [];
-  // 每个 token 的变体（CJK 有双字变体），整词命中权重 2 倍于双字命中。
-  const matchers = [];
-  for (const token of tokens) {
-    const variants = keywordVariants(token);
-    for (const variant of variants) {
-      matchers.push({ variant, weight: variant === token ? 2 : 1 });
-    }
-  }
-  if (matchers.length === 0) return [];
+
+  /**
+   * 每个 token 的匹配组：整词 + CJK 双字变体。
+   * 评分按「token 级最佳命中」算，而不是把所有变体命中数累加——累加会让
+   * 「侧边栏管理」这种四字查询里没命中「管理」的相关插件（描述只写
+   * 「侧边栏完整工作台」的 DSH-better-sidebar 就是）被未命中变体稀释掉分。
+   * 同时是 OR 语义：命中任意一个 token 就进候选，只是排名靠后。
+   */
+  const groups = tokens.map(token => ({
+    token,
+    variants: keywordVariants(token),
+    weight: token.length >= 3 ? 1.4 : 1,
+  }));
+
   const scored = [];
   for (const plugin of Array.isArray(plugins) ? plugins : []) {
     if (!plugin) continue;
-    const name = String(plugin.name || '').toLowerCase();
-    const repo = String(plugin.repo || '').toLowerCase();
+    const nameRepo = `${String(plugin.repo || '').toLowerCase()} ${String(plugin.name || '').toLowerCase()}`;
     const description = `${plugin.descriptionEn || ''} ${plugin.descriptionZh || ''}`.toLowerCase();
     const category = String(plugin.category || '').toLowerCase();
+
     let score = 0;
-    for (const { variant, weight } of matchers) {
-      if (name.includes(variant)) score += 4 * weight;
-      if (repo.includes(variant)) score += 3 * weight;
-      if (description.includes(variant)) score += 2 * weight;
-      if (category.includes(variant)) score += 1 * weight;
+    let matchedTokens = 0;
+    for (const group of groups) {
+      let best = 0;
+      for (const variant of group.variants) {
+        const factor = variant === group.token ? 1 : 0.55;
+        if (nameRepo.includes(variant)) best = Math.max(best, 5 * factor);
+        else if (description.includes(variant)) best = Math.max(best, 3 * factor);
+        else if (category.includes(variant)) best = Math.max(best, 1.5 * factor);
+      }
+      if (best > 0) {
+        matchedTokens += 1;
+        score += best * group.weight;
+      }
     }
-    if (text.length >= 4 && description.includes(text)) score += 3;
-    if (score > 0) scored.push({ plugin, score });
+    if (matchedTokens > 0) {
+      score *= 1 + (matchedTokens - 1) * 0.5;
+      scored.push({ plugin, score, matchedTokens });
+    }
   }
-  scored.sort((a, b) => b.score - a.score
+  scored.sort((a, b) => b.matchedTokens - a.matchedTokens
+    || b.score - a.score
     || (b.plugin.stars || 0) - (a.plugin.stars || 0)
     || (b.plugin.downloads || 0) - (a.plugin.downloads || 0));
   return scored.map(item => item.plugin);
@@ -4378,7 +4394,7 @@ export function parseSearchPicks(text, candidateCount, candidates = []) {
  * 之所以要多条：用户机器上可能既有免费路由又有余额不足的付费路由（实测 402
  * ACCOUNT_QUOTA），必须能换一条再试，而不是直接降级。
  */
-export async function resolveSearchRoutes(llm, max = 4) {
+export async function resolveSearchRoutes(llm, max = 6) {
   const providers = typeof llm?.listProviders === 'function' ? llm.listProviders() : [];
   const routes = [];
   for (const provider of providers || []) {
@@ -4386,14 +4402,23 @@ export async function resolveSearchRoutes(llm, max = 4) {
     for (const model of Array.isArray(models) ? models : []) {
       const modalities = model.inputModalities;
       if (Array.isArray(modalities) && !modalities.includes('text')) continue;
-      routes.push({ provider: provider.id, model: model.id });
+      routes.push({ provider: provider.id, model: model.id, name: model.name || '' });
     }
   }
+  /**
+   * 排序目标：先挑**最快**的模型，而不是「名字带 free」的。
+   * 实测 group/* 这类路由组模型是推理模型，思考要 20-40 秒（44-52 秒才出结果），
+   * 而具体的 flash 型号（loomy/GLM-5.3-Flash、autoclaw-cn/zai_glm-5.3-flash）
+   * 几秒就能出。因此：具体 flash 型号 > 其他具体型号 > 路由组（group/* / auto/*）。
+   */
   const rank = (route) => {
     const id = String(route.model || '').toLowerCase();
-    if (id.includes('free')) return 0;
-    if (/flash|mini|lite|small|haiku/.test(id)) return 1;
-    return 2;
+    const isGroup = /^(group|auto)\//.test(id);
+    const isFlash = /flash|mini|lite|small|haiku|turbo/.test(id);
+    if (!isGroup && isFlash) return 0;   // 具体快模型，首选
+    if (!isGroup) return 1;              // 其他具体模型
+    if (isFlash) return 2;               // 路由组但名字是 flash
+    return 3;                            // 其余路由组
   };
   return routes
     .map((route, index) => ({ route, index }))
@@ -4486,7 +4511,7 @@ export async function searchPluginsByDescription(options = {}) {
   const index = await marketplaceIndexCached();
   const all = Array.isArray(index.plugins) ? index.plugins : [];
   const keywordHits = rankPluginsByKeywords(all, query);
-  const ranked = (keywordHits.length > 0 ? keywordHits : all.slice().sort((a, b) => (b.downloads || 0) - (a.downloads || 0)))
+  const ranked = (keywordHits.length > 0 ? keywordHits : all.slice().sort((a, b) => (b.stars || 0) - (a.stars || 0)))
     .slice(0, AI_SEARCH_MAX_CANDIDATES);
   if (ranked.length === 0) {
     return { ok: true, items: [], candidates: 0, fallback: true, note: '插件库为空，先同步插件源试试' };
@@ -4507,8 +4532,11 @@ export async function searchPluginsByDescription(options = {}) {
   let debugInfo = options.debug ? { routes } : {};
   for (const route of routes) {
     const controller = new AbortController();
-    // 推理模型首个正文 token 常要 20-40 秒，30 秒会把还在思考的模型 abort 掉。
-    const timer = setTimeout(() => controller.abort(), Number(options.timeoutMs) || 75000);
+    // 分级超时：前面的快模型 25 秒不出正文就换下一个（它们通常 3-8 秒出结果）；
+    // 最后一条路由用长超时兜底（推理模型首个正文 token 可能要 20-40 秒）。
+    const isLast = ri === routes.length - 1;
+    const budget = isLast ? (Number(options.timeoutMs) || 75000) : Math.min(25000, Number(options.timeoutMs) || 25000);
+    const timer = setTimeout(() => controller.abort(), budget);
     try {
       const outcome = await streamSearchCompletion(llm, route, prompt, controller.signal);
       if (outcome.error) {
@@ -4562,7 +4590,7 @@ export async function searchPluginsByDescriptionStream(options = {}) {
   // 关键词一条都没命中时，不能让模型面对空候选——退化成「最热门的 40 个」，
   // 由模型来判断（用户描述和插件措辞不同时，关键词匹配经常全落空）。
   const keywordHits = rankPluginsByKeywords(all, query);
-  const ranked = (keywordHits.length > 0 ? keywordHits : all.slice().sort((a, b) => (b.downloads || 0) - (a.downloads || 0)))
+  const ranked = (keywordHits.length > 0 ? keywordHits : all.slice().sort((a, b) => (b.stars || 0) - (a.stars || 0)))
     .slice(0, AI_SEARCH_MAX_CANDIDATES);
   emit('candidates', {
     count: ranked.length,
@@ -4594,24 +4622,34 @@ export async function searchPluginsByDescriptionStream(options = {}) {
   }
   emit('routes', { count: routes.length, models: routes.map(route => `${route.provider}/${route.model}`) });
 
+  /**
+   * 并发竞速：把前几条路由同时发出，谁先给出可用结果就用谁。
+   *
+   * 实测本机 6 个路由里 5 个因环境原因失败（余额不足 / 429 限频 / 空回复 /
+   * 推理超时），串行重试累计 104 秒。并发后总耗时 ≈ 最慢的那个成功路由，
+   * 而不是所有失败路由之和。
+   * 逐条失败仍会 emit 事件（UI 能看见），只是不再阻塞等待。
+   */
+  const RACE_WIDTH = Math.min(3, routes.length);
+  let settled = false;
   let lastError = '';
-  for (let ri = 0; ri < routes.length; ri++) {
-    const route = routes[ri];
+
+  const attempt = async (route, ri) => {
     emit('model-try', { index: ri + 1, total: routes.length, model: `${route.provider}/${route.model}` });
     const controller = new AbortController();
-    // 推理模型首个正文 token 常要 20-40 秒，30 秒会把还在思考的模型 abort 掉。
-    const timer = setTimeout(() => controller.abort(), Number(options.timeoutMs) || 75000);
+    // 推理型路由（group/*、GLM）首个正文 token 可能要 20-40 秒；快模型 25 秒足够。
+    const isReasoning = /glm|group\/|auto\/|qwen3/i.test(String(route.model || ''));
+    const budget = isReasoning ? 60000 : 25000;
+    const timer = setTimeout(() => controller.abort(), budget);
     try {
-      // 模型的关键输出（JSON 片段）实时推送给 UI 打印。
       let firstChunk = true;
       const outcome = await streamSearchCompletion(llm, route, prompt, controller.signal, (delta, full) => {
         if (firstChunk) { emit('model-first-token', { model: `${route.provider}/${route.model}` }); firstChunk = false; }
         emit('model-delta', { text: delta, length: full.length });
       });
       if (outcome.error) {
-        lastError = outcome.error;
         emit('model-error', { model: `${route.provider}/${route.model}`, error: outcome.error });
-        continue;
+        return null;
       }
       emit('model-output', {
         chars: outcome.text.length,
@@ -4620,22 +4658,49 @@ export async function searchPluginsByDescriptionStream(options = {}) {
       });
       const picks = parseSearchPicks(outcome.text, ranked.length, ranked);
       emit('parsed', { picks: picks.map(pick => ({ name: ranked[pick.index] && (ranked[pick.index].repo || ranked[pick.index].name), why: pick.why })) });
-      if (picks.length === 0) {
-        emit('fallback', { reason: '模型没有挑出相关插件' });
-        const result = { ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true, note: '模型没有挑出相关插件，按关键词匹配给出结果' };
-        emit('done', result);
-        return result;
-      }
-      const result = { ok: true, items: searchItems(ranked, picks, false), candidates: ranked.length, promptChars: prompt.length, model: route, fallback: false };
-      emit('done', result);
-      return result;
+      if (picks.length === 0) return null;
+      return { route, picks };
     } catch (error) {
-      lastError = String(error?.message || error);
-      emit('model-error', { model: `${route.provider}/${route.model}`, error: lastError });
+      emit('model-error', { model: `${route.provider}/${route.model}`, error: String(error?.message || error) });
+      return null;
     } finally {
       clearTimeout(timer);
     }
+  };
+
+  // 前 RACE_WIDTH 条并发，其余留给后续补位（某条失败后立刻补上下一条）。
+  const queue = routes.map((route, index) => ({ route, index }));
+  const running = new Set();
+  let winner = null;
+  const startNext = () => {
+    const next = queue.shift();
+    if (!next) return;
+    const task = attempt(next.route, next.index)
+      .then(result => {
+        if (result && !settled) {
+          settled = true;
+          winner = result;
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        running.delete(task);
+        if (!settled) startNext();
+      });
+    running.add(task);
+  };
+  for (let i = 0; i < RACE_WIDTH; i++) startNext();
+  while (running.size > 0 && !settled) {
+    await Promise.race([...running]);
   }
+
+  if (winner) {
+    const result = { ok: true, items: searchItems(ranked, winner.picks, false), candidates: ranked.length, promptChars: prompt.length, model: winner.route, fallback: false };
+    emit('done', result);
+    return result;
+  }
+  lastError = '所有模型都不可用';
+
   emit('fallback', { reason: lastError || '所有路由都不可用' });
   const result = {
     ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true,
