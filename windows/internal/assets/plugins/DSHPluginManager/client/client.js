@@ -268,9 +268,15 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-card-icon.dsh-pm-hue-indigo,.dsh-pm-card-chip.dsh-pm-hue-indigo{background:color-mix(in srgb,#4f63d2 13%,transparent);color:color-mix(in srgb,#4f63d2 80%,var(--dsw-alias-label-primary))}
 .dsh-pm-card-chip{align-items:center;border-radius:5px;display:inline-flex;font-size:10.5px;font-weight:600;gap:3px;height:17px;padding:0 6px}
 /* 分类条：原始分类按数量平铺；超过 8 个收进「全部 N 类」，点击在下方换行展开。 */
-.dsh-pm-catbar{align-items:flex-start;display:flex;flex-wrap:wrap;gap:12px;padding:0}
+/* 分类条：两行结构。第一行 = 分类 chips（可换行）+ 右侧筛选组（来源/排序），
+   第二行 = 展开的全部分类。筛选组永远钉在第一行右侧 —— 之前两个 select 是
+   catbar 的独立 flex 项，放不下时最后一个会孤零零掉到第二行（用户截图的排版）。 */
+.dsh-pm-catbar{display:flex;flex-direction:column;gap:8px;padding:0}
+.dsh-pm-catrow{align-items:center;display:flex;gap:10px;min-width:0}
 .dsh-pm-segs{display:flex;flex:1 1 auto;flex-wrap:wrap;gap:8px;min-width:0}
-.dsh-pm-seg{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:17px;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:12.5px;gap:6px;height:34px;padding:0 14px;white-space:nowrap}
+.dsh-pm-seg{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:15px;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:12.5px;gap:6px;height:30px;padding:0 12px;transition:border-color .14s ease,color .14s ease,background .14s ease;white-space:nowrap}
+.dsh-pm-filters{align-items:center;display:flex;flex:none;gap:8px;margin-left:auto}
+.dsh-pm-select{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:12px;height:30px;max-width:200px;padding:0 8px}
 .dsh-pm-seg:hover{border-color:var(--dsw-alias-label-tertiary);color:var(--dsw-alias-label-primary)}
 .dsh-pm-seg.on{background:var(--pm-accent);border-color:var(--pm-accent);color:var(--pm-accent-fg);font-weight:600}
 .dsh-pm-seg .n{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
@@ -279,12 +285,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-seg.more.expanded{background:var(--pm-accent);border-color:var(--pm-accent);color:var(--pm-accent-fg)}
 .dsh-pm-seg.more.expanded .n{color:var(--pm-accent-fg)}
 /* 展开后收起入口：低调文字，不再是胶囊，展开区只展示纯分类 chips */
-.dsh-pm-collapse{background:none;border:0;border-radius:8px;color:var(--dsw-alias-label-tertiary);cursor:pointer;display:inline-flex;font:inherit;font-size:12px;align-items:center;gap:4px;height:34px;padding:0 8px}
+.dsh-pm-collapse{background:none;border:0;border-radius:8px;color:var(--dsw-alias-label-tertiary);cursor:pointer;display:inline-flex;font:inherit;font-size:12px;align-items:center;gap:4px;height:30px;padding:0 8px}
 .dsh-pm-collapse:hover{color:var(--pm-accent);background:var(--accent-soft)}
-/* 展开区：独立一行、换行排列，与收起按钮留 8px */
-.dsh-pm-segs-open{padding:0;width:100%;margin-top:2px}
-.dsh-pm-catbar-sp{flex:0 0 auto;width:0}
-.dsh-pm-select{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:9px;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;height:34px;padding:0 10px}
+/* 展开区：独立一行、换行排列（catbar 是纵向 flex，天然独占一行） */
+.dsh-pm-segs-open{padding:0}
 .dsh-pm-select:hover{border-color:var(--dsw-alias-label-tertiary)}
 /* 分区：标题行 + 三列栅格（每区 6 张 = 两整行）+ 分区尾部入口 */
 .dsh-pm-sec2{display:flex;flex-direction:column;gap:12px}
@@ -309,9 +313,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-ai-badge{background:color-mix(in srgb,var(--pm-accent) 11%,transparent);border-radius:6px;color:var(--pm-accent);flex:none;font-size:10.5px;font-weight:700;height:19px;letter-spacing:.02em;line-height:19px;padding:0 7px}
 .dsh-pm-ai-bar .inp{background:none;border:0;color:var(--dsw-alias-label-primary);cursor:text;flex:1;font:inherit;font-size:14px;min-width:0;outline:none}
 .dsh-pm-ai-bar .inp::placeholder{color:var(--dsw-alias-label-tertiary)}
-.dsh-pm-ai-go{align-items:center;align-self:center;background:var(--pm-accent);border:0;border-radius:0 13px 13px 0;color:var(--pm-accent-fg);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:13px;font-weight:650;gap:6px;height:38px;justify-content:center;margin:0 -1px 0 0;padding:0 22px;white-space:nowrap;transition:filter .14s ease,opacity .14s ease}
+/* 找插件按钮：贴右缘的实心主按钮。几何（52px 条内 38px 高、圆角跟随外框）
+   是用户已批准的形状，这里只修视觉 —— 之前的禁用态是 opacity:.4（白字浮在
+   淡蓝上，看着像坏了），改成淡蓝底 + 灰字，读作「先填内容」而不是「坏了」。 */
+.dsh-pm-ai-go{align-items:center;align-self:center;background:var(--pm-accent);border:0;border-radius:0 13px 13px 0;box-shadow:0 1px 2px color-mix(in srgb,var(--pm-accent) 32%,transparent);color:var(--pm-accent-fg);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:13px;font-weight:600;gap:6px;height:38px;justify-content:center;margin:0 -1px 0 0;padding:0 20px;transition:background .14s ease,box-shadow .14s ease,filter .14s ease;white-space:nowrap}
 .dsh-pm-ai-go:hover:not(:disabled){filter:brightness(1.07)}
-.dsh-pm-ai-go:disabled{cursor:default;opacity:.4}
+.dsh-pm-ai-go:active:not(:disabled){filter:brightness(.93)}
+.dsh-pm-ai-go:focus-visible{outline:2px solid var(--pm-accent);outline-offset:-3px}
+.dsh-pm-ai-go:disabled{background:color-mix(in srgb,var(--pm-accent) 12%,var(--dsw-alias-bg-layer-1));box-shadow:none;color:var(--dsw-alias-label-tertiary);cursor:default}
 /* 检索中：按钮内小转圈 */
 .dsh-pm-ai-go .spin{animation:dsh-pm-spin .8s linear infinite;border:1.6px solid currentColor;border-radius:50%;border-right-color:transparent;height:11px;width:11px}
 @keyframes dsh-pm-spin{to{transform:rotate(360deg)}}
@@ -2219,20 +2228,39 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       title: active ? '再点一次回到全部' : `只看「${label}」`,
     }, label, count != null ? h('span', { className: 'n' }, String(count)) : null)
 
+    // 自定义源的 URL 可能很长（github:owner/repo 或整段 https 地址），
+    // 直接塞进 select 会把筛选组撑爆：截到 24 字符，完整地址在 title 里。
+    const shortSourceLabel = url => {
+      const text = String(url || '').replace(/^https?:\/\//, '').replace(/^github:/, '');
+      return text.length > 24 ? text.slice(0, 23) + '…' : text;
+    }
+
     const categoryBar = h('div', { className: 'dsh-pm-catbar' },
-      h('div', { className: 'dsh-pm-segs' },
-        pinnedCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name)),
-        // 「全部 N 类」只在收起态显示：展开后它自己消失，用户要收起时
-        // 用展开分类行末尾那个低调的文字「收起」（不再是醒目的胶囊按钮）。
-        tailCategories.length > 0 && !catExpanded
-          ? h('button', {
-              key: 'seg-more',
-              className: 'dsh-pm-seg more',
-              onClick: () => setCatExpanded(true),
-              'aria-expanded': 'false',
-              title: `还有 ${tailCategories.length} 个分类，点击展开`,
-            }, `全部 ${orderedCategories.length} 类`, icon('chev', 11))
-          : null),
+      h('div', { className: 'dsh-pm-catrow' },
+        h('div', { className: 'dsh-pm-segs' },
+          pinnedCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name)),
+          // 「全部 N 类」只在收起态显示：展开后它自己消失，用户要收起时
+          // 用展开分类行末尾那个低调的文字「收起」（不再是醒目的胶囊按钮）。
+          tailCategories.length > 0 && !catExpanded
+            ? h('button', {
+                key: 'seg-more',
+                className: 'dsh-pm-seg more',
+                onClick: () => setCatExpanded(true),
+                'aria-expanded': 'false',
+                title: `还有 ${tailCategories.length} 个分类，点击展开`,
+              }, `全部 ${orderedCategories.length} 类`, icon('chev', 11))
+            : null),
+        // 筛选组钉在第一行右侧：分类 chips 在左侧换行，select 永远不孤行。
+        h('div', { className: 'dsh-pm-filters' },
+          h('select', { className: 'dsh-pm-select', value: source, onChange: (e) => setSource(e.target.value), title: '按插件来源过滤', 'aria-label': '按来源过滤' },
+            h('option', { value: 'all' }, '来源：全部'),
+            h('option', { value: 'official' }, '来源：官方'),
+            h('option', { value: 'community' }, '来源：社区'),
+            (Array.isArray(sources) ? sources : []).filter(item => !item.builtin).map(item => h('option', { key: item.id, value: item.id }, '来源：' + shortSourceLabel(item.url)))),
+          h('select', { className: 'dsh-pm-select', value: sort, onChange: (e) => setSort(e.target.value), title: '排序', 'aria-label': '排序' },
+            h('option', { value: 'stars' }, '排序：星标'),
+            h('option', { value: 'downloads' }, '排序：下载量'),
+            h('option', { value: 'newest' }, '排序：最新')))),
       catExpanded ? h('div', { className: 'dsh-pm-segs dsh-pm-segs-open' },
         tailCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name)),
         // 收起入口：低调文字，不再是「全部 N 类」胶囊，也不抢占分类视觉。
@@ -2241,17 +2269,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           className: 'dsh-pm-collapse',
           onClick: () => setCatExpanded(false),
           'aria-label': '收起分类',
-        }, '收起', icon('back', 11))) : null,
-      h('span', { className: 'dsh-pm-catbar-sp' }),
-      h('select', { className: 'dsh-pm-select', value: source, onChange: (e) => setSource(e.target.value), title: '按插件来源过滤', 'aria-label': '按来源过滤' },
-        h('option', { value: 'all' }, '来源：全部'),
-        h('option', { value: 'official' }, '来源：官方'),
-        h('option', { value: 'community' }, '来源：社区'),
-        (Array.isArray(sources) ? sources : []).filter(item => !item.builtin).map(item => h('option', { key: item.id, value: item.id }, '来源：' + item.url))),
-      h('select', { className: 'dsh-pm-select', value: sort, onChange: (e) => setSort(e.target.value), title: '排序', 'aria-label': '排序' },
-        h('option', { value: 'stars' }, '排序：星标'),
-        h('option', { value: 'downloads' }, '排序：下载量'),
-        h('option', { value: 'newest' }, '排序：最新')))
+        }, '收起', icon('back', 11))) : null)
 
     // 分类分区：每区 6 张（三列两整行），分区头/尾各一个「查看全部 N 个」。
     // 服务端分区给的是**原始分类** id（category）：点「查看全部 N 个」后按该分类

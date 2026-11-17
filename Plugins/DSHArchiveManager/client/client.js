@@ -78,10 +78,11 @@ window.__ModuleLoader__.load({ id: "dsh-archive-manager", factory: (require) => 
 
   /* 线性 SVG 图标（16 网格 / 1.5 描边 / currentColor）：与插件中心同一套画法，
      不用 emoji（跨平台字形不一致，也和宿主设计语言不搭）。 */
+  // Lucide 线性图标（ISC 许可，24 网格 / 2 描边），与插件管理同一套体系。
   const ICON_PATHS = {
-    search: '<circle cx="6.5" cy="6.5" r="4.5"/><path d="m10.2 10.2 3.8 3.8"/>',
-    archive: '<rect x="2" y="3" width="12" height="3" rx=".8"/><path d="M3.2 6v6.5A1.5 1.5 0 0 0 4.7 14h6.6a1.5 1.5 0 0 0 1.5-1.5V6"/><path d="M6.5 8.5h3"/>',
-    restore: '<path d="M2.5 6.5h3v-3"/><path d="M3.4 9.5a5 5 0 1 0 .9-4.6L2.5 6.5"/>',
+    search: "<path d=\"m21 21-4.34-4.34\" /><circle cx=\"11\" cy=\"11\" r=\"8\" />",
+    archive: "<rect width=\"20\" height=\"5\" x=\"2\" y=\"3\" rx=\"1\" /><path d=\"M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8\" /><path d=\"M10 12h4\" />",
+    restore: "<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /><path d=\"M3 3v5h5\" />",
   }
   function icon(name, size = 14) {
     // 图标名都是本文件里的字面量（archive / search），不设兜底：名字写错
@@ -99,7 +100,7 @@ window.__ModuleLoader__.load({ id: "dsh-archive-manager", factory: (require) => 
       nodes.push(h(m[1], { key: nodes.length, ...attrs }))
     }
     return h('span', { className: 'dsh-archive-ic', 'aria-hidden': true, style: { display: 'inline-flex', flex: 'none' } },
-      h('svg', { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' }, ...nodes))
+      h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' }, ...nodes))
   }
 
   function ArchivePanel({ wide, autoOpen = false, onClose }) {

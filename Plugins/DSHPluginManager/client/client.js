@@ -273,17 +273,18 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
    catbar 的独立 flex 项，放不下时最后一个会孤零零掉到第二行（用户截图的排版）。 */
 .dsh-pm-catbar{display:flex;flex-direction:column;gap:8px;padding:0}
 .dsh-pm-catrow{align-items:center;display:flex;gap:10px;min-width:0}
-.dsh-pm-segs{display:flex;flex:1 1 auto;flex-wrap:wrap;gap:8px;min-width:0}
-.dsh-pm-seg{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:15px;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:12.5px;gap:6px;height:30px;padding:0 12px;transition:border-color .14s ease,color .14s ease,background .14s ease;white-space:nowrap}
+/* 分类 tab：magpie 式纯文字 tab（无描边胶囊），计数用弱化的等宽数字，
+   选中态给一层柔和底色 —— 排版基准来自 magpie 插件页（用户指定）。 */
+.dsh-pm-segs{display:flex;flex:1 1 auto;flex-wrap:wrap;gap:2px;min-width:0}
+.dsh-pm-seg{align-items:center;background:transparent;border:0;border-radius:8px;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:13px;gap:6px;height:32px;padding:0 10px;transition:background .12s ease,color .12s ease;white-space:nowrap}
 .dsh-pm-filters{align-items:center;display:flex;flex:none;gap:8px;margin-left:auto}
 .dsh-pm-select{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:12px;height:30px;max-width:200px;padding:0 8px}
-.dsh-pm-seg:hover{border-color:var(--dsw-alias-label-tertiary);color:var(--dsw-alias-label-primary)}
-.dsh-pm-seg.on{background:var(--pm-accent);border-color:var(--pm-accent);color:var(--pm-accent-fg);font-weight:600}
-.dsh-pm-seg .n{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
-.dsh-pm-seg.on .n{color:color-mix(in srgb,var(--pm-accent-fg) 75%,transparent)}
-.dsh-pm-seg.more{background:color-mix(in srgb,var(--pm-accent) 8%,transparent);border-color:color-mix(in srgb,var(--pm-accent) 40%,transparent);color:var(--pm-accent);font-weight:600}
-.dsh-pm-seg.more.expanded{background:var(--pm-accent);border-color:var(--pm-accent);color:var(--pm-accent-fg)}
-.dsh-pm-seg.more.expanded .n{color:var(--pm-accent-fg)}
+.dsh-pm-seg:hover{background:var(--dsw-alias-button-ghost-active-fill);color:var(--dsw-alias-label-primary)}
+.dsh-pm-seg.on{background:var(--dsw-alias-interactive-bg-hover-solid,var(--dsw-alias-button-ghost-active-fill));color:var(--dsw-alias-label-primary);font-weight:600}
+.dsh-pm-seg .n{color:var(--dsw-alias-label-tertiary);font-size:11.5px;font-variant-numeric:tabular-nums}
+.dsh-pm-seg.on .n{color:var(--pm-accent);font-weight:600}
+.dsh-pm-seg.more{color:var(--dsw-alias-label-tertiary)}
+.dsh-pm-seg.more:hover{color:var(--dsw-alias-label-primary)}
 /* 展开后收起入口：低调文字，不再是胶囊，展开区只展示纯分类 chips */
 .dsh-pm-collapse{background:none;border:0;border-radius:8px;color:var(--dsw-alias-label-tertiary);cursor:pointer;display:inline-flex;font:inherit;font-size:12px;align-items:center;gap:4px;height:30px;padding:0 8px}
 .dsh-pm-collapse:hover{color:var(--pm-accent);background:var(--accent-soft)}
@@ -306,7 +307,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-crumbs-back:hover{background:color-mix(in srgb,var(--pm-accent) 10%,transparent)}
 /* 描述找插件：一条虚线检索行 + 结果面板（top5，带理由/下载/星标/版本） */
 /* 搜索条：整条是可点击输入区（点图标/空白都能聚焦），右侧按钮内嵌不贴边 */
-.dsh-pm-ai-bar{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-shadow:0 1px 2px rgba(15,17,21,.04);color:var(--dsw-alias-label-tertiary);cursor:text;display:flex;flex:0 0 auto;gap:11px;height:52px;min-height:52px;padding:0 0 0 16px;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
+.dsh-pm-ai-bar{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-shadow:0 1px 2px rgba(15,17,21,.04);color:var(--dsw-alias-label-tertiary);cursor:text;display:flex;flex:0 0 auto;gap:11px;height:52px;min-height:52px;padding:0 8px 0 16px;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
 .dsh-pm-ai-bar:hover{border-color:color-mix(in srgb,var(--fg) 18%,var(--dsw-alias-border-l2))}
 .dsh-pm-ai-bar:focus-within{background:var(--dsw-alias-bg-layer-1);border-color:var(--pm-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--pm-accent) 13%,transparent)}
 .dsh-pm-ai-bar .spark{color:var(--pm-accent);flex:none}
@@ -316,10 +317,13 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 /* 找插件按钮：贴右缘的实心主按钮。几何（52px 条内 38px 高、圆角跟随外框）
    是用户已批准的形状，这里只修视觉 —— 之前的禁用态是 opacity:.4（白字浮在
    淡蓝上，看着像坏了），改成淡蓝底 + 灰字，读作「先填内容」而不是「坏了」。 */
-.dsh-pm-ai-go{align-items:center;align-self:center;background:var(--pm-accent);border:0;border-radius:0 13px 13px 0;box-shadow:0 1px 2px color-mix(in srgb,var(--pm-accent) 32%,transparent);color:var(--pm-accent-fg);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:13px;font-weight:600;gap:6px;height:38px;justify-content:center;margin:0 -1px 0 0;padding:0 20px;transition:background .14s ease,box-shadow .14s ease,filter .14s ease;white-space:nowrap}
+/* 找插件按钮：内嵌在输入框条内的胶囊（右侧内缩 8px、36px 高，与 52px 条
+   上下各留 8px）—— 与输入框是同一个容器的一部分，而不是贴在边上的贴片。
+   之前贴满右缘的样式（-1px 外扩、圆角跟随外框）看起来像另一个组件粘上去的。 */
+.dsh-pm-ai-go{align-items:center;align-self:center;background:var(--pm-accent);border:0;border-radius:10px;box-shadow:0 1px 2px color-mix(in srgb,var(--pm-accent) 32%,transparent);color:var(--pm-accent-fg);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:13px;font-weight:600;gap:6px;height:36px;justify-content:center;margin:0;padding:0 18px;transition:background .14s ease,box-shadow .14s ease,filter .14s ease;white-space:nowrap}
 .dsh-pm-ai-go:hover:not(:disabled){filter:brightness(1.07)}
 .dsh-pm-ai-go:active:not(:disabled){filter:brightness(.93)}
-.dsh-pm-ai-go:focus-visible{outline:2px solid var(--pm-accent);outline-offset:-3px}
+.dsh-pm-ai-go:focus-visible{outline:2px solid var(--pm-accent);outline-offset:2px}
 .dsh-pm-ai-go:disabled{background:color-mix(in srgb,var(--pm-accent) 12%,var(--dsw-alias-bg-layer-1));box-shadow:none;color:var(--dsw-alias-label-tertiary);cursor:default}
 /* 检索中：按钮内小转圈 */
 .dsh-pm-ai-go .spin{animation:dsh-pm-spin .8s linear infinite;border:1.6px solid currentColor;border-radius:50%;border-right-color:transparent;height:11px;width:11px}
@@ -390,64 +394,114 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
   .dsh-pm-rail-item .n{margin-left:3px}
   .dsh-pm-cols{grid-template-columns:1fr}
 }`
-  /* SVG 线性图标集（16 网格 / 1.5 描边 / currentColor）：分类、榜单与工具按钮
-     全部用矢量图标，不用 emoji（跨平台字形不一致、与宿主设计语言不搭）。 */
-  const ICON_PATHS = {
-    search: '<circle cx="6.5" cy="6.5" r="4.5"/><path d="m10.2 10.2 3.8 3.8"/>',
-    refresh: '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/>',
-    plus: '<path d="M8 3.5v9M3.5 8h9"/>',
-    check: '<path d="m3.5 8.5 3 3 6-7"/>',
-    shield: '<path d="M8 1.5 13.5 3.5v4c0 3.6-2.3 6-5.5 7-3.2-1-5.5-3.4-5.5-7v-4Z"/><path d="m5.8 7.7 1.6 1.6 2.8-3"/>',
-    x: '<path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/>',
-    chev: '<path d="m6 3.5 4.5 4.5L6 12.5"/>',
-    expand: '<path d="M6 2.5H2.5V6M10 2.5h3.5V6M6 13.5H2.5V10M10 13.5h3.5V10"/>',
-    collapse: '<path d="M2.5 6H6V2.5M13.5 6H10V2.5M2.5 10H6v3.5M13.5 10H10v3.5"/>',
-    back: '<path d="M10 3.5 5.5 8 10 12.5"/>',
-    sparkle: '<path d="M8 1.8l1.1 2.9 2.9 1.1-2.9 1.1L8 9.8 6.9 6.9 4 5.8l2.9-1.1Z"/><path d="M12.4 10.4l.6 1.5 1.5.6-1.5.6-.6 1.5-.6-1.5-1.5-.6 1.5-.6Z"/>',
-    download: '<path d="M8 2.5v7.5M8 10l2.8-2.8M8 10 5.2 7.2"/><path d="M2.5 13.5h11"/>',
-    star: '<path d="M8 2.2l1.7 3.6 3.9.5-2.8 2.7.7 3.9L8 11l-3.5 1.9.7-3.9L2.4 6.3l3.9-.5Z"/>',
-    cube: '<path d="M8 1.8 13.8 4.8v6.4L8 14.2 2.2 11.2V4.8Z"/><path d="M2.2 4.8 8 7.8l5.8-3M8 7.8v6.4"/>',
-    compass: '<circle cx="8" cy="8" r="6"/><path d="M10.8 5.2 9.2 9.2 5.2 10.8 6.8 6.8Z"/>',
-    bell: '<path d="M8 2.2a4 4 0 0 0-4 4v2.6L2.6 11h10.8L12 8.8V6.2a4 4 0 0 0-4-4Z"/><path d="m6.2 13.2a1.9 1.9 0 0 0 3.6 0"/>',
-    globe: '<circle cx="8" cy="8" r="6"/><path d="M2 8h12"/><path d="M8 2c2.2 2.4 2.2 9.6 0 12-2.2-2.4-2.2-9.6 0-12Z"/>',
-    chart: '<path d="M3 13.5V9.5M8 13.5V4M13 13.5V6.5"/>',
-    zap: '<path d="M9.2 1.8 4 9h3.6L6.8 14.2 12 7H8.4Z"/>',
-    hdd: '<path d="M2.5 9.5h11v3.5h-11Z"/><path d="M2.5 9.5 4.2 4h7.6l1.7 5.5"/><path d="M5 11.2h.01"/>',
-    layers: '<path d="M8 2.2 13.8 5 8 7.8 2.2 5Z"/><path d="m2.2 8 5.8 2.8L13.8 8"/><path d="m2.2 10.5 5.8 2.8 5.8-2.8"/>',
-    server: '<rect x="2.5" y="2.5" width="11" height="4.5" rx="1.2"/><rect x="2.5" y="9" width="11" height="4.5" rx="1.2"/><path d="M5 4.75h.01M5 11.25h.01M10 4.75h1.5M10 11.25h1.5"/>',
-    puzzle: '<path d="M6 2.5h4v2.2a1.3 1.3 0 1 0 2.6 0V2.5H13.5v4h-2.2a1.3 1.3 0 1 0 0 2.6h2.2v4.4h-4v-2.2a1.3 1.3 0 1 0-2.6 0v2.2H2.5V9h2.2a1.3 1.3 0 1 0 0-2.6H2.5V2.5H6Z"/>',
-    archive: '<rect x="2" y="3" width="12" height="3" rx=".8"/><path d="M3.2 6v6.5A1.5 1.5 0 0 0 4.7 14h6.6a1.5 1.5 0 0 0 1.5-1.5V6"/><path d="M6.5 8.5h3"/>',
-    branch: '<circle cx="5" cy="3.5" r="1.7"/><circle cx="5" cy="12.5" r="1.7"/><circle cx="11.5" cy="5" r="1.7"/><path d="M5 5.2v5.6M11.5 6.7c0 3-2.9 4.8-6.5 4.8"/>',
-    message: '<path d="M2.5 3h11a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5H7.5L4.5 13.5v-2.5h-2a.5.5 0 0 1-.5-.5v-7a.5.5 0 0 1 .5-.5Z"/>',
-    palette: '<circle cx="8" cy="8" r="6"/><circle cx="6" cy="6" r="1"/><circle cx="10" cy="6" r="1"/><path d="M8 14c0-2 1.5-2.5 3-2.5"/>',
-    workflow: '<path d="M3 2.5v6a2 2 0 0 0 2 2h8"/><rect x="9" y="8.5" width="4.5" height="4.5" rx="1"/><circle cx="3" cy="11" r="1.5"/>',
-    robot: '<rect x="3" y="5" width="10" height="8" rx="2"/><path d="M8 2.5V5M6.5 9h.01M9.5 9h.01M6 11h4"/>',
-    gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.9 3.9l1.4 1.4M10.7 10.7l1.4 1.4M12.1 3.9l-1.4 1.4M5.3 10.7l-1.4 1.4"/>',
+  /* Lucide 线性图标集（ISC 许可，https://lucide.dev）：24 网格 / 2 描边 /
+     currentColor。path 数据由 lucide-static v1.74.0 提取（scripts/patch-lucide-icons.js），
+     键名沿用调用点旧名（chev/back/...），新增更丰富的键供分类与名称规则用。 */
+  const ICONS = {
+    search: "<path d=\"m21 21-4.34-4.34\" /><circle cx=\"11\" cy=\"11\" r=\"8\" />",
+    refresh: "<path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\" /><path d=\"M21 3v5h-5\" /><path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\" /><path d=\"M8 16H3v5\" />",
+    plus: "<path d=\"M5 12h14\" /><path d=\"M12 5v14\" />",
+    check: "<path d=\"M20 6 9 17l-5-5\" />",
+    shield: "<path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z\" /><path d=\"m9 12 2 2 4-4\" />",
+    x: "<path d=\"M18 6 6 18\" /><path d=\"m6 6 12 12\" />",
+    chev: "<path d=\"m9 18 6-6-6-6\" />",
+    expand: "<path d=\"M15 3h6v6\" /><path d=\"m21 3-7 7\" /><path d=\"m3 21 7-7\" /><path d=\"M9 21H3v-6\" />",
+    collapse: "<path d=\"m14 10 7-7\" /><path d=\"M20 10h-6V4\" /><path d=\"m3 21 7-7\" /><path d=\"M4 14h6v6\" />",
+    back: "<path d=\"m15 18-6-6 6-6\" />",
+    sparkle: "<path d=\"M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z\" /><path d=\"M20 2v4\" /><path d=\"M22 4h-4\" /><circle cx=\"4\" cy=\"20\" r=\"2\" />",
+    download: "<path d=\"M12 15V3\" /><path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" /><path d=\"m7 10 5 5 5-5\" />",
+    star: "<path d=\"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z\" />",
+    cube: "<path d=\"M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z\" /><path d=\"m3.3 7 8.7 5 8.7-5\" /><path d=\"M12 22V12\" />",
+    compass: "<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z\" />",
+    bell: "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /><path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" />",
+    globe: "<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20\" /><path d=\"M2 12h20\" />",
+    chart: "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /><path d=\"M18 17V9\" /><path d=\"M13 17V5\" /><path d=\"M8 17v-3\" />",
+    zap: "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />",
+    hdd: "<path d=\"M10 16h.01\" /><path d=\"M2.212 11.577a2 2 0 0 0-.212.896V18a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5.527a2 2 0 0 0-.212-.896L18.55 5.11A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" /><path d=\"M21.946 12.013H2.054\" /><path d=\"M6 16h.01\" />",
+    layers: "<path d=\"M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z\" /><path d=\"M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12\" /><path d=\"M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17\" />",
+    server: "<rect width=\"20\" height=\"8\" x=\"2\" y=\"2\" rx=\"2\" ry=\"2\" /><rect width=\"20\" height=\"8\" x=\"2\" y=\"14\" rx=\"2\" ry=\"2\" /><line x1=\"6\" x2=\"6.01\" y1=\"6\" y2=\"6\" /><line x1=\"6\" x2=\"6.01\" y1=\"18\" y2=\"18\" />",
+    puzzle: "<path d=\"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z\" />",
+    archive: "<rect width=\"20\" height=\"5\" x=\"2\" y=\"3\" rx=\"1\" /><path d=\"M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8\" /><path d=\"M10 12h4\" />",
+    branch: "<path d=\"M15 6a9 9 0 0 0-9 9V3\" /><circle cx=\"18\" cy=\"6\" r=\"3\" /><circle cx=\"6\" cy=\"18\" r=\"3\" />",
+    message: "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />",
+    palette: "<path d=\"M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z\" /><circle cx=\"13.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\" /><circle cx=\"17.5\" cy=\"10.5\" r=\".5\" fill=\"currentColor\" /><circle cx=\"6.5\" cy=\"12.5\" r=\".5\" fill=\"currentColor\" /><circle cx=\"8.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />",
+    workflow: "<rect width=\"8\" height=\"8\" x=\"3\" y=\"3\" rx=\"2\" /><path d=\"M7 11v4a2 2 0 0 0 2 2h4\" /><rect width=\"8\" height=\"8\" x=\"13\" y=\"13\" rx=\"2\" />",
+    robot: "<path d=\"M12 8V4H8\" /><rect width=\"16\" height=\"12\" x=\"4\" y=\"8\" rx=\"2\" /><path d=\"M2 14h2\" /><path d=\"M20 14h2\" /><path d=\"M15 13v2\" /><path d=\"M9 13v2\" />",
+    gear: "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /><circle cx=\"12\" cy=\"12\" r=\"3\" />",
+    panel: "<rect width=\"7\" height=\"18\" x=\"3\" y=\"3\" rx=\"1\" /><rect width=\"7\" height=\"7\" x=\"14\" y=\"3\" rx=\"1\" /><rect width=\"7\" height=\"7\" x=\"14\" y=\"14\" rx=\"1\" />",
+    terminal: "<path d=\"m7 11 2-2-2-2\" /><path d=\"M11 13h4\" /><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" />",
+    cpu: "<path d=\"M12 20v2\" /><path d=\"M12 2v2\" /><path d=\"M17 20v2\" /><path d=\"M17 2v2\" /><path d=\"M2 12h2\" /><path d=\"M2 17h2\" /><path d=\"M2 7h2\" /><path d=\"M20 12h2\" /><path d=\"M20 17h2\" /><path d=\"M20 7h2\" /><path d=\"M7 20v2\" /><path d=\"M7 2v2\" /><rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"2\" /><rect x=\"8\" y=\"8\" width=\"8\" height=\"8\" rx=\"1\" />",
+    brain: "<path d=\"M12 18V5\" /><path d=\"M15 13a4.17 4.17 0 01-3-4 4.17 4.17 0 01-3 4\" /><path d=\"M17.707 6.294A3 3 0 1012 5a3 3 0 10-5.707 1.294\" /><path d=\"M17.996 5.125a4 4 0 012.526 5.77\" /><path d=\"M18 18a4 4 0 002-7.465\" /><path d=\"M19.967 17.482a4 4 0 11-7.967.517 4 4 0 11-7.967-.517\" /><path d=\"M6 18a4 4 0 01-2-7.465\" /><path d=\"M6.004 5.125a4 4 0 00-2.526 5.77\" />",
+    database: "<ellipse cx=\"12\" cy=\"5\" rx=\"9\" ry=\"3\" /><path d=\"M3 5V19A9 3 0 0 0 21 19V5\" /><path d=\"M3 12A9 3 0 0 0 21 12\" />",
+    code: "<path d=\"m10 9-3 3 3 3\" /><path d=\"m14 15 3-3-3-3\" /><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" />",
+    brackets: "<path d=\"M16 3h3a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-3\" /><path d=\"M8 21H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h3\" />",
+    gauge: "<path d=\"m12 14 4-4\" /><path d=\"M3.34 19a10 10 0 1 1 17.32 0\" />",
+    store: "<path d=\"M15 21v-5a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v5\" /><path d=\"M17.774 10.31a1.12 1.12 0 0 0-1.549 0 2.5 2.5 0 0 1-3.451 0 1.12 1.12 0 0 0-1.548 0 2.5 2.5 0 0 1-3.452 0 1.12 1.12 0 0 0-1.549 0 2.5 2.5 0 0 1-3.77-3.248l2.889-4.184A2 2 0 0 1 7 2h10a2 2 0 0 1 1.653.873l2.895 4.192a2.5 2.5 0 0 1-3.774 3.244\" /><path d=\"M4 10.95V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8.05\" />",
+    plug: "<path d=\"M12 22v-5\" /><path d=\"M15 8V2\" /><path d=\"M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z\" /><path d=\"M9 8V2\" />",
+    network: "<rect x=\"16\" y=\"16\" width=\"6\" height=\"6\" rx=\"1\" /><rect x=\"2\" y=\"16\" width=\"6\" height=\"6\" rx=\"1\" /><rect x=\"9\" y=\"2\" width=\"6\" height=\"6\" rx=\"1\" /><path d=\"M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3\" /><path d=\"M12 12V8\" />",
+    wrench: "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />",
+    book: "<path d=\"M12 5v16\" /><path d=\"M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z\" />",
+    key: "<path d=\"M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z\" /><circle cx=\"16.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />",
+    share: "<circle cx=\"18\" cy=\"5\" r=\"3\" /><circle cx=\"6\" cy=\"12\" r=\"3\" /><circle cx=\"18\" cy=\"19\" r=\"3\" /><line x1=\"8.59\" x2=\"15.42\" y1=\"13.51\" y2=\"17.49\" /><line x1=\"15.41\" x2=\"8.59\" y1=\"6.51\" y2=\"10.49\" />",
+    eye: "<path d=\"M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0\" /><circle cx=\"12\" cy=\"12\" r=\"3\" />",
+    eyeoff: "<path d=\"M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49\" /><path d=\"M14.084 14.158a3 3 0 0 1-4.242-4.242\" /><path d=\"M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143\" /><path d=\"m2 2 20 20\" />",
+    image: "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /><circle cx=\"9\" cy=\"9\" r=\"2\" /><path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />",
+    mic: "<path d=\"M12 19v3\" /><path d=\"M19 10v2a7 7 0 0 1-14 0v-2\" /><rect x=\"9\" y=\"2\" width=\"6\" height=\"13\" rx=\"3\" />",
+    coins: "<path d=\"M13.744 17.736a6 6 0 1 1-7.48-7.48\" /><path d=\"M15 6h1v4\" /><path d=\"m6.134 14.768.866-.5 2 3.464\" /><circle cx=\"16\" cy=\"8\" r=\"6\" />",
+    folder: "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />",
+    pkg: "<path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\" /><path d=\"M12 22V12\" /><polyline points=\"3.29 7 12 12 20.71 7\" /><path d=\"m7.5 4.27 9 5.15\" />",
+    file: "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M10 9H8\" /><path d=\"M16 13H8\" /><path d=\"M16 17H8\" />",
+    activity: "<path d=\"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2\" />",
+    flame: "<path d=\"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4\" />",
+    rocket: "<path d=\"M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5\" /><path d=\"M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09\" /><path d=\"M9 12a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.4 22.4 0 0 1-4 2z\" /><path d=\"M9 12H4s.55-3.03 2-4c1.62-1.08 5 .05 5 .05\" />",
+    bulb: "<path d=\"M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5\" /><path d=\"M9 18h6\" /><path d=\"M10 22h4\" />",
+    cloud: "<path d=\"M12 13v8\" /><path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /><path d=\"m8 17 4-4 4 4\" />",
+    timer: "<line x1=\"10\" x2=\"14\" y1=\"2\" y2=\"2\" /><line x1=\"12\" x2=\"15\" y1=\"14\" y2=\"11\" /><circle cx=\"12\" cy=\"14\" r=\"8\" />",
+    user: "<circle cx=\"12\" cy=\"8\" r=\"5\" /><path d=\"M20 21a8 8 0 0 0-16 0\" />",
+    session: "<path d=\"M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z\" /><path d=\"M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1\" />",
+    audio: "<path d=\"M2 10v3\" /><path d=\"M6 6v11\" /><path d=\"M10 3v18\" /><path d=\"M14 8v7\" /><path d=\"M18 5v13\" /><path d=\"M22 10v3\" />",
+    cable: "<path d=\"M17 19a1 1 0 0 1-1-1v-2a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a1 1 0 0 1-1 1z\" /><path d=\"M17 21v-2\" /><path d=\"M19 14V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V10\" /><path d=\"M21 21v-2\" /><path d=\"M3 5V3\" /><path d=\"M4 10a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a2 2 0 0 1-2 2z\" /><path d=\"M7 5V3\" />",
+    scan: "<path d=\"M3 7V5a2 2 0 0 1 2-2h2\" /><path d=\"M17 3h2a2 2 0 0 1 2 2v2\" /><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\" /><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\" /><circle cx=\"12\" cy=\"12\" r=\"1\" /><path d=\"M18.944 12.33a1 1 0 0 0 0-.66 7.5 7.5 0 0 0-13.888 0 1 1 0 0 0 0 .66 7.5 7.5 0 0 0 13.888 0\" />",
+    voice: "<path d=\"m11 7.601-5.994 8.19a1 1 0 0 0 .1 1.298l.817.818a1 1 0 0 0 1.314.087L15.09 12\" /><path d=\"M16.5 21.174C15.5 20.5 14.372 20 13 20c-2.058 0-3.928 2.356-6 2-2.072-.356-2.775-3.369-1.5-4.5\" /><circle cx=\"16\" cy=\"7\" r=\"5\" />",
+    notes: "<path d=\"M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4\" /><path d=\"M2 6h4\" /><path d=\"M2 10h4\" /><path d=\"M2 14h4\" /><path d=\"M2 18h4\" /><path d=\"M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z\" />",
+    tree: "<path d=\"M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z\" /><path d=\"M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z\" /><path d=\"M3 5a2 2 0 0 0 2 2h3\" /><path d=\"M3 3v13a2 2 0 0 0 2 2h3\" />",
+    commit: "<circle cx=\"12\" cy=\"12\" r=\"3\" /><line x1=\"3\" x2=\"9\" y1=\"12\" y2=\"12\" /><line x1=\"15\" x2=\"21\" y1=\"12\" y2=\"12\" />",
+    route: "<path d=\"M9 5h8.5a1 1 0 010 7h-11a1 1 0 000 7H15\" /><circle cx=\"18\" cy=\"19\" r=\"3\" /><circle cx=\"6\" cy=\"5\" r=\"3\" />",
+    waypoints: "<path d=\"m10.586 5.414-5.172 5.172\" /><path d=\"m18.586 13.414-5.172 5.172\" /><path d=\"M6 12h12\" /><circle cx=\"12\" cy=\"20\" r=\"2\" /><circle cx=\"12\" cy=\"4\" r=\"2\" /><circle cx=\"20\" cy=\"12\" r=\"2\" /><circle cx=\"4\" cy=\"12\" r=\"2\" />",
+    map: "<path d=\"M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z\" /><path d=\"M15 5.764v15\" /><path d=\"M9 3.236v15\" />",
+    paint: "<path d=\"m14.622 17.897-10.68-2.913\" /><path d=\"M18.376 2.622a1 1 0 1 1 3.002 3.002L17.36 9.643a.5.5 0 0 0 0 .707l.944.944a2.41 2.41 0 0 1 0 3.408l-.944.944a.5.5 0 0 1-.707 0L8.354 7.348a.5.5 0 0 1 0-.707l.944-.944a2.41 2.41 0 0 1 3.408 0l.944.944a.5.5 0 0 0 .707 0z\" /><path d=\"M9 8c-1.804 2.71-3.97 3.46-6.583 3.948a.507.507 0 0 0-.302.819l7.32 8.883a1 1 0 0 0 1.185.204C12.735 20.405 16 16.792 16 15\" />",
+    note: "<path d=\"M21 9a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2z\" /><path d=\"M15 3v5a1 1 0 0 0 1 1h5\" />",
+    orbit: "<path d=\"M20.341 6.484A10 10 0 0 1 10.266 21.85\" /><path d=\"M3.659 17.516A10 10 0 0 1 13.74 2.152\" /><circle cx=\"12\" cy=\"12\" r=\"3\" /><circle cx=\"19\" cy=\"5\" r=\"2\" /><circle cx=\"5\" cy=\"19\" r=\"2\" />",
+    blocks: "<path d=\"M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2\" /><rect x=\"14\" y=\"2\" width=\"8\" height=\"8\" rx=\"1\" />",
+    todo: "<path d=\"M13 5h8\" /><path d=\"M13 12h8\" /><path d=\"M13 19h8\" /><path d=\"m3 17 2 2 4-4\" /><rect x=\"3\" y=\"4\" width=\"6\" height=\"6\" rx=\"1\" />",
+    bellring: "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /><path d=\"M22 8c0-2.3-.8-4.3-2-6\" /><path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" /><path d=\"M4 2C2.8 3.7 2 5.7 2 8\" />",
+    table: "<path d=\"M12 3v18\" /><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" /><path d=\"M3 9h18\" /><path d=\"M3 15h18\" />",
+    sliders: "<path d=\"M10 5H3\" /><path d=\"M12 19H3\" /><path d=\"M14 3v4\" /><path d=\"M16 17v4\" /><path d=\"M21 12h-9\" /><path d=\"M21 19h-5\" /><path d=\"M21 5h-7\" /><path d=\"M8 10v4\" /><path d=\"M8 12H3\" />",
+    filter: "<path d=\"M2 5h20\" /><path d=\"M6 12h12\" /><path d=\"M9 19h6\" />",
+    info: "<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"M12 16v-4\" /><path d=\"M12 8h.01\" />",
+    warn: "<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /><path d=\"M12 9v4\" /><path d=\"M12 17h.01\" />",
   }
   /**
-   * 渲染一个线性 SVG 图标节点。name 是 ICON_PATHS 的键；size 是像素边长。
-   * aria-hidden 恒真：图标永远伴随可见文字或 aria-label，不单独承载语义。
+   * 渲染一个线性 SVG 图标节点。name 是 ICONS 的键（lucide 图标名）；
+   * size 是像素边长。aria-hidden 恒真：图标永远伴随可见文字或 aria-label。
    */
   function icon(name, size = 14) {
-    const path = ICON_PATHS[name] || ICON_PATHS.puzzle
+    const path = ICONS[name] || ICONS.puzzle
     return h('span', { className: 'dsh-pm-ic', 'aria-hidden': true },
-      h('svg', { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', dangerouslySetInnerHTML: undefined },
-        // h() 是 createElement：path 内容直接用 dangerouslySetInnerHTML 会带来
-        // React 告警；这里 path 是本文件写死的字符串，用 <g> 包一层
-        // 或干脆用 innerHTML 都可以，但为了走 createElement，展开成子节点：
+      h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
+        // h() 是 createElement：path 内容是本文件写死的 lucide 数据字符串，
+        // 展开成子节点而不是 innerHTML（避免 React 告警与注入面）：
         ...(function expand() {
-          // 极简 path 展开器：把 ICON_PATHS 的 d/rect/circle 标记转成 vnode 数组。
+          // 极简形状展开器：lucide 的 path/circle/rect/line/polyline/polygon 转 vnode。
           const nodes = []
-          const tokenRe = /<(path|rect|circle)\b([^>]*)\/?>|<path\b([^>]*)\/>/g
+          const tokenRe = /<(path|rect|circle|line|polyline|polygon|ellipse)\b([^>]*)\/?>/g
           let m
           const attrRe = /([a-zA-Z-]+)="([^"]*)"/g
           while ((m = tokenRe.exec(path))) {
-            const tag = m[1]
             const attrs = {}
             let a
-            const attrText = m[2] ?? m[3] ?? ''
-            while ((a = attrRe.exec(attrText))) attrs[a[1]] = a[2]
-            nodes.push(h(tag, { key: nodes.length, ...attrs }))
+            while ((a = attrRe.exec(m[2]))) attrs[a[1]] = a[2]
+            nodes.push(h(m[1], { key: nodes.length, ...attrs }))
           }
           return nodes
         })()))
@@ -455,10 +509,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
   /* 分类 → 图标与展示名（与 magpie 的 kind chip 同思路：图标着色区分类型）。 */
   const CATEGORY_ICONS = {
-    official: 'shield', browser: 'globe', tool: 'gear', ui: 'palette', storage: 'hdd',
-    workflow: 'workflow', agent: 'robot', search: 'search', data: 'chart',
-    network: 'globe', dev: 'cube', panel: 'layers', notify: 'bell', auto: 'zap',
-    message: 'message', store: 'archive', other: 'puzzle',
+    official: 'shield', ui: 'panel', panel: 'panel', theme: 'palette', market: 'store',
+    session: 'session', memory: 'brain', notify: 'bellring', tools: 'wrench', tool: 'wrench',
+    dev: 'code', cli: 'terminal', skill: 'sparkle', search: 'search', workflow: 'workflow',
+    auto: 'zap', mcp: 'plug', agent: 'robot', gateway: 'network', prompt: 'note',
+    data: 'chart', storage: 'database', usage: 'gauge', model: 'cpu', browser: 'globe',
+    docs: 'file', vision: 'eye', git: 'branch', voice: 'audio', image: 'image',
+    identity: 'key', security: 'shield', remote: 'cloud', fun: 'flame', wsl: 'terminal',
+    agi: 'orbit', network: 'network', web: 'globe', plugin: 'puzzle', other: 'puzzle',
   }
   // 分类中文名的**兜底表**：服务端 /marketplace/query 的 counts[].label 是权威来源
   // （见 lib/index.js 的 MARKET_CATEGORY_LABELS），这张表只用于旧响应或卡片上的
@@ -473,6 +531,46 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
   }
   const categoryLabel = category => CATEGORY_LABELS[category] || category || '其他'
   const categoryIcon = category => CATEGORY_ICONS[category] || 'puzzle'
+  /* 插件名关键词 → 专属图标：卡片图标不再只看分类（同分类全是一个图标），
+     按名称给有辨识度的那个（sidebar→侧栏、terminal→终端、token→仪表盘…），
+     没命中再回落分类图标。规则按特异性排序，先命中先用。 */
+  const NAME_ICON_RULES = [
+    ['sidebar|panel|deck|dock|popout', 'panel'],
+    ['terminal|tui|tty|shell', 'terminal'],
+    ['token|usage|quota|context|meter', 'gauge'],
+    ['cost|billing|ledger|price|pay|wallet', 'coins'],
+    ['memory|recall|hindsight|viking|misaka', 'brain'],
+    ['theme|skin|appearance|genui|paint', 'palette'],
+    ['image|vision|visual|screenshot|ocr|photo', 'image'],
+    ['git|commit', 'branch'],
+    ['export|markdown|note|doc|file|archive', 'file'],
+    ['import|registry|market|store', 'store'],
+    ['share', 'share'],
+    ['key|auth|identity|sso', 'key'],
+    ['\bmcp\b', 'plug'],
+    ['voice|audio|tts|speech|sing', 'audio'],
+    ['browser|web|http', 'globe'],
+    ['database|\bdbo?\b|sql', 'database'],
+    ['workflow|flow|pipeline|n8n', 'workflow'],
+    ['agent|team|crew|kingdom|swarm|multi', 'robot'],
+    ['notify|pet|push|remind', 'bellring'],
+    ['search|serp|find|rag', 'search'],
+    ['code|script|develop', 'code'],
+    ['timer|schedule|cron|remind', 'timer'],
+    ['novel|writer|story|essay', 'notes'],
+    ['vault|password|safe', 'shield'],
+    ['monitor|watch|observ', 'eye'],
+    ['translate|i18n', 'map'],
+    ['cloud|remote|tunnel', 'cloud'],
+    ['proxy|network|route', 'network'],
+  ]
+  const pluginIcon = plugin => {
+    const text = (String(plugin?.repo || '') + ' ' + String(plugin?.name || '')).toLowerCase()
+    for (const [pattern, name] of NAME_ICON_RULES) {
+      if (new RegExp(pattern).test(text)) return name
+    }
+    return categoryIcon(plugin?.category)
+  }
   /* 分类 → 色相（v3 配色）：品牌蓝 / 青 / 紫 / 琥珀 / 绿 / 玫 / 靛，未命中的中性灰。 */
   const CATEGORY_HUES = {
     official: 'indigo', ui: 'brand', panel: 'brand', tools: 'teal', tool: 'teal',
@@ -1904,7 +2002,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       // 卡片竖版（v3）：着色图标块 + 名称/作者 + 安装按钮一行，两行摘要，彩色分类 chip 一行。
       return h('div', { className: 'dsh-pm-card', key: plugin.id, onClick: () => setDetail(plugin) },
         h('div', { className: 'dsh-pm-card-top' },
-          h('div', { className: `dsh-pm-card-icon ${hue}` }, icon(categoryIcon(plugin.category), 17)),
+          h('div', { className: `dsh-pm-card-icon ${hue}` }, icon(pluginIcon(plugin), 18)),
           h('div', { className: 'dsh-pm-card-who' },
             h('div', { className: 'dsh-pm-card-name' }, plugin.repo || plugin.name),
             h('div', { className: 'dsh-pm-card-by' },
@@ -1990,7 +2088,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       const status = installStatus[plugin.id]
       return h('div', { className: 'dsh-pm-rank-row', key: plugin.id },
         h('span', { className: 'rk', 'aria-hidden': true }, String(rank)),
-        h('div', { className: `dsh-pm-card-icon ${categoryHue(plugin.category)}`, style: { flex: 'none', width: '28px', height: '28px', borderRadius: '8px' } }, icon(categoryIcon(plugin.category), 14)),
+        h('div', { className: `dsh-pm-card-icon ${categoryHue(plugin.category)}`, style: { flex: 'none', width: '28px', height: '28px', borderRadius: '8px' } }, icon(pluginIcon(plugin), 16)),
         h('div', { className: 'who' },
           h('div', { className: 'nm' }, plugin.repo || plugin.name),
           h('div', { className: 'sub' }, `${categoryLabel(plugin.category)} · ↓ ${formatNumber(plugin.downloads)}/周 · ★ ${formatNumber(plugin.stars)}`)),
@@ -2008,7 +2106,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       list.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无数据') : list.map((p, i) => rankRow(p, i + 1)))
     const heroCard = hero
       ? h('div', { className: 'dsh-pm-hero' },
-          h('div', { className: `dsh-pm-card-icon ${categoryHue(hero.category)}`, style: { flex: 'none', width: '52px', height: '52px', borderRadius: '14px' } }, icon(categoryIcon(hero.category), 26)),
+          h('div', { className: `dsh-pm-card-icon ${categoryHue(hero.category)}`, style: { flex: 'none', width: '52px', height: '52px', borderRadius: '14px' } }, icon(pluginIcon(hero), 30)),
           h('div', { className: 'who' },
             h('div', { className: 'dsh-pm-hero-tag' }, '今日推荐'),
             h('div', { className: 'dsh-pm-hero-name' }, hero.repo || hero.name,
@@ -2119,7 +2217,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       const isInstalled = isInstalledPlugin(item)
       return h('div', { className: 'dsh-pm-ai-row', key: item.id },
         h('span', { className: 'rk', 'aria-hidden': true }, String(index + 1)),
-        h('div', { className: `dsh-pm-card-icon ${categoryHue(item.category)}`, style: { flex: 'none', width: '32px', height: '32px', borderRadius: '9px' } }, icon(categoryIcon(item.category), 16)),
+        h('div', { className: `dsh-pm-card-icon ${categoryHue(item.category)}`, style: { flex: 'none', width: '32px', height: '32px', borderRadius: '9px' } }, icon(pluginIcon(item), 18)),
         h('div', { className: 'who' },
           h('div', { className: 'nm' }, item.repo || item.name),
           item.reason ? h('div', { className: 'why' }, item.reason) : h('div', { className: 'why' }, item.description || '')),
