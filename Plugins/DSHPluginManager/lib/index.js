@@ -1476,7 +1476,12 @@ async function buildSourcePackage(dir, meta) {
   const script = meta?.scripts?.build ? 'build' : (meta?.scripts?.prepare ? 'prepare' : null);
   if (!script) return { ok: false, error: 'package.json 没有 build/prepare 脚本，无法生成入口文件' };
   try {
-    await runPnpmInSource(dir, ['install']);
+    // --ignore-scripts：pnpm install 默认会跑 prepare 生命周期脚本，
+    // 之后下面又显式跑一次 build —— 同一个构建跑两遍，且第一遍的失败信息
+    // 被称为 install 失败，很难看懂（实测 dsh-market：prepare 的 tsc 报错
+    // 被包成 ERR_PNPM_EXECUTOR_LIFECYCLE_SCRIPT_FAILED）。关掉自动脚本，
+    // 构建只在这里显式跑一次，错误也直接来自 build 本身。
+    await runPnpmInSource(dir, ['install', '--ignore-scripts']);
     await runPnpmInSource(dir, ['run', script]);
     return { ok: true, script };
   } catch (error) {
@@ -1535,10 +1540,15 @@ async function materializeClonedPlugin(src, options) {
   let published = false;
   try { published = (await npmProbe(src.packageName)) === true; } catch { published = false; }
   // 无 scope 的包名仍可能撞上别人的同名包：按仓库验证一次 identity（scoped 名已绑定作者）。
+  // **只有「明确查到不同的 repository」才否决**：src.packageName 来自 clone 出来的
+  // package.json，本身就是权威身份；国内镜像下 `pnpm view repository` 常常返回 null
+  // （超时/字段缺失），把它当成「对不上」会误否决，逼着走「上游构建坏掉的 git 源码」
+  // 这条路（实测 dsh-market：npm 包 dshmarket 存在且 repository 正确，却被误判）。
   if (published && options.sourceRef && !String(src.packageName).startsWith('@')) {
     try {
-      published = repoMatchesEntry(await repositoryOf(src.packageName), options.sourceRef);
-    } catch { published = false; }
+      const repository = await repositoryOf(src.packageName);
+      if (repository && !repoMatchesEntry(repository, options.sourceRef)) published = false;
+    } catch { /* 查不到 repository 不否决，信任源码 package.json 的 name */ }
   }
   if (published) {
     try {

@@ -938,7 +938,8 @@ serialTest('prepareClonedSource：默认构建实现会真的跑 pnpm install + 
     };
     const result = await prepareClonedSource(pkg);
     assert.equal(result.ok, true);
-    assert.deepEqual(calls, [['install'], ['run', 'build']]);
+    assert.deepEqual(calls, [['install', '--ignore-scripts'], ['run', 'build']],
+      'install 要 --ignore-scripts：pnpm 默认跑 prepare，会和显式 build 重复一次且把错误包成 lifecycle failed');
   });
 });
 
@@ -2028,12 +2029,14 @@ serialTest('uninstallPlugin：默认命令会先补齐 pnpm workspace 配置', a
   });
 });
 
-serialTest('installPlugin：npm 包的 repository 查不到时按「对不上」处理', async () => {
+serialTest('installPlugin：repository 查不到时信任源码 name，不否决 npm 发行版', async () => {
   await withTempHome(async home => {
     await writeProfile(home);
     execHook = (call) => {
       if (call.args[0] === 'view') {
         const key = call.args.slice(1).join(' ');
+        // 国内镜像下 pnpm view repository 挂了（返回 null）——不能因此否决整个 npm 路径，
+        // 否则 dsh-market（npm 名 dshmarket、上游 git 构建坏）会被逼走必失败的源码构建。
         if (key === 'repo repository --json') throw execError('registry 挂了');
         if (key === 'repo version') return { stdout: '1.0.0', stderr: '' };
         throw execError('E404 Not Found');
@@ -2050,9 +2053,9 @@ serialTest('installPlugin：npm 包的 repository 查不到时按「对不上」
       commands.push(args);
       return { note: 'installed' };
     }, { verifyPresent: async () => true });
-    assert.equal(commands.some(args => args[0] === 'add' && args[1] === 'repo'), false,
-      'repository 查不到就不能装那个同名包');
-    assert.match(result.installedAs, /^file:/);
+    assert.equal(result.fromNpm, true, 'repository 查不到仍走 npm 发行版');
+    assert.ok(commands.some(args => args[0] === 'add' && args[1] === 'repo'),
+      '装的是源码 package.json 声明的 npm 名');
   });
 });
 
@@ -2692,6 +2695,41 @@ serialTest('installPlugin：克隆出来的包在 npm 上有发行版时直接�
   });
 });
 
+serialTest('installPlugin：repository 查不到时不否决 npm 发行版（信任源码 package.json 的 name）', async () => {
+  await withTempHome(async home => {
+    await writeProfile(home);
+    // 源码 package.json 的 name 是 dshmarket（无 scope），市场条目名是 dsh-market/dsh-market。
+    execHook = installViaSource({ 'package.json': JSON.stringify({ name: 'dshmarket', version: '1.73.20' }) });
+    const commands = [];
+    const result = await installPlugin({ name: 'dsh-market/dsh-market' }, async (args) => {
+      commands.push(args);
+      return { note: 'installed' };
+    }, {
+      verifyPresent: async () => true,
+      npmProbe: async name => name === 'dshmarket',
+      // 国内镜像下 pnpm view repository 失败 → null；不能因此否决整个 npm 路径，
+      // 否则会被逼去走上游构建坏掉的 git 源码（dsh-market 的真实现象）。
+      npmRepository: async () => null,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.fromNpm, true, 'repository 查不到仍走 npm 发行版');
+    assert.deepEqual(commands, [['add', 'dshmarket']]);
+  });
+});
+
+serialTest('installPlugin：repository 明确对不上时才否决 npm 发行版', async () => {
+  await withTempHome(async home => {
+    await writeProfile(home);
+    execHook = installViaSource({ 'package.json': JSON.stringify({ name: 'someone-else', version: '1.0.0' }) });
+    const result = await installPlugin({ name: 'Owner/Repo' }, async () => ({ note: 'installed' }), {
+      verifyPresent: async () => true,
+      npmProbe: async name => name === 'someone-else',
+      npmRepository: async () => ({ url: 'https://github.com/other/different.git' }),
+    });
+    assert.equal(result.fromNpm, undefined, '明确对不上就否决 npm 路径，不装别人的同名包');
+  });
+});
+
 serialTest('installPlugin：npm 探测抛错时按「没找到」处理', async () => {
   await withTempHome(async home => {
     await writeProfile(home);
@@ -2712,7 +2750,7 @@ serialTest('installPlugin：npm 探测抛错时按「没找到」处理', async 
   });
 });
 
-serialTest('installPlugin：npm 上的 repository 查不出来时不装那个包', async () => {
+serialTest('installPlugin：repository 查询抛错时信任源码 name，仍走 npm 发行版', async () => {
   await withTempHome(async home => {
     await writeProfile(home);
     execHook = installViaSource({ 'package.json': JSON.stringify({ name: 'cloned-pkg', version: '2.0.0' }) });
@@ -2726,9 +2764,8 @@ serialTest('installPlugin：npm 上的 repository 查不出来时不装那个包
       npmRepository: async () => { throw new Error('registry 挂了'); }
     });
     assert.equal(result.ok, true);
-    assert.equal(commands.some(args => args[0] === 'add' && args[1] === 'cloned-pkg'), false,
-      '查不到 repository 就不能当同名包装');
-    assert.match(result.installedAs, /^file:/);
+    assert.equal(result.fromNpm, true, 'repository 查询抛错不否决 npm 路径');
+    assert.ok(commands.some(args => args[0] === 'add' && args[1] === 'cloned-pkg'));
   });
 });
 
