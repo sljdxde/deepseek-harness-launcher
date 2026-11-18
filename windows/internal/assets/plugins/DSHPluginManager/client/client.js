@@ -124,17 +124,17 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-card-meta{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;flex-wrap:wrap;font-size:11px;font-variant-numeric:tabular-nums;gap:8px;min-height:18px}
 .dsh-pm-card-ver{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10.5px}
 .dsh-pm-card-meta .dsh-pm-chip{align-items:center;background:var(--dsw-alias-bg-layer-2);border:0;border-radius:5px;color:var(--dsw-alias-label-secondary);display:inline-flex;font-size:10.5px;gap:3px;height:17px;padding:0 6px}
-/* 安装按钮（magpie 式）：描边胶囊，hover 填色，不用大块实心蓝。
-   安装中：淡底 + 转圈 + 文字（不禁用按钮本身，aria-busy 让读屏知道在忙）。
-   已安装：accent 淡底胶囊 + ✓ 图标（不是裸文字）。 */
-.dsh-pm-install{box-sizing:border-box;align-items:center;background:transparent;border:1px solid color-mix(in srgb,var(--pm-accent) 55%,var(--dsw-alias-border-l2));border-radius:14px;color:var(--pm-accent);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:11.5px;font-weight:600;gap:5px;height:26px;justify-content:center;line-height:1;padding:0 12px;transition:background .14s ease,border-color .14s ease,color .14s ease;white-space:nowrap}
+/* 安装按钮：三态严格等宽（安装 / 安装中… / 已安装），圆角 7px 不胖。
+   参考 magpie 榜单：按钮是克制的小圆角描边块，不是全圆角胶囊。 */
+.dsh-pm-install,.dsh-pm-installed-tag{align-items:center;border-radius:7px;box-sizing:border-box;display:inline-flex;flex:none;font:inherit;font-size:11.5px;font-weight:600;gap:5px;height:26px;justify-content:center;line-height:1;white-space:nowrap;width:68px;padding:0}
+.dsh-pm-install{background:transparent;border:1px solid color-mix(in srgb,var(--pm-accent) 55%,var(--dsw-alias-border-l2));color:var(--pm-accent);cursor:pointer;transition:background .14s ease,border-color .14s ease,color .14s ease}
 .dsh-pm-install:hover:not(:disabled){background:color-mix(in srgb,var(--pm-accent) 10%,transparent);border-color:var(--pm-accent)}
 .dsh-pm-install:active:not(:disabled){background:color-mix(in srgb,var(--pm-accent) 18%,transparent)}
 .dsh-pm-install:focus-visible{outline:2px solid var(--pm-accent);outline-offset:2px}
 .dsh-pm-install:disabled{opacity:.6;cursor:not-allowed}
 .dsh-pm-install.busy{background:color-mix(in srgb,var(--pm-accent) 8%,transparent);border-color:color-mix(in srgb,var(--pm-accent) 25%,var(--dsw-alias-border-l2));color:var(--dsw-alias-label-secondary);cursor:default}
 .dsh-pm-install .spin{animation:dsh-pm-spin .8s linear infinite;border:1.5px solid currentColor;border-radius:50%;border-right-color:transparent;display:inline-block;height:11px;width:11px}
-.dsh-pm-installed-tag{align-items:center;background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 12%,transparent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-success-primary) 32%,transparent);border-radius:14px;color:var(--dsw-alias-state-success-primary);display:inline-flex;flex:none;font-size:11.5px;font-weight:600;gap:4px;height:26px;line-height:1;padding:0 10px;white-space:nowrap}
+.dsh-pm-installed-tag{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-success-primary) 30%,transparent);color:var(--dsw-alias-state-success-primary)}
 .dsh-pm-cat{color:var(--dsw-alias-label-tertiary);font-size:11px}
 .dsh-pm-drawer{background:var(--dsw-alias-bg-layer-1);border-left:1px solid var(--dsw-alias-border-l2);box-sizing:border-box;display:flex;flex-direction:column;height:100%;max-width:420px;min-width:300px;padding:18px;position:absolute;right:0;top:0;width:40%;z-index:2147483002}
 .dsh-pm-drawer-head{display:flex;gap:10px;align-items:center}
@@ -236,7 +236,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-rank-row .nm{color:var(--dsw-alias-label-primary);font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-pm-rank-row .sub{color:var(--dsw-alias-label-tertiary);font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 榜单行的「详情」：低调文字按钮，和 hero 的详情一致；安装按钮在它左边。 */
-.dsh-pm-rank-detail{background:none;border:0;border-radius:6px;color:var(--dsw-alias-label-secondary);cursor:pointer;flex:none;font:inherit;font-size:11.5px;padding:4px 6px}
+.dsh-pm-rank-detail{align-items:center;background:none;border:1px solid transparent;border-radius:7px;box-sizing:border-box;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:11.5px;height:26px;justify-content:center;line-height:1;padding:0;transition:background .14s ease,color .14s ease;width:44px}
 .dsh-pm-rank-detail:hover{background:var(--dsw-alias-button-ghost-active-fill);color:var(--pm-accent)}
 .dsh-pm-rank-detail:focus-visible{outline:2px solid var(--pm-accent);outline-offset:1px}
 /* 分类分区：标题 + 查看全部。 */
@@ -1898,7 +1898,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           icon('check', 12), '已安装')
       }
       const busyNow = status === 'queued' || status === 'installing'
-      const label = status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装'
+      // 固定 68px 宽下的短文案：转圈 + 3 字，不塞省略号（宽度优先）。
+      const label = status === 'queued' ? '排队中' : status === 'installing' ? '安装中' : '安装'
       return h('button', {
         type: 'button',
         className: `dsh-pm-install${busyNow ? ' busy' : ''}${extraClass ? ' ' + extraClass : ''}`,
