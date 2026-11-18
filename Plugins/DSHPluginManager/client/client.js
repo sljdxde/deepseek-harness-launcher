@@ -191,11 +191,13 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
    颜色全部走宿主语义 token，深浅主题自动跟随。窄窗口（<860px）左栏收成
    顶部一行、右列折到主列下方。 */
 .dsh-pm-frame{display:flex;flex:1;min-height:0}
-.dsh-pm-rail{flex:none;width:172px;border-right:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);padding:16px 10px;display:flex;flex-direction:column;gap:3px;overflow-y:auto}
-.dsh-pm-rail-title{font-size:10.5px;font-weight:600;letter-spacing:.05em;color:var(--dsw-alias-label-tertiary);padding:6px 10px 4px;text-transform:uppercase}
-.dsh-pm-rail-item{align-items:center;background:none;border:0;border-radius:9px;box-sizing:border-box;color:var(--dsw-alias-label-secondary);cursor:pointer;display:flex;flex:0 0 auto;font:inherit;font-size:13px;gap:10px;height:38px;padding:0 12px;text-align:left;width:100%}
+.dsh-pm-rail{flex:none;width:176px;border-right:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);padding:14px 8px;display:flex;flex-direction:column;gap:4px;overflow-y:auto}
+.dsh-pm-rail-title{font-size:10.5px;font-weight:600;letter-spacing:.05em;color:var(--dsw-alias-label-tertiary);padding:6px 14px 4px;text-transform:uppercase}
+/* 左栏项：magpie 式浮框 —— border 始终占位（透明→可见），
+   所以选中/悬停时几何完全不变，图标左边缘在三种状态下严格对齐。 */
+.dsh-pm-rail-item{align-items:center;background:transparent;border:1px solid transparent;border-radius:12px;box-sizing:border-box;color:var(--dsw-alias-label-secondary);cursor:pointer;display:flex;flex:0 0 auto;font:inherit;font-size:13px;gap:11px;height:40px;padding:0 13px;text-align:left;width:100%}
 .dsh-pm-rail-item:hover{background:var(--dsw-alias-button-ghost-active-fill);color:var(--dsw-alias-label-primary)}
-.dsh-pm-rail-item.on{background:var(--dsw-alias-bg-layer-1);box-shadow:0 1px 2px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.06);color:var(--dsw-alias-label-primary);font-weight:600}
+.dsh-pm-rail-item.on{background:var(--dsw-alias-bg-layer-1);border-color:var(--dsw-alias-border-l2);box-shadow:0 2px 8px rgba(0,0,0,.10);color:var(--dsw-alias-label-primary);font-weight:600}
 .dsh-pm-rail-item .n{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums;margin-left:auto}
 .dsh-pm-rail-item.dsh-pm-rail-updates{color:var(--pm-accent)}
 .dsh-pm-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:24px;margin:0 auto;max-width:1360px;overflow-y:auto;padding:26px 30px 40px;width:100%}
