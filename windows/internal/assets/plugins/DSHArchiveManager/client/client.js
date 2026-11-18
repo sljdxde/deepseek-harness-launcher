@@ -40,7 +40,7 @@ window.__ModuleLoader__.load({ id: "dsh-archive-manager", factory: (require) => 
 .dsh-archive-row:hover{background:var(--dsw-alias-bg-layer-2)}
 .dsh-archive-row + .dsh-archive-row{border-top:1px solid var(--dsw-alias-border-l2)}
 .dsh-archive-row input[type=checkbox]{accent-color:var(--pm-accent);flex:0 0 auto;height:15px;margin:0;width:15px}
-.dsh-archive-icon{align-items:center;background:color-mix(in srgb,var(--pm-accent) 12%,transparent);border-radius:9px;color:var(--pm-accent);display:flex;flex:0 0 32px;height:32px;justify-content:center;width:32px}
+.dsh-archive-icon{align-items:center;background:color-mix(in srgb,var(--pm-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--pm-accent) 32%,transparent);border-radius:9px;box-sizing:border-box;color:var(--pm-accent);display:flex;flex:0 0 32px;height:32px;justify-content:center;width:32px}
 .dsh-archive-row-main{flex:1;min-width:0}
 .dsh-archive-row-title{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:550;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-archive-meta{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;flex-wrap:wrap;font-size:11.5px;gap:2px 7px;line-height:18px;margin-top:2px;min-width:0}

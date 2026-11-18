@@ -111,7 +111,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-card{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;gap:10px;min-width:0;padding:16px 17px 15px;transition:border-color .16s ease,box-shadow .16s ease}
 .dsh-pm-card:hover{border-color:color-mix(in srgb,var(--dsw-alias-label-primary) 16%,var(--dsw-alias-border-l2));box-shadow:0 4px 14px rgba(20,22,30,.08)}
 .dsh-pm-card-top{align-items:center;display:flex;gap:10px;min-width:0}
-.dsh-pm-card-icon{align-items:center;background:var(--dsw-alias-bg-layer-2);border-radius:10px;color:var(--dsw-alias-label-secondary);display:flex;flex:0 0 36px;height:36px;justify-content:center;width:36px}
+/* 统一的图标块体系：每个图标都有 1px 描边 + 同色淡底 + 等比圆角。
+   三档尺寸 sm/md/lg 只改大小，边框/圆角规则一致（圆角 = 尺寸 × 0.28）。 */
+.dsh-pm-icon-tile{align-items:center;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);box-sizing:border-box;display:inline-flex;flex:none;justify-content:center}
+.dsh-pm-icon-sm{height:28px;width:28px;border-radius:8px}
+.dsh-pm-icon-md{height:36px;width:36px;border-radius:10px}
+.dsh-pm-icon-lg{height:52px;width:52px;border-radius:15px}
 .dsh-pm-card-who{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0}
 .dsh-pm-card-name{color:var(--dsw-alias-label-primary);font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-pm-card-by{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;font-size:11px;gap:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -258,14 +263,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
    分类色 = 6 组固定色相 + 品牌蓝；图标块/分类 chip 用 13% 透明底 + 同色字，
    深色主题下透明底自然叠在深底上，文字用 color-mix 往 label-primary 靠一点，
    两套主题都不刺眼。状态色仍走宿主的 success / warn / brand 语义 token。 */
-.dsh-pm-card-icon.dsh-pm-hue-brand,.dsh-pm-card-chip.dsh-pm-hue-brand{background:color-mix(in srgb,var(--pm-accent) 13%,transparent);color:var(--pm-accent)}
-.dsh-pm-card-icon.dsh-pm-hue-ok,.dsh-pm-card-chip.dsh-pm-hue-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 13%,transparent);color:var(--dsw-alias-state-success-primary)}
-.dsh-pm-card-icon.dsh-pm-hue-warn,.dsh-pm-card-chip.dsh-pm-hue-warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);color:var(--dsw-alias-state-warn-primary)}
-.dsh-pm-card-icon.dsh-pm-hue-violet,.dsh-pm-card-chip.dsh-pm-hue-violet{background:color-mix(in srgb,#7c5cd6 14%,transparent);color:color-mix(in srgb,#7c5cd6 78%,var(--dsw-alias-label-primary))}
-.dsh-pm-card-icon.dsh-pm-hue-teal,.dsh-pm-card-chip.dsh-pm-hue-teal{background:color-mix(in srgb,#0f8f86 14%,transparent);color:color-mix(in srgb,#0f8f86 80%,var(--dsw-alias-label-primary))}
-.dsh-pm-card-icon.dsh-pm-hue-rose,.dsh-pm-card-chip.dsh-pm-hue-rose{background:color-mix(in srgb,#c2467a 13%,transparent);color:color-mix(in srgb,#c2467a 80%,var(--dsw-alias-label-primary))}
-.dsh-pm-card-icon.dsh-pm-hue-cyan,.dsh-pm-card-chip.dsh-pm-hue-cyan{background:color-mix(in srgb,#1b7fa8 13%,transparent);color:color-mix(in srgb,#1b7fa8 80%,var(--dsw-alias-label-primary))}
-.dsh-pm-card-icon.dsh-pm-hue-indigo,.dsh-pm-card-chip.dsh-pm-hue-indigo{background:color-mix(in srgb,#4f63d2 13%,transparent);color:color-mix(in srgb,#4f63d2 80%,var(--dsw-alias-label-primary))}
+.dsh-pm-icon-tile.dsh-pm-hue-brand{border-color:color-mix(in srgb,var(--pm-accent) 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-brand,.dsh-pm-card-chip.dsh-pm-hue-brand{background:color-mix(in srgb,var(--pm-accent) 13%,transparent);color:var(--pm-accent)}
+.dsh-pm-icon-tile.dsh-pm-hue-ok{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-ok,.dsh-pm-card-chip.dsh-pm-hue-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 13%,transparent);color:var(--dsw-alias-state-success-primary)}
+.dsh-pm-icon-tile.dsh-pm-hue-warn{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-warn,.dsh-pm-card-chip.dsh-pm-hue-warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);color:var(--dsw-alias-state-warn-primary)}
+.dsh-pm-icon-tile.dsh-pm-hue-violet{border-color:color-mix(in srgb,#7c5cd6 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-violet,.dsh-pm-card-chip.dsh-pm-hue-violet{background:color-mix(in srgb,#7c5cd6 14%,transparent);color:color-mix(in srgb,#7c5cd6 78%,var(--dsw-alias-label-primary))}
+.dsh-pm-icon-tile.dsh-pm-hue-teal{border-color:color-mix(in srgb,#0f8f86 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-teal,.dsh-pm-card-chip.dsh-pm-hue-teal{background:color-mix(in srgb,#0f8f86 14%,transparent);color:color-mix(in srgb,#0f8f86 80%,var(--dsw-alias-label-primary))}
+.dsh-pm-icon-tile.dsh-pm-hue-rose{border-color:color-mix(in srgb,#c2467a 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-rose,.dsh-pm-card-chip.dsh-pm-hue-rose{background:color-mix(in srgb,#c2467a 13%,transparent);color:color-mix(in srgb,#c2467a 80%,var(--dsw-alias-label-primary))}
+.dsh-pm-icon-tile.dsh-pm-hue-cyan{border-color:color-mix(in srgb,#1b7fa8 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-cyan,.dsh-pm-card-chip.dsh-pm-hue-cyan{background:color-mix(in srgb,#1b7fa8 13%,transparent);color:color-mix(in srgb,#1b7fa8 80%,var(--dsw-alias-label-primary))}
+.dsh-pm-icon-tile.dsh-pm-hue-indigo{border-color:color-mix(in srgb,#4f63d2 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-indigo,.dsh-pm-card-chip.dsh-pm-hue-indigo{background:color-mix(in srgb,#4f63d2 13%,transparent);color:color-mix(in srgb,#4f63d2 80%,var(--dsw-alias-label-primary))}
 .dsh-pm-card-chip{align-items:center;border-radius:5px;display:inline-flex;font-size:10.5px;font-weight:600;gap:3px;height:17px;padding:0 6px}
 /* 分类条：原始分类按数量平铺；超过 8 个收进「全部 N 类」，点击在下方换行展开。 */
 /* 分类条：两行结构。第一行 = 分类 chips（可换行）+ 右侧筛选组（来源/排序），
@@ -2002,7 +2007,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       // 卡片竖版（v3）：着色图标块 + 名称/作者 + 安装按钮一行，两行摘要，彩色分类 chip 一行。
       return h('div', { className: 'dsh-pm-card', key: plugin.id, onClick: () => setDetail(plugin) },
         h('div', { className: 'dsh-pm-card-top' },
-          h('div', { className: `dsh-pm-card-icon ${hue}` }, icon(pluginIcon(plugin), 18)),
+          h('div', { className: `dsh-pm-icon-tile dsh-pm-icon-md ${hue}` }, icon(pluginIcon(plugin), 18)),
           h('div', { className: 'dsh-pm-card-who' },
             h('div', { className: 'dsh-pm-card-name' }, plugin.repo || plugin.name),
             h('div', { className: 'dsh-pm-card-by' },
@@ -2088,7 +2093,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       const status = installStatus[plugin.id]
       return h('div', { className: 'dsh-pm-rank-row', key: plugin.id },
         h('span', { className: 'rk', 'aria-hidden': true }, String(rank)),
-        h('div', { className: `dsh-pm-card-icon ${categoryHue(plugin.category)}`, style: { flex: 'none', width: '28px', height: '28px', borderRadius: '8px' } }, icon(pluginIcon(plugin), 16)),
+        h('div', { className: `dsh-pm-icon-tile dsh-pm-icon-sm ${categoryHue(plugin.category)}` }, icon(pluginIcon(plugin), 16)),
         h('div', { className: 'who' },
           h('div', { className: 'nm' }, plugin.repo || plugin.name),
           h('div', { className: 'sub' }, `${categoryLabel(plugin.category)} · ↓ ${formatNumber(plugin.downloads)}/周 · ★ ${formatNumber(plugin.stars)}`)),
@@ -2106,7 +2111,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       list.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无数据') : list.map((p, i) => rankRow(p, i + 1)))
     const heroCard = hero
       ? h('div', { className: 'dsh-pm-hero' },
-          h('div', { className: `dsh-pm-card-icon ${categoryHue(hero.category)}`, style: { flex: 'none', width: '52px', height: '52px', borderRadius: '14px' } }, icon(pluginIcon(hero), 30)),
+          h('div', { className: `dsh-pm-icon-tile dsh-pm-icon-lg ${categoryHue(hero.category)}` }, icon(pluginIcon(hero), 30)),
           h('div', { className: 'who' },
             h('div', { className: 'dsh-pm-hero-tag' }, '今日推荐'),
             h('div', { className: 'dsh-pm-hero-name' }, hero.repo || hero.name,
@@ -2217,7 +2222,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       const isInstalled = isInstalledPlugin(item)
       return h('div', { className: 'dsh-pm-ai-row', key: item.id },
         h('span', { className: 'rk', 'aria-hidden': true }, String(index + 1)),
-        h('div', { className: `dsh-pm-card-icon ${categoryHue(item.category)}`, style: { flex: 'none', width: '32px', height: '32px', borderRadius: '9px' } }, icon(pluginIcon(item), 18)),
+        h('div', { className: `dsh-pm-icon-tile dsh-pm-icon-sm ${categoryHue(item.category)}` }, icon(pluginIcon(item), 18)),
         h('div', { className: 'who' },
           h('div', { className: 'nm' }, item.repo || item.name),
           item.reason ? h('div', { className: 'why' }, item.reason) : h('div', { className: 'why' }, item.description || '')),
@@ -2452,7 +2457,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             : pluginOn ? '停用这个插件（重启 dsh 后生效）' : '启用这个插件（重启 dsh 后生效）'
           const switchText = busy === 'disable-' + item.name ? '切换中…' : !disableInfo ? '状态未知' : pluginOn ? '已启用' : '已停用'
           return h('div', { className: `dsh-pm-row${pluginOn === false && disableInfo ? ' dsh-pm-row-off' : ''}`, key: item.name },
-            h('div', { className: 'dsh-pm-card-icon' }, icon('puzzle', 16)),
+            h('div', { className: 'dsh-pm-icon-tile dsh-pm-icon-md' }, icon('puzzle', 16)),
             h('div', { className: 'dsh-pm-row-main' },
               h('div', { className: 'dsh-pm-row-title' }, item.name),
               h('div', { className: 'dsh-pm-row-meta' }, item.description || '内置插件')),
@@ -2481,7 +2486,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       sources === null ? h('div', { className: 'dsh-pm-empty' }, '加载中…') :
       h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
         sources.map(source => h('div', { className: 'dsh-pm-srcrow', key: source.id },
-          h('div', { className: 'dsh-pm-card-icon' }, icon(source.builtin ? 'shield' : 'server', 16)),
+          h('div', { className: 'dsh-pm-icon-tile dsh-pm-icon-md' }, icon(source.builtin ? 'shield' : 'server', 16)),
           h('div', { className: 'who' },
             h('div', { className: 'nm' },
               source.builtin ? 'awesome-dsh 社区清单（内置默认源）' : source.url,
