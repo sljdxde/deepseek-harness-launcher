@@ -124,10 +124,17 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-card-meta{align-items:center;color:var(--dsw-alias-label-tertiary);display:flex;flex-wrap:wrap;font-size:11px;font-variant-numeric:tabular-nums;gap:8px;min-height:18px}
 .dsh-pm-card-ver{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10.5px}
 .dsh-pm-card-meta .dsh-pm-chip{align-items:center;background:var(--dsw-alias-bg-layer-2);border:0;border-radius:5px;color:var(--dsw-alias-label-secondary);display:inline-flex;font-size:10.5px;gap:3px;height:17px;padding:0 6px}
-.dsh-pm-install{box-sizing:border-box;background:var(--pm-accent);border:0;border-radius:8px;color:var(--pm-accent-fg);cursor:pointer;flex:none;font:inherit;font-size:12px;font-weight:600;line-height:18px;padding:6px 14px;white-space:nowrap}
-.dsh-pm-install:hover:not(:disabled){filter:brightness(1.06)}
-.dsh-pm-install:disabled{cursor:not-allowed;opacity:.6}
-.dsh-pm-installed-tag{color:var(--dsw-alias-state-success-primary);flex:none;font-size:12px;line-height:18px;white-space:nowrap}
+/* 安装按钮（magpie 式）：描边胶囊，hover 填色，不用大块实心蓝。
+   安装中：淡底 + 转圈 + 文字（不禁用按钮本身，aria-busy 让读屏知道在忙）。
+   已安装：accent 淡底胶囊 + ✓ 图标（不是裸文字）。 */
+.dsh-pm-install{box-sizing:border-box;align-items:center;background:transparent;border:1px solid color-mix(in srgb,var(--pm-accent) 55%,var(--dsw-alias-border-l2));border-radius:14px;color:var(--pm-accent);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:11.5px;font-weight:600;gap:5px;height:26px;justify-content:center;line-height:1;padding:0 12px;transition:background .14s ease,border-color .14s ease,color .14s ease;white-space:nowrap}
+.dsh-pm-install:hover:not(:disabled){background:color-mix(in srgb,var(--pm-accent) 10%,transparent);border-color:var(--pm-accent)}
+.dsh-pm-install:active:not(:disabled){background:color-mix(in srgb,var(--pm-accent) 18%,transparent)}
+.dsh-pm-install:focus-visible{outline:2px solid var(--pm-accent);outline-offset:2px}
+.dsh-pm-install:disabled{opacity:.6;cursor:not-allowed}
+.dsh-pm-install.busy{background:color-mix(in srgb,var(--pm-accent) 8%,transparent);border-color:color-mix(in srgb,var(--pm-accent) 25%,var(--dsw-alias-border-l2));color:var(--dsw-alias-label-secondary);cursor:default}
+.dsh-pm-install .spin{animation:dsh-pm-spin .8s linear infinite;border:1.5px solid currentColor;border-radius:50%;border-right-color:transparent;display:inline-block;height:11px;width:11px}
+.dsh-pm-installed-tag{align-items:center;background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 12%,transparent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-success-primary) 32%,transparent);border-radius:14px;color:var(--dsw-alias-state-success-primary);display:inline-flex;flex:none;font-size:11.5px;font-weight:600;gap:4px;height:26px;line-height:1;padding:0 10px;white-space:nowrap}
 .dsh-pm-cat{color:var(--dsw-alias-label-tertiary);font-size:11px}
 .dsh-pm-drawer{background:var(--dsw-alias-bg-layer-1);border-left:1px solid var(--dsw-alias-border-l2);box-sizing:border-box;display:flex;flex-direction:column;height:100%;max-width:420px;min-width:300px;padding:18px;position:absolute;right:0;top:0;width:40%;z-index:2147483002}
 .dsh-pm-drawer-head{display:flex;gap:10px;align-items:center}
@@ -1861,14 +1868,47 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
     // 已安装索引：一次构建，市场卡片与详情抽屉只查数组（此前每卡片每次
     // render 都重扫 installed 并做字符串包含）。
+    // 归一化比较：市场条目名 dsh-market/dsh-market，实际 npm 装下来可能是
+    // dshmarket（去掉了横杠），直接字符串比会漏 —— 用户装完还看到「安装」就是
+    // 这个原因。去掉 / @ - _ 和空白后比较，涵盖 scope、连字符与大小写差异。
+    const normalizedName = value => normalizeText(value).replace(/[\/@\-_\s.]/g, '')
     const installedIndex = React.useMemo(
-      () => installed.filter(item => !item.broken).map(item => normalizeText(item.name)),
+      () => installed.filter(item => !item.broken).map(item => normalizedName(item.name)),
       [installed]
     )
-    const isInstalledPlugin = plugin => installedIndex.some(name => {
-      const repo = normalizeText(plugin.repo)
-      return name === repo || name.endsWith('/' + repo) || (plugin.url && normalizeText(plugin.url).includes(name))
-    })
+    const isInstalledPlugin = plugin => {
+      if (!plugin) return false
+      const repo = normalizedName(plugin.repo)
+      if (!repo) return false
+      if (installedIndex.some(name => name === repo || name.endsWith(repo))) return true
+      // 再比整个 name（含作者），以及 url 里的仓库名兜底。
+      const whole = normalizedName(plugin.name)
+      if (whole && installedIndex.some(name => name === whole || name.endsWith(whole))) return true
+      return false
+    }
+
+    /**
+     * 统一的「安装 / 安装中 / 已安装」按钮，所有卡片、榜单、抽屉、hero 共用。
+     * 安装中显示转圈 + 进度文字；完成后 loadInstalled 把插件加进 installedIndex，
+     * 下次渲染自动变成「✓ 已安装」（不再停留在「安装」）。
+     */
+    const installButton = (plugin, { status = null, disabled = false, extraClass = '' } = {}) => {
+      if (isInstalledPlugin(plugin)) {
+        return h('span', { className: `dsh-pm-installed-tag ${extraClass}`.trim() },
+          icon('check', 12), '已安装')
+      }
+      const busyNow = status === 'queued' || status === 'installing'
+      const label = status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装'
+      return h('button', {
+        type: 'button',
+        className: `dsh-pm-install${busyNow ? ' busy' : ''}${extraClass ? ' ' + extraClass : ''}`,
+        disabled: disabled || busyNow,
+        'aria-busy': busyNow ? 'true' : undefined,
+        onClick: (e) => { e?.stopPropagation(); install(plugin) },
+        title: status === 'queued' ? '已加入安装队列' : status === 'installing' ? '正在安装' : undefined,
+      }, busyNow ? h('span', { className: 'spin', 'aria-hidden': true }) : icon('download', 12), label)
+    }
+
     // 市场查询走服务端分页（/marketplace/query）：社区清单 1.1 万条时整包 9.6MB，
     // webview 每次打开都要下载解析一遍，表现为长时间「加载中…」。服务端按
     // q/category/sort 过滤并只回一页，同时带回分类计数与两张榜。
@@ -2020,14 +2060,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
               plugin.category === 'official'
                 ? h('span', { className: 'dsh-pm-verified' }, icon('shield', 11), 'dsh 官方')
                 : h('span', null, plugin.author || plugin.name))),
-          isInstalled
-            ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
-            : h('button', {
-                className: 'dsh-pm-install',
-                disabled: batchRunning || Boolean(status),
-                onClick: (e) => { e.stopPropagation(); install(plugin) },
-                title: batchRunning ? '批量更新进行中，等它结束再安装' : status === 'queued' ? '已加入安装队列' : status === 'installing' ? '正在安装' : undefined,
-              }, status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装')),
+          installButton(plugin, { status, disabled: batchRunning })),
         h('p', { className: 'dsh-pm-card-sum' }, descOf(plugin, true) || descOf(plugin) || '暂无描述'),
         h('div', { className: 'dsh-pm-card-meta' },
           h('span', { className: `dsh-pm-card-chip ${hue}` }, icon(categoryIcon(plugin.category), 10), categoryLabel(plugin.category)),
@@ -2069,11 +2102,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         h('span', null, `下载 ${detail.downloads || 0}`),
         detail.addedDate ? h('span', null, `添加于 ${detail.addedDate}`) : null),
       h('div', { className: 'dsh-pm-drawer-actions' },
-        installStatus[detail.id]
-          ? h('span', { className: 'dsh-pm-badge' }, installStatus[detail.id] === 'installing' ? '安装中…' : '排队中…')
-          : isInstalledPlugin(detail)
-            ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
-            : h('button', { className: 'dsh-pm-install', disabled: batchRunning || busyOther, onClick: () => install(detail), title: batchRunning ? '批量更新进行中，等它结束再安装' : undefined }, '安装')),
+        installButton(detail, { status: installStatus[detail.id], disabled: batchRunning || busyOther })),
       detail.url ? h('a', { className: 'dsh-pm-drawer-link', href: detail.url, target: '_blank', rel: 'noreferrer' }, '在 GitHub 上查看 ↗') : null)
       : null
 
@@ -2103,14 +2132,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         h('div', { className: 'who' },
           h('div', { className: 'nm' }, plugin.repo || plugin.name),
           h('div', { className: 'sub' }, `${categoryLabel(plugin.category)} · ↓ ${formatNumber(plugin.downloads)}/周 · ★ ${formatNumber(plugin.stars)}`)),
-        isInstalled
-          ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
-          : h('button', {
-              className: 'dsh-pm-install',
-              disabled: batchRunning || Boolean(status),
-              onClick: (e) => { e.stopPropagation(); install(plugin) },
-              title: status === 'queued' ? '已加入安装队列' : status === 'installing' ? '正在安装' : undefined,
-            }, status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装'),
+        installButton(plugin, { status, disabled: batchRunning }),
         // 详情入口：榜单行此前整行没有任何点击处理，用户点名字没反应。
         // 用独立按钮（和 hero 的「详情」一致），避免整行点击与「安装」按钮冲突。
         h('button', {
@@ -2137,11 +2159,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
               h('div', { className: 's' }, h('b', null, categoryLabel(hero.category)), h('span', null, '类型')),
               hero.version ? h('div', { className: 's' }, h('b', null, `v${hero.version}`), h('span', null, '版本')) : null),
             h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center' } },
-              h('button', {
-                className: 'dsh-pm-install',
-                disabled: batchRunning || Boolean(installStatus[hero.id]),
-                onClick: () => install(hero),
-              }, installStatus[hero.id] === 'queued' ? '排队中…' : installStatus[hero.id] === 'installing' ? '安装中…' : '安装'),
+              installButton(hero, { status: installStatus[hero.id], disabled: batchRunning || busyOther }),
               h('button', { className: 'dsh-pm-tool', style: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '15px', padding: '6px 16px' }, onClick: () => setDetail(hero) }, '详情'))))
       : null
     // 扁平栅格（分类视图 / 搜索结果）：服务端分页，当前页已全部渲染；还有更多时按钮续页。
@@ -2244,9 +2262,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           h('span', null, `↓ ${formatNumber(item.downloads)}/周`),
           h('span', null, `★ ${formatNumber(item.stars)}`),
           item.version ? h('span', null, `v${item.version}`) : null),
-        isInstalled
-          ? h('span', { className: 'dsh-pm-installed-tag' }, '✓ 已安装')
-          : h('button', { className: 'dsh-pm-install', onClick: () => install({ ...item, category: item.category }) }, '安装'))
+        installButton({ ...item, category: item.category }))
     }
     // 步骤 → 圆点状态：错误红、降级琥珀、其余完成绿；最后一条检索中时呼吸。
     const stepState = (entry, index) => {

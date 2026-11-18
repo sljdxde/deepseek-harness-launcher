@@ -1108,10 +1108,10 @@ await openInstalledPanel(runtime);
   const rankText = textOf(rankCards[0]);
   assert.ok(rankText.includes('下载最多') && rankText.includes('o/hot'), '下载榜第一是 hot');
   assert.ok(textOf(rankCards[1]).includes('星标最多'), '第二张榜是星标榜');
-  // 已安装的插件在榜里显示「✓ 已安装」而不是安装按钮。
+  // 已安装的插件在榜里显示「已安装」而不是安装按钮。
   const rankRows = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-rank-row( |$)/.test(String(node.props.className || '')));
   const installedRow = rankRows.find(row => textOf(row).includes('o/dsh-notify'));
-  assert.ok(installedRow && textOf(installedRow).includes('✓ 已安装'), '榜单里已安装的插件显示「✓ 已安装」胶囊');
+  assert.ok(installedRow && textOf(installedRow).includes('已安装'), '榜单里已安装的插件显示「已安装」胶囊');
   // 榜单行可以查看详情（此前整行没有任何点击处理，点名字没反应）。
   const detailBtn = findAll(installedRow, node => node.type === 'button'
     && /(^| )dsh-pm-rank-detail( |$)/.test(String(node.props.className || '')))[0];
@@ -1717,7 +1717,7 @@ await openInstalledPanel(runtime);
 }
 
 /** 场景 23：插件详情抽屉 —— 点卡片打开，���示作者/分类/星标/下载/添加时间，
- *  抽屉里的「安装」按钮要真的能装；已安装的插件显示「✓ 已安装」而不是按钮。 */
+ *  抽屉里的「安装」按钮要真的能装；已安装的插件显示「已安装」而不是按钮。 */
 {
   const marketPlugins = [
     { id: 'm1', name: 'alpha', repo: 'owner/alpha', author: 'owner', category: 'ui', descriptionEn: 'English desc', descriptionZh: '中文描述', downloads: 1234, stars: 56, version: '1.0.0', addedDate: '2026-01-01', url: 'https://github.com/owner/alpha' },
@@ -1772,13 +1772,13 @@ await openInstalledPanel(runtime);
   await settle(runtime, 30);
   assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/install')), '抽屉里的安装会发请求');
 
-  // 已安装的插件：抽屉里显示「✓ 已安装」而不是按钮。
+  // 已安装的插件：抽屉里显示「已安装」而不是按钮。
   const installedCard = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')))[1];
   assert.ok(installedCard, '有第二个卡片');
   installedCard.props.onClick({ stopPropagation() {} });
   await settle(runtime, 10);
   const drawer2 = findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '').includes('dsh-pm-drawer'))[0];
-  assert.ok(textOf(drawer2).includes('✓ 已安装'), '已安装的插件显示已安装标记');
+  assert.ok(textOf(drawer2).includes('已安装'), '已安装的插件显示已安装标记');
   assert.ok(textOf(drawer2).includes('Installed'), '没有中文描述时回退到英文描述');
 
   console.log('场景23（插件详情抽屉）通过');
@@ -2294,4 +2294,74 @@ await openInstalledPanel(runtime);
   assert.equal(after.length, 1, '放行后也不会再发第二次（实际 ' + after.length + '）');
 
   console.log('场景31（安装队列只跑一次）通过');
+}
+
+/** 场景 32：安装按钮三态（安装 / 安装中转圈 / 已安装）+ 归一化匹配。
+ *  用户反馈：安装时没有转圈提示；装完还显示「安装」（dshmarket：市场名
+ *  dsh-market/dsh-market，实际 npm 名 dshmarket，旧的字符串匹配漏掉）。 */
+{
+  const marketPlugins = [
+    { id: 'm1', name: 'dsh-market/dsh-market', repo: 'dsh-market', author: 'dsh-market', category: 'market', descriptionEn: 'market', descriptionZh: '插件市场', downloads: 100, stars: 10, version: '1.0.0', addedDate: null },
+  ];
+  let installedItems = [];
+  let releaseInstall;
+  const installGate = new Promise(resolve => { releaseInstall = resolve });
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url === '/dsh-plugin-manager/installed') return respond({ items: installedItems });
+    if (url === '/dsh-plugin-manager/install') {
+      return installGate.then(() => {
+        // 装完：实际安装的 npm 名是 dshmarket（无横杠），不是市场条目名。
+        installedItems = [{ name: 'dshmarket', version: '1.73.20', source: 'user' }];
+        return respond({ ok: true });
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: 1, allTotal: 1,
+        counts: [{ name: 'market', count: 1, label: '市场' }], categories: ['market'],
+        plugins: marketPlugins, sections: [],
+        featured: [], topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  assert.ok(cards().length >= 1, '市场卡片已渲染');
+  const installBtn = () => findAll(cards()[0], node => node.type === 'button'
+    && /(^| )dsh-pm-install( |$)/.test(String(node.props.className || '')))[0];
+  assert.ok(installBtn(), '初始是「安装」按钮');
+  assert.equal(textOf(installBtn()).includes('安装'), true);
+
+  // 点安装 → 请求在途 → 按钮变成「安装中…」+ 转圈（busy class + spin 子元素）。
+  installBtn().props.onClick({ stopPropagation() {} });
+  await settle(runtime, 6);
+  const busyBtn = installBtn();
+  assert.ok(busyBtn, '安装中按钮还在');
+  assert.ok(String(busyBtn.props.className || '').includes('busy'), '安装中有 busy 态');
+  assert.equal(busyBtn.props['aria-busy'], 'true', 'aria-busy 告知读屏');
+  assert.ok(textOf(busyBtn).includes('安装中'), '文案是「安装中…」');
+  assert.ok(findAll(busyBtn, node => String(node.props.className || '').includes('spin')).length > 0,
+    '安装中有转圈图标');
+
+  // 放行安装 → installed 里出现 dshmarket（归一化匹配 dsh-market）→ 变成「已安装」。
+  releaseInstall();
+  await settle(runtime, 20);
+  const tag = findAll(cards()[0], node => node.type === 'span'
+    && /(^| )dsh-pm-installed-tag( |$)/.test(String(node.props.className || '')))[0];
+  assert.ok(tag, '装完后显示「已安装」胶囊（不再是「安装」按钮）');
+  assert.ok(textOf(tag).includes('已安装'));
+  assert.equal(installBtn(), undefined, '安装按钮被已安装胶囊取代');
+
+  console.log('场景32（安装按钮三态 + 归一化匹配）通过');
 }
