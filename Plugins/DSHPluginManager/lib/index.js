@@ -1245,7 +1245,7 @@ const LOCAL_IMPORT_RES = [
 const LOCAL_MODULE_EXTENSIONS = ['', '.mjs', '.js', '.cjs', '.mts', '.ts', '.cts'];
 
 /** 不参与 import 校验的目录：不是这个包的运行时代码。 */
-const UNSCANNED_PACKAGE_DIRS = new Set(['node_modules', '.git', 'test', 'tests', '__tests__', 'fixtures', 'coverage']);
+const UNSCANNED_PACKAGE_DIRS = new Set(['node_modules', '.git', 'test', 'tests', '__tests__', 'fixtures', 'coverage', 'scripts', 'examples']);
 
 function localImportSpecifiers(source) {
   const found = new Set();
@@ -1265,7 +1265,8 @@ async function listPackageModuleFiles(dir, out = []) {
       // 仓库的 test/ 引用到仓库里的 fixture 是常态，报出来全是误报。
       if (UNSCANNED_PACKAGE_DIRS.has(entry.name)) continue;
       await listPackageModuleFiles(path, out);
-    } else if (/\.(?:mjs|cjs|js|mts|cts)$/.test(entry.name) && !/\.(?:test|spec)\.(?:mjs|cjs|js|mts|cts)$/.test(entry.name)) {
+    } else if (/\.(?:mjs|cjs|js|mts|cts)$/.test(entry.name)
+      && !/\.(?:test|spec|smoke)\.(?:mjs|cjs|js|mts|cts)$/.test(entry.name)) {
       out.push(path);
     }
   }
