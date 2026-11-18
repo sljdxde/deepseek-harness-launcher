@@ -1537,8 +1537,13 @@ async function materializeClonedPlugin(src, options) {
   const prepare = options.prepare ?? prepareClonedSource;
   const repositoryOf = options.repositoryOf ?? npmRepositoryOf;
 
-  let published = false;
-  try { published = (await npmProbe(src.packageName)) === true; } catch { published = false; }
+  // 注意：npmProbe 返回 'unreachable'（registry 暂时连不上，国内镜像常用）时
+  // 不能当成「不存在」—— 它会把有 npm 发行版的插件（dsh-market/dshmarket）
+  // 逼去走上游构建坏掉的 git 源码。'unreachable' 当成「可能存在」，直接尝试装；
+  // 装不上会在下面 catch 里回退源码路径，代价只是一次失败的 pnpm add。
+  let npmCandidate = false;
+  try { npmCandidate = (await npmProbe(src.packageName)) !== false; } catch { npmCandidate = false; }
+  let published = npmCandidate;
   // 无 scope 的包名仍可能撞上别人的同名包：按仓库验证一次 identity（scoped 名已绑定作者）。
   // **只有「明确查到不同的 repository」才否决**：src.packageName 来自 clone 出来的
   // package.json，本身就是权威身份；国内镜像下 `pnpm view repository` 常常返回 null

@@ -660,15 +660,13 @@ serialTest('installPlugin：无 scope 候选要核对 repository，对不上就�
   await withTempHome(async home => {
     await writeProfile(home);
     execHook = (call) => {
-      const table = {
-        '@owner/repo version': execError('E404 Not Found'),
-        'repo version': '1.0.0',
-        'repo repository --json': JSON.stringify({ url: 'https://github.com/someone/else' })
-      };
       if (call.args[0] === 'view') {
         const key = call.args.slice(1).join(' ');
-        if (Object.prototype.hasOwnProperty.call(table, key)) throw table[key];
-        return { stdout: table[key], stderr: '' };
+        // E404 / repository 对不上是错误；version 正常返回（不能把正常值 throw 出去，
+        // 否则 npmViewExists 会当成 unreachable，干扰「明确对不上」这条断言）。
+        if (key === '@owner/repo version') throw execError('E404 Not Found');
+        if (key === 'repo version') return { stdout: '1.0.0', stderr: '' };
+        if (key === 'repo repository --json') return { stdout: JSON.stringify({ url: 'https://github.com/someone/else' }), stderr: '' };
       }
       if (call.args[0] === 'clone') {
         const dest = call.args[call.args.length - 1];
