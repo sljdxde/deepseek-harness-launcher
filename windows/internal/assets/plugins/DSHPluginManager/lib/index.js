@@ -1555,6 +1555,7 @@ async function materializeClonedPlugin(src, options) {
       if (repository && !repoMatchesEntry(repository, options.sourceRef)) published = false;
     } catch { /* 查不到 repository 不否决，信任源码 package.json 的 name */ }
   }
+  let npmError = '';
   if (published) {
     try {
       const result = (await command(['add', src.packageName])) ?? {};
@@ -1562,11 +1563,21 @@ async function materializeClonedPlugin(src, options) {
       if (accepted.ok) {
         return { ok: true, installedAs: src.packageName, packageName: src.packageName, note: accepted.note, fromNpm: true };
       }
-    } catch { /* npm 装不上就回退到源码构建这条路 */ }
+      npmError = accepted.error || 'npm 包装上后验收没通过';
+    } catch (error) {
+      // 记住 npm 失败的原因：如果源码构建也失败，用户看到的是最终那条错误；
+      // 把两条都带上，才能分辨「上游发布坏了」还是「本机网络/镜像问题」。
+      npmError = String(error?.message || error);
+    }
   }
 
   const prepared = await prepare(src.dest);
-  if (!prepared.ok) return { ok: false, error: prepared.error };
+  if (!prepared.ok) {
+    const hint = npmError
+      ? `；此前 npm 发行版 ${src.packageName} 也没装上：${npmError.slice(0, 240)}`
+      : '';
+    return { ok: false, error: (prepared.error || '插件源码准备失败') + hint };
+  }
   // 构建后重新扫一遍相对 import：构建产物里也可能有落不了地的本地引用。
   const gaps = await findUnresolvableLocalImports(src.dest);
   if (gaps.length) return { ok: false, error: describeUnresolvableImports(gaps) };

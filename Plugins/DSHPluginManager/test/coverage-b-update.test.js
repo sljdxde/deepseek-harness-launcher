@@ -4155,7 +4155,7 @@ serialTest('applyPluginUpdate：回滚时新目录删不掉也要继续放回旧
   });
 });
 
-serialTest('installPlugin：源码准备失败但没给出原因时保留前面那条错误', async () => {
+serialTest('installPlugin：源码准备失败但没给出原因时给兜底错误', async () => {
   await withTempHome(async home => {
     await writeProfile(home);
     execHook = installViaSource({ 'package.json': JSON.stringify({ name: 'repo', version: '2.0.0' }) });
@@ -4165,6 +4165,6 @@ serialTest('installPlugin：源码准备失败但没给出原因时保留前面�
       prepare: async () => ({ ok: false })
     });
     assert.equal(result.ok, false);
-    assert.match(result.error, /npm 上没有 @owner\/repo|npm 上没有 repo/);
+    assert.match(result.error, /源码准备失败/);
   });
 });
