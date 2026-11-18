@@ -185,14 +185,21 @@ function boot({ fetchImpl, setTimeoutImpl }) {
   const runtime = new Runtime();
   const documentStub = makeDocument();
   let plugin;
-  const window = { __ModuleLoader__: { load(record) { plugin = record.factory(name => {
+  // window 事件监听 stub：面板内的 ESC 关闭等 effect 会挂 keydown 监听，
+  // 测试可经 dispatchWindowEvent(type, event) 手动派发。
+  const windowEvents = new Map();
+  const window = {
+    __ModuleLoader__: { load(record) { plugin = record.factory(name => {
     if (name === 'react') return runtime.makeReact();
     // mountPanel 会把面板常驻挂到 body 上：这里只要一个不抛错的渲染入口，
     // 真正的渲染由本文件的 Runtime.render(trigger) 驱动。
     if (name === 'react-dom/client') return { createRoot: () => ({ render() {} }) };
     if (name === 'react-dom') return { render() {} };
     throw new Error('unexpected require ' + name);
-  }); } } };
+  }); } },
+    addEventListener(type, fn) { windowEvents.set(type, fn); },
+    removeEventListener(type, fn) { if (windowEvents.get(type) === fn) windowEvents.delete(type); },
+  };
   vm.runInNewContext(source, {
     window,
     document: documentStub,
@@ -214,7 +221,10 @@ function boot({ fetchImpl, setTimeoutImpl }) {
   // 侧边栏角标与「点开面板」的行为仍在 PluginTrigger 里，直接用它做渲染冒烟。
   if (typeof plugin.PluginTrigger === 'function') trigger = plugin.PluginTrigger;
   assert.equal(typeof trigger, 'function');
-  return { runtime, trigger, document: documentStub };
+  return { runtime, trigger, document: documentStub, dispatchWindowEvent(event) {
+    const fn = windowEvents.get(event?.type);
+    if (fn) fn(event);
+  } };
 }
 
 const installedItems = [
@@ -1091,7 +1101,7 @@ await openInstalledPanel(runtime);
     if (url.startsWith('/dsh-plugin-manager/install')) return respond({ ok: true, alreadyInstalled: false });
     return respond({});
   };
-  const { runtime, trigger } = boot({ fetchImpl });
+  const { runtime, trigger, dispatchWindowEvent } = boot({ fetchImpl });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
   await openPanelOn(runtime, null); // 默认即发现页
@@ -1122,6 +1132,11 @@ await openInstalledPanel(runtime);
     && String(node.props.className || '').includes('dsh-pm-drawer'))[0];
   assert.ok(drawer, '点榜单行的「详情」会打开插件详情抽屉');
   assert.ok(textOf(drawer).includes('o/dsh-notify'), '打开的是对应插件的详情');
+  // ESC 关闭详情抽屉（此前只能点右上角 ×）。
+  dispatchWindowEvent({ type: 'keydown', key: 'Escape' });
+  await settle(runtime, 6);
+  assert.equal(findAll(runtime.tree, node => node.type === 'div'
+    && String(node.props.className || '').includes('dsh-pm-drawer')).length, 0, '按 ESC 抽屉关闭');
   // 手动安装行：输入 spec 提交不抛错（安装走入队泵）。
   const manualInput = findAll(runtime.tree, node => node.type === 'input' && node.props['aria-label'] === '手动安装插件')[0];
   assert.ok(manualInput, '发现页底部有手动安装输入行');

@@ -102,7 +102,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-more:hover{color:var(--dsw-alias-label-primary)}
 /* 安装队列状态条：一行小字说明整体进度，安静、不抢焦点、不打断继续点按 */
 .dsh-pm-queue{align-items:center;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;display:flex;font-size:12px;gap:8px;line-height:18px;margin-bottom:10px;padding:6px 10px}
-.dsh-pm-queue-dot{animation:dsh-pm-spin 1s linear infinite;flex:none}
+.dsh-pm-queue-dot{flex:none;height:12px;position:relative;width:12px}
+.dsh-pm-queue-dot::before,.dsh-pm-queue-dot::after{border:1.5px solid currentColor;border-radius:50%;content:"";inset:0;position:absolute}
+.dsh-pm-queue-dot::before{opacity:.22}
+.dsh-pm-queue-dot::after{animation:dsh-pm-spin .7s linear infinite;border-top-color:transparent;border-right-color:transparent}
 .dsh-pm-queue-text{color:var(--dsw-alias-label-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-pm-queue-text strong{color:var(--dsw-alias-label-primary);font-weight:600}
 @keyframes dsh-pm-spin{to{transform:rotate(360deg)}}
@@ -133,7 +136,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-install:focus-visible{outline:2px solid var(--pm-accent);outline-offset:2px}
 .dsh-pm-install:disabled{opacity:.6;cursor:not-allowed}
 .dsh-pm-install.busy{background:color-mix(in srgb,var(--pm-accent) 8%,transparent);border-color:color-mix(in srgb,var(--pm-accent) 25%,var(--dsw-alias-border-l2));color:var(--dsw-alias-label-secondary);cursor:default}
-.dsh-pm-install .spin{animation:dsh-pm-spin .8s linear infinite;border:1.5px solid currentColor;border-radius:50%;border-right-color:transparent;display:inline-block;height:11px;width:11px}
+.dsh-pm-install .spin{animation:dsh-pm-spin .7s linear infinite;display:inline-block;height:12px;position:relative;width:12px}
+.dsh-pm-install .spin::before,.dsh-pm-install .spin::after{border:1.5px solid currentColor;border-radius:50%;content:"";inset:0;position:absolute}
+.dsh-pm-install .spin::before{opacity:.22}
+.dsh-pm-install .spin::after{animation:none;border-top-color:transparent;border-right-color:transparent}
 .dsh-pm-installed-tag{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-success-primary) 30%,transparent);color:var(--dsw-alias-state-success-primary)}
 .dsh-pm-cat{color:var(--dsw-alias-label-tertiary);font-size:11px}
 .dsh-pm-drawer{background:var(--dsw-alias-bg-layer-1);border-left:1px solid var(--dsw-alias-border-l2);box-sizing:border-box;display:flex;flex-direction:column;height:100%;max-width:420px;min-width:300px;padding:18px;position:absolute;right:0;top:0;width:40%;z-index:2147483002}
@@ -344,7 +350,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-ai-go:focus-visible{outline:2px solid var(--pm-accent);outline-offset:2px}
 .dsh-pm-ai-go:disabled{background:color-mix(in srgb,var(--pm-accent) 12%,var(--dsw-alias-bg-layer-1));box-shadow:none;color:var(--dsw-alias-label-tertiary);cursor:default}
 /* 检索中：按钮内小转圈 */
-.dsh-pm-ai-go .spin{animation:dsh-pm-spin .8s linear infinite;border:1.6px solid currentColor;border-radius:50%;border-right-color:transparent;height:11px;width:11px}
+.dsh-pm-ai-go .spin{animation:dsh-pm-spin .7s linear infinite;display:inline-block;height:12px;position:relative;width:12px}
+.dsh-pm-ai-go .spin::before,.dsh-pm-ai-go .spin::after{border:1.5px solid currentColor;border-radius:50%;content:"";inset:0;position:absolute}
+.dsh-pm-ai-go .spin::before{opacity:.22}
+.dsh-pm-ai-go .spin::after{animation:none;border-top-color:transparent;border-right-color:transparent}
 @keyframes dsh-pm-spin{to{transform:rotate(360deg)}}
 .dsh-pm-ai{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;display:flex;flex-direction:column;gap:12px;padding:16px 18px}
 .dsh-pm-ai-head{align-items:baseline;display:flex;flex-wrap:wrap;gap:10px}
@@ -1152,6 +1161,17 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const [disabledPlugins, setDisabledPlugins] = React.useState({})
     // 「更新内容」弹窗：{name, version, loading, data}
     const [notes, setNotes] = React.useState(null)
+    // ESC 关最上层浮层：发布说明弹窗优先于详情抽屉。监听器跟随两份 state
+    // 重建（闭包里读到的是最新值），面板关闭时随组件卸载摘掉。
+    React.useEffect(() => {
+      const onKeyDown = (event) => {
+        if (event.key !== 'Escape') return
+        if (notes) { setNotes(null); return }
+        if (detail) setDetail(null)
+      }
+      window.addEventListener('keydown', onKeyDown)
+      return () => window.removeEventListener('keydown', onKeyDown)
+    }, [notes, detail])
     const [error, setError] = React.useState('')
     // 更新检测：从 PluginTrigger 注入的 store 读取（角标与面板同源）；单独渲染时自建一个。
     const updatesStore = React.useMemo(() => store || createUpdatesStore(), [store])
@@ -2111,7 +2131,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const installingNow = installTotalRef.current - queueView.length + 1
     const queueStrip = queueView.length > 0
       ? h('div', { className: 'dsh-pm-queue', role: 'status' },
-          h('span', { className: 'dsh-pm-queue-dot', 'aria-hidden': true }, '◌'),
+          h('span', { className: 'dsh-pm-queue-dot', 'aria-hidden': true }),
           h('span', { className: 'dsh-pm-queue-text' },
             h('strong', null, `正在安装 ${installingNow}/${installTotalRef.current}`),
             ` · ${queueView[0].repo || queueView[0].name}`,
@@ -2577,7 +2597,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       : 0
     const batchStrip = batchRunning
       ? h('div', { className: 'dsh-pm-queue', role: 'status' },
-          h('span', { className: 'dsh-pm-queue-dot', 'aria-hidden': true }, '◌'),
+          h('span', { className: 'dsh-pm-queue-dot', 'aria-hidden': true }),
           h('span', { className: 'dsh-pm-queue-text' },
             h('strong', null, batchProgressLabel(progress) || '更新中…'),
             ` · 来源：${batchSource || '批量更新'}`,
@@ -2597,7 +2617,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const updateNowIndex = updateTotalRef.current - updateQueueView.length + 1
     const updateQueueStrip = updateQueueView.length > 0
       ? h('div', { className: 'dsh-pm-queue', role: 'status' },
-          h('span', { className: 'dsh-pm-queue-dot', 'aria-hidden': true }, '◌'),
+          h('span', { className: 'dsh-pm-queue-dot', 'aria-hidden': true }),
           h('span', { className: 'dsh-pm-queue-text' },
             h('strong', null, `正在更新 ${updateNowIndex}/${updateTotalRef.current}`),
             ` · ${updateQueueView[0].item.name}`,

@@ -210,6 +210,8 @@ function boot({ fetchImpl, setTimeoutImpl } = {}) {
   const documentStub = makeDocument();
   let plugin;
   const registrations = [];
+  // 面板内的 ESC 关闭等 effect 会挂 window keydown 监听，stub 必须能接住。
+  const windowEvents = new Map();
   const window = {
     __ModuleLoader__: {
       load(record) {
@@ -221,6 +223,9 @@ function boot({ fetchImpl, setTimeoutImpl } = {}) {
         });
       },
     },
+    addEventListener(type, fn) { windowEvents.set(type, fn); },
+    removeEventListener(type, fn) { if (windowEvents.get(type) === fn) windowEvents.delete(type); },
+    dispatchWindowEvent(event) { const fn = windowEvents.get(event?.type); if (fn) fn(event); },
   };
   vm.runInNewContext(source, {
     window,
