@@ -1112,6 +1112,16 @@ await openInstalledPanel(runtime);
   const rankRows = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-rank-row( |$)/.test(String(node.props.className || '')));
   const installedRow = rankRows.find(row => textOf(row).includes('o/dsh-notify'));
   assert.ok(installedRow && textOf(installedRow).includes('✓ 已安装'), '榜单里已安装的插件显示「✓ 已安装」胶囊');
+  // 榜单行可以查看详情（此前整行没有任何点击处理，点名字没反应）。
+  const detailBtn = findAll(installedRow, node => node.type === 'button'
+    && /(^| )dsh-pm-rank-detail( |$)/.test(String(node.props.className || '')))[0];
+  assert.ok(detailBtn, '榜单行有「详情」按钮');
+  detailBtn.props.onClick();
+  await settle(runtime, 10);
+  const drawer = findAll(runtime.tree, node => node.type === 'div'
+    && String(node.props.className || '').includes('dsh-pm-drawer'))[0];
+  assert.ok(drawer, '点榜单行的「详情」会打开插件详情抽屉');
+  assert.ok(textOf(drawer).includes('o/dsh-notify'), '打开的是对应插件的详情');
   // 手动安装行：输入 spec 提交不抛错（安装走入队泵）。
   const manualInput = findAll(runtime.tree, node => node.type === 'input' && node.props['aria-label'] === '手动安装插件')[0];
   assert.ok(manualInput, '发现页底部有手动安装输入行');

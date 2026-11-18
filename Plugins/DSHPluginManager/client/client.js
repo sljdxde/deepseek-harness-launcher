@@ -226,6 +226,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-rank-row .who{flex:1;min-width:0}
 .dsh-pm-rank-row .nm{color:var(--dsw-alias-label-primary);font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-pm-rank-row .sub{color:var(--dsw-alias-label-tertiary);font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 榜单行的「详情」：低调文字按钮，和 hero 的详情一致；安装按钮在它左边。 */
+.dsh-pm-rank-detail{background:none;border:0;border-radius:6px;color:var(--dsw-alias-label-secondary);cursor:pointer;flex:none;font:inherit;font-size:11.5px;padding:4px 6px}
+.dsh-pm-rank-detail:hover{background:var(--dsw-alias-button-ghost-active-fill);color:var(--pm-accent)}
+.dsh-pm-rank-detail:focus-visible{outline:2px solid var(--pm-accent);outline-offset:1px}
 /* 分类分区：标题 + 查看全部。 */
 .dsh-pm-sechead{align-items:baseline;display:flex;flex-wrap:wrap;gap:8px;margin-bottom:9px}
 .dsh-pm-sechead h3{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:650;margin:0}
@@ -2104,7 +2108,15 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
               disabled: batchRunning || Boolean(status),
               onClick: (e) => { e.stopPropagation(); install(plugin) },
               title: status === 'queued' ? '已加入安装队列' : status === 'installing' ? '正在安装' : undefined,
-            }, status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装'))
+            }, status === 'queued' ? '排队中…' : status === 'installing' ? '安装中…' : '安装'),
+        // 详情入口：榜单行此前整行没有任何点击处理，用户点名字没反应。
+        // 用独立按钮（和 hero 的「详情」一致），避免整行点击与「安装」按钮冲突。
+        h('button', {
+          className: 'dsh-pm-rank-detail',
+          onClick: () => setDetail(plugin),
+          title: `查看 ${plugin.repo || plugin.name} 的详情`,
+          'aria-label': `查看 ${plugin.repo || plugin.name} 的详情`,
+        }, '详情'))
     }
     const rankCard = (title, sub, list, keyPrefix) => h('div', { className: 'dsh-pm-rank', key: keyPrefix },
       h('div', { className: 'dsh-pm-rank-head' }, h('h3', null, title), h('span', { className: 'sub' }, sub)),
