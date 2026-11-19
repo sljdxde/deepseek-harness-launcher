@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+86a7047"
+  const BUILD_STAMP = "0.2.2-rc.5+5d4dc25"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -236,6 +236,17 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const Component = (slotProps) => {
       // hooks 必须无条件、顺序稳定：全部放在组件最顶部（React #310 的根因就是放在了 early return 之后）
       const [open, setOpen] = React.useState(false)
+      React.useEffect(() => {
+        if (!open) return undefined
+        const onKey = (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            setOpen(false)
+          }
+        }
+        window.addEventListener('keydown', onKey, true)
+        return () => window.removeEventListener('keydown', onKey, true)
+      }, [open])
       const readProjection = (name) => {
         try {
           const hook = slotProps?.useProjection
