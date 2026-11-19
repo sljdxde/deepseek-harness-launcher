@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+c4cce6d"
+  const BUILD_STAMP = "0.2.2-rc.5+e6fb6bd"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -78,7 +78,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-ctx__list div{display:flex;justify-content:space-between;gap:12px}
 .launcher-ctx__list dt{opacity:.7}
 .launcher-ctx__list dd{margin:0}
-.launcher-ctx__advice{margin:6px 0 0;font-size:12px;opacity:.8}
 .launcher-perm{position:relative;display:inline-flex;align-items:center}
 .launcher-perm__pill{height:26px;display:inline-flex;align-items:center;gap:4px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:13px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
 .launcher-perm__pill[disabled]{opacity:.6;cursor:not-allowed}
@@ -90,7 +89,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-turn-action{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
 .launcher-turn-action--usage{opacity:.7;border:0}
 .launcher-turn-highlight{outline:2px solid var(--dsw-alias-accent,#4c8dff);outline-offset:2px;border-radius:6px}
-.launcher-diag__advice{margin:0;padding:6px 10px 10px;font-size:12px;opacity:.8}
 .launcher-diag__list{margin:0;padding:8px 10px;display:grid;gap:6px;font-size:12px}
 .launcher-diag__list div{display:flex;justify-content:space-between;gap:12px}
 .launcher-diag__list dt{opacity:.7}
@@ -289,8 +287,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const files = num(breakdown, ['filesTokens', 'files'])
       const tools = num(breakdown, ['toolsTokens', 'tools'])
       if (pct === null || (system === null && chat === null && tools === null)) return null
-      const advice = pct >= 95 ? '快满了：建议压缩到 40%' : pct >= 85 ? '该压缩了：建议压缩到 40%' : '占用正常'
-      return h('div', { className: 'launcher-ctx', onKeyDown: (e) => { if (e.key === 'Escape') setOpen(false) } },
+      return h('div', { className: 'launcher-ctx launcher-diag', onKeyDown: (e) => { if (e.key === 'Escape') setOpen(false) } },
         h('button', {
           type: 'button',
           className: 'launcher-ctx__entry',
@@ -300,14 +297,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           title: `上下文占用 ${pct}% · 点开看拆分`,
           onClick: () => setOpen((v) => !v),
         }, `上下文 ${pct}%`),
-        open ? h('div', { className: 'launcher-ctx__pop', role: 'dialog', 'aria-label': '上下文诊断' },
+        open ? h('div', { className: 'launcher-ctx__pop launcher-diag__pop', role: 'dialog', 'aria-label': '上下文诊断' },
           h('header', { className: 'launcher-ctx__head' }, `上下文占用 ${pct}%`),
           h('dl', { className: 'launcher-ctx__list' },
             h('div', null, h('dt', null, '系统提示'), h('dd', null, system === null ? '—' : String(system))),
             h('div', null, h('dt', null, '会话消息'), h('dd', null, chat === null ? '—' : String(chat))),
             files === null ? null : h('div', null, h('dt', null, '文件'), h('dd', null, String(files))),
             h('div', null, h('dt', null, '工具'), h('dd', null, tools === null ? '—' : String(tools)))),
-          h('p', { className: 'launcher-ctx__advice' }, advice)) : null)
+          ) : null)
     }
     try {
       if (typeof ctx?.slots?.inject !== 'function') return []
