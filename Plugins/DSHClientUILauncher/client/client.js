@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+133466b"
+  const BUILD_STAMP = "0.2.2-rc.5+68786a1"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -118,9 +118,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 }
 .launcher-theme-chip{margin-left:auto;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;font-size:12px;line-height:1;padding:2px 6px;cursor:pointer}
 .launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
-.launcher-empty{position:absolute;inset:0 0 calc(var(--launcher-composer-h,150px) + 12px) 0;z-index:6;align-items:center;display:flex;justify-content:center;min-height:0;overflow:auto;padding:24px 24px 8px;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff))}
+.launcher-empty{position:absolute;inset:0 0 0 0;pointer-events:none;z-index:6;align-items:center;display:flex;justify-content:center;min-height:0;overflow:auto;padding:24px 24px 8px;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff))}
 .launcher-pane__host{display:flex;flex:1;min-height:0;flex-direction:column}
-.launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%}
+.launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%;pointer-events:auto;padding-bottom:var(--launcher-composer-h,150px)}
 .launcher-empty__theme{align-items:center;background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.14));border-radius:12px;color:var(--dsw-alias-label-secondary,#666);display:flex;font-size:13px;font-weight:600;height:40px;justify-content:center;width:40px}
 .launcher-empty__title{font-size:19px;font-weight:600;line-height:1.4;margin:2px 0 0}
 .launcher-empty__body{color:var(--dsw-alias-label-secondary,#666);font-size:12.5px;line-height:1.7;margin:0}
