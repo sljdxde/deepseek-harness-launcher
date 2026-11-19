@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+4f9d0f5"
+  const BUILD_STAMP = "0.2.2-rc.5+854acfe"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1254,6 +1254,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const toggleTheme = () => applyTheme((() => { try { return CURRENT_CTX?.theme?.getTheme?.()?.preference } catch { return undefined } })() === 'dark' ? 'light' : 'dark')
     /** 右栏开关：宿主 sidebarRight/命令 + 外壳轨道，两条入口（rail ▤ / ⌘⇧B）共用同一份状态。 */
     const toggleDock = () => {
+      if (dockOpen) DOCK_CLOSE_INTENT.user = true
       toggleRightbarHost()
       // 不管宿主返回什么，350ms 后仍没打开就给可见提示——不允许「按了没反应」
       setTimeout(() => {
@@ -1682,6 +1683,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const DOCK_WIDTH = 380
   // 与 lib/layout.js 的 DOCK 保持一致（client 侧不 import，避免加载顺序耦合）
   const DOCK_MIN = 320
+  // 用户主动关右栏的意图：宿主「开→立刻关」的自动 close 要被吞一次，用户关必须生效
+  const DOCK_CLOSE_INTENT = { user: false }
   const DOCK_MAX = 520
   const DOCK_HIDE_BELOW = 1020
   const clampDock = (w) => Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.round(w)))
@@ -1779,13 +1782,17 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         return () => dockListeners.delete(listener)
       },
     }
-    // 只吞一次「启动期占位者自己发出的 close」；吞过之后永不复位——否则每次 open 都重置，
-    // 用户永远关不掉（64807 实测）。槽已常驻，这一次之后都是真实开关。
-    let dockMountCloseSwallowed = false
+    // 宿主会在每次 open 后立刻发一次 close；只吞「非用户意图」的那次，用户关必须生效。
+    let dockAutoCloseSwallowed = false
     const setDockOpen = (next) => {
-      if (next === false && !dockMountCloseSwallowed) {
-        dockMountCloseSwallowed = true
-        return
+      if (next === true) dockAutoCloseSwallowed = false
+      if (next === false) {
+        if (DOCK_CLOSE_INTENT.user) {
+          DOCK_CLOSE_INTENT.user = false
+        } else if (!dockAutoCloseSwallowed) {
+          dockAutoCloseSwallowed = true
+          return
+        }
       }
       dockOpen = next
       try { window.__DSH_LAUNCHER_DOCK__ = dockOpen } catch { /* 忽略 */ }
