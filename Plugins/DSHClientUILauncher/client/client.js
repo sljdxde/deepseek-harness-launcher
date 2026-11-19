@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+5767959"
+  const BUILD_STAMP = "0.2.2-rc.5+5a28d8a"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-splitbar__mode{font:inherit;font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid transparent;background:transparent;color:inherit;cursor:pointer;opacity:.7}
 .launcher-splitbar__mode.on{opacity:1;border-color:var(--dsw-alias-border-l2,rgba(127,127,127,.35))}
 .launcher-panes{flex:1;min-height:0;display:grid;gap:1px;grid-template-columns:repeat(var(--split-cols,1),minmax(0,1fr));grid-template-rows:repeat(var(--split-rows,1),minmax(0,1fr))}
-.launcher-pane{min-width:0;min-height:0;overflow:auto}
+.launcher-pane{min-width:0;min-height:0;overflow:auto;display:flex;flex-direction:column}
 @container (max-width: 760px){.launcher-panes{grid-template-columns:minmax(0,1fr)!important;grid-template-rows:repeat(var(--split-rows,1),minmax(0,1fr))}}
 .launcher-palette{position:fixed;inset-inline:0;top:12vh;margin:auto;width:min(560px,92vw);max-height:60vh;display:flex;flex-direction:column;background:var(--dsw-alias-bg-1,#fff);color:inherit;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.18);z-index:50;overflow:hidden}
 .launcher-palette__input{font:inherit;padding:10px 12px;border:0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));outline:none;background:transparent;color:inherit}
@@ -108,7 +108,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-statusbar{grid-area:status;align-items:center;border-top:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;font-size:11px;gap:10px;padding:0 10px;color:var(--dsw-alias-label-secondary)}
 .launcher-overlay{position:fixed;inset:0;pointer-events:none;z-index:40}
 .launcher-overlay>*{pointer-events:auto}
-.launcher-pane{position:relative}
+.launcher-pane{position:relative;display:flex;flex-direction:column;min-height:0}
 @media (max-width: 860px){
   .launcher-shell{grid-template-columns:var(--launcher-rail) 0 minmax(0,1fr) 0}
   .launcher-sidebar{position:fixed;left:var(--launcher-rail);top:0;bottom:var(--launcher-status);width:280px;z-index:30;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff));border-right:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));box-shadow:0 0 0 100vmax rgba(0,0,0,.001)}
@@ -119,7 +119,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-theme-chip{margin-left:auto;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;font-size:12px;line-height:1;padding:2px 6px;cursor:pointer}
 .launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
 .launcher-empty{position:static;flex:0 0 auto;z-index:auto;align-items:center;display:flex;justify-content:center;min-height:0;max-height:260px;overflow:auto;padding:16px 16px 8px;background:transparent}
-.launcher-pane__host{display:flex;flex:1;min-height:0;flex-direction:column;overflow:hidden}
+.launcher-pane__host{display:flex;flex:1 1 0;min-height:0;flex-direction:column;overflow:hidden}
 .launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%}
 .launcher-empty__theme{align-items:center;background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.14));border-radius:12px;color:var(--dsw-alias-label-secondary,#666);display:flex;font-size:13px;font-weight:600;height:40px;justify-content:center;width:40px}
 .launcher-empty__title{font-size:19px;font-weight:600;line-height:1.4;margin:2px 0 0}
