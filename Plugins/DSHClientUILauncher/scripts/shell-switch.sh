@@ -46,16 +46,31 @@ require_profile() {
 }
 
 # 第一次切走时把原包整体复制到 .orig/，之后回滚只换链接、不重装
+# 原包留底：**必须**留一份真正的上游实现。实测过一次教训——如果备份时 profile 里装的正好是本包，
+# 备份下来的就是"自己"，回滚会把新外壳又装回去（rev 不变、页面还是 launcher）。
+# 所以：只在确认不是本包时才留底；优先从 dsh 安装目录取。
 preserve_original() {
-  if [ -e "$ORIG" ] || [ -L "$ORIG" ]; then return 0; fi
+  if [ -e "$ORIG" ] && ! is_own_package "$ORIG"; then return 0; fi
+  rm -rf "$ORIG"
   mkdir -p "$ORIG_DIR"
-  if [ -L "$LINK" ]; then
-    target=$(readlink "$LINK")
-    cp -R "$PROFILE_DIR/$target" "$ORIG" 2>/dev/null || cp -R "$target" "$ORIG"
-  else
-    cp -R "$LINK" "$ORIG"
-  fi
-  log_line "preserved-original=$ORIG"
+  for candidate in "${HOST_LAYOUT_DIR:-}" "$LINK"; do
+    [ -n "$candidate" ] || continue
+    [ -d "$candidate" ] || [ -L "$candidate" ] || continue
+    if is_own_package "$candidate"; then continue; fi
+    cp -R "$candidate" "$ORIG"
+    if is_own_package "$ORIG"; then rm -rf "$ORIG"; continue; fi
+    log_line "preserved-original=$ORIG from=$candidate"
+    return 0
+  done
+  echo "找不到可留底的上游 layout 实现（设 HOST_LAYOUT_DIR 指向 dsh 安装目录里的 @deepseek-ai/dsh-client-ui-layout）；"
+  echo "同名 drop-in 的回滚必须有它，已停止。" >&2
+  exit 3
+}
+
+# 这份目录是不是我们自己的包（以客户端文件里的运行时标记为准，名字不可信——同名）
+is_own_package() {
+  [ -f "$1/client/client.js" ] || return 1
+  grep -q "__DSH_LAUNCHER_SHELL__" "$1/client/client.js" 2>/dev/null
 }
 
 point_link() {
