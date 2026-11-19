@@ -67,6 +67,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-shell[data-code-wrap="on"] pre code{white-space:pre-wrap!important;word-break:break-word}
 .launcher-diag{position:fixed;right:16px;bottom:40px;width:min(340px,90vw);background:var(--dsw-alias-bg-1,#fff);color:inherit;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.18);z-index:45}
 .launcher-diag__head{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}
+.launcher-diag__advice{margin:0;padding:6px 10px 10px;font-size:12px;opacity:.8}
 .launcher-diag__list{margin:0;padding:8px 10px;display:grid;gap:6px;font-size:12px}
 .launcher-diag__list div{display:flex;justify-content:space-between;gap:12px}
 .launcher-diag__list dt{opacity:.7}
@@ -258,6 +259,35 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   }
 
 
+  /**
+   * FR-38：从宿主取上下文用量（system / chat / files / tools + 百分比 + 建议）。
+   * 读不到返回 null —— 调用方整项不显示、入口置灰，不许拿外壳状态顶替。
+   * @param {object} ctx - 客户端上下文。
+   * @returns {{ system:number, chat:number, files:number, tools:number, used:number, limit:number, pct:number }|null} 用量。
+   */
+  function readContextUsage(ctx) {
+    const candidates = [
+      ctx?.tokenMeter?.getSnapshot?.(),
+      ctx?.tokenMeter?.snapshot?.(),
+      ctx?.contextMeter?.getSnapshot?.(),
+      ctx?.composer?.meter?.(),
+    ]
+    for (const raw of candidates) {
+      if (raw === null || raw === undefined || typeof raw !== 'object') continue
+      const breakdown = raw.breakdown ?? raw
+      const system = Number(breakdown.systemTokens ?? breakdown.system ?? 0)
+      const tools = Number(breakdown.toolsTokens ?? breakdown.tools ?? 0)
+      const chat = Number(breakdown.messageTokens ?? breakdown.chat ?? 0)
+      const files = Number(breakdown.filesTokens ?? breakdown.files ?? 0)
+      const used = Number(raw.surfaceTokens ?? raw.used ?? system + tools + chat + files)
+      const limit = Number(raw.limit ?? raw.contextLimit ?? raw.windowTokens ?? 0)
+      if (!Number.isFinite(used) || used <= 0 || !Number.isFinite(limit) || limit <= 0) continue
+      const pct = Math.min(100, Math.round((used / limit) * 100))
+      return { system, chat, files, tools, used, limit, pct }
+    }
+    return null
+  }
+
   function ownCatalogRowsFor(ctx) {
     // 判定放在 resolve() 里现算：注册时 `ctx.slots.entries('main')` 里目标面板可能还没注册
     const currentPage = () => {
@@ -279,7 +309,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const resolveWorkbench = () => (onPage() && keyReady() ? { status: 'handled', run: runWorkbench } : { status: 'pass' })
     const wrapReady = () => onPage()
     return [
-      { id: 'launcher.contextDiagnostics', label: '上下文诊断', hint: '只读：外壳与上下文状态', regions: ['page'], aliases: [], resolve: () => (wrapReady() ? { status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:open-diagnostics')) } : { status: 'pass' }) },
+      { id: 'launcher.contextDiagnostics', label: '上下文诊断', hint: '上下文用量：占用百分比 + 四项拆分 + 压缩建议', regions: ['page'], aliases: [], resolve: () => (wrapReady() && readContextUsage(ctx) !== null ? { status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:open-diagnostics')) } : { status: 'pass' }) },
+      ...(typeof window !== 'undefined' && window.__DSH_LAUNCHER_DEV_PANEL__ === true
+        ? [{ id: 'launcher.devPanel', label: '外壳调试面板', hint: '开发用：面板/分屏/右栏宽度/codeWrap/权限', regions: ['page'], aliases: [], resolve: () => ({ status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:open-dev-panel')) }) }]
+        : []),
       { id: 'launcher.codeWrap.toggle', label: '切换代码块自动换行', hint: '开/关长代码横向滚动', regions: ['page', 'editable'], aliases: [], resolve: () => (wrapReady() ? { status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:toggle-code-wrap')) } : { status: 'pass' }) },
       { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], aliases: [], resolve: resolveWorkbench },
     ]
@@ -352,16 +385,21 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const commands = collectCommands(ctx)
     const [paletteOpen, setPaletteOpen] = React.useState(false)
     const [diagOpen, setDiagOpen] = React.useState(false)
+    const [devOpen, setDevOpen] = React.useState(false)
+    const contextUsage = readContextUsage(ctx)
     const [wrapOn, setWrapOn] = React.useState(codeWrapOn)
     // #1 焦点回位：打开面板时记住当时的活动元素，Esc 时优先还给它（选择器只作兜底）
     const openerRef = React.useRef(null)
     React.useEffect(() => {
       const open = () => setDiagOpen(true)
+      const openDev = () => setDevOpen(true)
       const flip = () => setWrapOn((on) => { setCodeWrapPref(!on); return !on })
       window.addEventListener('launcher:open-diagnostics', open)
+      window.addEventListener('launcher:open-dev-panel', openDev)
       window.addEventListener('launcher:toggle-code-wrap', flip)
       return () => {
         window.removeEventListener('launcher:open-diagnostics', open)
+        window.removeEventListener('launcher:open-dev-panel', openDev)
         window.removeEventListener('launcher:toggle-code-wrap', flip)
       }
     }, [])
@@ -520,15 +558,26 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         renderSlot('shell.bottom', {})),
       h('div', { className: 'launcher-overlay' },
         renderSlot('shell.overlay', {})),
-      diagOpen ? h('div', { className: 'launcher-diag', role: 'dialog', 'aria-label': '上下文诊断', onKeyDown: onDiagKeyDown },
+      diagOpen && contextUsage !== null ? h('div', { className: 'launcher-diag', role: 'dialog', 'aria-label': '上下文诊断', onKeyDown: onDiagKeyDown },
         h('header', { className: 'launcher-diag__head' },
-          h('span', null, '上下文诊断'),
+          h('span', null, `上下文诊断 · 占用 ${contextUsage.pct}%`),
           h('button', { type: 'button', onClick: () => setDiagOpen(false), 'aria-label': '关闭诊断' }, '✕')),
+        h('dl', { className: 'launcher-diag__list' },
+          h('div', null, h('dt', null, '系统提示'), h('dd', null, String(contextUsage.system))),
+          h('div', null, h('dt', null, '会话消息'), h('dd', null, String(contextUsage.chat))),
+          h('div', null, h('dt', null, '文件'), h('dd', null, String(contextUsage.files))),
+          h('div', null, h('dt', null, '工具'), h('dd', null, String(contextUsage.tools))),
+          h('div', null, h('dt', null, '用量 / 上限'), h('dd', null, `${contextUsage.used} / ${contextUsage.limit}`))),
+        h('p', { className: 'launcher-diag__advice' }, contextUsage.pct >= 95 ? '快满了：建议立刻压缩到 40%' : contextUsage.pct >= 85 ? '该压缩了：建议压缩到 40%' : '占用正常')) : null,
+      devOpen ? h('div', { className: 'launcher-diag', role: 'dialog', 'aria-label': '外壳调试面板', onKeyDown: onDiagKeyDown },
+        h('header', { className: 'launcher-diag__head' },
+          h('span', null, '外壳调试面板（开发用）'),
+          h('button', { type: 'button', onClick: () => setDevOpen(false), 'aria-label': '关闭调试面板' }, '✕')),
         h('dl', { className: 'launcher-diag__list' },
           h('div', null, h('dt', null, '当前面板'), h('dd', null, String(activePanelId ?? 'conversation'))),
           h('div', null, h('dt', null, '分屏档位'), h('dd', null, String(splitMode))),
           h('div', null, h('dt', null, '右栏宽度'), h('dd', null, `${dockWidth}px${dockCanShow ? '' : '（隐藏）'}`)),
-          h('div', null, h('dt', null, '代码块换行'), h('dd', null, codeWrapOn() ? '开' : '关')),
+          h('div', null, h('dt', null, '代码块换行'), h('dd', null, wrapOn ? '开' : '关')),
           h('div', null, h('dt', null, '权限范围'), h('dd', null, permissionLabel)))) : null,
       paletteOpen ? h('div', { className: 'launcher-palette', role: 'dialog', 'aria-modal': 'true', 'aria-label': '命令面板' },
         h('input', {
