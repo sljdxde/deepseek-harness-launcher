@@ -1,7 +1,6 @@
 #!/bin/sh
 # 壳层开关（新 05-§9 R1 定稿口径：持久层 override + 即时层链接，两者都要）。
 #
-#   持久层：profile 的 package.json 里 pnpm.overrides 决定「重新 install 后解析到谁」
 #   即时层：profiles/<name>/node_modules/@deepseek-ai/dsh-client-ui-layout 这条链接决定「现在是谁」
 #   切换   = 换链接 + 重启；链接会被 pnpm install 改回依赖图解析结果，所以换完链路要再跑一次本脚本（幂等）
 #   回滚   = 换回链接（原包在 profiles/<name>/.orig/ 里留了一份，不靠重装），5 分钟口径靠这个
@@ -74,12 +73,7 @@ is_own_package() {
   grep -q "__DSH_LAUNCHER_SHELL__" "$1/client/client.js" 2>/dev/null
 }
 
-point_link() {
-  target=$1
-  mkdir -p "$(dirname "$LINK")"
-  if [ -L "$LINK" ]; then rm -f "$LINK"; elif [ -d "$LINK" ]; then mv "$LINK" "$LINK.dsh-$(date +%s)"; fi
-  ln -s "$target" "$LINK"
-}
+
 
 dsh_plugin() {
   if [ -n "${DSH_BIN:-}" ]; then
@@ -140,9 +134,12 @@ require_version_lock() {
 # ② profile 的 dsh.profile.bundles：只写 ① 依赖时客户端模块图不枚举它，界面会"看起来像原生"
 
 
+# 只在**没装本包**时留快照：装之前要有一个"干净原生"的基线，否则比的是上一次装了的状态
 snapshot_state() {
-  cp -p "$MANIFEST" "$STATE_DIR/package.json.snapshot"
-  [ -f "$PROFILE_DIR/pnpm-lock.yaml" ] && cp -p "$PROFILE_DIR/pnpm-lock.yaml" "$STATE_DIR/pnpm-lock.snapshot"
+  if "$NODE" -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(m.dependencies?.["@deepseek-ai/dsh-client-ui-layout"]===undefined?0:1)' "$MANIFEST"; then
+    cp -p "$MANIFEST" "$STATE_DIR/package.json.snapshot"
+    [ -f "$PROFILE_DIR/pnpm-lock.yaml" ] && cp -p "$PROFILE_DIR/pnpm-lock.yaml" "$STATE_DIR/pnpm-lock.snapshot"
+  fi
   return 0
 }
 
@@ -171,17 +168,35 @@ NODE_EOF
 
 
 
+set_bundle() {
+  mode=$1
+  "$NODE" -e '
+    const fs = require("node:fs");
+    const [file, mode, name] = process.argv.slice(1);
+    const m = JSON.parse(fs.readFileSync(file, "utf8"));
+    const list = Array.isArray(m.dsh?.profile?.bundles) ? m.dsh.profile.bundles : null;
+    if (list === null) process.exit(3);
+    const next = list.filter((entry) => entry !== name);
+    if (mode === "add") next.push(name);
+    m.dsh.profile.bundles = next;
+    fs.writeFileSync(file, JSON.stringify(m, null, 2) + "\n");
+  ' "$MANIFEST" "$mode" "$HOST_PACKAGE"
+}
+
 set_override() {
   mode=$1
   if [ "$mode" = "add" ]; then
-    dsh_plugin add "@deepseek-ai/dsh-client-ui-layout@file:$PACKAGE_DIR"
-  else
-    # 幂等：依赖已经不在了就不调 dsh plugin remove（否则 pnpm remove 会因"该依赖不存在"报错）
-    if "$NODE" -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(m.dependencies?.["@deepseek-ai/dsh-client-ui-layout"]===undefined?0:1)' "$MANIFEST"; then
-      return 0
-    fi
-    dsh_plugin remove "@deepseek-ai/dsh-client-ui-layout"
+    dsh_plugin add "@deepseek-ai/dsh-client-ui-layout@file:$PACKAGE_DIR" || return 1
+    # 登记写在 plugin add 之后：先写会被 dsh 按 canonical 形态重写掉
+    set_bundle add || return 1
+    return 0
   fi
+  set_bundle remove || true
+  # 幂等：依赖已经不在了就不调 dsh plugin remove（否则 pnpm remove 会因为该依赖不存在而报错）
+  if "$NODE" -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(m.dependencies?.["@deepseek-ai/dsh-client-ui-layout"]===undefined?0:1)' "$MANIFEST"; then
+    return 0
+  fi
+  dsh_plugin remove "@deepseek-ai/dsh-client-ui-layout"
 }
 
 write_state() {
@@ -269,7 +284,6 @@ case "${1:-}" in
       log_line "boot-self-check=FAILED fallback=native"
       printf '%s\n' "新外壳启动自检失败，自动回落原生（日志：$LOG）" >&2
       set_override remove
-      point_link "$ORIG"
       write_state native
       restart_web || true
       exit 1
@@ -290,6 +304,7 @@ case "${1:-}" in
     log_line "switch=native link=$(link_target)"
     echo "已卸回宿主实现（依赖移除）"
     compare_snapshot
+    snapshot_state
     restart_web || exit 3
     if [ -n "${DSH_URL:-}" ]; then verify_page native || { log_line "verify=native FAILED"; exit 1; }; fi
     ;;
