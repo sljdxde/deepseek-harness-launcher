@@ -3,16 +3,16 @@
 #
 # 裁决口径（2026-11-19，Super-agent；技术负责人落脚本）：
 #   外壳 = 谁提供 @deepseek-ai/dsh-client-ui-layout 这个包。
-#   launcher = profile 依赖用 `dependencies["@deepseek-ai/dsh-client-ui-layout"] = file:<本包>` +
-#              在 dsh.profile.bundles 里登记本包（缺一客户端半区不进图）
-#   native   = 删掉那条依赖（bundles 同名条目保留，解析回宿主自带包）
+#   launcher = profile 依赖用 `dependencies["@deepseek-ai/dsh-client-ui-layout"] = file:<本包>`
+#              （**不写 dsh.profile.bundles**：05-§4.2 / 06-R-16 冻结为"非必需、默认不写"）
+#   native   = 删掉那条依赖，解析回宿主自带包
 #   行 id / name / cordis.patch.yml 一个字不动；切换 = 改依赖 + pnpm install + 重启 + verify。
 #   本脚本不含、也不再提 override 与软链——那两条口径已作废（05-§9 R1）。
 #   备份一律写 /tmp/dsh-shell-<时间戳>/（web/ + ui-layout 原包 + 指纹），不落 profiles/ 下、不在 node_modules 里留 .orig。
 #   日志字段：host=<v> pkg=<v> action=<..> verify=<一行 JSON> reason=<失败原因>
 #
 # 用法：
-#   ./shell-switch.sh status            # 只读：依赖当前值 / bundles 登记 / dsh plugin 视角 / 版本锁判定
+#   ./shell-switch.sh status            # 只读：依赖当前值 / dsh plugin 视角 / 版本锁判定
 #   ./shell-switch.sh launcher          # 切到新外壳
 #   ./shell-switch.sh native            # 切回原生
 #   ./shell-switch.sh verify            # 断言页面特征（需要 DSH_URL）
@@ -71,7 +71,6 @@ pkg_field() { # $1: dep | bundles | deps-all
     const p = process.argv[1], what = process.argv[2];
     let d; try { d = JSON.parse(fs.readFileSync(p, "utf8")); } catch { console.log(""); process.exit(0); }
     if (what === "dep") console.log((d.dependencies || {})["@deepseek-ai/dsh-client-ui-layout"] || "");
-    else if (what === "bundles") console.log(((d.dsh?.profile?.bundles) || []).includes("@deepseek-ai/dsh-client-ui-layout") ? "yes" : "no");
     else if (what === "deps-all") console.log(JSON.stringify(d.dependencies || {}));
   ' "$PKG_JSON" "$1"
 }
@@ -89,20 +88,7 @@ dsh_plugin() {
   fi
 }
 
-pkg_write_bundles() { # $1: add|remove —— 只动 dsh.profile.bundles，不碰 dependencies
-  "$NODE_BIN" -e '
-    const fs = require("node:fs");
-    const [p, mode] = process.argv.slice(1);
-    const doc = JSON.parse(fs.readFileSync(p, "utf8"));
-    const NAME = "@deepseek-ai/dsh-client-ui-layout";
-    doc.dsh = doc.dsh || {}; doc.dsh.profile = doc.dsh.profile || {};
-    const b = doc.dsh.profile.bundles = doc.dsh.profile.bundles || [];
-    const next = b.filter((x) => x !== NAME);
-    if (mode === "add") next.push(NAME);
-    doc.dsh.profile.bundles = next;
-    fs.writeFileSync(p, JSON.stringify(doc, null, 2) + "\n");
-  ' "$PKG_JSON" "$1"
-}
+
 
 pkg_write() { # $1: mode(add|remove)  $2: file: spec
   "$NODE_BIN" -e '
@@ -266,14 +252,13 @@ do_launcher() {
       log "reason=dsh-plugin-add-failed restored=$PKG_JSON"
       die 4 "dsh plugin add 失败，已还原 package.json"
     fi
-    pkg_write_bundles add || true
   else
     pkg_write add "file:$PKG_DIR"
     install_with_restore "$backup"
   fi
   restart_hook
   verify_page launcher
-  log "launcher 完成：dependencies + bundles 已登记（patch/行未动）"
+  log "launcher 完成：依赖已装（不写 bundles；patch/行未动）"
 }
 
 do_native() {
@@ -285,9 +270,7 @@ do_native() {
     log "native：dependencies 里已无该包（幂等，继续做 install/verify）"
   fi
   if dsh_plugin_available; then
-    if dsh_plugin remove "@deepseek-ai/dsh-client-ui-layout"; then
-      pkg_write_bundles remove || true
-    else
+    if ! dsh_plugin remove "@deepseek-ai/dsh-client-ui-layout"; then
       log "reason=dsh-plugin-remove-failed（依赖可能已不存在，继续）"
     fi
   else
@@ -306,14 +289,14 @@ do_native() {
   if [ -f "$backup" ] && ! cmp -s "$backup" "$PKG_JSON"; then
     if "$NODE_BIN" -e '
       const fs=require("node:fs");const [a,b]=process.argv.slice(1);
-      const pick=(f)=>{const m=JSON.parse(fs.readFileSync(f,"utf8"));return JSON.stringify({d:Object.entries(m.dependencies||{}).sort(),b:m.dsh?.profile?.bundles??[]})};
+      const pick=(f)=>{const m=JSON.parse(fs.readFileSync(f,"utf8"));return JSON.stringify(Object.entries(m.dependencies||{}).sort())};
       process.exit(pick(a)===pick(b)?0:1)' "$backup" "$PKG_JSON"; then
       cp -f "$backup" "$PKG_JSON"; log "package.json 语义一致但字节不同，已按备份逐字恢复"
     else
       log "reason=manifest-semantic-diff 未逐字恢复"
     fi
   fi
-  log "native 完成：依赖已删除（bundles 条目保留，解析回宿主包）"
+  log "native 完成：依赖已删除（解析回宿主包）"
 }
 
 do_status() {
