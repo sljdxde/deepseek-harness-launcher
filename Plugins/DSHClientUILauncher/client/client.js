@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+1bb56fc"
+  const BUILD_STAMP = "0.2.2-rc.5+8515b2e"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -211,6 +211,40 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 
   /** 宿主面板里「自己不带返回」的那些——由外壳补一条回链（插件页自带，不重复）。 */
   const PANELS_NEEDING_BACK = ['dsh-archive-manager']
+
+  /**
+   * 让宿主自己展开/收起右栏（不要再拿本地 sticky 冒充展开态）：
+   * ① 宿主服务 sidebarRight：commandTarget(null) + toggleExpanded()；
+   * ② 退宿主命令 `sidebar.right.toggle`；
+   * ③ 都不行才用本地轨道（仅兜底，轨道开了内容不一定开）。
+   * @returns {boolean} 是否成功让宿主切换。
+   */
+  function toggleRightbarHost() {
+    try {
+      const svc = CURRENT_CTX?.get?.('sidebarRight')
+      if (svc !== null && svc !== undefined && typeof svc.toggleExpanded === 'function') {
+        svc.commandTarget?.(null)
+        svc.toggleExpanded()
+        return true
+      }
+    } catch {
+      /* 落到命令 */
+    }
+    try {
+      const rows = CURRENT_CTX?.shortcuts?.registry?.commands
+      const row = rows?.get?.('sidebar.right.toggle')
+      if (row !== undefined) {
+        const verdict = row.resolve?.({ region: 'page', modal: null, source: 'menu' })
+        if (verdict?.status === 'handled' && typeof verdict.run === 'function') {
+          verdict.run()
+          return true
+        }
+      }
+    } catch {
+      /* 落到本地兜底 */
+    }
+    return false
+  }
 
   /** 回会话页：宿主 selectPanel(null) 不生效时退到 'conversation' 真 key。 */
   function goConversation(ctx) {
@@ -1205,7 +1239,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           'aria-label': '开关右栏',
           'aria-pressed': dockOpen,
           title: '开关右栏（宽度 320–520）',
-          onClick: () => setDockSticky((open) => !open),
+          onClick: () => { if (!toggleRightbarHost()) setDockSticky((open) => !open) },
         }, '▤'),
         h('button', {
           type: 'button',
