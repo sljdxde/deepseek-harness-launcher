@@ -133,7 +133,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     schedules: ['dsh-schedule', 'schedule', 'schedules'],
     approvals: ['dsh-approvals', 'approvals'],
     settings: ['dsh-settings', 'settings'],
-    plugins: ['dsh-plugin-manager', 'plugin-manager', 'plugins'],
+    plugins: ['dsh-plugin-manager', 'plugin-manager'],
   }
 
   function ownCatalogRowsFor(ctx) {
@@ -266,9 +266,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           'aria-pressed': props.activeRail === entry.id,
           // 05 口径：点击前先 resolveMainKey(候选)；解析不到 → 置灰（aria-disabled + title），不许 throw
         'aria-disabled': railKey === null,
-        title: railKey === null
-          ? (entry.id === 'approvals' ? '见 设置 → 审批与权限' : '本版未接')
-          : entry.label,
+        title: entry.id === 'plugins'
+          ? (railKey === null ? '插件工作台本版未接' : '插件工作台')
+          : (railKey === null
+            ? (entry.id === 'approvals' ? '见 设置 → 审批与权限' : '本版未接')
+            : entry.label),
         onClick: () => {
           if (railKey === null) return
           try {
