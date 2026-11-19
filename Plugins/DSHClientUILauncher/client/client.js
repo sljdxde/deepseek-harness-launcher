@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+e56f7e6"
+  const BUILD_STAMP = "0.2.2-rc.5+3ce16c0"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1135,7 +1135,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     })()
     const [hostHasMessages, setHostHasMessages] = React.useState(false)
     const [starterFilled, setStarterFilled] = React.useState(false)
-    React.useEffect(() => { applyThemeDom() }, [])
+    React.useEffect(() => {
+      applyThemeDom()
+      // 测试钩子：debug 开关下暴露 composer 填充器，便于无会话环境验多行插入
+      if (typeof window !== 'undefined' && window.__DSH_LAUNCHER_DEBUG__ === true) {
+        window.__DSH_LAUNCHER_FILL__ = fillComposerByDom
+      }
+    }, [])
     // 空态覆盖层要给 composer 让位：按 composer 实际高度算，不用固定 150px
     const [composerHeight, setComposerHeight] = React.useState(150)
     React.useEffect(() => {
