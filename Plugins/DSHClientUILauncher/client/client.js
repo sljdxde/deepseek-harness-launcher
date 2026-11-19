@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+23cc373"
+  const BUILD_STAMP = "0.2.2-rc.5+8c1f164"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -479,18 +479,37 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * 拿不到就整条不渲染。
    */
   function registerComposerDock(ctx) {
-    const Component = (slotProps) => {
-      const queued = Number(slotProps?.queue?.length ?? slotProps?.queued ?? slotProps?.queueCount)
-      const draft = typeof slotProps?.draft === 'string' ? slotProps.draft : (typeof slotProps?.input === 'string' ? slotProps.input : null)
-      const chars = draft === null ? null : [...draft].length
-      const files = slotProps?.attachments?.length ?? slotProps?.files?.length ?? null
+    /** DOM 读数（宿主给 dock 槽传的是空对象，slotProps 里没有输入/附件）。 */
+    const readDockSummary = () => {
+      try {
+        const editable = document.querySelector('[contenteditable="true"]')
+        const chars = editable === null ? 0 : [...(editable.innerText ?? '')].length
+        const attachments = document.querySelectorAll('[data-attachment-id], [class*="attachmentChip"], [class*="attachment-chip"]').length
+        return { chars, attachments }
+      } catch {
+        return { chars: 0, attachments: 0 }
+      }
+    }
+
+    const Component = () => {
+      const [summary, setSummary] = React.useState(readDockSummary)
+      React.useEffect(() => {
+        const update = () => setSummary(readDockSummary())
+        document.addEventListener('input', update, true)
+        const observer = new MutationObserver(update)
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+        return () => {
+          document.removeEventListener('input', update, true)
+          observer.disconnect()
+        }
+      }, [])
       const parts = []
-      if (Number.isFinite(queued) && queued > 0) parts.push(`排队 ${queued}`)
-      if (chars !== null) parts.push(`输入 ${chars} 字`)
-      if (Number.isFinite(files)) parts.push(`${files} 个附件`)
+      if (summary.chars > 0) parts.push(`输入 ${summary.chars} 字`)
+      if (summary.attachments > 0) parts.push(`${summary.attachments} 个附件`)
       if (parts.length === 0) return null
       return h('span', { className: 'launcher-dock-summary', title: parts.join(' · ') }, parts.join(' · '))
     }
+
     try {
       if (typeof ctx?.slots?.inject !== 'function') return []
       const dispose = ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
