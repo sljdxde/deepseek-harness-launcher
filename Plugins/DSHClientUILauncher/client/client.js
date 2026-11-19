@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+e6bbf3e"
+  const BUILD_STAMP = "0.2.2-rc.5+65914f7"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1531,7 +1531,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           onClick: () => {
             // 双管：宿主命令切它自己的 expanded 状态；轨道由外壳保证（否则内容开、列宽不开）
             const hostOk = toggleRightbarHost()
-            setDockSticky((open) => !open)
             // 空态没有会话时宿主命令会被 blocked：给出可见提示，别让用户以为按钮坏了
             if (!hostOk) {
               setTimeout(() => {
