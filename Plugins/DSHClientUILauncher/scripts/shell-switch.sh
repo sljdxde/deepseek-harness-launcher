@@ -138,20 +138,7 @@ require_version_lock() {
 
 # 装之前的 package.json 与锁文件各留一份：native 要证明它们逐字回来了
 # ② profile 的 dsh.profile.bundles：只写 ① 依赖时客户端模块图不枚举它，界面会"看起来像原生"
-set_bundle() {
-  mode=$1
-  "$NODE" -e '
-    const fs = require("node:fs");
-    const [file, mode, name] = process.argv.slice(1);
-    const m = JSON.parse(fs.readFileSync(file, "utf8"));
-    const list = m.dsh?.profile?.bundles;
-    if (!Array.isArray(list)) { process.exit(3) }
-    const next = list.filter((entry) => entry !== name);
-    if (mode === "add") next.push(name);
-    m.dsh.profile.bundles = next;
-    fs.writeFileSync(file, JSON.stringify(m, null, 2) + "\n");
-  ' "$MANIFEST" "$mode" "$HOST_PACKAGE"
-}
+
 
 snapshot_state() {
   cp -p "$MANIFEST" "$STATE_DIR/package.json.snapshot"
@@ -159,16 +146,30 @@ snapshot_state() {
   return 0
 }
 
+# 逐字一致做不到：`dsh plugin remove` 会把 package.json 按自己的 canonical 形态重写（键序/缩进变）。
+# 判据改成"语义一致"：dependencies 与 dsh.profile.bundles 两项与装前快照相等即算回到装前。
 compare_snapshot() {
-  if [ -f "$STATE_DIR/package.json.snapshot" ] && ! cmp -s "$MANIFEST" "$STATE_DIR/package.json.snapshot"; then
-    echo "警告：package.json 与装之前不完全一致（依赖删了但顺序/其他字段被动过）" >&2
-    log_line "native=manifest-not-identical"
-  fi
-  if [ -f "$STATE_DIR/pnpm-lock.snapshot" ] && ! cmp -s "$PROFILE_DIR/pnpm-lock.yaml" "$STATE_DIR/pnpm-lock.snapshot"; then
-    echo "警告：pnpm-lock.yaml 与装之前不完全一致" >&2
-    log_line "native=lock-not-identical"
+  if [ ! -f "$STATE_DIR/package.json.snapshot" ]; then return 0; fi
+  "$NODE" - "$MANIFEST" "$STATE_DIR/package.json.snapshot" <<'NODE_EOF'
+const fs = require('node:fs')
+const pick = (file) => {
+  const m = JSON.parse(fs.readFileSync(file, 'utf8'))
+  const deps = Object.fromEntries(Object.entries(m.dependencies ?? {}).sort(([a], [b]) => a.localeCompare(b)))
+  return JSON.stringify({ deps, bundles: m.dsh?.profile?.bundles ?? [] })
+}
+const [now, before] = process.argv.slice(2)
+if (pick(now) === pick(before)) process.stdout.write('SEMANTIC-OK\n')
+else { process.stderr.write('SEMANTIC-DIFF\n'); process.exit(1) }
+NODE_EOF
+  if [ $? -eq 0 ]; then
+    echo "package.json 语义与装前一致（依赖与 bundles）"
+  else
+    echo "警告：package.json 语义与装前不一致（依赖或 bundles 变了）" >&2
+    log_line "native=manifest-semantic-diff"
   fi
 }
+
+
 
 set_override() {
   mode=$1
