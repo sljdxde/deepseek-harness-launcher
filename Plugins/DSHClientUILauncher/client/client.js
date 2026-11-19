@@ -63,8 +63,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-palette__item.off{opacity:.45;cursor:not-allowed}
 .launcher-palette__item.on{background:var(--dsw-alias-bg-2,rgba(127,127,127,.12))}
 .launcher-palette__hint{opacity:.6;font-size:11px}
-[data-code-wrap="off"] pre, [data-code-wrap="off"] pre code{white-space:pre!important;overflow-x:auto}
-[data-code-wrap="on"] pre code{white-space:pre-wrap!important;word-break:break-word}
+.launcher-shell[data-code-wrap="off"] pre, .launcher-shell[data-code-wrap="off"] pre code{white-space:pre!important;overflow-x:auto}
+.launcher-shell[data-code-wrap="on"] pre code{white-space:pre-wrap!important;word-break:break-word}
 .launcher-diag{position:fixed;right:16px;bottom:40px;width:min(340px,90vw);background:var(--dsw-alias-bg-1,#fff);color:inherit;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.18);z-index:45}
 .launcher-diag__head{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}
 .launcher-diag__list{margin:0;padding:8px 10px;display:grid;gap:6px;font-size:12px}
@@ -159,14 +159,17 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   }
   function applyCodeWrap(on) {
     try {
-      document.documentElement.dataset.codeWrap = on ? 'on' : 'off'
       window.localStorage.setItem(CODE_WRAP_KEY, on ? 'on' : 'off')
     } catch {
       /* 无 localStorage 时只影响本次会话 */
     }
   }
-  function toggleCodeWrap() {
-    applyCodeWrap(!codeWrapOn())
+  function setCodeWrapPref(on) {
+    try {
+      window.localStorage.setItem(CODE_WRAP_KEY, on ? 'on' : 'off')
+    } catch {
+      /* 无 localStorage 时只影响本次会话 */
+    }
   }
 
   function ownCatalogRowsFor(ctx) {
@@ -191,7 +194,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const wrapReady = () => onPage()
     return [
       { id: 'launcher.contextDiagnostics', label: '上下文诊断', hint: '只读：外壳与上下文状态', regions: ['page'], aliases: [], resolve: () => (wrapReady() ? { status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:open-diagnostics')) } : { status: 'pass' }) },
-      { id: 'launcher.codeWrap.toggle', label: '切换代码块自动换行', hint: '开/关长代码横向滚动', regions: ['page', 'editable'], aliases: [], resolve: () => (wrapReady() ? { status: 'handled', run: toggleCodeWrap } : { status: 'pass' }) },
+      { id: 'launcher.codeWrap.toggle', label: '切换代码块自动换行', hint: '开/关长代码横向滚动', regions: ['page', 'editable'], aliases: [], resolve: () => (wrapReady() ? { status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:toggle-code-wrap')) } : { status: 'pass' }) },
       { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], aliases: [], resolve: resolveWorkbench },
     ]
   }
@@ -263,12 +266,18 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const commands = collectCommands(ctx)
     const [paletteOpen, setPaletteOpen] = React.useState(false)
     const [diagOpen, setDiagOpen] = React.useState(false)
+    const [wrapOn, setWrapOn] = React.useState(codeWrapOn)
     // #1 焦点回位：打开面板时记住当时的活动元素，Esc 时优先还给它（选择器只作兜底）
     const openerRef = React.useRef(null)
     React.useEffect(() => {
       const open = () => setDiagOpen(true)
+      const flip = () => setWrapOn((on) => { setCodeWrapPref(!on); return !on })
       window.addEventListener('launcher:open-diagnostics', open)
-      return () => window.removeEventListener('launcher:open-diagnostics', open)
+      window.addEventListener('launcher:toggle-code-wrap', flip)
+      return () => {
+        window.removeEventListener('launcher:open-diagnostics', open)
+        window.removeEventListener('launcher:toggle-code-wrap', flip)
+      }
     }, [])
     const onDiagKeyDown = (event) => {
       if (event.key === 'Escape') { event.preventDefault(); setDiagOpen(false) }
@@ -337,7 +346,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (event.key === 'ArrowUp') { event.preventDefault(); setPaletteIndex((i) => (shown.length === 0 ? 0 : (i - 1 + shown.length) % shown.length)) }
       if (event.key === 'Enter' && shown[paletteIndex] !== undefined) { event.preventDefault(); runCommand(shown[paletteIndex]) }
     }
-    return h('div', { className: 'launcher-shell', 'data-shell': 'launcher', onKeyDown },
+    return h('div', {
+      className: 'launcher-shell',
+      'data-shell': 'launcher',
+      // 05 §6.3-7：属性挂外壳根，不挂 documentElement（避免改到宿主自己的代码块）
+      'data-code-wrap': wrapOn ? 'on' : 'off',
+      onKeyDown,
+    },
       h('div', { className: 'launcher-rail', role: 'navigation', 'aria-label': 'launcher rail' },
         renderSlot('shell.leading', {}),
         RAIL_ENTRIES.map((entry) => {
@@ -487,7 +502,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // 只读暴露，不改行为；卸载时清掉。
     window.__DSH_LAUNCHER_CTX__ = ctx
     CURRENT_CTX = ctx
-    applyCodeWrap(codeWrapOn())
     // FR-16：我们自己的动作也注册进同一个 catalog（与宿主条目同权）
     const OWN_ROWS_REGISTERED = Symbol.for('dsh.launcher.catalogRows')
     if (typeof ctx?.shortcuts?.register === 'function') {
