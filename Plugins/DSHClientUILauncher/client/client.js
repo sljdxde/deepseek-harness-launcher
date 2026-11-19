@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+4e82ca4"
+  const BUILD_STAMP = "0.2.2-rc.5+fcfda04"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -932,6 +932,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     return { render: true, reason: 'ok' }
   }
 
+
+  /** 收起/恢复一块（与 lib/panes.js 的 toggleCollapsed 同口径，不改入参）。 */
+  function toggleCollapsed(collapsed, index) {
+    const next = new Set(collapsed)
+    if (next.has(index)) next.delete(index)
+    else next.add(index)
+    return next
+  }
 
   /** 可见块数 → 网格（与 lib/panes.js 的 gridForCount 同口径：收起后重排不留空洞）。 */
   function gridForCount(count) {
