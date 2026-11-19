@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+daba00d"
+  const BUILD_STAMP = "0.2.2-rc.5+882b5ca"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1197,7 +1197,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       window.addEventListener('launcher:dock', onDock)
       return () => window.removeEventListener('launcher:dock', onDock)
     }, [])
-    const dockOpen = dockOpenHook || dockOpenEvent
+    // 用户显式开关优先（宿主 hook 一旦为 true 会一直 true，没有 override 就永远关不掉）
+    const [dockOverride, setDockOverride] = React.useState(null)
+    const dockOpen = dockOverride === null ? (dockOpenHook || dockOpenEvent) : dockOverride
     const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     // 03 FR-13：宽度按会话记忆（localStorage['dsh.launcher.dockWidth']），刷新后右栏默认收起、重开回该值
@@ -1258,9 +1260,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         // 关闭：宿主在 launcher 里不一定回 closeRightbar，外壳直接把轨道收掉（可视结果必须响应）
         DOCK_CLOSE_INTENT.user = true
         setDockOpenEvent(false)
+        setDockOverride(false)
         toggleRightbarHost()
         return
       }
+      setDockOverride(true)
       toggleRightbarHost()
       // 打开：先给宿主一帧；若宿主没接管（blocked / 无 occupant 等），外壳自己展开轨道
       setTimeout(() => {
