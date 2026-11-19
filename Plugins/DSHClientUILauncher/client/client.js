@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+d3ef8e1"
+  const BUILD_STAMP = "0.2.2-rc.5+55ac7d3"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -479,12 +479,22 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * 拿不到就整条不渲染。
    */
   function registerComposerDock(ctx) {
+    /** composer 容器（把取值限定在会话 composer 内，避免误读命令面板/改名弹窗的可编辑元素）。 */
+    const composerRoot = () => {
+      const bySlot = document.querySelector('[data-slot="conversation.composer"]')
+      if (bySlot !== null) return bySlot
+      const editable = document.querySelector('[contenteditable="true"]')
+      return editable?.closest('[class*="composer"]') ?? null
+    }
+
     /** DOM 读数（宿主给 dock 槽传的是空对象，slotProps 里没有输入/附件）。 */
     const readDockSummary = () => {
       try {
-        const editable = document.querySelector('[contenteditable="true"]')
+        const root = composerRoot()
+        if (root === null) return { chars: 0, attachments: 0 }
+        const editable = root.querySelector('[contenteditable="true"]')
         const chars = editable === null ? 0 : [...(editable.innerText ?? '')].length
-        const attachments = document.querySelectorAll('[data-attachment-id], [class*="attachmentChip"], [class*="attachment-chip"]').length
+        const attachments = root.querySelectorAll('[data-attachment-id], [class*="attachmentChip"], [class*="attachment-chip"]').length
         return { chars, attachments }
       } catch {
         return { chars: 0, attachments: 0 }
@@ -494,20 +504,25 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const Component = () => {
       const [summary, setSummary] = React.useState(readDockSummary)
       React.useEffect(() => {
-        // 只在数值变化时 setState，避免宿主运行条动画引发无谓重渲染
+        let frame = 0
         const update = () => {
-          const next = readDockSummary()
-          setSummary((prev) => (prev.chars === next.chars && prev.attachments === next.attachments ? prev : next))
+          // rAF 合并：生成中每个 token 都触发也只算一次；数值没变不 setState
+          if (frame !== 0) return
+          frame = requestAnimationFrame(() => {
+            frame = 0
+            const next = readDockSummary()
+            setSummary((prev) => (prev.chars === next.chars && prev.attachments === next.attachments ? prev : next))
+          })
         }
+        const root = composerRoot()
         document.addEventListener('input', update, true)
-        document.addEventListener('keyup', update, true)
         const observer = new MutationObserver(update)
-        observer.observe(document.body, { childList: true, subtree: true, characterData: true })
-        // 兜底轮询：即便 input/observer 都被宿主拦掉，也能在 500ms 内反映
-        const timer = setInterval(update, 500)
+        // 只观察 composer 子树；拿不到容器时不观察（宁可不动，也不盯全页）
+        if (root !== null) observer.observe(root, { childList: true, subtree: true, characterData: true })
+        const timer = setInterval(update, 800)
         return () => {
+          if (frame !== 0) cancelAnimationFrame(frame)
           document.removeEventListener('input', update, true)
-          document.removeEventListener('keyup', update, true)
           observer.disconnect()
           clearInterval(timer)
         }
@@ -538,6 +553,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       return []
     }
   }
+
 
   /** FR-44 三态（与 lib/model-chip.js 同口径）。 */
   function modelChipText(model = {}) {
