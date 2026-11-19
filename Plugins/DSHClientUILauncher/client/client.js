@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+edf69e4"
+  const BUILD_STAMP = "0.2.2-rc.5+a93297e"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1260,7 +1260,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         DOCK_CLOSE_INTENT.user = true
         setDockOpen(false)
         setDockOpenEvent(false)
-        toggleRightbarHost()
+        // 关闭时不要再走宿主 toggle：那会把刚关掉的右栏重新打开
+        try { CURRENT_CTX?.layout?.closeRightbar?.() } catch { /* 忽略 */ }
         return
       }
       setDockOpen(true)
