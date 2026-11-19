@@ -47,8 +47,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-rail__entry:hover{background:var(--dsw-alias-button-floating-hover,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary)}
 .launcher-rail__entry.on{background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.18));color:var(--dsw-alias-label-primary)}
 .launcher-sidebar{grid-area:sidebar;border-right:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));min-height:0;overflow:hidden}
-.launcher-main{grid-area:main;container-type:inline-size;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
+.launcher-main{container-type:inline-size;display:flex;flex-direction:column;min-width:0;min-height:0;grid-area:main;container-type:inline-size;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
 .launcher-dock{position:relative;grid-area:dock;border-left:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.launcher-splitbar{display:flex;gap:2px;padding:2px 6px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}
+.launcher-splitbar__mode{font:inherit;font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid transparent;background:transparent;color:inherit;cursor:pointer;opacity:.7}
+.launcher-splitbar__mode.on{opacity:1;border-color:var(--dsw-alias-border-l2,rgba(127,127,127,.35))}
+.launcher-panes{flex:1;min-height:0;display:grid;gap:1px;grid-template-columns:repeat(var(--split-cols,1),minmax(0,1fr));grid-template-rows:repeat(var(--split-rows,1),minmax(0,1fr))}
+.launcher-pane{min-width:0;min-height:0;overflow:auto}
+@container (max-width: 760px){.launcher-panes{grid-template-columns:minmax(0,1fr)!important;grid-template-rows:repeat(var(--split-rows,1),minmax(0,1fr))}}
 .launcher-dock__handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;background:transparent;z-index:2}
 .launcher-dock__handle:hover{background:var(--dsw-alias-border-l2,rgba(127,127,127,.3))}
 .launcher-statusbar{grid-area:status;align-items:center;border-top:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;font-size:11px;gap:10px;padding:0 10px;color:var(--dsw-alias-label-secondary)}
@@ -94,6 +100,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     const [dragWidth, setDragWidth] = React.useState(DOCK_WIDTH)
+    const [splitMode, setSplitMode] = React.useState(1)
+    const [cols, rows] = SPLIT_GRID[splitMode] ?? SPLIT_GRID[1]
+    const paneKeys = Array.from({ length: splitMode }, (_, i) => (i === 0 ? 'conversation' : `conversation#${i + 1}`))
     const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
     const dockWidth = dockCanShow ? dragWidth : 0
     const startDrag = (event) => {
@@ -123,8 +132,22 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         }, entry.label.slice(0, 1)))),
       h('aside', { className: 'launcher-sidebar' },
         collapsed ? null : renderSlot('sidebar', { collapsed, width: 280, drawer: false })),
-      h('main', { className: 'launcher-main' },
-        renderSlot('main', 'conversation')),
+      h('main', {
+        className: 'launcher-main',
+        'data-split': splitMode,
+        style: { '--split-cols': cols, '--split-rows': rows },
+      },
+        h('div', { className: 'launcher-splitbar', role: 'toolbar', 'aria-label': '分屏档位' },
+          SPLIT_MODES.map((mode) => h('button', {
+            key: mode,
+            type: 'button',
+            className: `launcher-splitbar__mode${splitMode === mode ? ' on' : ''}`,
+            'aria-pressed': splitMode === mode,
+            onClick: () => setSplitMode(mode),
+          }, String(mode)))),
+        h('div', { className: 'launcher-panes' },
+          paneKeys.map((key) => h('div', { key, className: 'launcher-pane', 'data-pane': key },
+            renderSlot('main', key))))),
       h('aside', {
         className: 'launcher-dock',
         style: { '--launcher-dock': `${dockWidth}px` },
@@ -172,6 +195,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const DOCK_MAX = 520
   const DOCK_HIDE_BELOW = 1020
   const clampDock = (w) => Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.round(w)))
+  // 与 lib/panes.js 的 GRID 一致：1/2/4/6 档 → 行列
+  const SPLIT_GRID = { 1: [1, 1], 2: [2, 1], 4: [2, 2], 6: [3, 2] }
+  const SPLIT_MODES = [1, 2, 4, 6]
 
   function apply(ctx) {
     ensureStyle()
