@@ -385,7 +385,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       try {
         const register = ctx.shortcuts?.register
         if (typeof register === 'function') {
-          rows.forEach((row) => register.call(ctx.shortcuts, { ...row, modals: [], defaults: {} }))
+          rows.forEach((row) => register.call(ctx.shortcuts, {
+            ...row,
+            label: typeof row.label === 'function' ? row.label : () => row.label,
+            modals: [],
+            defaults: {},
+          }))
           window.__DSH_LAUNCHER_OWN_ROWS__ = rows.length
         }
       } catch (error) {
