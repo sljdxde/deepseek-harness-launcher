@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+045bfe2"
+  const BUILD_STAMP = "0.2.2-rc.5+e43103d"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1612,7 +1612,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             type: 'button',
             className: `launcher-splitbar__mode${splitMode === mode ? ' on' : ''}`,
             'aria-pressed': splitMode === mode,
-            onClick: () => setSplitMode(mode),
+            onClick: () => {
+              // 降档要给出可见反馈，否则用户视角是「点了没反应」（05 §6.2 允许降档）
+              const target = resolveSplit(mode, mainWidth, (typeof window === 'undefined' ? 900 : window.innerHeight) - 26)
+              if (target !== mode) showLauncherToast(`窗口太窄，已降为 ${target} 块（每块至少 360 宽）`)
+              setSplitMode(mode)
+            },
           }, String(mode))),
           h('button', {
             type: 'button',
