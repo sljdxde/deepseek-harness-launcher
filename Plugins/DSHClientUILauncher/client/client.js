@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+fd82293"
+  const BUILD_STAMP = "0.2.2-rc.5+0f0c454"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -949,7 +949,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const viewportWidth = typeof window === 'undefined' ? 1440 : window.innerWidth
     // 标准 props 是选择器钩子（SnapshotSelectorHook），必须带 selector 调用，
     // 直接 useDockOpen() 会报 `selector is not a function` 并把 root 整个打崩。
-    const dockOpen = props.useDockOpen === undefined ? false : props.useDockOpen((open) => open)
+    const dockOpenHook = props.useDockOpen === undefined ? false : props.useDockOpen((open) => open)
+    const [dockOpenEvent, setDockOpenEvent] = React.useState(false)
+    React.useEffect(() => {
+      const onDock = (event) => setDockOpenEvent(event?.detail?.open === true)
+      window.addEventListener('launcher:dock', onDock)
+      return () => window.removeEventListener('launcher:dock', onDock)
+    }, [])
+    const dockOpen = dockOpenHook || dockOpenEvent
     const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     const [dragWidth, setDragWidth] = React.useState(DOCK_WIDTH)
@@ -1402,6 +1409,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (next === dockOpen) return
       dockOpen = next
       for (const listener of dockListeners) listener()
+      try {
+        window.dispatchEvent(new CustomEvent('launcher:dock', { detail: { open: dockOpen } }))
+      } catch {
+        /* 事件派发失败不影响状态 */
+      }
     }
     // 上游 AppFrame 注册时带 foldedLandscape（窄窗折起），占据者可能会取 useFoldedLandscape；
     // 不 provide 会留下"required 未激活"的下一个坑，所以照带。
