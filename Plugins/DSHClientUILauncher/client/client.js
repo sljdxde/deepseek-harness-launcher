@@ -104,24 +104,32 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * @returns {{ id: string, label: string, hint?: string, run?: Function, command?: string }[]} 命令清单。
    */
   function collectCommands(ctx) {
+    // 与 lib/command-palette.js 的 normalizeCommands 同口径（client 是 loader 形态，不能 import lib）
     const source = ctx?.commandUi
-    if (source === undefined || source === null) return []
-    try {
-      const list = source.list?.() ?? source.directory?.list?.() ?? source.commands ?? []
-      if (!Array.isArray(list)) return []
-      const rows = []
-      for (const item of list) {
-        if (item === null || typeof item !== 'object') continue
-        const id = item.id ?? item.name ?? item.command
-        const label = item.label ?? item.title ?? item.name
-        if (typeof id !== 'string' || typeof label !== 'string') continue
-        rows.push({ id, label, hint: item.hint ?? item.description, command: item.name ?? id })
+    if (source === null || source === undefined) return []
+    let list = source
+    if (!Array.isArray(list)) {
+      try {
+        list = source.list?.() ?? source.directory?.list?.() ?? source.commands ?? []
+      } catch {
+        return []
       }
-      return rows
-    } catch {
-      return []
     }
+    if (!Array.isArray(list)) return []
+    const rows = []
+    const seen = new Set()
+    for (const item of list) {
+      if (item === null || typeof item !== 'object') continue
+      const id = item.id ?? item.name ?? item.command
+      const label = item.label ?? item.title ?? item.name
+      if (typeof id !== 'string' || id.length === 0 || typeof label !== 'string' || label.length === 0) continue
+      if (seen.has(id)) continue
+      seen.add(id)
+      rows.push({ id, label, hint: typeof item.hint === 'string' ? item.hint : item.description, command: item.name ?? id })
+    }
+    return rows
   }
+
 
   /** 外壳本体：56 图标栏 + 侧栏列 + 主区 + 右栏轨道 + 底状态条 + 浮层。 */
   function LauncherRoot(props) {
