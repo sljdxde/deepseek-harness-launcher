@@ -34,6 +34,8 @@ TIMEOUT=${START_TIMEOUT:-40}
 [ -f "$PROFILE_SRC/package.json" ] || { echo "PROFILE_SRC 不是有效 profile：$PROFILE_SRC" >&2; exit 2; }
 [ -f "$PACKAGE_DIR/package.json" ] || { echo "PACKAGE_DIR 不是有效包：$PACKAGE_DIR" >&2; exit 2; }
 
+# dsh 安装目录的 node_modules（宿主原包在这里，不在 dsh 包自身目录下）
+DSH_MODULES=$(cd "$DSH_INSTALL/../.." && pwd)
 WORK=${STANDALONE_HOME:-/tmp/dsh-shell-standalone}
 HOME2="$WORK/home"
 FRESH=${FRESH:-1}
@@ -62,7 +64,10 @@ start_web() {
   i=0
   while [ $i -lt "$TIMEOUT" ]; do
     url=$(grep -o 'http://127\.0\.0\.1:[0-9]*/?token=[A-Za-z0-9_-]*' "$log" | head -1 || true)
-    [ -n "${url:-}" ] && { echo "$url"; return 0; }
+    if [ -n "${url:-}" ]; then
+      printf '%s' "$url" > "$WORK/url"
+      return 0
+    fi
     sleep 1
     i=$((i + 1))
   done
@@ -84,7 +89,14 @@ switch_impl() {
   want=$1
   case "$want" in
     launcher)
-      if [ -d "$LAYOUT" ] && [ ! -d "$ORIG" ]; then cp -R "$LAYOUT" "$ORIG"; fi
+      # 原包留底：优先用 profile 里那份，其次用	dsh 安装目录里的宿主实现（新 profile 可能还没有 layout 依赖）
+      if [ ! -d "$ORIG" ]; then
+        # 源 profile 可能本来就装着我们的实现：这种情况必须从 dsh 安装目录取宿主原包留底
+        if [ -d "$LAYOUT" ] && ! is_ours_at "$LAYOUT"; then cp -R "$LAYOUT" "$ORIG"
+        elif [ -d "$DSH_MODULES/@deepseek-ai/dsh-client-ui-layout" ]; then
+          cp -R "$DSH_MODULES/@deepseek-ai/dsh-client-ui-layout" "$ORIG"
+        fi
+      fi
       rm -rf "$LAYOUT"
       # 只拷实现需要的部分：不能整个 cp -R（包里若有 node_modules 软链会被解引用，复制几百 MB 卡住）
       mkdir -p "$LAYOUT"
@@ -96,8 +108,12 @@ switch_impl() {
   esac
 }
 
+is_ours_at() {
+  [ -f "$1/client/client.js" ] && grep -q '__DSH_LAUNCHER_SHELL__' "$1/client/client.js"
+}
+
 is_ours() {
-  [ -f "$LAYOUT/client/client.js" ] && grep -q '__DSH_LAUNCHER_SHELL__' "$LAYOUT/client/client.js"
+  is_ours_at "$LAYOUT"
 }
 
 run_state() {
@@ -110,7 +126,8 @@ run_state() {
   else
     is_ours && { echo "独立实例里仍是我们的实现，native 未生效" >&2; return 3; }
   fi
-  url=$(start_web "$port") || { stop_web "$port"; return 3; }
+  start_web "$port" || { stop_web "$port"; return 3; }
+  url=$(cat "$WORK/url")
   echo "URL: $url"
   DSH_HOME="$HOME2" DSH_URL="$url" PACKAGE_DIR="$PACKAGE_DIR" \
     "$NODE" "$HERE/verify-shell.mjs" "$url" "$want"
