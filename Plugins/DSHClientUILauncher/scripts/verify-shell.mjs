@@ -77,6 +77,10 @@ try {
   } else if (seen.launcherMark || seen.launcherShell) verdict = 'native-but-launcher'
   else if (!seen.hostRoot) verdict = 'native-no-host-root'
   if (crashed.length > 0) verdict = 'slot-entry-crashed'
+  // 客户端模块被枚举两次的信号（真机上会让 root 挂钩两次）
+  if (errors.some((line) => line.includes('MODULE_ID') && line.includes('already been declared'))) {
+    verdict = 'duplicate-module'
+  }
   // 有会话时的追加判据（SESSION_URL 开关）：注册成功 ≠ 渲染出来
   let sessionActions = null
   if (process.env.SESSION_URL) {
