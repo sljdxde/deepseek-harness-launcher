@@ -234,6 +234,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       return null
     }
     const Component = (slotProps) => {
+      if (window.__DSH_LAUNCHER_CONTEXT_DIAG__ === true) {
+        console.info('launcher:diag useProjection =', typeof slotProps?.useProjection)
+      }
       const pressure = pickNumber(slotProps?.useProjection?.('contextPressure'), ['pct', 'percent', 'used', 'pressure', 'ratio'])
       const breakdown = slotProps?.useProjection?.('contextBreakdown')
       const raw = typeof breakdown === 'function' ? breakdown((v) => v) : breakdown
@@ -308,7 +311,18 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
   }
 
+  function turnActionsEnabled() {
+    // 默认开；`localStorage['dsh.launcher.turnActions']==='false'` 关；`window.__DSH_LAUNCHER_TURN_ACTIONS__===false` 作 R2 回滚
+    if (typeof window !== 'undefined' && window.__DSH_LAUNCHER_TURN_ACTIONS__ === false) return false
+    try {
+      return window.localStorage.getItem('dsh.launcher.turnActions') !== 'false'
+    } catch {
+      return true
+    }
+  }
+
   function registerTurnActions(ctx) {
+    if (!turnActionsEnabled()) return []
     const disposers = []
 
     // 导出：生成 Markdown 并触发下载（不依赖宿主接口）
