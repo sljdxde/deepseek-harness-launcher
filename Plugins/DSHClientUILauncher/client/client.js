@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+c4a6007"
+  const BUILD_STAMP = "0.2.2-rc.5+bef0bfb"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -391,8 +391,19 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
      * @returns {string} 带围栏的正文。
      */
     const textWithFences = (root) => {
-      // 按文档顺序拼一遍：普通节点取文本，PRE 一次拼成「```lang\n代码\n```」，不再往克隆节点里塞文本
+      // 按文档顺序拼：遇到 PRE 一次拼「```lang + 代码 + ```」；
+      // 宿主的代码块常带一个「语言标签」节点（如 <span>js</span>）紧挨在 PRE 前，要跳过它并把语言带进围栏。
       const parts = []
+      const labelOf = (node) => {
+        const text = (node?.textContent ?? '').trim()
+        return /^[A-Za-z0-9+#._-]{1,12}$/.test(text) ? text.toLowerCase() : ''
+      }
+      const pushPre = (pre, lang) => {
+        const code = pre.querySelector('code')
+        const codeLang = ((code?.className ?? '').match(/language-([\w-]+)/)?.[1] ?? '')
+        const body = (code?.textContent ?? pre.textContent ?? '').replace(/\n$/, '')
+        parts.push(`\n\n\`\`\`${codeLang || lang}\n${body}\n\`\`\`\n\n`)
+      }
       const walk = (node) => {
         if (node === null || node === undefined) return
         if (node.nodeType === 3) {
@@ -400,19 +411,30 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           return
         }
         if (node.nodeType !== 1) return
-        const tag = node.tagName
-        if (tag === 'PRE') {
-          const code = node.querySelector('code')
-          const lang = ((code?.className ?? '').match(/language-([\w-]+)/)?.[1] ?? '')
-          const body = (code?.textContent ?? node.textContent ?? '').replace(/\n$/, '')
-          parts.push(`\n\n\`\`\`${lang}\n${body}\n\`\`\`\n\n`)
+        if (node.tagName === 'PRE') {
+          pushPre(node, '')
           return
         }
-        for (const child of node.childNodes) walk(child)
+        const children = [...node.childNodes]
+        for (let index = 0; index < children.length; index += 1) {
+          const child = children[index]
+          const next = children[index + 1]
+          if (child.nodeType === 1 && child.tagName !== 'PRE' && next?.nodeType === 1 && next.tagName === 'PRE') {
+            const lang = labelOf(child)
+            if (lang !== '') {
+              // 语言标签：跳过它，语言交给围栏
+              pushPre(next, lang)
+              index += 1
+              continue
+            }
+          }
+          walk(child)
+        }
       }
       walk(root)
       return parts.join('').replace(/\n{3,}/g, '\n\n').trim()
     }
+
 
 
     const readTurnFromNode = (node) => {
