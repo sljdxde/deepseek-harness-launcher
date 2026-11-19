@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+830a2a6"
+  const BUILD_STAMP = "0.2.2-rc.5+c4cce6d"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -400,7 +400,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }
       const pushPre = (pre, lang) => {
         const code = pre.querySelector('code')
-        const codeLang = ((code?.className ?? '').match(/language-([\w-]+)/)?.[1] ?? '')
+        // 语言三处依次取：code 的 language-* class → pre 的 language-* class → data-language → 传入的标签文本
+        const codeLang = ((code?.className ?? '').match(/language-([\w-]+)/)?.[1]
+          ?? (pre.className ?? '').match(/language-([\w-]+)/)?.[1]
+          ?? pre.getAttribute?.('data-language')
+          ?? '')
         const body = (code?.textContent ?? pre.textContent ?? '').replace(/\n$/, '')
         parts.push(`\n\n\`\`\`${codeLang || lang}\n${body}\n\`\`\`\n\n`)
       }
