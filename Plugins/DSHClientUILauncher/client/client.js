@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+09962f3"
+  const BUILD_STAMP = "0.2.2-rc.5+d4cf977"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -119,7 +119,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-theme-chip{margin-left:auto;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;font-size:12px;line-height:1;padding:2px 6px;cursor:pointer}
 .launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
 .launcher-empty{position:static;flex:0 0 auto;z-index:auto;align-items:center;display:flex;justify-content:center;min-height:0;padding:16px 16px 8px;background:transparent}
-.launcher-pane__host{display:flex;flex:1;min-height:0;flex-direction:column}
+.launcher-pane__host{display:flex;flex:1;min-height:0;flex-direction:column;overflow:hidden}
 .launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%}
 .launcher-empty__theme{align-items:center;background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.14));border-radius:12px;color:var(--dsw-alias-label-secondary,#666);display:flex;font-size:13px;font-weight:600;height:40px;justify-content:center;width:40px}
 .launcher-empty__title{font-size:19px;font-weight:600;line-height:1.4;margin:2px 0 0}
@@ -1030,6 +1030,21 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const ctx = CURRENT_CTX
     const commands = collectCommands(ctx)
     const [paletteOpen, setPaletteOpen] = React.useState(false)
+    const paletteWasOpen = React.useRef(false)
+    React.useEffect(() => {
+      if (paletteWasOpen.current && !paletteOpen) {
+        requestAnimationFrame(() => {
+          const opener = openerRef.current
+          if (opener !== null && opener.isConnected !== false && typeof opener.focus === 'function') {
+            opener.focus()
+            return
+          }
+          const fallback = document.querySelector('[data-slot="main"] textarea, [data-slot="main"] input, [data-slot="main"] [contenteditable="true"], .launcher-main textarea, .launcher-main input, .launcher-main [contenteditable="true"]')
+          fallback?.focus?.()
+        })
+      }
+      paletteWasOpen.current = paletteOpen
+    }, [paletteOpen])
     const paneScrollRef = React.useRef(0)
     const [devOpen, setDevOpen] = React.useState(false)
     const [wrapOn, setWrapOn] = React.useState(codeWrapOn)
