@@ -51,3 +51,9 @@ test('代码块换行属性挂在 .launcher-shell 根，不写 documentElement',
   assert.ok(!SOURCE.includes('documentElement.dataset.codeWrap'), '不应把属性挂到 documentElement')
   assert.ok(SOURCE.includes("'data-code-wrap': wrapOn ? 'on' : 'off'"), '应以属性形式输出在外壳根上')
 })
+
+test('FR-38 浮层挂 body（data-launcher-overlay），不在 header 内渲染', () => {
+  assert.ok(SOURCE.includes("node.setAttribute('data-launcher-overlay', '')"), '浮层必须带 data-launcher-overlay')
+  assert.ok(SOURCE.includes('document.body.appendChild(node)'), '浮层要挂到 body，避开 header 的 mask')
+  assert.ok(!SOURCE.includes("open ? h('div', {"), '不许再在 header 子树里直接渲染浮层')
+})

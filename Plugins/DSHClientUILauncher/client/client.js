@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+c6e3720"
+  const BUILD_STAMP = "0.2.2-rc.5+d294dba"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -256,7 +256,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const Component = (slotProps) => {
       // hooks 必须无条件、顺序稳定：全部放在组件最顶部（React #310 的根因就是放在了 early return 之后）
       const [open, setOpen] = React.useState(false)
-      const [anchor, setAnchor] = React.useState(null)
       const entryRef = React.useRef(null)
       React.useEffect(() => {
         if (!open) return undefined
@@ -320,6 +319,51 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const chat = num(breakdown, ['messageTokens', 'chat'])
       const files = num(breakdown, ['filesTokens', 'files'])
       const tools = num(breakdown, ['toolsTokens', 'tools'])
+
+      // 浮层挂 document.body：header 的 mask 会裁掉 position:fixed 的后代（实测）
+      React.useEffect(() => {
+        if (!open || unavailable) return undefined
+        const rect = entryRef.current?.getBoundingClientRect?.()
+        const node = document.createElement('div')
+        node.className = 'launcher-ctx__pop launcher-ctxdiag__pop'
+        node.setAttribute('role', 'dialog')
+        node.setAttribute('aria-label', '上下文诊断')
+        node.setAttribute('data-launcher-overlay', '')
+        node.style.position = 'fixed'
+        node.style.zIndex = '1000'
+        node.style.top = `${(rect?.bottom ?? 0) + 6}px`
+        node.style.left = `${Math.max(8, rect?.left ?? 8)}px`
+        const head = document.createElement('header')
+        head.className = 'launcher-ctx__head'
+        head.textContent = pct === null ? '上下文占用 —' : `上下文占用 ${pct}%`
+        node.appendChild(head)
+        const list = document.createElement('dl')
+        list.className = 'launcher-ctx__list'
+        for (const [label, value] of [['系统提示', system], ['会话消息', chat], ['文件', files], ['工具', tools]]) {
+          if (value === null || value === undefined) continue
+          const row = document.createElement('div')
+          const dt = document.createElement('dt')
+          dt.textContent = label
+          const dd = document.createElement('dd')
+          dd.textContent = String(value)
+          row.append(dt, dd)
+          list.appendChild(row)
+        }
+        node.appendChild(list)
+        document.body.appendChild(node)
+        const onOutside = (event) => {
+          if (node.contains(event.target)) return
+          if (entryRef.current?.contains?.(event.target)) return
+          setOpen(false)
+        }
+        document.addEventListener('pointerdown', onOutside, true)
+        return () => {
+          document.removeEventListener('pointerdown', onOutside, true)
+          node.remove()
+          entryRef.current?.focus?.()
+        }
+      }, [open, unavailable, pct, system, chat, files, tools])
+
       const unavailable = pct === null && system === null && chat === null && tools === null
       return h('div', { className: 'launcher-ctx launcher-ctxdiag', onKeyDown: (e) => { if (e.key === 'Escape') setOpen(false) } },
         h('button', {
@@ -334,24 +378,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           title: unavailable ? '上下文用量不可用' : `上下文占用 ${pct}% · 点开看拆分`,
           onClick: () => {
             if (unavailable) return
-            const rect = entryRef.current?.getBoundingClientRect?.()
-            if (rect !== undefined && rect !== null) setAnchor({ top: rect.bottom + 6, left: Math.max(8, rect.left) })
             setOpen((v) => !v)
           },
-        }, unavailable ? '上下文 —' : `上下文 ${pct}%`),
-        open ? h('div', {
-          className: 'launcher-ctx__pop launcher-ctxdiag__pop',
-          role: 'dialog',
-          'aria-label': '上下文诊断',
-          style: anchor === null ? undefined : { position: 'fixed', top: `${anchor.top}px`, left: `${anchor.left}px`, right: 'auto', zIndex: 1000 },
-        },
-          h('header', { className: 'launcher-ctx__head' }, pct === null ? '上下文占用 —' : `上下文占用 ${pct}%`),
-          h('dl', { className: 'launcher-ctx__list' },
-            h('div', null, h('dt', null, '系统提示'), h('dd', null, system === null ? '—' : String(system))),
-            h('div', null, h('dt', null, '会话消息'), h('dd', null, chat === null ? '—' : String(chat))),
-            files === null ? null : h('div', null, h('dt', null, '文件'), h('dd', null, String(files))),
-            h('div', null, h('dt', null, '工具'), h('dd', null, tools === null ? '—' : String(tools)))),
-          ) : null)
+        }, unavailable ? '上下文 —' : `上下文 ${pct}%`))
     }
     try {
       if (typeof ctx?.slots?.inject !== 'function') return []
