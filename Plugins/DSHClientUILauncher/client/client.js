@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+cb2ae1c"
+  const BUILD_STAMP = "0.2.2-rc.5+68b236e"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1779,19 +1779,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         return () => dockListeners.delete(listener)
       },
     }
-    // M2：禁止时间窗。按 05-§6.3.0，只在「本次 open 之后」忽略占位者那一次 close（一次），
-    // 之后的任何 close（含用户主动关）一律生效。
-    let dockCloseGuardArmed = false
-    let dockCloseGuardUsed = true
+    // rightbar 槽常驻挂载后，宿主不再有"占位者挂载即关"的事件，守卫失去意义：
+    // 直接记账（任何 open/close 都生效），避免"永远关不掉"。
     const setDockOpen = (next) => {
-      if (next === true) {
-        dockCloseGuardArmed = true
-        dockCloseGuardUsed = false
-      }
-      if (next === false && dockCloseGuardArmed && !dockCloseGuardUsed) {
-        dockCloseGuardUsed = true
-        return
-      }
       dockOpen = next
       try { window.__DSH_LAUNCHER_DOCK__ = dockOpen } catch { /* 忽略 */ }
       for (const listener of dockListeners) listener()
