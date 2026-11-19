@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+802adcc"
+  const BUILD_STAMP = "0.2.2-rc.5+a576721"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -118,7 +118,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 }
 .launcher-theme-chip{margin-left:auto;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;font-size:12px;line-height:1;padding:2px 6px;cursor:pointer}
 .launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
-.launcher-empty{position:absolute;inset:0 0 150px 0;z-index:6;align-items:center;display:flex;justify-content:center;min-height:0;overflow:auto;padding:24px 24px 8px;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff))}
+.launcher-empty{position:absolute;inset:0 0 calc(var(--launcher-composer-h,150px) + 12px) 0;z-index:6;align-items:center;display:flex;justify-content:center;min-height:0;overflow:auto;padding:24px 24px 8px;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff))}
 .launcher-pane__host{display:flex;flex:1;min-height:0;flex-direction:column}
 .launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%}
 .launcher-empty__theme{align-items:center;background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.14));border-radius:12px;color:var(--dsw-alias-label-secondary,#666);display:flex;font-size:13px;font-weight:600;height:40px;justify-content:center;width:40px}
@@ -978,6 +978,31 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     })()
     const [hostHasMessages, setHostHasMessages] = React.useState(false)
     React.useEffect(() => { applyThemeDom() }, [])
+    // 空态覆盖层要给 composer 让位：按 composer 实际高度算，不用固定 150px
+    const [composerHeight, setComposerHeight] = React.useState(150)
+    React.useEffect(() => {
+      const measure = () => {
+        const editable = document.querySelector('[contenteditable="true"]')
+        if (editable === null) return
+        let node = editable
+        let best = editable.getBoundingClientRect().height
+        while (node !== null && node !== document.body) {
+          const rect = node.getBoundingClientRect()
+          if (rect.height > best && rect.height < 400) best = rect.height
+          if (String(node.className ?? '').includes('composer')) break
+          node = node.parentElement
+        }
+        setComposerHeight(Math.round(best) + 24)
+      }
+      measure()
+      const observer = new MutationObserver(measure)
+      observer.observe(document.body, { childList: true, subtree: true })
+      window.addEventListener('resize', measure)
+      return () => {
+        observer.disconnect()
+        window.removeEventListener('resize', measure)
+      }
+    }, [])
     React.useEffect(() => {
       const check = () => setHostHasMessages(document.querySelector('[data-chat-flow-kind]') !== null)
       check()
@@ -1102,6 +1127,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       'data-shell': 'launcher',
       // 05 §6.3-7：属性挂外壳根，不挂 documentElement（避免改到宿主自己的代码块）
       'data-code-wrap': wrapOn ? 'on' : 'off',
+      style: { '--launcher-composer-h': `${composerHeight}px` },
       'data-build': BUILD_STAMP,
       onKeyDown,
     },
