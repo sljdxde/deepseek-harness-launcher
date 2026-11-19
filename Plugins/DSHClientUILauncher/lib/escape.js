@@ -25,11 +25,20 @@ export function nextEscapeTarget(open) {
 }
 
 /**
- * 关掉一层之后的焦点归属：计量面板还给触发它的环，其它层不动焦点。
+ * 关掉一层之后的焦点归属。
+ *
+ * 两条来源不同但不冲突：04-A2 D1 要求关计量面板把焦点还给环（它是 composer 上的小按钮）；
+ * FR-06 要求 find 关掉后焦点回输入框（原型这里是落到发送键上，属缺陷）。其它层不动焦点，
+ * 交还给关之前的活动元素。
+ */
+export const FOCUS_AFTER_ESCAPE = Object.freeze({ meter: 'meter-ring', find: 'composer-input' })
+
+/**
+ * 关掉一层之后的焦点归属。
  * @param {string|null} layer - nextEscapeTarget 的结果。
- * @returns {{ closed: string|null, focus: 'meter-ring'|null }} 关闭目标与焦点去处。
+ * @returns {{ closed: string|null, focus: 'meter-ring'|'composer-input'|null }} 关闭目标与焦点去处（null = 沿用关之前）。
  */
 export function escapeOutcome(layer) {
   if (layer === null) return { closed: null, focus: null }
-  return { closed: layer, focus: layer === 'meter' ? 'meter-ring' : null }
+  return { closed: layer, focus: FOCUS_AFTER_ESCAPE[layer] ?? null }
 }

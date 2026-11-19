@@ -24,9 +24,11 @@ test('没有任何层打开时 Esc 交还宿主', () => {
   assert.deepEqual(escapeOutcome(null), { closed: null, focus: null })
 })
 
-test('关计量面板时焦点还给环，其它层不动焦点', () => {
+test('关计量面板焦点还给环；关 find 焦点回输入框（FR-06，原型这里落到发送键是缺陷）', () => {
   assert.deepEqual(escapeOutcome('meter'), { closed: 'meter', focus: 'meter-ring' })
+  assert.deepEqual(escapeOutcome('find'), { closed: 'find', focus: 'composer-input' })
   assert.deepEqual(escapeOutcome('selection'), { closed: 'selection', focus: null })
+  assert.deepEqual(escapeOutcome('palette'), { closed: 'palette', focus: null })
 })
 
 test('计量提示：≥85 才有「该压缩了」，≥95 是更强的告警强度', () => {

@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { DOCK, PANE_MIN_WIDTH, setDockWidth, dockCanShow, maxSplit, resolveSplit, mainAreaWidth, widthBudget } from '../lib/layout.js'
+import { DOCK, PANE_MIN_WIDTH, setDockWidth, dockCanShow, maxSplit, resolveSplit, mainAreaWidth, widthBudget, collapseComposerBar } from '../lib/layout.js'
 
 test('右栏宽度：区间内原样、越界夹回并报原因', () => {
   assert.deepEqual(setDockWidth(380), { ok: true, width: 380 })
@@ -51,4 +51,12 @@ test('resolveSplit 报 too-narrow 并给实际档位', () => {
 test('1440 参考视口：宽度预算放得下主区 480', () => {
   assert.deepEqual(widthBudget({ viewportWidth: 1440 }), { main: 724, total: 1440, fits: true })
   assert.equal(widthBudget({ viewportWidth: 1020 }).fits, false)
+})
+
+test('composer 工具条：320 下改成图标 + 收进 + 菜单，发送键永远在（FR-31）', () => {
+  assert.deepEqual(collapseComposerBar(320), { labels: 'icon', extras: 'menu', sendVisible: true })
+  assert.deepEqual(collapseComposerBar(399), { labels: 'icon', extras: 'menu', sendVisible: true })
+  assert.deepEqual(collapseComposerBar(420), { labels: 'icon', extras: 'inline', sendVisible: true })
+  assert.deepEqual(collapseComposerBar(600), { labels: 'full', extras: 'inline', sendVisible: true })
+  assert.deepEqual(collapseComposerBar(Number.NaN), { labels: 'icon', extras: 'menu', sendVisible: true })
 })

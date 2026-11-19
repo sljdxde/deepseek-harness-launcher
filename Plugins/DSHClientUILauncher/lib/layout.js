@@ -84,6 +84,25 @@ export function mainAreaWidth({ viewportWidth, rail = 56, sidebar = 0, dock = 0 
   return Math.max(0, Math.round(Number(viewportWidth) - rail - sidebar - dock))
 }
 
+/** composer 工具条在窄窗下可用的宽度档位（FR-31）。 */
+export const COMPOSER_BAR = Object.freeze({ full: 480, compact: 400, icons: 320 })
+
+/**
+ * composer 工具条在给定宽度下怎么排（FR-31：320 下不溢出、发送键不许被裁）。
+ * 原型在 320 时工具条 scrollWidth 431 / clientWidth 196、发送键 right 522 落到视口外——那是缺陷，
+ * 这里的规则是"先收标签、再收次要入口进 + 菜单，发送键永远在"。
+ * @param {number} availableWidth - 输入区可用宽度。
+ * @returns {{ labels: 'full'|'icon', extras: 'inline'|'menu', sendVisible: true }} 排布档位。
+ */
+export function collapseComposerBar(availableWidth) {
+  const width = Number(availableWidth)
+  if (!Number.isFinite(width) || width < COMPOSER_BAR.compact) {
+    return { labels: 'icon', extras: 'menu', sendVisible: true }
+  }
+  if (width < COMPOSER_BAR.full) return { labels: 'icon', extras: 'inline', sendVisible: true }
+  return { labels: 'full', extras: 'inline', sendVisible: true }
+}
+
 /**
  * §4.4 的宽度预算检查（1440 参考：56 + 280 + 480 + 380 = 1196，余量给间距与把手）。
  * @param {{ viewportWidth: number, rail?: number, sidebar?: number, dock?: number }} input - 各列宽度。
