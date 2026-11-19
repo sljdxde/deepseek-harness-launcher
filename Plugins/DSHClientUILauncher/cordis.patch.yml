@@ -1,6 +1,4 @@
-# 新外壳的插件行。与 @deepseek-ai/dsh-client-ui-layout 互斥：
-# 两行同时启用时 root 槽会被先声明的一方占住，LauncherRoot 走 §4.2-2 的降级
-# （原生界面 + #launcher-conflict 提示条），不白屏。切换见 scripts/shell-switch.sh。
-- insert:
-    - id: dsh-client-ui-launcher
-      name: 'dsh-client-ui-launcher'
+# 本包是 layout 的**同名 drop-in**：包名就是 @deepseek-ai/dsh-client-ui-layout，
+# 由 profile 的依赖 / override 按名字解析到这一份，行 id 仍是 ui-layout。
+# 所以这里不能再 insert 自己的行——insert 会让同一个实现被加载两次、root 注册两次。
+[]

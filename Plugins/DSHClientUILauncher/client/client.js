@@ -159,6 +159,26 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       dockOpen = next
       for (const listener of dockListeners) listener()
     }
+    // 上游 AppFrame 注册时带 foldedLandscape（窄窗折起），占据者可能会取 useFoldedLandscape；
+    // 不 provide 会留下"required 未激活"的下一个坑，所以照带。
+    let foldedLandscape = typeof window !== 'undefined' && window.innerWidth < 900
+    const foldedListeners = new Set()
+    const foldedHook = {
+      getSnapshot: () => foldedLandscape,
+      subscribe: (listener) => {
+        foldedListeners.add(listener)
+        return () => foldedListeners.delete(listener)
+      },
+    }
+    const syncFolded = () => {
+      const next = typeof window !== 'undefined' && window.innerWidth < 900
+      if (next === foldedLandscape) return
+      foldedLandscape = next
+      for (const listener of foldedListeners) listener()
+    }
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('resize', syncFolded)
+    }
     const disposers = []
     try {
       // 面板选中的观测面：ui-sidebar 用 usePanelInfo(info => info.activePanelId === id) 决定高亮。
@@ -189,7 +209,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       disposers.push(ctx.slots.register({
         name: 'root',
         children: CHILDREN,
-        inject: () => ({ hooks: { dockOpen: dockHook } }),
+        inject: () => ({ hooks: { dockOpen: dockHook, foldedLandscape: foldedHook } }),
       }, LauncherRoot))
     } catch (error) {
       // 不带半个服务面接管：服务面任一步失败就整段撤销、不注册 root，退回原生外壳 + 提示条。
@@ -205,6 +225,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     return () => {
       window.__DSH_LAUNCHER_SHELL__ = false
       if (window.__DSH_LAUNCHER_CTX__ === ctx) delete window.__DSH_LAUNCHER_CTX__
+      if (typeof window.removeEventListener === 'function') window.removeEventListener('resize', syncFolded)
       for (const dispose of disposers.reverse()) {
         try { dispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
       }
