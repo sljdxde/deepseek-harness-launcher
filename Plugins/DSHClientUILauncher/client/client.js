@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+b7c7772"
+  const BUILD_STAMP = "0.2.2-rc.5+883a435"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -687,9 +687,61 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       window.dispatchEvent(new CustomEvent('launcher:turn-action', { detail: { id: 'launcher.viewInContext' } }))
     }
 
+    /**
+     * FR-41 降级版：新建会话并把该轮正文以 `> ` 引用块填进 composer，明确告知「未复制上下文」。
+     * 不碰原会话内容：只读 DOM 取正文 + 走宿主 session.new。
+     */
+    const branchToNewSession = async (turn) => {
+      const quote = typeof turn?.text === 'string' ? turn.text.trim() : ''
+      if (quote.length === 0) {
+        showLauncherToast('分支失败：取不到这一轮的正文')
+        return
+      }
+      const quoted = quote.split('\n').map((line) => (line.length === 0 ? '>' : `> ${line}`)).join('\n')
+      let created = false
+      try {
+        const rows = CURRENT_CTX?.shortcuts?.registry?.commands
+        const row = rows?.get?.('session.new')
+        if (row !== undefined) {
+          const verdict = row.resolve?.({ region: 'page', modal: null, source: 'menu' })
+          if (verdict?.status === 'handled' && typeof verdict.run === 'function') {
+            verdict.run()
+            created = true
+          }
+        }
+      } catch {
+        created = false
+      }
+      if (!created && typeof CURRENT_CTX?.layout?.selectPanel === 'function') {
+        try {
+          CURRENT_CTX.layout.selectPanel('conversation')
+          created = true
+        } catch {
+          created = false
+        }
+      }
+      if (!created) {
+        showLauncherToast('分支失败：无法新建会话')
+        return
+      }
+      // 等新会话的 composer 出现（最多 2.5s），再引用原句
+      const started = Date.now()
+      const waitForComposer = () => {
+        const editable = document.querySelector('[contenteditable="true"], textarea')
+        if (editable !== null || Date.now() - started > 2500) {
+          fillComposerByDom(quoted)
+          showLauncherToast('已新建会话并引用该轮，未复制上下文')
+          return
+        }
+        setTimeout(waitForComposer, 150)
+      }
+      waitForComposer()
+    }
+
     const rows = [
       { slot: 'conversation.chat.assistant-actions', id: 'launcher.export', order: 20, label: '导出本轮', onClick: downloadExport },
       { slot: 'conversation.chat.assistant-actions', id: 'launcher.viewInContext', order: 30, label: '在上下文视图中查看此轮', onClick: viewInContext },
+      { slot: 'conversation.chat.assistant-actions', id: 'launcher.branch', order: 40, label: '在新对话中分支', onClick: branchToNewSession },
     ]
 
     for (const row of rows) {
