@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+f69d8b8"
+  const BUILD_STAMP = "0.2.2-rc.5+b8c8959"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -102,7 +102,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-diag__list div{display:flex;justify-content:space-between;gap:12px}
 .launcher-diag__list dt{opacity:.7}
 .launcher-diag__list dd{margin:0}
-.launcher-dock__handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;background:transparent;z-index:2}
+.launcher-dock__handle{position:absolute;left:0;top:0;bottom:0;width:8px;cursor:col-resize;background:transparent;z-index:30;touch-action:none}
 .launcher-dock__handle:hover{background:var(--dsw-alias-border-l2,rgba(127,127,127,.3))}
 .launcher-statusbar{grid-area:status;align-items:center;border-top:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;font-size:11px;gap:10px;padding:0 10px;color:var(--dsw-alias-label-secondary)}
 .launcher-overlay{position:fixed;inset:0;pointer-events:none;z-index:40}
@@ -1148,9 +1148,19 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const [cols, rows] = SPLIT_GRID[splitMode] ?? SPLIT_GRID[1]
     const paneKeys = Array.from({ length: splitMode }, (_, i) => (i === 0 ? 'conversation' : `conversation#${i + 1}`))
     const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
-    const dockWidth = dockCanShow ? dragWidth : 0
+    const dockWidth = dockCanShow ? Math.max(DOCK_MIN, dragWidth) : 0
+    const lastPointerRef = React.useRef({ time: 0, x: 0 })
     const startDrag = (event) => {
       event.preventDefault()
+      const now = Date.now()
+      const last = lastPointerRef.current
+      // 双击复位：两次 pointerdown 间隔 <300ms 且位移 <4px（preventDefault 后不会再收到 dblclick）
+      if (now - last.time < 300 && Math.abs(event.clientX - last.x) < 4) {
+        lastPointerRef.current = { time: 0, x: 0 }
+        setDragWidth(DOCK_WIDTH)
+        return
+      }
+      lastPointerRef.current = { time: now, x: event.clientX }
       const startX = event.clientX
       const startWidth = dragWidth
       const move = (e) => setDragWidth(clampDock(startWidth - (e.clientX - startX)))
