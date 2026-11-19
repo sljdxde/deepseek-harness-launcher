@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+00c7232"
+  const BUILD_STAMP = "0.2.2-rc.5+fd82293"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -97,7 +97,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-dock-summary{font-size:12px;opacity:.75}
 .launcher-toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:rgba(20,20,20,.9);color:#fff;font-size:12px;z-index:60;pointer-events:none}
 .launcher-turn-action{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
-.launcher-turn-action--usage{opacity:.7;border:0}
 .launcher-turn-highlight{outline:2px solid var(--dsw-alias-accent,#4c8dff);outline-offset:2px;border-radius:6px}
 .launcher-diag__list{margin:0;padding:8px 10px;display:grid;gap:6px;font-size:12px}
 .launcher-diag__list div{display:flex;justify-content:space-between;gap:12px}

@@ -10,7 +10,6 @@ test('三个动作的槽名/id/order 与 05 §6.5 一致', () => {
   assert.deepEqual(TURN_ACTIONS.map((a) => [a.id, a.order, a.slot]), [
     ['launcher.export', 20, TURN_SLOTS.assistantActions],
     ['launcher.viewInContext', 30, TURN_SLOTS.assistantActions],
-    ['launcher.usage', 40, TURN_SLOTS.turnTail],
   ])
 })
 

@@ -13,7 +13,6 @@ export const TURN_SLOTS = {
 export const TURN_ACTIONS = [
   { id: 'launcher.export', slot: TURN_SLOTS.assistantActions, order: 20, label: '导出本轮', title: '把这一轮导出为 Markdown' },
   { id: 'launcher.viewInContext', slot: TURN_SLOTS.assistantActions, order: 30, label: '在上下文视图中查看此轮', title: '定位到上下文视图里的这一轮' },
-  { id: 'launcher.usage', slot: TURN_SLOTS.turnTail, order: 40, label: '每轮用量', title: '本轮的 token 用量' },
 ]
 
 /**
