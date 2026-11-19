@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+764e0bb"
+  const BUILD_STAMP = "0.2.2-rc.5+26f73ee"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -37,6 +37,15 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   }
 }
   // #endregion children-from-contract
+
+  // 与 lib/new-session.js 的 STARTERS 逐条对齐（text 是整句：只填入、不发送）；
+  // 漂移由 test/new-session.test.mjs 的同步检查挡住。
+  const STARTERS = [
+    { id: 'explore', label: '看仓库结构', text: '帮我看一下这个仓库的结构，先说值得注意的地方。' },
+    { id: 'test', label: '跑一遍测试', text: '跑一遍测试，失败的和跳过的分开说。' },
+    { id: 'split-tasks', label: '拆成任务卡', text: '把这件事拆成几张能并行的任务卡，写清依赖顺序。' },
+    { id: 'resume', label: '接着上次的活', text: '接着上次没做完的活继续，先说上次停在哪。' },
+  ]
 
   const CSS = `
 .launcher-shell{--launcher-rail:56px;--launcher-sidebar:280px;--launcher-status:26px;--launcher-dock:0px;
@@ -99,6 +108,15 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-statusbar{grid-area:status;align-items:center;border-top:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;font-size:11px;gap:10px;padding:0 10px;color:var(--dsw-alias-label-secondary)}
 .launcher-overlay{position:fixed;inset:0;pointer-events:none;z-index:40}
 .launcher-overlay>*{pointer-events:auto}
+.launcher-empty{align-items:center;display:flex;flex:1;justify-content:center;min-height:0;overflow:auto;padding:24px}
+.launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%}
+.launcher-empty__theme{align-items:center;background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.14));border-radius:12px;color:var(--dsw-alias-label-secondary,#666);display:flex;font-size:13px;font-weight:600;height:40px;justify-content:center;width:40px}
+.launcher-empty__title{font-size:19px;font-weight:600;line-height:1.4;margin:2px 0 0}
+.launcher-empty__body{color:var(--dsw-alias-label-secondary,#666);font-size:12.5px;line-height:1.7;margin:0}
+.launcher-empty__starters{display:grid;gap:8px;grid-template-columns:repeat(2,minmax(0,1fr));margin-top:6px}
+.launcher-empty__starters[data-columns="1"]{grid-template-columns:minmax(0,1fr)}
+.launcher-empty__starter{align-items:center;background:var(--dsw-alias-button-floating-fill,rgba(127,127,127,.08));border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));border-radius:10px;color:inherit;cursor:pointer;display:flex;font:inherit;font-size:13px;height:36px;justify-content:center;padding:0 10px}
+.launcher-empty__hint{color:var(--dsw-alias-label-tertiary,#8a8a8a);font-size:11px;margin:4px 0 0}
 .launcher-conflict{border-bottom:1px solid var(--dsw-alias-state-warn-border,#d9a441);background:var(--dsw-alias-state-warn-fill,#fff6e0);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.5;padding:6px 12px;position:sticky;top:0;z-index:50}
 `
 
@@ -681,6 +699,63 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 
 
 
+  /** 空态判据（与 lib/new-session.js 的 emptyStateDecision 同口径）。 */
+  function emptyStateDecision(input) {
+    const force = input.force ?? (typeof window !== 'undefined' ? window.__DSH_LAUNCHER_EMPTY__ : undefined)
+    if (force === 'off') return { render: false, reason: 'forced-off' }
+    const session = input.selectedSessionId
+    if (session === null || session === undefined || session === '') return { render: false, reason: 'no-session' }
+    if (force === 'on') return { render: true, reason: 'forced-on' }
+    if (input.hostEmptyState === true) return { render: false, reason: 'host-empty-state' }
+    const messages = Number(input.messageCount)
+    if ((Number.isFinite(messages) ? messages : 0) > 0) return { render: false, reason: 'has-messages' }
+    return { render: true, reason: 'ok' }
+  }
+
+  /** 卡片布局量（与 lib/new-session.js 的 cardLayout 同口径）。 */
+  function cardLayout(width, height) {
+    const narrow = width <= 760
+    return {
+      width: Math.min(440, width),
+      minHeight: Math.round((height * (narrow ? 36 : 46)) / 100),
+      columns: narrow ? 1 : 2,
+    }
+  }
+
+  /** 空会话首屏（FR-36）：主题标 + 标题 + 说明 + 四个起手式；点起手式只填入不发送。 */
+  function EmptyStateCard(props) {
+    const layout = props.layout
+    const onStarter = (id) => {
+      const item = STARTERS.find((entry) => entry.id === id)
+      if (item === undefined) return
+      const ctx = CURRENT_CTX
+      let filled = false
+      try {
+        if (typeof ctx?.composer?.fill === 'function') {
+          ctx.composer.fill(item.text)
+          ctx.composer.focus?.()
+          filled = true
+        }
+      } catch {
+        filled = false
+      }
+      if (!filled) window.dispatchEvent(new CustomEvent('launcher:starter', { detail: { id, text: item.text } }))
+    }
+    return h('div', { className: 'launcher-empty', 'data-launcher-empty': 'our' },
+      h('div', { className: 'launcher-empty__card', style: { maxWidth: `${layout.width}px`, minHeight: `${layout.minHeight}px` } },
+        h('div', { className: 'launcher-empty__theme', 'aria-hidden': 'true' }, 'dsh'),
+        h('h2', { className: 'launcher-empty__title' }, '从一个问题开始'),
+        h('p', { className: 'launcher-empty__body' }, '选一个起手式，或直接在下面输入；起手式只会填进输入框，不会替你发送。'),
+        h('div', { className: 'launcher-empty__starters', 'data-columns': String(layout.columns) },
+          STARTERS.map((item) => h('button', {
+            key: item.id,
+            type: 'button',
+            className: 'launcher-empty__starter',
+            onClick: () => onStarter(item.id),
+          }, item.label))),
+        h('p', { className: 'launcher-empty__hint' }, '提示：⌘K 打开命令面板')))
+  }
+
   /** 外壳本体：56 图标栏 + 侧栏列 + 主区 + 右栏轨道 + 底状态条 + 浮层。 */
   function LauncherRoot(props) {
     const renderSlot = props.renderSlot
@@ -705,6 +780,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const level = ['danger-full-access', 'workspace-write', 'read'].includes(hostPolicy) ? hostPolicy : 'workspace-write'
       return { 'danger-full-access': '完全权限', 'workspace-write': '工作区内修改', read: '仅可查看' }[level]
     })()
+    const emptyDecision = emptyStateDecision({
+      selectedSessionId: props.selectedSessionId ?? props.sessionId ?? null,
+      messageCount: props.messageCount,
+      hostEmptyState: props.hostEmptyState,
+    })
     const activePanelId = props.usePanelInfo === undefined
       ? null
       : props.usePanelInfo((info) => info.activePanelId)
@@ -853,7 +933,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             'data-pane': index === 0 ? (activePanelId ?? 'conversation') : key,
           },
             index === 0
-              ? renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' })
+              ? (emptyDecision.render
+                ? h(EmptyStateCard, { layout: cardLayout(viewportWidth, typeof window === 'undefined' ? 900 : window.innerHeight) })
+                : renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' }))
               : renderSlot('main', {}, { entryKey: key }))))),
       h('aside', {
         className: 'launcher-dock',
