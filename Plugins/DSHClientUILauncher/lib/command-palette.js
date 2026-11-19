@@ -136,7 +136,8 @@ export function executeCommand(entry, context = {}) {
 /** 我们自己的动作要注册进同一个 catalog（FR-16）：只注册宿主没有的三条，「新建会话」用宿主 session.new。 */
 export const OWN_CATALOG_ROWS = [
   { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'] },
-  { id: 'launcher.shellToggle', label: '切换外壳', hint: '新外壳 ↔ 原生外壳', regions: ['page'] },
+  // 切换外壳在客户端做不了真切换（要换安装实现），先不挂在面板里当可执行项；
+  // 等口径下来再决定放哪（外部 shell-switch 或设置页入口）。
   { id: 'launcher.settings', label: '打开设置', hint: '设置面板', regions: ['page', 'editable'] },
 ]
 
@@ -153,7 +154,6 @@ export function ownCatalogRows(ctx = {}, actions = {}) {
   const guard = (enabled, run) => ({ resolve: () => (enabled ? 'handled' : 'pass'), run })
   return [
     { ...OWN_CATALOG_ROWS[0], ...guard(onPage, () => actions.onOpenWorkbench?.()) },
-    { ...OWN_CATALOG_ROWS[1], ...guard(onPage, () => actions.onToggleShell?.()) },
-    { ...OWN_CATALOG_ROWS[2], ...guard(onPage && hasSession, () => actions.onOpenSettings?.()) },
+    { ...OWN_CATALOG_ROWS[1], ...guard(onPage && hasSession, () => actions.onOpenSettings?.()) },
   ]
 }

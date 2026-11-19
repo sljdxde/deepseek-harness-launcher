@@ -116,7 +116,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const guard = (enabled, run) => ({ resolve: () => (enabled ? 'handled' : 'pass'), run })
     return [
       { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.('plugins')) },
-      { id: 'launcher.shellToggle', label: '切换外壳', hint: '新外壳 ↔ 原生外壳', regions: ['page'], ...guard(onPage, () => console.info('dsh-client-ui-launcher: 切换外壳需在外部执行 shell-switch')) },
       { id: 'launcher.settings', label: '打开设置', hint: '设置面板', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.('settings')) },
     ]
   }
@@ -233,14 +232,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           title: entry.label,
           'aria-label': entry.label,
           'aria-pressed': props.activeRail === entry.id,
-          onClick: () => {
-          try {
-            if (entry.id === 'conversation') ctx?.layout?.selectPanel(null)
-            else ctx?.layout?.selectPanel(entry.id)
-          } catch (error) {
-            console.warn('dsh-client-ui-launcher: 导航失败', error)
-          }
-        },
+          // 图标栏 → main key 的映射未定（插件工作台的真 key 不是 'plugins'），先不猜：
+        // 点击只记录意图，接线等映射口径。
+        onClick: () => { console.info('dsh-client-ui-launcher: 图标栏导航待接线', entry.id) },
         }, entry.label.slice(0, 1)))),
       h('aside', { className: 'launcher-sidebar' },
         collapsed ? null : renderSlot('sidebar', { collapsed, width: 280, drawer: false })),
