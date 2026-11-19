@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+03fd7ff"
+  const BUILD_STAMP = "0.2.2-rc.5+91e6771"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -797,6 +797,35 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     return false
   }
 
+  /**
+   * 主题落地器（原宿主 layout 的 apply(snapshot)，随同名替换一起搬回来）：
+   * 写 colorScheme / data-ds-theme-source / body[data-ds-theme-dark] / 字体变量。
+   * 不做这一步，setTheme 只改 preference，页面不变色。
+   */
+  function applyThemeDom() {
+    try {
+      const snapshot = CURRENT_CTX?.theme?.getTheme?.()
+      if (snapshot === null || snapshot === undefined) return
+      const scheme = snapshot.active?.colorScheme ?? 'light'
+      const root = document.documentElement
+      root.style.colorScheme = scheme
+      root.setAttribute('data-ds-theme-source', snapshot.preference === 'system' ? 'system' : scheme)
+      const body = document.body
+      if (body === null) return
+      if (scheme === 'dark') body.setAttribute('data-ds-theme-dark', '')
+      else body.removeAttribute('data-ds-theme-dark')
+      for (const [role, px] of Object.entries(snapshot.fontSizes ?? {})) {
+        if (Number.isFinite(px)) body.style.setProperty(`--dsw-font-size-${role}`, `${px}px`)
+      }
+      for (const [role, family] of Object.entries(snapshot.fontFamilies ?? {})) {
+        if (typeof family === 'string' && family.length > 0) body.style.setProperty(`--dsw-font-family-${role}`, family)
+        else body.style.removeProperty(`--dsw-font-family-${role}`)
+      }
+    } catch (error) {
+      console.warn('dsh-client-ui-launcher: 主题落地失败', error)
+    }
+  }
+
   /** 空态判据（与 lib/new-session.js 的 emptyStateDecision 同口径）。 */
   function emptyStateDecision(input) {
     const force = input.force ?? (typeof window !== 'undefined' ? window.__DSH_LAUNCHER_EMPTY__ : undefined)
@@ -895,6 +924,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         const ctx = CURRENT_CTX
         if (typeof ctx?.theme?.setTheme === 'function') {
           ctx.theme.setTheme(next)
+          applyThemeDom()
           // 宿主没写标记时补写（便于断言；不覆盖宿主自己的值）
           const root = document.documentElement
           if (root.dataset.dsThemeSource === undefined || root.dataset.dsThemeSource === 'system') {
@@ -928,6 +958,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       return { 'danger-full-access': '完全权限', 'workspace-write': '工作区内修改', read: '仅可查看' }[level]
     })()
     const [hostHasMessages, setHostHasMessages] = React.useState(false)
+    React.useEffect(() => { applyThemeDom() }, [])
     React.useEffect(() => {
       const check = () => setHostHasMessages(document.querySelector('[data-chat-flow-kind]') !== null)
       check()
