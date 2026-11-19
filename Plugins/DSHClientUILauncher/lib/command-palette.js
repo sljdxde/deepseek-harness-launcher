@@ -67,3 +67,68 @@ export function moveIndex(index, length, delta) {
   const next = (Math.trunc(index) + delta) % length
   return next < 0 ? next + length : next
 }
+
+/** 面板取条目时允许的 region（05 §6.5：只有 page / editable 的行进面板）。 */
+export const PALETTE_REGIONS = ['page', 'editable']
+
+/**
+ * 从 `ctx.shortcuts.catalog` 建面板条目（05 §6.5 定稿口径）。
+ * 规则：`regions` 含 `page` 或 `editable` 的才进；`modals` 专属行不进；`label` 作标题、`id` 作唯一键。
+ * 每行执行前先 `resolve(context)`：返回 `handled` 才可执行，返回 `pass` 置灰（**不隐藏**）。
+ * @param {unknown} catalog - `ctx.shortcuts.catalog`（数组，或带 `rows`/`list()` 的对象）。
+ * @param {object} [context] - 传给 `resolve` 的上下文。
+ * @returns {{ id: string, label: string, hint?: string, disabled: boolean, row: object }[]} 面板条目。
+ */
+export function catalogCommands(catalog, context = {}) {
+  let rows = catalog
+  if (rows !== null && typeof rows === 'object' && !Array.isArray(rows)) {
+    try {
+      rows = rows.rows ?? rows.list?.() ?? []
+    } catch {
+      rows = []
+    }
+  }
+  if (!Array.isArray(rows)) return []
+  const out = []
+  const seen = new Set()
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object') continue
+    const id = row.id
+    const label = row.label
+    if (typeof id !== 'string' || id.length === 0 || typeof label !== 'string' || label.length === 0) continue
+    const regions = Array.isArray(row.regions) ? row.regions : []
+    if (!regions.some((region) => PALETTE_REGIONS.includes(region))) continue
+    const modals = Array.isArray(row.modals) ? row.modals : []
+    const onlyModals = modals.length > 0 && regions.length === 0
+    if (onlyModals) continue
+    if (seen.has(id)) continue
+    seen.add(id)
+    let disabled = false
+    try {
+      const verdict = row.resolve?.(context)
+      disabled = verdict !== 'handled'
+    } catch {
+      disabled = true
+    }
+    out.push({ id, label, hint: typeof row.hint === 'string' ? row.hint : row.description, disabled, row })
+  }
+  return out
+}
+
+/**
+ * 执行面板条目：`resolve` 返回 handled 才跑 `run()`；pass/异常都不执行。
+ * @param {{ row: object }} entry - `catalogCommands` 产出的条目。
+ * @param {object} [context] - 传给 `resolve`/`run` 的上下文。
+ * @returns {'ran'|'pass'|'failed'} 执行结果。
+ */
+export function executeCommand(entry, context = {}) {
+  const row = entry?.row
+  if (row === null || typeof row !== 'object') return 'failed'
+  try {
+    if (row.resolve?.(context) !== 'handled') return 'pass'
+    row.run?.(context)
+    return 'ran'
+  } catch {
+    return 'failed'
+  }
+}

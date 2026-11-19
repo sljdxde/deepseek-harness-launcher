@@ -60,6 +60,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-palette__input{font:inherit;padding:10px 12px;border:0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));outline:none;background:transparent;color:inherit}
 .launcher-palette__list{list-style:none;margin:0;padding:4px;overflow:auto}
 .launcher-palette__item{display:flex;justify-content:space-between;gap:12px;padding:6px 10px;border-radius:6px;cursor:pointer}
+.launcher-palette__item.off{opacity:.45;cursor:not-allowed}
 .launcher-palette__item.on{background:var(--dsw-alias-bg-2,rgba(127,127,127,.12))}
 .launcher-palette__hint{opacity:.6;font-size:11px}
 .launcher-dock__handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;background:transparent;z-index:2}
@@ -104,31 +105,43 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * @returns {{ id: string, label: string, hint?: string, run?: Function, command?: string }[]} 命令清单。
    */
   function collectCommands(ctx) {
-    // 与 lib/command-palette.js 的 normalizeCommands 同口径（client 是 loader 形态，不能 import lib）
-    const source = ctx?.commandUi
-    if (source === null || source === undefined) return []
-    let list = source
-    if (!Array.isArray(list)) {
+    // 05 §6.5 定稿：条目源 = ctx.shortcuts.catalog；只取 regions 含 page/editable 的行，
+    // modals 专属行不进；label 作标题、id 作键；resolve 返回 pass 的行置灰但不隐藏。
+    const catalog = ctx?.shortcuts?.catalog
+    if (catalog === null || catalog === undefined) return []
+    let rows = catalog
+    if (!Array.isArray(rows)) {
       try {
-        list = source.list?.() ?? source.directory?.list?.() ?? source.commands ?? []
+        rows = rows.rows ?? rows.list?.() ?? []
       } catch {
         return []
       }
     }
-    if (!Array.isArray(list)) return []
-    const rows = []
+    if (!Array.isArray(rows)) return []
+    const out = []
     const seen = new Set()
-    for (const item of list) {
-      if (item === null || typeof item !== 'object') continue
-      const id = item.id ?? item.name ?? item.command
-      const label = item.label ?? item.title ?? item.name
+    for (const row of rows) {
+      if (row === null || typeof row !== 'object') continue
+      const id = row.id
+      const label = row.label
       if (typeof id !== 'string' || id.length === 0 || typeof label !== 'string' || label.length === 0) continue
+      const regions = Array.isArray(row.regions) ? row.regions : []
+      if (!regions.some((region) => region === 'page' || region === 'editable')) continue
+      const modals = Array.isArray(row.modals) ? row.modals : []
+      if (modals.length > 0 && regions.length === 0) continue
       if (seen.has(id)) continue
       seen.add(id)
-      rows.push({ id, label, hint: typeof item.hint === 'string' ? item.hint : item.description, command: item.name ?? id })
+      let disabled = false
+      try {
+        disabled = row.resolve?.(ctx) !== 'handled'
+      } catch {
+        disabled = true
+      }
+      out.push({ id, label, hint: typeof row.hint === 'string' ? row.hint : row.description, disabled, row })
     }
-    return rows
+    return out
   }
+
 
 
   /** 外壳本体：56 图标栏 + 侧栏列 + 主区 + 右栏轨道 + 底状态条 + 浮层。 */
@@ -169,8 +182,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       setPaletteOpen(false)
       setQuery('')
       try {
-        if (typeof cmd.run === 'function') cmd.run()
-        else if (cmd.command !== undefined) ctx?.commandUi?.execute?.(cmd.command)
+        if (cmd.row?.resolve?.(ctx) !== 'handled') return
+        cmd.row?.run?.(ctx)
       } catch (error) {
         console.warn('dsh-client-ui-launcher: 命令执行失败', error)
       }
@@ -272,8 +285,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             key: cmd.id,
             role: 'option',
             'aria-selected': index === paletteIndex,
-            className: `launcher-palette__item${index === paletteIndex ? ' on' : ''}`,
-            onClick: () => runCommand(cmd),
+            className: `launcher-palette__item${index === paletteIndex ? ' on' : ''}${cmd.disabled ? ' off' : ''}`,
+            'aria-disabled': cmd.disabled === true,
+            onClick: () => { if (cmd.disabled !== true) runCommand(cmd) },
             onMouseEnter: () => setPaletteIndex(index),
           }, h('span', { className: 'launcher-palette__label' }, cmd.label),
              h('span', { className: 'launcher-palette__hint' }, cmd.hint))))) : null,
