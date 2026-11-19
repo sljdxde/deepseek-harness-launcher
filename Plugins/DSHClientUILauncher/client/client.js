@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+d06ddcc"
+  const BUILD_STAMP = "0.2.2-rc.5+7935079"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -840,10 +840,19 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const level = ['danger-full-access', 'workspace-write', 'read'].includes(hostPolicy) ? hostPolicy : 'workspace-write'
       return { 'danger-full-access': '完全权限', 'workspace-write': '工作区内修改', read: '仅可查看' }[level]
     })()
+    const [hostHasMessages, setHostHasMessages] = React.useState(false)
+    React.useEffect(() => {
+      const check = () => setHostHasMessages(document.querySelector('[data-chat-flow-kind]') !== null)
+      check()
+      const observer = new MutationObserver(check)
+      observer.observe(document.body, { childList: true, subtree: true })
+      return () => observer.disconnect()
+    }, [])
     const emptyDecision = emptyStateDecision({
       selectedSessionId: props.selectedSessionId ?? props.sessionId ?? null,
       messageCount: props.messageCount,
       hostEmptyState: props.hostEmptyState,
+      messageCount: hostHasMessages ? 1 : props.messageCount,
     })
     const activePanelId = props.usePanelInfo === undefined
       ? null
