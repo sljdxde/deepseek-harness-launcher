@@ -223,9 +223,17 @@ verify_page() { # $1 = launcher|native
   fi
   # 判据用仓库里的 verify-shell.mjs：靠实现运行时标记 + [data-shell] 判"装的是哪一版"，
   # 不用 [data-slot="sidebar"]（实测两态都会出现，当判据会假阳性）。
+  # 身份断言：profile 里装的到底是不是这份本包（realpath 与 client.js sha256 两条都要过）
+  if [ -f "$PKG_DIR/tools/check-installed-identity.mjs" ]; then
+    if ! "$NODE_BIN" "$PKG_DIR/tools/check-installed-identity.mjs" --profile-dir "$PROFILE" --package-dir "$PKG_DIR" --expect "$1" >&2; then
+      die 5 "身份断言失败（$1）：装的不是期望的那份"
+    fi
+  fi
   if [ -x "$PKG_DIR/scripts/verify-shell.mjs" ] || [ -f "$PKG_DIR/scripts/verify-shell.mjs" ]; then
     if ! "$NODE_BIN" "$PKG_DIR/scripts/verify-shell.mjs" "$DSH_URL" "$1"; then
-      die 5 "壳层断言失败（$1）"
+      # 身份已确认是我们这份、页面却还是旧壳：服务端模块缓存，必须重启，不算安装失败
+      log "reason=stale-module-cache（身份正确但页面仍是旧壳，请重启 dsh web）"
+      die 5 "壳层断言失败（$1）：疑似服务端模块缓存，重启后再验"
     fi
     return 0
   fi

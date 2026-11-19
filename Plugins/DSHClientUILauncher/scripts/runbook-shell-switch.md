@@ -56,6 +56,15 @@ DSH_BIN=<dsh 安装>/lib/bin.js sh scripts/shell-switch.sh native
 **实测结论**：`dsh plugin add` 只把包装成"普通依赖"时（warning: installed as a plain dependency），页面照样能切过去——
 **不需要 bundles 登记也能顶替**；bundles 登记留着只为与裁决口径一致，不写它不再是阻断项。
 
+## 身份断言（替代"坏产物"那条）
+
+`verify` 会先跑 `tools/check-installed-identity.mjs`，两条一起过才算「装的是这份」：
+
+1. `realpath(profile/node_modules/@deepseek-ai/dsh-client-ui-layout)` **等于**本包绝对路径；
+2. 已装目录里 `client/client.js` 的 **sha256 与仓库一致**（pnpm 若是拷贝而非软链，靠这条判）。
+
+身份对、页面却还是旧壳 → 判 **`reason=stale-module-cache`（服务端模块缓存，必须重启）**，不当成安装失败。
+
 ## 窗口内清单（省事故的三条）
 
 1. **切之前先做一次 native 态 verify**（`shell-switch.sh verify native`）：证明 Chrome / URL 工具链是活的，别在切完才发现断。
