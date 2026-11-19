@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+538c0f2"
+  const BUILD_STAMP = "0.2.2-rc.5+57d0ec5"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1396,7 +1396,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const mainWidth = Math.max(0, viewportWidth - 56 - (props.sidebarCollapsed === true ? 0 : 280) - dockWidth)
     const effectiveSplit = resolveSplit(splitMode, mainWidth, (typeof window === 'undefined' ? 900 : window.innerHeight) - 26)
     const [cols, rows] = SPLIT_GRID[effectiveSplit] ?? SPLIT_GRID[1]
-    const paneKeys = Array.from({ length: effectiveSplit }, (_, i) => (i === 0 ? 'conversation' : `conversation#${i + 1}`))
+    const mainKeys = (() => {
+      try {
+        return (CURRENT_CTX?.slots?.entries?.('main') ?? []).map((entry) => entry?.options?.key).filter((key) => typeof key === 'string')
+      } catch {
+        return ['conversation']
+      }
+    })()
+    const paneKeys = assignPaneKeys(mainKeys, effectiveSplit)
     const lastPointerRef = React.useRef({ time: 0, x: 0 })
     const startDrag = (event) => {
       event.preventDefault()
@@ -1573,12 +1580,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           }, themeMode === 'dark' ? '🌙' : '☀️')),
         h('div', { className: 'launcher-panes' },
           paneKeys.map((key, index) => h('div', {
-            key,
-            className: 'launcher-pane',
-            // 第一格反映真实 entryKey（断言用），其余格是分屏占位 key
-            'data-pane': index === 0 ? (activePanelId ?? 'conversation') : key,
+            key: key ?? `unavailable-${index}`,
+            className: `launcher-pane${key === null ? ' launcher-pane--unavailable' : ''}`,
+            // 第一格反映真实 entryKey（断言用）；空位显式标 unavailable，不自造 key
+            'data-pane': index === 0 ? (activePanelId ?? 'conversation') : (key ?? 'unavailable'),
           },
-            index === 0
+            key === null
+              ? h('span', { className: 'launcher-pane__unavailable' }, '本版未接')
+              : index === 0
               ? [
                 emptyDecision.render && !starterFilled
                   ? h(EmptyStateCard, { key: 'empty', layout: cardLayout(viewportWidth, typeof window === 'undefined' ? 900 : window.innerHeight), onFilled: () => setStarterFilled(true) })

@@ -116,3 +116,21 @@ export function visiblePanes(state) {
   return state.panes.filter((pane) => pane.collapsed !== true)
 }
 
+
+/** 分屏第 N 块优先取的真 key 顺序（宿主 rc.5 实测存在的 main key：会话/插件/归档/日程）。 */
+export const PANE_PREFERENCE = Object.freeze(['conversation', 'dsh-plugin-manager', 'dsh-archive-manager', 'schedules', 'plugins'])
+
+/**
+ * 按固定顺序把真实 main key 分配到各块；凑不满的位置返回 null（调用方给「本版未接」占位，不许自造 key）。
+ * @param {string[]} availableKeys - 宿主 `ctx.slots.entries('main')` 里真实存在的 key。
+ * @param {number} count - 需要的块数。
+ * @returns {(string|null)[]} 每块的 key 或 null。
+ */
+export function assignPaneKeys(availableKeys, count) {
+  const available = new Set(Array.isArray(availableKeys) ? availableKeys : [])
+  const ordered = []
+  for (const key of PANE_PREFERENCE) if (available.has(key)) ordered.push(key)
+  for (const key of available) if (!PANE_PREFERENCE.includes(key)) ordered.push(key)
+  const total = Number.isFinite(count) && count > 0 ? Math.trunc(count) : 1
+  return Array.from({ length: total }, (_, index) => ordered[index] ?? null)
+}
