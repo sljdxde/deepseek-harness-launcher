@@ -267,7 +267,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           // 05 口径：点击前先 resolveMainKey(候选)；解析不到 → 置灰（aria-disabled + title），不许 throw
         'aria-disabled': railKey === null,
         title: railKey === null
-          ? (entry.id === 'approvals' ? '见 设置 → 审批与权限' : `${entry.label}：本版暂无对应面板`)
+          ? (entry.id === 'approvals' ? '见 设置 → 审批与权限' : '本版未接')
           : entry.label,
         onClick: () => {
           if (railKey === null) return
