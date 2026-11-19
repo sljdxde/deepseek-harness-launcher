@@ -147,43 +147,37 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   }
 
   function collectCommands(ctx) {
-    // 05 §6.5 定稿：条目源 = ctx.shortcuts.catalog；只取 regions 含 page/editable 的行，
-    // modals 专属行不进；label 作标题、id 作键；resolve 返回 pass 的行置灰但不隐藏。
-    const catalog = ctx?.shortcuts?.catalog
-    if (catalog === null || catalog === undefined) return []
-    let rows = catalog
-    if (!Array.isArray(rows)) {
-      try {
-        rows = rows.rows ?? rows.list?.() ?? []
-      } catch {
-        return []
-      }
-    }
-    if (!Array.isArray(rows)) return []
+    // 05 §6.5 实测口径：条目源 = ctx.shortcuts.registry.commands（Map）。
+    // catalog.getSnapshot() 只是键位展示（无 regions/resolve），不能用。
+    const registry = ctx?.shortcuts?.registry
+    const map = registry?.commands
+    if (!(map instanceof Map)) return []
     const out = []
     const seen = new Set()
-    for (const row of rows) {
-      if (row === null || typeof row !== 'object') continue
-      const id = row.id
-      const label = row.label
-      if (typeof id !== 'string' || id.length === 0 || typeof label !== 'string' || label.length === 0) continue
-      const regions = Array.isArray(row.regions) ? row.regions : []
+    for (const cmd of map.values()) {
+      if (cmd === null || typeof cmd !== 'object') continue
+      const id = cmd.id
+      if (typeof id !== 'string' || id.length === 0) continue
+      const rawLabel = typeof cmd.label === 'function' ? cmd.label() : cmd.label
+      const label = typeof rawLabel === 'string' ? rawLabel : id
+      const regions = Array.isArray(cmd.regions) ? cmd.regions : []
       if (!regions.some((region) => region === 'page' || region === 'editable')) continue
-      const modals = Array.isArray(row.modals) ? row.modals : []
+      const modals = Array.isArray(cmd.modals) ? cmd.modals : []
       if (modals.length > 0 && regions.length === 0) continue
       if (seen.has(id)) continue
       seen.add(id)
       let disabled = false
       try {
-        const verdict = row.resolve?.(ctx)
+        const verdict = cmd.resolve?.(ctx)
         disabled = !(verdict === 'handled' || verdict?.status === 'handled')
       } catch {
         disabled = true
       }
-      out.push({ id, label, hint: typeof row.hint === 'string' ? row.hint : row.description, disabled, row })
+      out.push({ id, label, hint: typeof cmd.hint === 'string' ? cmd.hint : cmd.description, disabled, command: cmd })
     }
     return out
   }
+
 
 
 
@@ -225,9 +219,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       setPaletteOpen(false)
       setQuery('')
       try {
-        const verdict = cmd.row?.resolve?.(ctx)
-        if (!(verdict === 'handled' || verdict?.status === 'handled')) return
-        cmd.row?.run?.(ctx)
+        const verdict = cmd.command?.resolve?.(ctx)
+        if (verdict !== 'handled' && verdict?.status !== 'handled') return
+        const run = verdict?.run ?? cmd.command?.run
+        if (typeof run === 'function') run()
       } catch (error) {
         console.warn('dsh-client-ui-launcher: 命令执行失败', error)
       }
@@ -385,15 +380,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     CURRENT_CTX = ctx
     // FR-16：我们自己的动作也注册进同一个 catalog（与宿主条目同权）
     const OWN_ROWS_REGISTERED = Symbol.for('dsh.launcher.catalogRows')
-    if (ctx?.shortcuts?.catalog !== undefined && ctx.shortcuts.catalog !== null) {
-      const catalog = ctx.shortcuts.catalog
+    if (typeof ctx?.shortcuts?.register === 'function') {
       const rows = ownCatalogRowsFor(ctx)
       try {
-        if (typeof catalog.register === 'function') rows.forEach((row) => catalog.register(row))
-        else if (Array.isArray(catalog)) catalog.push(...rows)
-        else if (Array.isArray(catalog.rows)) catalog.rows.push(...rows)
-        catalog[OWN_ROWS_REGISTERED] = rows
-        window.__DSH_LAUNCHER_OWN_ROWS__ = rows.length
+        const register = ctx.shortcuts?.register
+        if (typeof register === 'function') {
+          rows.forEach((row) => register.call(ctx.shortcuts, { ...row, modals: [], defaults: {} }))
+          window.__DSH_LAUNCHER_OWN_ROWS__ = rows.length
+        }
       } catch (error) {
         console.warn('dsh-client-ui-launcher: 注册 catalog 行失败', error)
       }

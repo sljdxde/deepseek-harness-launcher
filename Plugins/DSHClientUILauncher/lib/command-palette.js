@@ -72,20 +72,25 @@ export function moveIndex(index, length, delta) {
 export const PALETTE_REGIONS = ['page', 'editable']
 
 /**
- * 从 `ctx.shortcuts.catalog` 建面板条目（05 §6.5 定稿口径）。
- * 规则：`regions` 含 `page` 或 `editable` 的才进；`modals` 专属行不进；`label` 作标题、`id` 作唯一键。
- * 每行执行前先 `resolve(context)`：返回 `handled` 才可执行，返回 `pass` 置灰（**不隐藏**）。
- * @param {unknown} catalog - `ctx.shortcuts.catalog`（数组，或带 `rows`/`list()` 的对象）。
+ * 从 `ctx.shortcuts.registry.commands`（Map）建面板条目（05 §6.5 定稿口径）。
+ * 规则：`regions` 含 `page` 或 `editable` 的才进；`modals` 专属行不进；`label()` 是函数就调用取文案、`id` 作唯一键。
+ * 每行执行前先 `resolve(context)`：返回 `{status:'handled'}` 才可执行，`pass` 置灰（**不隐藏**）。
+ * @param {unknown} source - Map / 数组 / 带 `commands` 的对象。
  * @param {object} [context] - 传给 `resolve` 的上下文。
- * @returns {{ id: string, label: string, hint?: string, disabled: boolean, row: object }[]} 面板条目。
+ * @returns {{ id: string, label: string, hint?: string, disabled: boolean, command: object }[]} 面板条目。
  */
-export function catalogCommands(catalog, context = {}) {
-  let rows = catalog
-  if (rows !== null && typeof rows === 'object' && !Array.isArray(rows)) {
-    try {
-      rows = rows.rows ?? rows.list?.() ?? []
-    } catch {
-      rows = []
+export function catalogCommands(source, context = {}) {
+  let rows = source
+  if (rows instanceof Map) rows = [...rows.values()]
+  else if (rows !== null && typeof rows === 'object' && !Array.isArray(rows)) {
+    if (rows.commands instanceof Map) rows = [...rows.commands.values()]
+    else if (Array.isArray(rows.commands)) rows = rows.commands
+    else {
+      try {
+        rows = rows.rows ?? rows.list?.() ?? []
+      } catch {
+        rows = []
+      }
     }
   }
   if (!Array.isArray(rows)) return []
@@ -94,43 +99,47 @@ export function catalogCommands(catalog, context = {}) {
   for (const row of rows) {
     if (row === null || typeof row !== 'object') continue
     const id = row.id
-    const label = row.label
+    const rawLabel = typeof row.label === 'function' ? row.label() : row.label
+    const label = typeof rawLabel === 'string' ? rawLabel : id
     if (typeof id !== 'string' || id.length === 0 || typeof label !== 'string' || label.length === 0) continue
     const regions = Array.isArray(row.regions) ? row.regions : []
     if (!regions.some((region) => PALETTE_REGIONS.includes(region))) continue
     const modals = Array.isArray(row.modals) ? row.modals : []
-    const onlyModals = modals.length > 0 && regions.length === 0
-    if (onlyModals) continue
+    if (modals.length > 0 && regions.length === 0) continue
     if (seen.has(id)) continue
     seen.add(id)
     let disabled = false
     try {
       const verdict = row.resolve?.(context)
-      // 宿主返回 {status:'handled'|'pass'} 对象，自有行返回字符串——两种都认
-      const handled = verdict === 'handled' || verdict?.status === 'handled'
-      disabled = !handled
+      disabled = !(verdict === 'handled' || verdict?.status === 'handled')
     } catch {
       disabled = true
     }
-    out.push({ id, label, hint: typeof row.hint === 'string' ? row.hint : row.description, disabled, row })
+    out.push({ id, label, hint: typeof row.hint === 'string' ? row.hint : row.description, disabled, command: row })
   }
   return out
 }
 
 /**
- * 执行面板条目：`resolve` 返回 handled 才跑 `run()`；pass/异常都不执行。
- * @param {{ row: object }} entry - `catalogCommands` 产出的条目。
- * @param {object} [context] - 传给 `resolve`/`run` 的上下文。
+ * 执行面板条目：`resolve(context)` 返回 `{status:'handled', run}` 才跑它带回的 `run()`；
+ * 命令对象本身没有 `run`（实测），所以必须用 resolve 的结果。
+ * @param {{ command: object }} entry - `catalogCommands` 产出的条目。
+ * @param {object} [context] - 传给 `resolve` 的上下文。
  * @returns {'ran'|'pass'|'failed'} 执行结果。
  */
 export function executeCommand(entry, context = {}) {
-  const row = entry?.row
-  if (row === null || typeof row !== 'object') return 'failed'
+  const command = entry?.command
+  if (command === null || typeof command !== 'object') return 'failed'
   try {
-    const verdict = row.resolve?.(context)
-    const handled = verdict === 'handled' || verdict?.status === 'handled'
-    if (!handled) return 'pass'
-    row.run?.(context)
+    const verdict = command.resolve?.(context)
+    if (verdict === 'handled') {
+      const run = entry.run ?? command.run
+      if (typeof run === 'function') { run(); return 'ran' }
+      return 'ran'
+    }
+    if (verdict?.status !== 'handled') return 'pass'
+    const run = verdict.run ?? command.run
+    if (typeof run === 'function') run()
     return 'ran'
   } catch {
     return 'failed'
@@ -153,7 +162,8 @@ export const OWN_CATALOG_ROWS = [
 export function ownCatalogRows(ctx = {}, actions = {}) {
   const onPage = ctx.currentPage === undefined || ctx.currentPage === 'conversation' || ctx.currentPage === 'plugins'
   const hasSession = ctx.hasSession !== false
-  const guard = (enabled, run) => ({ resolve: () => (enabled ? 'handled' : 'pass'), run })
+  // 与宿主同形态：resolve(ctx) → { status: 'handled', run } | { status: 'pass' }
+  const guard = (enabled, run) => ({ resolve: () => (enabled ? { status: 'handled', run } : { status: 'pass' }) })
   return [
     { ...OWN_CATALOG_ROWS[0], ...guard(onPage, () => actions.onOpenWorkbench?.()) },
     { ...OWN_CATALOG_ROWS[1], ...guard(onPage && hasSession, () => actions.onOpenSettings?.()) },

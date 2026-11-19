@@ -60,14 +60,14 @@ test('catalog 形状容错：{rows} / list() / 非数组', () => {
   assert.deepEqual(catalogCommands({ list: () => { throw new Error('x') } }), [])
 })
 
-test('执行：handled 才跑 run；pass 不跑；异常记 failed', () => {
+test('执行：resolve 返回 {status:handled,run} 才跑；pass 不跑；异常记 failed', () => {
   const calls = []
-  const handled = { row: { resolve: () => 'handled', run: () => calls.push('ran') } }
+  const handled = { command: { resolve: () => ({ status: 'handled', run: () => calls.push('ran') }) } }
   assert.equal(executeCommand(handled), 'ran')
   assert.deepEqual(calls, ['ran'])
-  const pass = { row: { resolve: () => 'pass', run: () => calls.push('nope') } }
+  const pass = { command: { resolve: () => ({ status: 'pass' }), run: () => calls.push('nope') } }
   assert.equal(executeCommand(pass), 'pass')
-  const throwing = { row: { resolve: () => 'handled', run: () => { throw new Error('boom') } } }
+  const throwing = { command: { resolve: () => ({ status: 'handled', run: () => { throw new Error('boom') } }) } }
   assert.equal(executeCommand(throwing), 'failed')
   assert.equal(executeCommand(null), 'failed')
 })
@@ -106,7 +106,24 @@ test('resolve 返回对象形态（{status}）：handled 可执行、pass 置灰
   assert.equal(rows[0].disabled, false)
   assert.equal(rows[1].disabled, true)
   const calls = []
-  assert.equal(executeCommand({ row: { resolve: () => ({ status: 'handled' }), run: () => calls.push(1) } }), 'ran')
-  assert.equal(executeCommand({ row: { resolve: () => ({ status: 'pass' }), run: () => calls.push(2) } }), 'pass')
+  assert.equal(executeCommand({ command: { resolve: () => ({ status: 'handled', run: () => calls.push(1) }) } }), 'ran')
+  assert.equal(executeCommand({ command: { resolve: () => ({ status: 'pass' }) } }), 'pass')
   assert.deepEqual(calls, [1])
+})
+
+test('registry.commands（Map）：label() 函数、regions 过滤、resolve 对象判定', () => {
+  const run = []
+  const registry = new Map([
+    ['session.new', { id: 'session.new', label: () => '新建会话', regions: ['page'], modals: [], resolve: () => ({ status: 'handled', run: () => run.push('new') }) }],
+    ['session.search', { id: 'session.search', label: () => '搜索会话', regions: ['editable'], resolve: () => ({ status: 'pass' }) }],
+    ['modal.only', { id: 'modal.only', label: '弹窗', regions: [], modals: ['settings'] }],
+  ])
+  const entries = catalogCommands({ commands: registry })
+  assert.deepEqual(entries.map((e) => e.id), ['session.new', 'session.search'])
+  assert.deepEqual(entries.map((e) => e.label), ['新建会话', '搜索会话'])
+  assert.equal(entries[0].disabled, false)
+  assert.equal(entries[1].disabled, true)
+  assert.equal(executeCommand(entries[0]), 'ran')
+  assert.deepEqual(run, ['new'])
+  assert.equal(executeCommand(entries[1]), 'pass')
 })
