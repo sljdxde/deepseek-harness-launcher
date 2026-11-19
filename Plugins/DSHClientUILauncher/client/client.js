@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+1e5a695"
+  const BUILD_STAMP = "0.2.2-rc.5+5f0866d"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1254,13 +1254,25 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const toggleTheme = () => applyTheme((() => { try { return CURRENT_CTX?.theme?.getTheme?.()?.preference } catch { return undefined } })() === 'dark' ? 'light' : 'dark')
     /** 右栏开关：宿主 sidebarRight/命令 + 外壳轨道，两条入口（rail ▤ / ⌘⇧B）共用同一份状态。 */
     const toggleDock = () => {
-      if (dockOpen) DOCK_CLOSE_INTENT.user = true
+      if (dockOpen) {
+        // 关闭：宿主在 launcher 里不一定回 closeRightbar，外壳直接把轨道收掉（可视结果必须响应）
+        DOCK_CLOSE_INTENT.user = true
+        setDockOpenEvent(false)
+        toggleRightbarHost()
+        return
+      }
       toggleRightbarHost()
-      // 不管宿主返回什么，350ms 后仍没打开就给可见提示——不允许「按了没反应」
+      // 打开：先给宿主一帧；若宿主没接管（blocked / 无 occupant 等），外壳自己展开轨道
       setTimeout(() => {
         const width = document.querySelector('.launcher-dock')?.getBoundingClientRect().width ?? 0
-        if (width < 10) showLauncherToast('先打开一个会话再展开右栏')
-      }, 350)
+        if (width < 10) {
+          setDockOpenEvent(true)
+          setTimeout(() => {
+            const retry = document.querySelector('.launcher-dock')?.getBoundingClientRect().width ?? 0
+            if (retry < 10) showLauncherToast('右栏未就绪：先打开一个会话再展开')
+          }, 250)
+        }
+      }, 200)
     }
     const narrow = viewportWidth <= 860
     // 宿主 MainPanel 的口径：面板 key 是 renderSlot 的第三参 `{ entryKey }`，
