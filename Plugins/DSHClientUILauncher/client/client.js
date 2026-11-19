@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+bef0bfb"
+  const BUILD_STAMP = "0.2.2-rc.5+830a2a6"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -415,21 +415,16 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           pushPre(node, '')
           return
         }
-        const children = [...node.childNodes]
-        for (let index = 0; index < children.length; index += 1) {
-          const child = children[index]
-          const next = children[index + 1]
-          if (child.nodeType === 1 && child.tagName !== 'PRE' && next?.nodeType === 1 && next.tagName === 'PRE') {
-            const lang = labelOf(child)
-            if (lang !== '') {
-              // 语言标签：跳过它，语言交给围栏
-              pushPre(next, lang)
-              index += 1
-              continue
-            }
-          }
-          walk(child)
+        // 宿主的代码块容器（.md-code-block / 含横幅）里有 pre：只取 pre 的代码与语言，
+        // 绝不把横幅里的语言名、复制按钮带进正文。
+        if (typeof node.querySelector === 'function' && node.querySelector('pre') !== null) {
+          const langEl = node.querySelector('[class*="language"], [data-language]')
+          const lang = (langEl?.textContent ?? '').trim().toLowerCase()
+          pushPre(node.querySelector('pre'), lang)
+          return
         }
+        const children = [...node.childNodes]
+        for (const child of children) walk(child)
       }
       walk(root)
       return parts.join('').replace(/\n{3,}/g, '\n\n').trim()
