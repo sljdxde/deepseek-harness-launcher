@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+1062ecb"
+  const BUILD_STAMP = "0.2.2-rc.5+264fb0d"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1779,9 +1779,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         return () => dockListeners.delete(listener)
       },
     }
-    // rightbar 槽常驻挂载后，宿主不再有"占位者挂载即关"的事件，守卫失去意义：
-    // 直接记账（任何 open/close 都生效），避免"永远关不掉"。
+    // 只吞一次「启动期占位者自己发出的 close」；吞过之后永不复位——否则每次 open 都重置，
+    // 用户永远关不掉（64807 实测）。槽已常驻，这一次之后都是真实开关。
+    let dockMountCloseSwallowed = false
     const setDockOpen = (next) => {
+      if (next === false && !dockMountCloseSwallowed) {
+        dockMountCloseSwallowed = true
+        return
+      }
       dockOpen = next
       try { window.__DSH_LAUNCHER_DOCK__ = dockOpen } catch { /* 忽略 */ }
       for (const listener of dockListeners) listener()
