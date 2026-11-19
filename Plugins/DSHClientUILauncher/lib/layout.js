@@ -135,3 +135,21 @@ export function widthBudget({ viewportWidth, rail = 56, sidebar = 280, dock = DO
   const main = mainAreaWidth({ viewportWidth, rail, sidebar, dock })
   return { main, total: Math.round(Number(viewportWidth)), fits: main >= MAIN_MIN_WIDTH }
 }
+
+/** ≤860 时侧栏塌成抽屉（列宽 0）；否则收起态 0、展开 280。与 client 的 mainWidth 同口径。 */
+export function sidebarColumnWidth({ viewportWidth, collapsed = false, sidebar = 280, drawerBreakpoint = 860 } = {}) {
+  const width = Number(viewportWidth)
+  if (!Number.isFinite(width)) return sidebar
+  if (width <= drawerBreakpoint) return 0
+  return collapsed ? 0 : sidebar
+}
+
+/**
+ * 主区实际能放几块（把侧栏列宽算对，避免 788–860 误降档）。
+ * @param {{ requested: number, viewportWidth: number, collapsed?: boolean, rail?: number, dock?: number, height?: number }} input - 视口与外壳列宽。
+ * @returns {{ mainWidth: number, mode: number, requested: number, max: number, reason: 'too-narrow'|null }} 结果。
+ */
+export function effectiveSplitFor({ requested, viewportWidth, collapsed = false, rail = 56, dock = 0, height = Infinity } = {}) {
+  const mainWidth = Math.max(0, Math.round(Number(viewportWidth) - rail - sidebarColumnWidth({ viewportWidth, collapsed }) - dock))
+  return { mainWidth, ...resolveSplit(requested, { availableWidth: mainWidth, availableHeight: height }) }
+}
