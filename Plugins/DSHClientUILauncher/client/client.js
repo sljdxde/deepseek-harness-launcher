@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+234a8b9"
+  const BUILD_STAMP = "0.2.2-rc.5+1bb56fc"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1417,11 +1417,18 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       },
     }
     let dockOpenedAt = 0
+    let dockCloseGuardUsed = true
     const setDockOpen = (next) => {
-      // 宿主占位者会在 openRightbar 之后立刻 closeRightbar：800ms 内的关闭忽略一次，
-      // 否则用户/宿主刚打开就被自己关掉（实测 1440 下 0.9s 后回到 false）。
-      if (next === true) dockOpenedAt = Date.now()
-      if (next === false && dockOpenedAt !== 0 && Date.now() - dockOpenedAt < 800) return
+      // 只忽略「打开后紧接着的那一次 close」（占位者挂载时发的），之后的关闭照常生效，
+      // 避免用户点关闭没反应（800ms 内一律忽略会吃掉用户操作）。
+      if (next === true) {
+        dockOpenedAt = Date.now()
+        dockCloseGuardUsed = false
+      }
+      if (next === false && !dockCloseGuardUsed && Date.now() - dockOpenedAt < 800) {
+        dockCloseGuardUsed = true
+        return
+      }
       dockOpen = next
       try { window.__DSH_LAUNCHER_DOCK__ = dockOpen } catch { /* 忽略 */ }
       for (const listener of dockListeners) listener()
