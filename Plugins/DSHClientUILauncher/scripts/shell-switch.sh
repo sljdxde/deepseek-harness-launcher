@@ -65,20 +65,29 @@ point_link() {
   ln -s "$target" "$LINK"
 }
 
+dsh_plugin() {
+  if [ -n "${DSH_BIN:-}" ]; then
+    "$DSH_BIN" plugin --profile "$PROFILE" "$@"
+  elif command -v dsh >/dev/null 2>&1; then
+    dsh plugin --profile "$PROFILE" "$@"
+  else
+    cat >&2 <<'MANUAL'
+找不到 dsh 命令（设 DSH_BIN 指向 <dsh 安装>/lib/bin.js）。手工等价操作：
+  1) cd <profile 目录>，在 package.json 的 dependencies 里加/删 "@deepseek-ai/dsh-client-ui-layout": "file:<本包绝对路径>"
+  2) 在该目录跑 pnpm install
+  3) 重启 dsh web 并硬刷新页面
+MANUAL
+    exit 3
+  fi
+}
+
 set_override() {
   mode=$1
-  "$NODE" -e '
-    const fs = require("node:fs");
-    const [file, mode, name, target] = process.argv.slice(1);
-    const m = JSON.parse(fs.readFileSync(file, "utf8"));
-    m.pnpm = m.pnpm ?? {};
-    m.pnpm.overrides = m.pnpm.overrides ?? {};
-    if (mode === "add") m.pnpm.overrides[name] = `file:${target}`;
-    else delete m.pnpm.overrides[name];
-    if (Object.keys(m.pnpm.overrides).length === 0) delete m.pnpm.overrides;
-    if (Object.keys(m.pnpm).length === 0) delete m.pnpm;
-    fs.writeFileSync(file, JSON.stringify(m, null, 2) + "\n");
-  ' "$MANIFEST" "$mode" "$HOST_PACKAGE" "$PACKAGE_DIR"
+  if [ "$mode" = "add" ]; then
+    dsh_plugin add "@deepseek-ai/dsh-client-ui-layout@file:$PACKAGE_DIR"
+  else
+    dsh_plugin remove "@deepseek-ai/dsh-client-ui-layout"
+  fi
 }
 
 write_state() {
@@ -108,17 +117,24 @@ MANUAL
 
 verify_page() {
   expected=$1
-  # 先断言"当前链向"（即时层），再看页面：链向不对时页面即使能开也不是期望的那一版。
-  actual=$(link_target)
-  case "$expected" in
-    launcher) wanted=$PACKAGE_DIR ;;
-    native) wanted=$ORIG ;;
-    *) wanted='' ;;
-  esac
-  if [ -n "$wanted" ] && [ "$actual" != "$wanted" ]; then
-    echo "链向不符：期望 $wanted，实际 $actual" >&2
-    return 1
+  # 先断言"profile 里装的是哪一版"（即时层）。launcher：解析到本包；native：不解析到本包（回落安装目录的原包或 .orig）。
+  if [ -e "$LINK" ] || [ -L "$LINK" ]; then
+    actual=$("$NODE" -e 'const fs=require("node:fs");process.stdout.write(fs.realpathSync(process.argv[1]))' "$LINK" 2>/dev/null || echo "")
+  else
+    actual=""
   fi
+  case "$expected" in
+    launcher)
+      if [ "$actual" != "$PACKAGE_DIR" ]; then
+        echo "链向不符：launcher 期望解析到 $PACKAGE_DIR，实际 ${actual:-（profile 里没有该包）}" >&2
+        return 1
+      fi ;;
+    native)
+      if [ -n "$actual" ] && [ "$actual" = "$PACKAGE_DIR" ]; then
+        echo "链向不符：native 但 profile 仍解析到本包（$actual）" >&2
+        return 1
+      fi ;;
+  esac
   if [ -z "${DSH_URL:-}" ]; then
     echo "未提供 DSH_URL，无法断言页面（期望 $expected）" >&2
     return 3
@@ -141,7 +157,6 @@ case "${1:-}" in
     require_profile
     preserve_original
     set_override add
-    point_link "$PACKAGE_DIR"
     write_state launcher
     log_line "switch=launcher link=$LINK -> $PACKAGE_DIR"
     echo "链接已指向本包：$LINK -> $PACKAGE_DIR（override 已写）"
@@ -160,9 +175,6 @@ case "${1:-}" in
   native)
     require_profile
     set_override remove
-    if [ -e "$ORIG" ] || [ -L "$ORIG" ]; then
-      point_link "$ORIG"
-    fi
     write_state native
     log_line "switch=native link=$(link_target)"
     echo "链接已指回原包：$LINK -> $(link_target)"
