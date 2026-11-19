@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+7e111c7"
+  const BUILD_STAMP = "0.2.2-rc.5+c4a6007"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -391,15 +391,29 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
      * @returns {string} 带围栏的正文。
      */
     const textWithFences = (root) => {
-      const clone = root.cloneNode(true)
-      for (const pre of clone.querySelectorAll('pre')) {
-        const code = pre.querySelector('code')
-        const lang = (code?.className ?? '').match(/language-([\w-]+)/)?.[1] ?? ''
-        const body = (code?.textContent ?? pre.textContent ?? '').replace(/\n$/, '')
-        pre.replaceWith(document.createTextNode(`\n\n\`\`\`${lang}\n${body}\n\`\`\`\n\n`))
+      // 按文档顺序拼一遍：普通节点取文本，PRE 一次拼成「```lang\n代码\n```」，不再往克隆节点里塞文本
+      const parts = []
+      const walk = (node) => {
+        if (node === null || node === undefined) return
+        if (node.nodeType === 3) {
+          parts.push(node.nodeValue ?? '')
+          return
+        }
+        if (node.nodeType !== 1) return
+        const tag = node.tagName
+        if (tag === 'PRE') {
+          const code = node.querySelector('code')
+          const lang = ((code?.className ?? '').match(/language-([\w-]+)/)?.[1] ?? '')
+          const body = (code?.textContent ?? node.textContent ?? '').replace(/\n$/, '')
+          parts.push(`\n\n\`\`\`${lang}\n${body}\n\`\`\`\n\n`)
+          return
+        }
+        for (const child of node.childNodes) walk(child)
       }
-      return (clone.textContent ?? '').trim()
+      walk(root)
+      return parts.join('').replace(/\n{3,}/g, '\n\n').trim()
     }
+
 
     const readTurnFromNode = (node) => {
       const tail = node?.closest?.('[data-chat-flow-kind="turn-tail"]') ?? null
