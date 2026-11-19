@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+f828983"
+  const BUILD_STAMP = "0.2.2-rc.5+1ce65ed"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1312,11 +1312,17 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     toggleRef.current.theme = toggleTheme
     React.useEffect(() => {
       // 宿主右栏面板内的「收起右侧边栏」在换壳后不会回 closeRightbar：点它时外壳直接收轨道
+      // 按宿主文案匹配（中/英、大小写不敏感）；宿主改文案则退化为无响应，不影响 rail ▤ / ⌘⇧B
+      const COLLAPSE_LABELS = ['收起右侧边栏', '收起侧边栏', 'collapse right sidebar', 'hide right sidebar', 'collapse sidebar']
       const onHostCollapse = (event) => {
         const target = event?.target
         if (target === null || target === undefined || typeof target.closest !== 'function') return
-        const btn = target.closest('[aria-label*="收起右侧边栏"], [title*="收起右侧边栏"], [aria-label*="收起侧边栏"]')
+        // 作用域收紧：只对右栏内的元素生效
+        if (target.closest('.launcher-dock') === null) return
+        const btn = target.closest('[aria-label], [title]')
         if (btn === null) return
+        const label = String(btn.getAttribute('aria-label') ?? btn.getAttribute('title') ?? '').toLowerCase()
+        if (!COLLAPSE_LABELS.some((word) => label.includes(word.toLowerCase()))) return
         DOCK_CLOSE_INTENT.user = true
         setDockOpen(false)
       }
