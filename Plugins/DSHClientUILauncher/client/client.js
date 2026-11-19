@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+f638728"
+  const BUILD_STAMP = "0.2.2-rc.5+25e5a76"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -318,19 +318,21 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const chat = num(breakdown, ['messageTokens', 'chat'])
       const files = num(breakdown, ['filesTokens', 'files'])
       const tools = num(breakdown, ['toolsTokens', 'tools'])
-      if (pct === null || (system === null && chat === null && tools === null)) return null
+      const unavailable = pct === null && system === null && chat === null && tools === null
       return h('div', { className: 'launcher-ctx launcher-ctxdiag', onKeyDown: (e) => { if (e.key === 'Escape') setOpen(false) } },
         h('button', {
           type: 'button',
           className: 'launcher-ctx__entry',
-          'data-pct': pct,
+          'data-pct': pct === null ? '' : pct,
           'aria-haspopup': 'dialog',
           'aria-expanded': open,
-          title: `上下文占用 ${pct}% · 点开看拆分`,
-          onClick: () => setOpen((v) => !v),
-        }, `上下文 ${pct}%`),
+          'aria-disabled': unavailable,
+          disabled: unavailable,
+          title: unavailable ? '上下文用量不可用' : `上下文占用 ${pct}% · 点开看拆分`,
+          onClick: () => { if (!unavailable) setOpen((v) => !v) },
+        }, unavailable ? '上下文 —' : `上下文 ${pct}%`),
         open ? h('div', { className: 'launcher-ctx__pop launcher-ctxdiag__pop', role: 'dialog', 'aria-label': '上下文诊断' },
-          h('header', { className: 'launcher-ctx__head' }, `上下文占用 ${pct}%`),
+          h('header', { className: 'launcher-ctx__head' }, pct === null ? '上下文占用 —' : `上下文占用 ${pct}%`),
           h('dl', { className: 'launcher-ctx__list' },
             h('div', null, h('dt', null, '系统提示'), h('dd', null, system === null ? '—' : String(system))),
             h('div', null, h('dt', null, '会话消息'), h('dd', null, chat === null ? '—' : String(chat))),
