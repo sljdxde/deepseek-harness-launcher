@@ -227,7 +227,8 @@ final class DSHInstallWindowController: NSWindowController {
         let note = NSTextField(labelWithString: wording.note)
         note.frame = NSRect(x: 108, y: 18, width: 350, height: 20)
         note.font = .systemFont(ofSize: 12)
-        note.textColor = .tertiaryLabelColor
+        // 三级灰在深色下 2.3:1，安装窗口的说明文字读不出来。
+        note.textColor = .secondaryLabelColor
         note.lineBreakMode = .byTruncatingTail
         effect.addSubview(note)
 

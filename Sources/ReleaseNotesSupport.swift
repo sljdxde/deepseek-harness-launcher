@@ -154,7 +154,9 @@ enum ReleaseNotesMarkdown {
             string: "────────────────────────────\n",
             attributes: [
                 .font: NSFont.systemFont(ofSize: 8),
-                .foregroundColor: NSColor.tertiaryLabelColor,
+                // 这是一条装饰性分隔线，不是文字：用 separatorColor 表达语义，
+                // 也不该占用三级文字色（深色 2.3:1 会淡到看不见）。
+                .foregroundColor: NSColor.separatorColor,
                 .paragraphStyle: paragraph
             ]
         )

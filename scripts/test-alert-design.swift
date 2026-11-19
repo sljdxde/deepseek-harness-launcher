@@ -87,7 +87,10 @@ struct AlertDesignChecks {
         let note = AlertDesign.footnote("更新不会影响会话与归档。")
         precondition(note.stringValue == "更新不会影响会话与归档。")
         precondition(note.preferredMaxLayoutWidth == AlertDesign.cardWidth)
-        precondition(note.textColor == .tertiaryLabelColor)
+        // 这里曾经断言 == .tertiaryLabelColor，把「11pt 小字配 2.3:1 的灰」钉成了
+        // 正确值——深色弹窗里那行字实际读不出来。改为断言可读性：不得使用三级色。
+        precondition(note.textColor != .tertiaryLabelColor, "脚注不能用三级灰（深色 2.3:1）")
+        precondition(note.textColor == .secondaryLabelColor || note.textColor == .labelColor)
     }
 
     // MARK: - 卡片

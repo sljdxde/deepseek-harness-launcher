@@ -20,6 +20,11 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
     WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     private let logger: (String) -> Void
     private let onClose: () -> Void
+    /// 页面**连不上**当前端口（不是 401、不是内容错误）时回调，参数是这次要加载的
+    /// 端口。启动器据此立刻确认「端口上还有没有 dsh」——没有就重新拉起。
+    /// 只在窗口里贴一张「Could not connect」的兜底页，用户就永远出不来了：
+    /// 下一次点「打开」还是同一个空端口，重载也一样（历史事故现场）。
+    var onConnectionFailure: ((Int?) -> Void)?
 
     private var webView: WKWebView!
     /// 已请求加载的页面端口。SPA 内部路由不会改它；换端口/重载才会。
@@ -69,6 +74,16 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
         // （会话列表、主题、工作区选择都属于 Harness 自己的持久状态）。
         configuration.websiteDataStore = .default()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        // 旧版 WebKit 不支持 CSS 锚点定位，而 DSH 前端完全依赖它定位弹层且没有
+        // 降级方案——不注入的话，macOS 15 及更早系统上所有菜单都叠在左上角。
+        // 脚本自身会先探测能力，支持锚点定位的新系统不受影响。
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: HarnessAnchorFallback.userScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+        )
         let webView = WKWebView(frame: window.contentView?.bounds ?? .zero, configuration: configuration)
         webView.autoresizingMask = [.width, .height]
         webView.navigationDelegate = self
@@ -207,7 +222,9 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         guard !showingFailurePage else { return }
+        let failedPort = loadedPort
         presentFailure(message: "Harness 页面加载失败", detail: error.localizedDescription)
+        reportConnectionFailure(error, port: failedPort)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
@@ -215,7 +232,19 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
         // 被取消的导航（外链改道、JS 中断）不是错误，别把兜底页盖上去。
         let nsError = error as NSError
         if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return }
+        let failedPort = loadedPort
         presentFailure(message: "Harness 页面打不开", detail: error.localizedDescription)
+        reportConnectionFailure(nsError, port: failedPort)
+    }
+
+    /// 连接失败（端口上没人）交回启动器：它会再确认一次服务是否还在，必要时重启。
+    /// 认证/内容类失败不在此列——那种情况重启也没用，兜底页里的提示才是正解。
+    /// `port` 必须在 `presentFailure` 之前取：它会把 loadedPort 清掉。
+    private func reportConnectionFailure(_ error: Error, port: Int?) {
+        guard let onConnectionFailure else { return }
+        let nsError = error as NSError
+        guard RuntimeHealthSupport.isConnectionFailure(nsError) else { return }
+        onConnectionFailure(port)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

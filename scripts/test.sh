@@ -523,7 +523,17 @@ rg -q 'onProgress' "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift
 rg -Fq 'DSHPluginManager' "$ROOT/scripts/build-app.sh" "$ROOT/scripts/build-universal.sh" "$ROOT/Sources/main.swift"
 rg -q 'window.isOpaque = true' "$ROOT/Sources/SettingsWindowController.swift"
 rg -q 'visualEffect.blendingMode = .withinWindow' "$ROOT/Sources/SettingsWindowController.swift"
-rg -q 'checkbox.contentTintColor = .labelColor' "$ROOT/Sources/SettingsWindowController.swift"
+# 勾选框：标签文字**不能**留在 NSButton 上。NSButton 的标题（title /
+# attributedTitle）在深色窗口里会被解析成近黑（#070808 on #1D1E1E = 1.2:1），
+# 而且塞进 attributedTitle 的动态色也不会随外观重新解析（白天创建、夜里切深色
+# 仍是黑字）。所以按钮只负责开关字形，文字交给 NSTextField。
+if rg -q 'checkbox\.attributedTitle\s*=' "$ROOT/Sources/SettingsWindowController.swift"; then
+  echo "勾选框标签不能用 attributedTitle（深色下解析成近黑且不随外观刷新）" >&2
+  exit 1
+fi
+rg -Fq 'checkbox.title = ""' "$ROOT/Sources/SettingsWindowController.swift"
+rg -Fq 'checkbox.contentTintColor = .controlAccentColor' "$ROOT/Sources/SettingsWindowController.swift"
+rg -Fq 'let label = makeLabel(title, size: 13, weight: .regular, color: .labelColor)' "$ROOT/Sources/SettingsWindowController.swift"
 if rg -q 'feedField|updateFeedURL|更新清单' "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/main.swift"; then
   echo "update source must be fixed to GitHub Releases" >&2
   exit 1
@@ -734,6 +744,13 @@ fi
 rg -Fq 'AppMenuSupport.makeMainMenu' "$ROOT/Sources/main.swift" "$ROOT/Sources/AppMenuSupport.swift"
 rg -Fq 'settings.embeddedHarnessWindow' "$ROOT/Sources/main.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/UpdateSupport.swift"
 rg -Fq 'presentHarnessWindow' "$ROOT/Sources/main.swift"
+# 运行中存活看护不许被删：接管（复用）的实例没有进程句柄，它退出后启动器若
+# 仍停在 running，每次「打开」都只会把同一个死端口再加载一遍——用户看到的就是
+# 「Harness 页面打不开 / Could not connect to the server」，而且再也进不去。
+rg -Fq 'startRuntimeWatchdog' "$ROOT/Sources/main.swift"
+rg -Fq 'recoverDeadHarness' "$ROOT/Sources/main.swift"
+rg -Fq 'onConnectionFailure' "$ROOT/Sources/main.swift" "$ROOT/Sources/HarnessWindowController.swift"
+rg -Fq 'isConnectionFailure' "$ROOT/Sources/RuntimeHealthSupport.swift"
 rg -Fq 'window.setFrameAutosaveName' "$ROOT/Sources/HarnessWindowController.swift"
 rg -Fq 'runOpenPanelWith' "$ROOT/Sources/HarnessWindowController.swift"
 rg -Fq 'WKDownloadDelegate' "$ROOT/Sources/HarnessWindowController.swift"
@@ -967,7 +984,7 @@ swiftc "$ROOT/scripts/test-status-badge.swift" "$ROOT/Sources/StatusBadgeSupport
 "$ROOT/build/test-status-badge"
 # 设置窗口是复用的：取消后再打开必须回到已保存的设置（否则界面显示的是被取消掉的
 # 勾选与间隔，用户以为生效了）。
-swiftc "$ROOT/scripts/test-settings-window.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/AlertBoundary.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-settings-window" -framework AppKit
+swiftc "$ROOT/scripts/test-settings-window.swift" "$ROOT/Sources/SettingsWindowController.swift" "$ROOT/Sources/DynamicLayerView.swift" "$ROOT/Sources/AlertDesign.swift" "$ROOT/Sources/AlertBoundary.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-settings-window" -framework AppKit
 "$ROOT/build/test-settings-window"
 swiftc "$ROOT/scripts/test-global-hotkey.swift" "$ROOT/Sources/GlobalHotKey.swift" -o "$ROOT/build/test-global-hotkey"
 "$ROOT/build/test-global-hotkey"
@@ -978,6 +995,29 @@ swiftc "$ROOT/scripts/test-dsh-install-progress.swift" "$ROOT/Sources/DSHInstall
 # 启动期运行环境决策：每个分支都必须是「直接启动」或「先问用户」，不允许自己开装。
 swiftc "$ROOT/scripts/test-runtime-launch-plan.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-runtime-launch-plan"
 "$ROOT/build/test-runtime-launch-plan"
+# 运行期存活判据：接管实例退出后必须重启（否则「Harness 页面打不开 /
+# Could not connect」且再也进不去），同时不能因为一次慢探测误杀健康实例。
+swiftc "$ROOT/scripts/test-runtime-health.swift" "$ROOT/Sources/RuntimeHealthSupport.swift" -o "$ROOT/build/test-runtime-health" -framework Foundation
+"$ROOT/build/test-runtime-health"
+# 界面文字对比度：夜间模式下勾选框标签曾只有 1.2:1（近黑画在深色卡片上），
+# 三级灰小字也只有 2.3:1。这里按 WCAG 算系统语义色的真实对比度，并守卫
+# 关键文案必须用正文色。
+swiftc -parse-as-library "$ROOT/scripts/test-contrast.swift" -o "$ROOT/build/test-contrast" -framework AppKit
+"$ROOT/build/test-contrast"
+# 旧版 WebKit 没有 CSS 锚点定位，而 DSH 前端只靠它定位弹层且无降级——不注入
+# 降级脚本时，macOS 15 及更早系统上所有菜单都叠在窗口左上角。
+swiftc -parse-as-library "$ROOT/scripts/test-anchor-fallback.swift" "$ROOT/Sources/HarnessAnchorFallback.swift" -o "$ROOT/build/test-anchor-fallback"
+"$ROOT/build/test-anchor-fallback"
+# 降级脚本的行为（用 node 跑真实逻辑）：不支持锚点时按触发元素摆位、支持时不动。
+if command -v node >/dev/null 2>&1; then
+  node "$ROOT/scripts/test-anchor-fallback.js"
+else
+  echo "跳过 test-anchor-fallback.js：未找到 node"
+fi
+# 动态颜色不能被 .cgColor 冻结：浅色下创建的窗口切到夜间后必须重新解析图层色，
+# 否则卡片停在纯白底、配白字（真实事故）。
+swiftc -parse-as-library "$ROOT/scripts/test-dynamic-layer.swift" "$ROOT/Sources/DynamicLayerView.swift" -o "$ROOT/build/test-dynamic-layer" -framework AppKit
+"$ROOT/build/test-dynamic-layer"
 swiftc "$ROOT/scripts/test-dsh-runtime-support.swift" "$ROOT/Sources/LauncherEnvironment.swift" "$ROOT/Sources/DSHRuntimeSupport.swift" "$ROOT/Sources/NpmVersionSupport.swift" "$ROOT/Sources/DSHUpdateSupport.swift" "$ROOT/Sources/UpdateSupport.swift" "$ROOT/Sources/RuntimeLaunchPlanner.swift" -o "$ROOT/build/test-dsh-runtime-support"
 RUNTIME_TEST_HOME="$(mktemp -d /tmp/dsh-runtime-home.XXXXXX)"
 # macOS ignores the HOME env var for NSHomeDirectory(); DSHRuntimeSupport honors
