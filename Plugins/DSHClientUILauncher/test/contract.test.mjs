@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, DOCK_TABS, diffContract, describeDiff } from '../lib/contract.js'
-import { moduleIdBlock, withContractBlock, withModuleId, runSync } from '../tools/sync-contract.mjs'
+import { moduleIdBlock, withContractBlock, withModuleId, runSync, buildStampBlock} from '../tools/sync-contract.mjs'
 import { checkHostVersion, realHostVersion } from '../tools/check-host-version.mjs'
 import { chmodSync, mkdirSync, mkdtempSync as mkTmp, rmSync as rmTmp } from 'node:fs'
 
@@ -208,4 +208,12 @@ test('宿主版本读取：profile 里 dsh 包是坏 JSON 时落到下一档（�
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('页面 data-build：构建标记 = 包版本 + git 短 sha，且 client 里已注入', () => {
+  const stamp = buildStampBlock()
+  assert.match(stamp, /^\d+\.\d+\.\d+(-[\w.]+)?\+[\w]+$/)
+  const source = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
+  assert.ok(source.includes(`const BUILD_STAMP = ${JSON.stringify(stamp)}`), 'client 的 BUILD_STAMP 必须与生成器一致')
+  assert.ok(source.includes("'data-build': BUILD_STAMP"), '根元素必须输出 data-build')
 })

@@ -60,6 +60,7 @@ try {
   // 冒烟门禁：控制台里出现 `slot entry crashed` 一律算失败（单测覆盖不到浏览器侧）
   const crashed = errors.filter((line) => line.includes('slot entry crashed'))
   const seen = await page.evaluate(() => ({
+    build: document.querySelector('[data-shell="launcher"]')?.getAttribute('data-build') ?? null,
     launcherMark: window.__DSH_LAUNCHER_SHELL__ === true,
     launcherShell: document.querySelector('[data-shell="launcher"]') !== null,
     hostRoot: document.querySelector('[data-slot="root"]') !== null,

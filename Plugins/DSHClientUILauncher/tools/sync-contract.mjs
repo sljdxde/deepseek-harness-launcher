@@ -10,6 +10,7 @@
  *       node tools/sync-contract.mjs --check  # 只检查，漂移退出码 1
  */
 import { readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -43,6 +44,21 @@ export function contractBlock() {
 }
 
 /** 模块 id 段：与 package.json 的 name 一致（同名替换时两边一起变，见 tools/build-layout-alias.mjs）。 */
+/**
+ * 构建标记：`<version>+<git短sha>`，供页面 `data-build` 与测试断言「测的是哪一版」。
+ * @returns {string} 形如 `0.2.2-rc.5+fe56b8c`（拿不到 git 时用 `dev`）。
+ */
+export function buildStampBlock() {
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+  let sha = 'dev'
+  try {
+    sha = execFileSync('git', ['-C', ROOT, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim() || 'dev'
+  } catch {
+    /* 非 git 环境退 dev */
+  }
+  return `${manifest.version}+${sha}`
+}
+
 export function moduleIdBlock(name) {
   return [ID_START, '// 本段由 tools/sync-contract.mjs 从 package.json 的 name 生成，勿手改。', `const MODULE_ID = ${JSON.stringify(name)}`, ID_END].join('\n')
 }
@@ -60,7 +76,10 @@ export function withContractBlock(source) {
   const start = source.indexOf(START)
   const end = source.indexOf(END)
   if (start < 0 || end < 0) return null
-  return `${source.slice(0, start)}${contractBlock()}${source.slice(end + END.length)}`
+  let next = `${source.slice(0, start)}${contractBlock()}${source.slice(end + END.length)}`
+  // BUILD_STAMP 也随包版本/提交更新（页面 data-build 用它）
+  next = next.replace(/const BUILD_STAMP = "[^"]*"/, `const BUILD_STAMP = ${JSON.stringify(buildStampBlock())}`)
+  return next
 }
 
 /**
