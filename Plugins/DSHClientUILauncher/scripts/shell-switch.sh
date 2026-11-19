@@ -10,6 +10,11 @@
 # 状态文件：$DSH_HOME/state/ui-shell.json，键 shell = "native" | "launcher"；缺文件/坏文件按 launcher（全开）处理，
 # 回滚开关不能因为文件坏了把界面弄坏（05-§9 R2 末段）。
 # 探测不到就退出码 3 并打印手工等价操作，不假装成功（06 R-12）。
+#
+# 状态：**等 root 提供者结论**（2026-11-19）。真机探针里"同名替换"已能换壳
+# （见 Pod/tasks/dsh-launcher-T3-真机验证/卡点-真机换壳.md 与提交 ef9582e），
+# 但设计里"root 单槽二选一"这条口径还没被技术负责人正式确认，所以切换那半先冻住；
+# verify 断言半不受影响，可单独用。
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
