@@ -43,14 +43,19 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 8_000))
   // 原生壳的特征不是 `.app`（0.2.2-rc.5 里没有这个类），而是 ui-layout 自己渲染的
   // `[data-slot="sidebar"]` 等槽标记；新外壳是 `[data-shell="launcher"]`。
+  // 两侧都要两个特征，避免"属性写错导致假阳性"：launcher = 我们的标记在 + 原生特征不在；
+  // native = 宿主原生特征在（右栏列或原生顶栏节点）+ 我们的标记不在。
   const seen = await page.evaluate(() => ({
     launcher: document.querySelector('[data-shell="launcher"]') !== null,
-    native: document.querySelector('[data-slot="sidebar"]') !== null,
+    nativeSidebar: document.querySelector('[data-slot="sidebar"]') !== null,
+    nativeRightbar: document.querySelector('[data-rightbar-col], [data-slot="rightbar"]') !== null,
+    nativeTopbar: document.querySelector('[data-slot="root"]') !== null,
     conflict: document.getElementById('launcher-conflict')?.textContent ?? null,
   }))
+  const nativeSeen = seen.nativeSidebar && (seen.nativeRightbar || seen.nativeTopbar)
   const ok = expected === 'launcher'
-    ? seen.launcher && !seen.native
-    : seen.native && !seen.launcher
+    ? seen.launcher && !seen.nativeSidebar && !seen.nativeRightbar
+    : !seen.launcher && nativeSeen
   process.stdout.write(`${JSON.stringify({ expected, seen, errors: errors.slice(0, 4) })}\n`)
   if (!ok) {
     process.stderr.write(`壳层断言失败：期望 ${expected}，实测 launcher=${seen.launcher} native=${seen.native}\n`)

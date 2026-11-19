@@ -6,6 +6,9 @@
  * 规则：单块放大时其余折叠但保留；收起后仍可恢复；切档位不改已分配的 key。
  */
 
+/** 每档的行列（原型：2 块左右并排、4 块 2×2、6 块 3×2）。 */
+export const GRID = Object.freeze({ 1: { columns: 1, rows: 1 }, 2: { columns: 2, rows: 1 }, 4: { columns: 2, rows: 2 }, 6: { columns: 3, rows: 2 } })
+
 /** main 的保留键。 */
 export const CONVERSATION = 'conversation'
 
@@ -97,6 +100,15 @@ export function restorePane(state, index) {
   if (index < 0 || index >= state.panes.length) return state
   const panes = state.panes.map((pane, position) => (position === index ? { ...pane, collapsed: false } : { ...pane }))
   return { ...state, panes }
+}
+
+/**
+ * 档位对应的网格（外壳用它铺 grid-template；非法档位按 1）。
+ * @param {number} mode - 档位。
+ * @returns {{ columns: number, rows: number }} 行列数。
+ */
+export function gridOf(mode) {
+  return GRID[mode] ?? GRID[1]
 }
 
 /** 当前可见的块（未收起）。 */

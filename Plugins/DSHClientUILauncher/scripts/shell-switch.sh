@@ -15,6 +15,13 @@
 # （见 Pod/tasks/dsh-launcher-T3-真机验证/卡点-真机换壳.md 与提交 ef9582e），
 # 但设计里"root 单槽二选一"这条口径还没被技术负责人正式确认，所以切换那半先冻住；
 # verify 断言半不受影响，可单独用。
+#
+# 语义（裁决前先记下，实现按它来）：
+#   同名替换落定时，native 与 launcher 的差别是「profile 里装哪一版 layout 实现」，
+#   不是「同一份代码读一个值」——launcher 让位也不能把 root 交给一个没被加载的真 ui-layout。
+#   所以实现层是换实现（软链/本地装），`state/ui-shell.json` 只作状态记录与双保险，不当唯一开关。
+#   verify 断言两侧都要两个特征：launcher = [data-shell="launcher"] 在 + 原生特征不在；
+#   native = 原生特征在（[data-rightbar-col] 或原生顶栏节点）+ [data-shell="launcher"] 不在。
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

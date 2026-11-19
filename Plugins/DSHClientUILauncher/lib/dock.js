@@ -5,8 +5,24 @@
  * 这里只管注册表与打开/关闭的语义，错误一律返回结果对象（渲染层不能因一个标签抛错整页崩）。
  */
 
+import { setDockWidth } from './layout.js'
+
+/** 拖动把手的命中宽度（px）。 */
+export const DOCK_HANDLE_HIT = 6
+
 /** 六个内置标签，顺序即标签栏顺序。 */
 export const BUILTIN_TABS = Object.freeze(['review', 'files', 'browser', 'terminal', 'tasks', 'side'])
+
+/**
+ * 拖拽把手算新宽度（FR-13）：把手在右栏左缘，往左拖变宽；宽度夹紧交给 layout.setDockWidth。
+ * @param {{ startWidth: number, deltaX: number, edge?: 'inner'|'outer' }} input - 起始宽、指针位移、把手在哪条边。
+ * @returns {{ ok: boolean, width: number, reason?: 'min'|'max' }} 夹紧后的宽度。
+ */
+export function dragDockWidth({ startWidth, deltaX, edge = 'inner' } = {}) {
+  const direction = edge === 'outer' ? 1 : -1
+  const raw = Number(startWidth) + direction * Number(deltaX || 0)
+  return setDockWidth(raw)
+}
 
 /**
  * 造一个 dock 注册表。

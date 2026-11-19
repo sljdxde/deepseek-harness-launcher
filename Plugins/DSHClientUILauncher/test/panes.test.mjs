@@ -2,8 +2,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { CONVERSATION, assignPane, collapsePane, createSplit, focusPane, restorePane, setSplitMode, visiblePanes, zoomPane } from '../lib/panes.js'
-import { BUILTIN_TABS, createDock } from '../lib/dock.js'
+import { CONVERSATION, assignPane, collapsePane, createSplit, focusPane, gridOf, restorePane, setSplitMode, visiblePanes, zoomPane } from '../lib/panes.js'
+import { BUILTIN_TABS, DOCK_HANDLE_HIT, createDock, dragDockWidth } from '../lib/dock.js'
 
 test('分屏：初始 1 块会话，切档位补空 pane、降档丢尾部', () => {
   const one = createSplit()
@@ -91,4 +91,20 @@ test('dock：注销当前打开的标签时右栏同时收起', () => {
   assert.equal(dock.active(), 'plugin:x')
   dispose()
   assert.equal(dock.active(), null, '被注销的标签不能继续是活动标签')
+})
+
+test('分屏网格：1/2/4/6 各自的行列，非法档位按 1', () => {
+  assert.deepEqual(gridOf(1), { columns: 1, rows: 1 })
+  assert.deepEqual(gridOf(2), { columns: 2, rows: 1 })
+  assert.deepEqual(gridOf(4), { columns: 2, rows: 2 })
+  assert.deepEqual(gridOf(6), { columns: 3, rows: 2 })
+  assert.deepEqual(gridOf(3), { columns: 1, rows: 1 })
+})
+
+test('右栏拖拽：左缘把手往左变宽、夹紧 320–520', () => {
+  assert.equal(DOCK_HANDLE_HIT, 6)
+  assert.deepEqual(dragDockWidth({ startWidth: 380, deltaX: -60 }), { ok: true, width: 440 })
+  assert.deepEqual(dragDockWidth({ startWidth: 380, deltaX: -300 }), { ok: false, reason: 'max', width: 520 })
+  assert.deepEqual(dragDockWidth({ startWidth: 380, deltaX: 300 }), { ok: false, reason: 'min', width: 320 })
+  assert.deepEqual(dragDockWidth({ startWidth: 380, deltaX: 60, edge: 'outer' }), { ok: true, width: 440 })
 })
