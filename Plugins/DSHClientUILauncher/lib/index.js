@@ -187,11 +187,17 @@ export function apply(ctx) {
   const service = createApprovalService()
   // allow/deny 接管：策略真的影响宿主工具审批；ask 交回宿主原生卡（避免双卡）
   ctx.on('approval/request', async (request, next) => {
+    // 顺序取证：waterfall 按注册序执行；若 api-remotes 的转发先注册，原生卡会先被问，
+    // 只有它 pass 才轮到我们。用 DSH_APPROVAL_TRACE=1 时打日志钉死先后。
+    const trace = process.env.DSH_APPROVAL_TRACE === '1'
+    if (trace) console.error('[approval-takeover] handler entered', request?.toolName, request?.callId)
     try {
       const outcome = await approvalOutcome(service, request)
+      if (trace) console.error('[approval-takeover] outcome', outcome)
       if (outcome === null) return next()
       return outcome
-    } catch {
+    } catch (error) {
+      if (trace) console.error('[approval-takeover] fallback to native', String(error?.message ?? error))
       return next()
     }
   })
