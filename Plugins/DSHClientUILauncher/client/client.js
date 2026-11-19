@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+3ce16c0"
+  const BUILD_STAMP = "0.2.2-rc.5+6c23a31"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -898,14 +898,22 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           selection?.removeAllRanges()
           selection?.addRange(range)
         }
-        // 多行要逐行插：contenteditable 里 insertText 的 \n 会被吞，多行会并成一行
+        // Lexical 类 composer：用 paste 事件写入（insertText 的 \n 会被吞，insertParagraph 无效）
+        if (String(text).includes('\n')) {
+          try {
+            const data = new DataTransfer()
+            data.setData('text/plain', String(text))
+            editable.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+            return true
+          } catch {
+            /* 退逐行插入 */
+          }
+        }
         const lines = String(text).split('\n')
         for (let index = 0; index < lines.length; index += 1) {
           const line = lines[index]
           if (line.length > 0) document.execCommand('insertText', false, line)
-          if (index < lines.length - 1) {
-            if (!document.execCommand('insertParagraph')) document.execCommand('insertLineBreak')
-          }
+          if (index < lines.length - 1) document.execCommand('insertParagraph')
         }
         // 光标放到文末，别留全选
         const endRange = document.createRange()
