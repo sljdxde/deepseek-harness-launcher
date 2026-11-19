@@ -116,38 +116,3 @@ export function visiblePanes(state) {
   return state.panes.filter((pane) => pane.collapsed !== true)
 }
 
-/**
- * 可见块数 → 网格行列（FR-15：收起后按剩余块数重排，不留空洞）。
- * 覆盖 1/2/3/4/5/6 块；>6 按接近正方形的列数排，行数向上取整。
- * @param {number} count - 可见块数。
- * @returns {{ columns: number, rows: number }} 网格。
- */
-export function gridForCount(count) {
-  const n = Number.isFinite(count) && count > 0 ? Math.trunc(count) : 1
-  if (GRID[n] !== undefined) return GRID[n]
-  const columns = Math.min(n, Math.max(1, Math.round(Math.sqrt(n))))
-  return { columns, rows: Math.ceil(n / columns) }
-}
-
-/**
- * 收起/恢复一块。
- * @param {Set<number>} collapsed - 当前收起集合（块序号，0 起）。
- * @param {number} index - 目标块序号。
- * @returns {Set<number>} 新集合（不改入参）。
- */
-export function toggleCollapsed(collapsed, index) {
-  const next = new Set(collapsed)
-  if (next.has(index)) next.delete(index)
-  else next.add(index)
-  return next
-}
-
-/**
- * 可见块（按原顺序过滤收起的）。
- * @param {number[]} indices - 全部块序号。
- * @param {Set<number>} collapsed - 收起集合。
- * @returns {number[]} 可见块序号。
- */
-export function visibleIndices(indices, collapsed) {
-  return indices.filter((index) => !collapsed.has(index))
-}
