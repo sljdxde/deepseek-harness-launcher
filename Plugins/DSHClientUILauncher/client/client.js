@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+414f460"
+  const BUILD_STAMP = "0.2.2-rc.5+d325df9"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1417,7 +1417,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         return () => dockListeners.delete(listener)
       },
     }
+    let dockOpenedAt = 0
     const setDockOpen = (next) => {
+      // 宿主占位者会在 openRightbar 之后立刻 closeRightbar：800ms 内的关闭忽略一次，
+      // 否则用户/宿主刚打开就被自己关掉（实测 1440 下 0.9s 后回到 false）。
+      if (next === true) dockOpenedAt = Date.now()
+      if (next === false && dockOpenedAt !== 0 && Date.now() - dockOpenedAt < 800) return
       dockOpen = next
       try { window.__DSH_LAUNCHER_DOCK__ = dockOpen } catch { /* 忽略 */ }
       for (const listener of dockListeners) listener()
