@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  ATTACH_LIMIT, SLASH_QUERY_LIMIT, addAttachment, breakdownOf, createQueue, filterSlash, meterOf, quoteBlockOf, slashQueryOf,
+  ATTACH_LIMIT, SLASH_QUERY_LIMIT, addAttachment, breakdownOf, createQueue, filterSlash, levelOf, meterOf, meterHint, quoteBlockOf, slashQueryOf,
 } from '../lib/composer.js'
 
 test('/ 只在行首、无空白、无第二个斜杠时触发', () => {
@@ -66,6 +66,14 @@ test('计量：真机口径 round(used/window*100)，85/95 两档阈值', () => 
   assert.deepEqual(meterOf({ used: 190000, window: 200000 }), { pct: 95, level: 'hot' })
   assert.deepEqual(meterOf({ used: 300000, window: 200000 }), { pct: 100, level: 'hot' })
   assert.deepEqual(meterOf({ used: 10, window: 0 }), { pct: 0, level: 'normal' })
+  assert.equal(levelOf(84.9), 'normal')
+  assert.equal(levelOf(85), 'warn')
+  assert.equal(levelOf(95), 'hot')
+})
+
+test('计量环的 title 与 aria-label 共用同一句（定稿文案）', () => {
+  const { text } = meterHint(meterOf({ used: 176000, window: 200000 }).pct)
+  assert.equal(text, '上下文占用 88%，该压缩了 · 点开压到 40%')
 })
 
 test('四项拆分之和恒等于显示值', () => {

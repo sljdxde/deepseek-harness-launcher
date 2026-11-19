@@ -31,8 +31,13 @@ test('关计量面板焦点还给环；关 find 焦点回输入框（FR-06，原
   assert.deepEqual(escapeOutcome('palette'), { closed: 'palette', focus: null })
 })
 
-test('计量提示：≥85 才有「该压缩了」，≥95 是更强的告警强度', () => {
-  assert.deepEqual(meterHint('normal'), { text: '', urgency: 'none' })
-  assert.deepEqual(meterHint('warn'), { text: '该压缩了', urgency: 'warn' })
-  assert.deepEqual(meterHint('hot'), { text: '该压缩了', urgency: 'alert' })
+test('计量提示按定稿文案：三档、数字取实时值、85/95 两档阈值', () => {
+  assert.deepEqual(meterHint(59), { text: '上下文占用 59% · 点开看拆分', urgency: 'none' })
+  assert.deepEqual(meterHint(84), { text: '上下文占用 84% · 点开看拆分', urgency: 'none' })
+  assert.deepEqual(meterHint(85), { text: '上下文占用 85%，该压缩了 · 点开压到 40%', urgency: 'warn' })
+  assert.deepEqual(meterHint(94), { text: '上下文占用 94%，该压缩了 · 点开压到 40%', urgency: 'warn' })
+  assert.deepEqual(meterHint(95), { text: '上下文占用 95%，快满了 · 点开压到 40%', urgency: 'alert' })
+  assert.deepEqual(meterHint(97), { text: '上下文占用 97%，快满了 · 点开压到 40%', urgency: 'alert' })
+  assert.equal(meterHint(Number.NaN).text, '上下文占用 0% · 点开看拆分')
+  assert.equal(meterHint(140).text, '上下文占用 100%，快满了 · 点开压到 40%')
 })

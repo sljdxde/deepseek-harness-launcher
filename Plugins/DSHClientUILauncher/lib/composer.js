@@ -104,21 +104,39 @@ export function meterOf({ used, window } = {}) {
     ? Math.round((spent / total) * 100)
     : 0
   const pct = Math.min(100, Math.max(0, raw))
-  const level = pct >= METER_HOT ? 'hot' : (pct >= METER_WARN ? 'warn' : 'normal')
-  return { pct, level }
+  return { pct, level: levelOf(pct) }
 }
 
 /**
- * 计量状态的提示文案（04-A2 · D2，口径来自 v4-变更与分工 §2）：
- * `≥85%` 的 tooltip 提示「该压缩了」；`≥95%` 是同一句话的更强呈现（红档 + role=alert，
- * 由渲染层决定），不另起文案——设计师若给了 ≥95 的原话，改这一个常量即可。
- * @param {'normal'|'warn'|'hot'} level - meterOf 的档位。
- * @returns {{ text: string, urgency: 'none'|'warn'|'alert' }} tooltip 文案与告警强度。
+ * 百分比对应的档位（FR-09 两档阈值：≥85 琥珀、≥95 红）。
+ * @param {number} pct - 0–100 的百分比。
+ * @returns {'normal'|'warn'|'hot'} 档位。
  */
-export function meterHint(level) {
-  if (level === 'hot') return { text: '该压缩了', urgency: 'alert' }
-  if (level === 'warn') return { text: '该压缩了', urgency: 'warn' }
-  return { text: '', urgency: 'none' }
+export function levelOf(pct) {
+  const value = Number(pct)
+  if (!Number.isFinite(value)) return 'normal'
+  if (value >= METER_HOT) return 'hot'
+  if (value >= METER_WARN) return 'warn'
+  return 'normal'
+}
+
+/**
+ * 计量环的提示文案与告警强度（04-A2 · D2，2026-11-19 设计定稿）。
+ *
+ * `title` 与 `aria-label` 用同一句；数字取实时值；拆分面板顶不加文字。
+ * 三档：
+ *   `<85%`  `上下文占用 59% · 点开看拆分`
+ *   `≥85%`  `上下文占用 88%，该压缩了 · 点开压到 40%`（琥珀）
+ *   `≥95%`  `上下文占用 97%，快满了 · 点开压到 40%`（红）
+ * @param {number} pct - 0–100 的实时百分比。
+ * @returns {{ text: string, urgency: 'none'|'warn'|'alert' }} 文案（title 与 aria-label 共用）与告警强度。
+ */
+export function meterHint(pct) {
+  const value = Number.isFinite(Number(pct)) ? Math.min(100, Math.max(0, Math.round(Number(pct)))) : 0
+  const level = levelOf(value)
+  if (level === 'hot') return { text: `上下文占用 ${value}%，快满了 · 点开压到 40%`, urgency: 'alert' }
+  if (level === 'warn') return { text: `上下文占用 ${value}%，该压缩了 · 点开压到 40%`, urgency: 'warn' }
+  return { text: `上下文占用 ${value}% · 点开看拆分`, urgency: 'none' }
 }
 
 /**
