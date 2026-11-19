@@ -79,8 +79,14 @@ pkg_field() { # $1: dep | bundles | deps-all
 # 官方接口：dsh plugin add/remove（DSH_BIN 指向 <dsh>/lib/bin.js 时用 node 跑）
 dsh_plugin_available() { [ -n "${DSH_BIN:-}" ] || command -v dsh >/dev/null 2>&1; }
 dsh_plugin() {
-  if [ -n "${DSH_BIN:-}" ]; then "$NODE_BIN" "$DSH_BIN" plugin --profile "$(basename "$PROFILE")" "$@"
-  else dsh plugin --profile "$(basename "$PROFILE")" "$@"; fi
+  # 关键：把 DSH_HOME 钉在 PROFILE 所在的 home。否则 dsh CLI 会退回默认的 ~/.dsh，
+  # 把依赖装到用户**真实** profile 上（已踩过一次，靠 dsh plugin remove 撤回）。
+  dsh_home=$(cd "$PROFILE/../.." && pwd)
+  if [ -n "${DSH_BIN:-}" ]; then
+    DSH_HOME="$dsh_home" "$NODE_BIN" "$DSH_BIN" plugin --profile "$(basename "$PROFILE")" "$@"
+  else
+    DSH_HOME="$dsh_home" dsh plugin --profile "$(basename "$PROFILE")" "$@"
+  fi
 }
 
 pkg_write_bundles() { # $1: add|remove —— 只动 dsh.profile.bundles，不碰 dependencies
