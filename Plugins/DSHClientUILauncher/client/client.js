@@ -216,6 +216,49 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * @param {object} ctx - 客户端上下文。
    * @returns {Function[]} dispose 列表。
    */
+  /**
+   * FR-38 上下文诊断：入口 + 浮层都在 `conversation.session.header.actions`（session scope）。
+   * root 是 root scope，拿不到 useProjection；硬读 ctx.tokenMeter 会把整页打崩（df1f865 事故）。
+   * 数据只用宿主投影 `contextPressure` / `contextBreakdown`；读不到整条不渲染（不置假数据）。
+   */
+  function registerContextDiagnostics(ctx) {
+    if (typeof window === 'undefined' || window.__DSH_LAUNCHER_CONTEXT_DIAG__ !== true) return []
+    const pickNumber = (value, keys) => {
+      if (value === null || value === undefined) return null
+      const raw = typeof value === 'function' ? value((v) => v) : value
+      if (raw === null || typeof raw !== 'object') return Number.isFinite(raw) ? Number(raw) : null
+      for (const key of keys) {
+        const n = Number(raw[key])
+        if (Number.isFinite(n)) return n
+      }
+      return null
+    }
+    const Component = (slotProps) => {
+      const pressure = pickNumber(slotProps?.useProjection?.('contextPressure'), ['pct', 'percent', 'used', 'pressure', 'ratio'])
+      const breakdown = slotProps?.useProjection?.('contextBreakdown')
+      const raw = typeof breakdown === 'function' ? breakdown((v) => v) : breakdown
+      const system = pickNumber(raw?.systemTokens ?? raw, ['systemTokens'])
+      if (pressure === null || raw === null || raw === undefined) return null
+      const pct = pressure <= 1 ? Math.round(pressure * 100) : Math.round(pressure)
+      return h('div', { className: 'launcher-diag-inline' },
+        h('button', { type: 'button', className: 'launcher-diag-inline__btn', title: '上下文诊断', 'data-pct': pct }, `上下文 ${pct}%`),
+        pct >= 85 ? h('span', { className: 'launcher-diag-inline__advice' }, pct >= 95 ? '快满了：建议压缩到 40%' : '该压缩了：建议压缩到 40%') : null)
+    }
+    try {
+      if (typeof ctx?.slots?.inject !== 'function') return []
+      const dispose = ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+        name: 'conversation.session.header.actions',
+        id: 'launcher.contextDiagnostics',
+        order: 10,
+        inject: () => ({}),
+      }, Component))
+      return typeof dispose === 'function' ? [dispose] : []
+    } catch (error) {
+      console.warn('dsh-client-ui-launcher: 注册上下文诊断失败', error)
+      return []
+    }
+  }
+
   function registerPermissionPill(ctx) {
     if (typeof window === 'undefined' || window.__DSH_LAUNCHER_PERMISSION_PILL__ !== true) return []
     const LEVELS = [
@@ -404,7 +447,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const resolveWorkbench = () => (onPage() && keyReady() ? { status: 'handled', run: runWorkbench } : { status: 'pass' })
     const wrapReady = () => onPage()
     return [
-      { id: 'launcher.contextDiagnostics', label: '上下文诊断', hint: '上下文用量：占用百分比 + 四项拆分 + 压缩建议', regions: ['page'], aliases: [], resolve: () => (wrapReady() && readContextUsage(ctx) !== null ? { status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:open-diagnostics')) } : { status: 'pass' }) },
       ...(typeof window !== 'undefined' && window.__DSH_LAUNCHER_DEV_PANEL__ === true
         ? [{ id: 'launcher.devPanel', label: '外壳调试面板', hint: '开发用：面板/分屏/右栏宽度/codeWrap/权限', regions: ['page'], aliases: [], resolve: () => ({ status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:open-dev-panel')) }) }]
         : []),
@@ -479,21 +521,16 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const ctx = CURRENT_CTX
     const commands = collectCommands(ctx)
     const [paletteOpen, setPaletteOpen] = React.useState(false)
-    const [diagOpen, setDiagOpen] = React.useState(false)
     const [devOpen, setDevOpen] = React.useState(false)
-    const contextUsage = readContextUsage(ctx)
     const [wrapOn, setWrapOn] = React.useState(codeWrapOn)
     // #1 焦点回位：打开面板时记住当时的活动元素，Esc 时优先还给它（选择器只作兜底）
     const openerRef = React.useRef(null)
     React.useEffect(() => {
-      const open = () => setDiagOpen(true)
       const openDev = () => setDevOpen(true)
       const flip = () => setWrapOn((on) => { setCodeWrapPref(!on); return !on })
-      window.addEventListener('launcher:open-diagnostics', open)
       window.addEventListener('launcher:open-dev-panel', openDev)
       window.addEventListener('launcher:toggle-code-wrap', flip)
       return () => {
-        window.removeEventListener('launcher:open-diagnostics', open)
         window.removeEventListener('launcher:open-dev-panel', openDev)
         window.removeEventListener('launcher:toggle-code-wrap', flip)
       }
@@ -653,17 +690,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         renderSlot('shell.bottom', {})),
       h('div', { className: 'launcher-overlay' },
         renderSlot('shell.overlay', {})),
-      diagOpen && contextUsage !== null ? h('div', { className: 'launcher-diag', role: 'dialog', 'aria-label': '上下文诊断', onKeyDown: onDiagKeyDown },
-        h('header', { className: 'launcher-diag__head' },
-          h('span', null, `上下文诊断 · 占用 ${contextUsage.pct}%`),
-          h('button', { type: 'button', onClick: () => setDiagOpen(false), 'aria-label': '关闭诊断' }, '✕')),
-        h('dl', { className: 'launcher-diag__list' },
-          h('div', null, h('dt', null, '系统提示'), h('dd', null, String(contextUsage.system))),
-          h('div', null, h('dt', null, '会话消息'), h('dd', null, String(contextUsage.chat))),
-          h('div', null, h('dt', null, '文件'), h('dd', null, String(contextUsage.files))),
-          h('div', null, h('dt', null, '工具'), h('dd', null, String(contextUsage.tools))),
-          h('div', null, h('dt', null, '用量 / 上限'), h('dd', null, `${contextUsage.used} / ${contextUsage.limit}`))),
-        h('p', { className: 'launcher-diag__advice' }, contextUsage.pct >= 95 ? '快满了：建议立刻压缩到 40%' : contextUsage.pct >= 85 ? '该压缩了：建议压缩到 40%' : '占用正常')) : null,
       devOpen ? h('div', { className: 'launcher-diag', role: 'dialog', 'aria-label': '外壳调试面板', onKeyDown: onDiagKeyDown },
         h('header', { className: 'launcher-diag__head' },
           h('span', null, '外壳调试面板（开发用）'),
@@ -735,6 +761,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // FR-39/42/43：会话流动作（真槽，槽在才注册）
     const turnDisposers = registerTurnActions(ctx)
     const permDisposers = registerPermissionPill(ctx)
+    const diagDisposers = registerContextDiagnostics(ctx)
     // FR-16：我们自己的动作也注册进同一个 catalog（与宿主条目同权）
     const OWN_ROWS_REGISTERED = Symbol.for('dsh.launcher.catalogRows')
     if (typeof ctx?.shortcuts?.register === 'function') {
@@ -840,6 +867,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (window.__DSH_LAUNCHER_CTX__ === ctx) delete window.__DSH_LAUNCHER_CTX__
       if (typeof window.removeEventListener === 'function') window.removeEventListener('resize', syncFolded)
       // 会话动作的 dispose 只释放一次（之前被外层循环重复调用）
+      for (const diagDispose of diagDisposers) {
+        try { diagDispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
+      }
       for (const permDispose of permDisposers) {
         try { permDispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
       }
