@@ -22,6 +22,7 @@ LINK="$PROFILE_DIR/node_modules/@deepseek-ai/dsh-client-ui-layout"
 ORIG_DIR="$PROFILE_DIR/.orig/@deepseek-ai"
 ORIG="$ORIG_DIR/dsh-client-ui-layout"
 STATE="$DSH_DATA/state/ui-shell.json"
+STATE_DIR="$(dirname "$STATE")"
 LOG="$DSH_DATA/state/ui-shell.log"
 HOST_PACKAGE='@deepseek-ai/dsh-client-ui-layout'
 
@@ -135,6 +136,24 @@ require_version_lock() {
   fi
 }
 
+# 装之前的 package.json 与锁文件各留一份：native 要证明它们逐字回来了
+snapshot_state() {
+  cp -p "$MANIFEST" "$STATE_DIR/package.json.snapshot"
+  [ -f "$PROFILE_DIR/pnpm-lock.yaml" ] && cp -p "$PROFILE_DIR/pnpm-lock.yaml" "$STATE_DIR/pnpm-lock.snapshot"
+  return 0
+}
+
+compare_snapshot() {
+  if [ -f "$STATE_DIR/package.json.snapshot" ] && ! cmp -s "$MANIFEST" "$STATE_DIR/package.json.snapshot"; then
+    echo "警告：package.json 与装之前不完全一致（依赖删了但顺序/其他字段被动过）" >&2
+    log_line "native=manifest-not-identical"
+  fi
+  if [ -f "$STATE_DIR/pnpm-lock.snapshot" ] && ! cmp -s "$PROFILE_DIR/pnpm-lock.yaml" "$STATE_DIR/pnpm-lock.snapshot"; then
+    echo "警告：pnpm-lock.yaml 与装之前不完全一致" >&2
+    log_line "native=lock-not-identical"
+  fi
+}
+
 set_override() {
   mode=$1
   if [ "$mode" = "add" ]; then
@@ -210,7 +229,7 @@ case "${1:-}" in
   launcher)
     require_profile
     require_version_lock
-    preserve_original
+    snapshot_state
     cp -p "$MANIFEST" "$MANIFEST.bak.$$"
     if ! set_override add; then
       mv -f "$MANIFEST.bak.$$" "$MANIFEST"
