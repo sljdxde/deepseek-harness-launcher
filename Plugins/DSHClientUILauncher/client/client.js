@@ -143,7 +143,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   function ownCatalogRowsFor(ctx) {
     const page = window.__DSH_LAUNCHER_PAGE__ ?? 'conversation'
     const onPage = page === 'conversation' || page === 'plugins'
-    const guard = (enabled, run) => ({ resolve: () => (enabled ? 'handled' : 'pass'), run })
+    const guard = (enabled, run) => ({ resolve: () => (enabled ? { status: 'handled', run } : { status: 'pass' }) })
     return [
       { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.('plugins')) },
       { id: 'launcher.settings', label: '打开设置', hint: '设置面板', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.('settings')) },
