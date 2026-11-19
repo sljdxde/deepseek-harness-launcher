@@ -67,6 +67,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-shell[data-code-wrap="on"] pre code{white-space:pre-wrap!important;word-break:break-word}
 .launcher-diag{position:fixed;right:16px;bottom:40px;width:min(340px,90vw);background:var(--dsw-alias-bg-1,#fff);color:inherit;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.18);z-index:45}
 .launcher-diag__head{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}
+.launcher-toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:rgba(20,20,20,.9);color:#fff;font-size:12px;z-index:60;pointer-events:none}
+.launcher-turn-action{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
+.launcher-turn-action--usage{opacity:.7;border:0}
+.launcher-turn-highlight{outline:2px solid var(--dsw-alias-accent,#4c8dff);outline-offset:2px;border-radius:6px}
 .launcher-diag__advice{margin:0;padding:6px 10px 10px;font-size:12px;opacity:.8}
 .launcher-diag__list{margin:0;padding:8px 10px;display:grid;gap:6px;font-size:12px}
 .launcher-diag__list div{display:flex;justify-content:space-between;gap:12px}
@@ -185,6 +189,19 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * **默认不注册**：等有会话环境的真渲染验证过再开（`window.__DSH_LAUNCHER_TURN_ACTIONS__ === true`）。
    * 按钮必须真有行为，否则就是"假执行"（05 §6.5：假执行比不提供更糟）。
    */
+  /** 外壳的可见反馈条（失败/结果都要看得见，别只 console）。 */
+  function showLauncherToast(text) {
+    try {
+      const node = document.createElement('div')
+      node.className = 'launcher-toast'
+      node.textContent = text
+      document.body.appendChild(node)
+      setTimeout(() => node.remove(), 2600)
+    } catch {
+      console.warn('dsh-client-ui-launcher:', text)
+    }
+  }
+
   function registerTurnActions(ctx) {
     if (typeof window === 'undefined' || window.__DSH_LAUNCHER_TURN_ACTIONS__ !== true) return []
     const disposers = []
@@ -200,10 +217,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         const link = document.createElement('a')
         link.href = url
         link.download = `turn-${index}-${Date.now()}.md`
+        link.rel = 'noopener'
+        document.body.appendChild(link)
         link.click()
-        setTimeout(() => URL.revokeObjectURL(url), 1000)
+        link.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 2000)
+        showLauncherToast(`已导出 ${link.download}`)
       } catch (error) {
-        console.warn('dsh-client-ui-launcher: 导出失败', error)
+        showLauncherToast(`导出失败：${String(error?.message ?? error).slice(0, 60)}`)
       }
     }
 
@@ -216,7 +237,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         setTimeout(() => anchor.classList.remove('launcher-turn-highlight'), 1600)
         return
       }
-      window.dispatchEvent(new CustomEvent('launcher:turn-action', { detail: { id: 'launcher.viewInContext', message: '上下文视图暂无该轮锚点，已停留在当前会话' } }))
+      showLauncherToast('上下文视图暂无该轮锚点，已停留在当前会话')
+      window.dispatchEvent(new CustomEvent('launcher:turn-action', { detail: { id: 'launcher.viewInContext' } }))
     }
 
     const rows = [
