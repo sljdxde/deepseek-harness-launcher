@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+3e8e7d0"
+  const BUILD_STAMP = "0.2.2-rc.5+8f1efb2"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -932,6 +932,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     return { render: true, reason: 'ok' }
   }
 
+
+  /** 可见块数 → 网格（与 lib/panes.js 的 gridForCount 同口径：收起后重排不留空洞）。 */
+  function gridForCount(count) {
+    const n = Number.isFinite(count) && count > 0 ? Math.trunc(count) : 1
+    if (SPLIT_GRID[n] !== undefined) return { columns: SPLIT_GRID[n][0], rows: SPLIT_GRID[n][1] }
+    const columns = Math.min(n, Math.max(1, Math.round(Math.sqrt(n))))
+    return { columns, rows: Math.ceil(n / columns) }
+  }
 
   /** 卡片布局量（与 lib/new-session.js 的 cardLayout 同口径）。 */
   function cardLayout(width, height) {
