@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+95c3f38"
+  const BUILD_STAMP = "0.2.2-rc.5+3e8e7d0"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -118,6 +118,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-theme-chip{margin-left:auto;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;font-size:12px;line-height:1;padding:2px 6px;cursor:pointer}
 .launcher-rail__dock{display:inline-flex;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
 .launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
+.launcher-pane.is-focused{outline:2px solid var(--dsw-alias-brand-primary,#2f6fed);outline-offset:-2px}
+.launcher-pane__collapse{position:absolute;top:6px;right:8px;z-index:5;width:22px;height:22px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:6px;background:var(--dsw-alias-bg-base,#fff);color:inherit;font-size:12px;line-height:1;cursor:pointer;opacity:.75}
+.launcher-pane__collapse:hover{opacity:1}
+.launcher-panes__empty{display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--dsw-alias-label-secondary,#666);font-size:13px}
+.launcher-panes__restore{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;font:inherit;font-size:12px;padding:4px 10px;cursor:pointer}
 .launcher-panel-back{flex:0 0 auto;padding:6px 12px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}
 .launcher-panel-back__btn{border:0;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;opacity:.8}
 .launcher-empty{position:static;flex:0 0 auto;z-index:auto;align-items:center;display:flex;justify-content:center;min-height:0;max-height:260px;overflow:auto;padding:16px 16px 8px;background:transparent}
@@ -998,7 +1003,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     const [dragWidth, setDragWidth] = React.useState(DOCK_WIDTH)
-    const [splitMode, setSplitMode] = React.useState(1)
+    const [splitMode, setSplitModeRaw] = React.useState(1)
+    const [collapsedPanes, setCollapsedPanes] = React.useState(() => new Set())
+    const [focusedPane, setFocusedPane] = React.useState(0)
+    // 切档位清空收起集合（FR-15：2/4/6 切换时清空）
+    const setSplitMode = (mode) => { setCollapsedPanes(new Set()); setSplitModeRaw(mode) }
     // ≤860：侧栏转抽屉（默认收起），与 rail 互斥；主区从 rail 后起算
     const [drawerOpen, setDrawerOpen] = React.useState(false)
     const [themeMode, setThemeMode] = React.useState(() => {
@@ -1145,8 +1154,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const [paletteIndex, setPaletteIndex] = React.useState(0)
     const [query, setQuery] = React.useState('')
     const shown = commands.filter((cmd) => query === '' || String(cmd.label).includes(query))
-    const [cols, rows] = SPLIT_GRID[splitMode] ?? SPLIT_GRID[1]
     const paneKeys = Array.from({ length: splitMode }, (_, i) => (i === 0 ? 'conversation' : `conversation#${i + 1}`))
+    const visiblePanes = paneKeys.map((_, i) => i).filter((i) => !collapsedPanes.has(i))
+    const { columns: cols, rows } = visiblePanes.length === 0 ? { columns: 1, rows: 1 } : gridForCount(visiblePanes.length)
     const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
     const dockWidth = dockCanShow ? Math.max(DOCK_MIN, dragWidth) : 0
     const lastPointerRef = React.useRef({ time: 0, x: 0 })
@@ -1312,6 +1322,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             'aria-pressed': splitMode === mode,
             onClick: () => setSplitMode(mode),
           }, String(mode))),
+          collapsedPanes.size > 0
+            ? h('button', {
+              key: 'restore-panes',
+              type: 'button',
+              className: 'launcher-panes__restore',
+              onClick: () => setCollapsedPanes(new Set()),
+            }, `恢复收起的 ${collapsedPanes.size} 块`)
+            : null,
           h('button', {
             type: 'button',
             className: 'launcher-theme-chip',
@@ -1322,12 +1340,29 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             onClick: toggleTheme,
           }, themeMode === 'dark' ? '🌙' : '☀️')),
         h('div', { className: 'launcher-panes' },
-          paneKeys.map((key, index) => h('div', {
-            key,
-            className: 'launcher-pane',
-            // 第一格反映真实 entryKey（断言用），其余格是分屏占位 key
-            'data-pane': index === 0 ? (activePanelId ?? 'conversation') : key,
-          },
+          visiblePanes.length === 0
+            ? h('div', { className: 'launcher-panes__empty' },
+              h('span', null, '所有块都收起了'),
+              h('button', { type: 'button', className: 'launcher-panes__restore', onClick: () => setCollapsedPanes(new Set()) }, '恢复全部块'))
+            : visiblePanes.map((index) => h('div', {
+                key: paneKeys[index],
+                className: `launcher-pane${focusedPane === index ? ' is-focused' : ''}`,
+                'data-pane-index': index,
+                onPointerDown: () => setFocusedPane(index),
+                // 第一格反映真实 entryKey（断言用），其余格是分屏占位 key
+                'data-pane': index === 0 ? (activePanelId ?? 'conversation') : paneKeys[index],
+              },
+            splitMode > 1
+              ? h('button', {
+                key: 'collapse',
+                type: 'button',
+                className: 'launcher-pane__collapse',
+                'aria-label': '收起该块',
+                title: '收起该块',
+                onPointerDown: (e) => e.stopPropagation(),
+                onClick: () => setCollapsedPanes((prev) => toggleCollapsed(prev, index)),
+              }, '✕')
+              : null,
             index === 0
               ? [
                 emptyDecision.render && !starterFilled
