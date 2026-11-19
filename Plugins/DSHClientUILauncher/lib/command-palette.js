@@ -132,3 +132,33 @@ export function executeCommand(entry, context = {}) {
     return 'failed'
   }
 }
+
+/** 我们自己的动作要注册进同一个 catalog（FR-16：面板能搜到并执行）。 */
+export const OWN_CATALOG_ROWS = [
+  { id: 'launcher.workbench.open', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'] },
+  { id: 'launcher.shell.toggle', label: '切换外壳', hint: '新外壳 ↔ 原生外壳', regions: ['page'] },
+  { id: 'launcher.session.new', label: '新建会话', hint: '与左栏「＋ 新建会话」同效', regions: ['page', 'editable'] },
+  { id: 'launcher.session.search', label: '搜索会话', hint: '按标题/内容过滤', regions: ['page'] },
+]
+
+/**
+ * 造出我们自己的 catalog 行（带 resolve/run），供 client 注册进 `ctx.shortcuts.catalog`。
+ * `resolve` 按上下文判定：不在页面级 / 没有可工作的面板时返回 `pass`（置灰），不一律 handled。
+ * @param {{ hasSession?: boolean, currentPage?: string }} [ctx] - 最小上下文。
+ * @param {{ onOpenWorkbench?: Function, onToggleShell?: Function, onNewSession?: Function, onSearchSessions?: Function }} [actions] - 执行回调。
+ * @returns {object[]} catalog 行。
+ */
+export function ownCatalogRows(ctx = {}, actions = {}) {
+  const onPage = ctx.currentPage === undefined || ctx.currentPage === 'conversation' || ctx.currentPage === 'plugins'
+  const hasSession = ctx.hasSession !== false
+  const guard = (enabled, run) => ({
+    resolve: () => (enabled ? 'handled' : 'pass'),
+    run,
+  })
+  return [
+    { ...OWN_CATALOG_ROWS[0], ...guard(onPage, () => actions.onOpenWorkbench?.()) },
+    { ...OWN_CATALOG_ROWS[1], ...guard(onPage, () => actions.onToggleShell?.()) },
+    { ...OWN_CATALOG_ROWS[2], ...guard(onPage && hasSession, () => actions.onNewSession?.()) },
+    { ...OWN_CATALOG_ROWS[3], ...guard(onPage, () => actions.onSearchSessions?.()) },
+  ]
+}

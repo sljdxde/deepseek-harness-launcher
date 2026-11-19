@@ -104,6 +104,24 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * @param {object} ctx - 客户端上下文。
    * @returns {{ id: string, label: string, hint?: string, run?: Function, command?: string }[]} 命令清单。
    */
+  /**
+   * 我们自己的 catalog 行（与 lib/command-palette.js 的 ownCatalogRows 同口径）。
+   * client 是 loader 形态不能 import lib，这里内联同一套规则；单测在 lib 侧覆盖。
+   * @param {object} ctx - 客户端上下文。
+   * @returns {object[]} catalog 行。
+   */
+  function ownCatalogRowsFor(ctx) {
+    const page = window.__DSH_LAUNCHER_PAGE__ ?? 'conversation'
+    const onPage = page === 'conversation' || page === 'plugins'
+    const guard = (enabled, run) => ({ resolve: () => (enabled ? 'handled' : 'pass'), run })
+    return [
+      { id: 'launcher.workbench.open', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.('plugins')) },
+      { id: 'launcher.shell.toggle', label: '切换外壳', hint: '新外壳 ↔ 原生外壳', regions: ['page'], ...guard(onPage, () => console.info('dsh-client-ui-launcher: 切换外壳需在外部执行 shell-switch')) },
+      { id: 'launcher.session.new', label: '新建会话', hint: '与左栏「＋ 新建会话」同效', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.(null)) },
+      { id: 'launcher.session.search', label: '搜索会话', hint: '按标题/内容过滤', regions: ['page'], ...guard(onPage, () => console.info('dsh-client-ui-launcher: 搜索会话待接宿主会话列表')) },
+    ]
+  }
+
   function collectCommands(ctx) {
     // 05 §6.5 定稿：条目源 = ctx.shortcuts.catalog；只取 regions 含 page/editable 的行，
     // modals 专属行不进；label 作标题、id 作键；resolve 返回 pass 的行置灰但不隐藏。
@@ -327,6 +345,21 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // 只读暴露，不改行为；卸载时清掉。
     window.__DSH_LAUNCHER_CTX__ = ctx
     CURRENT_CTX = ctx
+    // FR-16：我们自己的动作也注册进同一个 catalog（与宿主条目同权）
+    const OWN_ROWS_REGISTERED = Symbol.for('dsh.launcher.catalogRows')
+    if (ctx?.shortcuts?.catalog !== undefined && ctx.shortcuts.catalog !== null) {
+      const catalog = ctx.shortcuts.catalog
+      const rows = ownCatalogRowsFor(ctx)
+      try {
+        if (typeof catalog.register === 'function') rows.forEach((row) => catalog.register(row))
+        else if (Array.isArray(catalog)) catalog.push(...rows)
+        else if (Array.isArray(catalog.rows)) catalog.rows.push(...rows)
+        catalog[OWN_ROWS_REGISTERED] = rows
+        window.__DSH_LAUNCHER_OWN_ROWS__ = rows.length
+      } catch (error) {
+        console.warn('dsh-client-ui-launcher: 注册 catalog 行失败', error)
+      }
+    }
     const panelInfo = createPanelInfo()
     // 右栏轨道宽度是外壳的活，但显隐由 ctx.layout.openRightbar/closeRightbar 记账
     // （ui-sidebar-right 用这两个动作），所以它得是一个能订阅的小观测面。

@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { EMPTY_SOURCE_HINT, PALETTE_REGIONS, catalogCommands, executeCommand, filterCommands, moveIndex, normalizeCommands } from '../lib/command-palette.js'
+import { EMPTY_SOURCE_HINT, OWN_CATALOG_ROWS, PALETTE_REGIONS, catalogCommands, executeCommand, filterCommands, moveIndex, normalizeCommands, ownCatalogRows } from '../lib/command-palette.js'
 
 test('归一化：容忍 list()/directory.list()/commands 三种形状，坏项与重复 id 丢掉', () => {
   assert.deepEqual(normalizeCommands([{ id: 'a', label: 'A' }]), [{ id: 'a', label: 'A', hint: undefined, command: 'a' }])
@@ -75,4 +75,29 @@ test('执行：handled 才跑 run；pass 不跑；异常记 failed', () => {
 test('resolve 抛异常的行：置灰而不是把面板打崩', () => {
   const rows = catalogCommands([{ id: 'bad', label: '坏', regions: ['page'], resolve: () => { throw new Error('x') } }])
   assert.equal(rows[0].disabled, true)
+})
+
+test('自己注册的行：能进 catalogCommands 且能执行（FR-16）', () => {
+  const calls = []
+  const rows = ownCatalogRows({}, {
+    onOpenWorkbench: () => calls.push('bench'),
+    onToggleShell: () => calls.push('shell'),
+    onNewSession: () => calls.push('new'),
+    onSearchSessions: () => calls.push('search'),
+  })
+  const entries = catalogCommands(rows)
+  assert.deepEqual(entries.map((e) => e.id), OWN_CATALOG_ROWS.map((r) => r.id))
+  assert.equal(entries.every((e) => e.disabled === false), true)
+  assert.equal(executeCommand(entries[0]), 'ran')
+  assert.equal(executeCommand(entries[1]), 'ran')
+  assert.equal(executeCommand(entries[2]), 'ran')
+  assert.equal(executeCommand(entries[3]), 'ran')
+  assert.deepEqual(calls, ['bench', 'shell', 'new', 'search'])
+})
+
+test('自己注册的行：没有会话/不在页面级时 resolve 返回 pass（置灰）', () => {
+  const rows = ownCatalogRows({ hasSession: false, currentPage: 'settings' })
+  const entries = catalogCommands(rows)
+  assert.equal(entries.every((e) => e.disabled === true), true)
+  assert.equal(executeCommand(entries[2]), 'pass')
 })
