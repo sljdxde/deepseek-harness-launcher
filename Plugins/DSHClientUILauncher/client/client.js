@@ -55,6 +55,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-panes{flex:1;min-height:0;display:grid;gap:1px;grid-template-columns:repeat(var(--split-cols,1),minmax(0,1fr));grid-template-rows:repeat(var(--split-rows,1),minmax(0,1fr))}
 .launcher-pane{min-width:0;min-height:0;overflow:auto}
 @container (max-width: 760px){.launcher-panes{grid-template-columns:minmax(0,1fr)!important;grid-template-rows:repeat(var(--split-rows,1),minmax(0,1fr))}}
+.launcher-palette{position:fixed;inset-inline:0;top:12vh;margin:auto;width:min(560px,92vw);max-height:60vh;display:flex;flex-direction:column;background:var(--dsw-alias-bg-1,#fff);color:inherit;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.18);z-index:50;overflow:hidden}
+.launcher-palette__input{font:inherit;padding:10px 12px;border:0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));outline:none;background:transparent;color:inherit}
+.launcher-palette__list{list-style:none;margin:0;padding:4px;overflow:auto}
+.launcher-palette__item{display:flex;justify-content:space-between;gap:12px;padding:6px 10px;border-radius:6px;cursor:pointer}
+.launcher-palette__item.on{background:var(--dsw-alias-bg-2,rgba(127,127,127,.12))}
+.launcher-palette__hint{opacity:.6;font-size:11px}
 .launcher-dock__handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;background:transparent;z-index:2}
 .launcher-dock__handle:hover{background:var(--dsw-alias-border-l2,rgba(127,127,127,.3))}
 .launcher-statusbar{grid-area:status;align-items:center;border-top:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;font-size:11px;gap:10px;padding:0 10px;color:var(--dsw-alias-label-secondary)}
@@ -101,6 +107,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     const [dragWidth, setDragWidth] = React.useState(DOCK_WIDTH)
     const [splitMode, setSplitMode] = React.useState(1)
+    const [paletteOpen, setPaletteOpen] = React.useState(false)
+    const [paletteIndex, setPaletteIndex] = React.useState(0)
     const [cols, rows] = SPLIT_GRID[splitMode] ?? SPLIT_GRID[1]
     const paneKeys = Array.from({ length: splitMode }, (_, i) => (i === 0 ? 'conversation' : `conversation#${i + 1}`))
     const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
@@ -118,7 +126,32 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       window.addEventListener('pointerup', up)
     }
     const collapsed = props.sidebarCollapsed === true
-    return h('div', { className: 'launcher-shell', 'data-shell': 'launcher' },
+    const runCommand = (id) => {
+      setPaletteOpen(false)
+      if (id === 'new-session') { props.onNewSession?.(); return }
+      if (id === 'toggle-dock') { props.onToggleDock?.(); return }
+      if (id === 'toggle-sidebar') { props.onToggleSidebar?.(); return }
+      if (id === 'search-sessions') { props.onSearchSessions?.(); return }
+    }
+    const onKeyDown = (event) => {
+      const isPaletteKey = (event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'k'
+      if (isPaletteKey) { event.preventDefault(); setPaletteOpen((open) => !open); setPaletteIndex(0); return }
+      if (!paletteOpen) return
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setPaletteOpen(false)
+        // Esc 焦点回位：UX 口径是回到 composer 输入框（05-§4.2 / FR-06）
+        requestAnimationFrame(() => {
+          const input = document.querySelector('[data-slot="main"] textarea, .launcher-main textarea')
+          input?.focus?.()
+        })
+        return
+      }
+      if (event.key === 'ArrowDown') { event.preventDefault(); setPaletteIndex((i) => (i + 1) % PALETTE_COMMANDS.length) }
+      if (event.key === 'ArrowUp') { event.preventDefault(); setPaletteIndex((i) => (i - 1 + PALETTE_COMMANDS.length) % PALETTE_COMMANDS.length) }
+      if (event.key === 'Enter') { event.preventDefault(); runCommand(PALETTE_COMMANDS[paletteIndex].id) }
+    }
+    return h('div', { className: 'launcher-shell', 'data-shell': 'launcher', onKeyDown },
       h('div', { className: 'launcher-rail', role: 'navigation', 'aria-label': 'launcher rail' },
         renderSlot('shell.leading', {}),
         RAIL_ENTRIES.map((entry) => h('button', {
@@ -174,6 +207,24 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         renderSlot('shell.bottom', {})),
       h('div', { className: 'launcher-overlay' },
         renderSlot('shell.overlay', {})),
+      paletteOpen ? h('div', { className: 'launcher-palette', role: 'dialog', 'aria-modal': 'true', 'aria-label': '命令面板' },
+        h('input', {
+          className: 'launcher-palette__input',
+          placeholder: '搜索命令…',
+          autoFocus: true,
+          onKeyDown,
+          'aria-controls': 'launcher-palette-list',
+        }),
+        h('ul', { id: 'launcher-palette-list', role: 'listbox', className: 'launcher-palette__list' },
+          PALETTE_COMMANDS.map((cmd, index) => h('li', {
+            key: cmd.id,
+            role: 'option',
+            'aria-selected': index === paletteIndex,
+            className: `launcher-palette__item${index === paletteIndex ? ' on' : ''}`,
+            onClick: () => runCommand(cmd.id),
+            onMouseEnter: () => setPaletteIndex(index),
+          }, h('span', { className: 'launcher-palette__label' }, cmd.label),
+             h('span', { className: 'launcher-palette__hint' }, cmd.hint))))) : null,
     )
   }
 
@@ -198,6 +249,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   // 与 lib/panes.js 的 GRID 一致：1/2/4/6 档 → 行列
   const SPLIT_GRID = { 1: [1, 1], 2: [2, 1], 4: [2, 2], 6: [3, 2] }
   const SPLIT_MODES = [1, 2, 4, 6]
+  // W5 命令面板的命令清单（宿主没有命令面板，自建已定稿）
+  const PALETTE_COMMANDS = [
+    { id: 'new-session', label: '新建会话', hint: '与左栏「＋ 新建会话」同效' },
+    { id: 'search-sessions', label: '搜索会话', hint: '按标题/内容过滤' },
+    { id: 'toggle-dock', label: '开关右栏', hint: '⌘J' },
+    { id: 'toggle-sidebar', label: '收起/展开侧栏', hint: '⌘B' },
+  ]
 
   function apply(ctx) {
     ensureStyle()
