@@ -115,10 +115,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const onPage = page === 'conversation' || page === 'plugins'
     const guard = (enabled, run) => ({ resolve: () => (enabled ? 'handled' : 'pass'), run })
     return [
-      { id: 'launcher.workbench.open', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.('plugins')) },
-      { id: 'launcher.shell.toggle', label: '切换外壳', hint: '新外壳 ↔ 原生外壳', regions: ['page'], ...guard(onPage, () => console.info('dsh-client-ui-launcher: 切换外壳需在外部执行 shell-switch')) },
-      { id: 'launcher.session.new', label: '新建会话', hint: '与左栏「＋ 新建会话」同效', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.(null)) },
-      { id: 'launcher.session.search', label: '搜索会话', hint: '按标题/内容过滤', regions: ['page'], ...guard(onPage, () => console.info('dsh-client-ui-launcher: 搜索会话待接宿主会话列表')) },
+      { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.('plugins')) },
+      { id: 'launcher.shellToggle', label: '切换外壳', hint: '新外壳 ↔ 原生外壳', regions: ['page'], ...guard(onPage, () => console.info('dsh-client-ui-launcher: 切换外壳需在外部执行 shell-switch')) },
+      { id: 'launcher.settings', label: '打开设置', hint: '设置面板', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.('settings')) },
     ]
   }
 

@@ -82,17 +82,15 @@ test('自己注册的行：能进 catalogCommands 且能执行（FR-16）', () =
   const rows = ownCatalogRows({}, {
     onOpenWorkbench: () => calls.push('bench'),
     onToggleShell: () => calls.push('shell'),
-    onNewSession: () => calls.push('new'),
-    onSearchSessions: () => calls.push('search'),
+    onOpenSettings: () => calls.push('settings'),
   })
   const entries = catalogCommands(rows)
-  assert.deepEqual(entries.map((e) => e.id), OWN_CATALOG_ROWS.map((r) => r.id))
+  assert.deepEqual(entries.map((e) => e.id), ['launcher.pluginWorkbench', 'launcher.shellToggle', 'launcher.settings'])
   assert.equal(entries.every((e) => e.disabled === false), true)
   assert.equal(executeCommand(entries[0]), 'ran')
   assert.equal(executeCommand(entries[1]), 'ran')
   assert.equal(executeCommand(entries[2]), 'ran')
-  assert.equal(executeCommand(entries[3]), 'ran')
-  assert.deepEqual(calls, ['bench', 'shell', 'new', 'search'])
+  assert.deepEqual(calls, ['bench', 'shell', 'settings'])
 })
 
 test('自己注册的行：没有会话/不在页面级时 resolve 返回 pass（置灰）', () => {
