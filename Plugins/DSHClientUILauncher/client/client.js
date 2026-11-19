@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+06ac0c3"
+  const BUILD_STAMP = "0.2.2-rc.5+5767959"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -118,7 +118,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 }
 .launcher-theme-chip{margin-left:auto;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;font-size:12px;line-height:1;padding:2px 6px;cursor:pointer}
 .launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
-.launcher-empty{position:static;flex:0 0 auto;z-index:auto;align-items:center;display:flex;justify-content:center;min-height:0;padding:16px 16px 8px;background:transparent}
+.launcher-empty{position:static;flex:0 0 auto;z-index:auto;align-items:center;display:flex;justify-content:center;min-height:0;max-height:260px;overflow:auto;padding:16px 16px 8px;background:transparent}
 .launcher-pane__host{display:flex;flex:1;min-height:0;flex-direction:column;overflow:hidden}
 .launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%}
 .launcher-empty__theme{align-items:center;background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.14));border-radius:12px;color:var(--dsw-alias-label-secondary,#666);display:flex;font-size:13px;font-weight:600;height:40px;justify-content:center;width:40px}
@@ -868,7 +868,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const narrow = width <= 760
     return {
       width: Math.min(440, width),
-      minHeight: Math.round((height * (narrow ? 36 : 46)) / 100),
+      // 空态要给宿主 hero+composer 让地方：卡片最高 260px（内部滚动），不要把 composer 顶出视口
+      minHeight: Math.min(260, Math.round((height * (narrow ? 36 : 46)) / 100)),
       columns: narrow ? 1 : 2,
     }
   }
