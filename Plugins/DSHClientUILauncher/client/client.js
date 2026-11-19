@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+79a2596"
+  const BUILD_STAMP = "0.2.2-rc.5+f638728"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -108,7 +108,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-statusbar{grid-area:status;align-items:center;border-top:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;font-size:11px;gap:10px;padding:0 10px;color:var(--dsw-alias-label-secondary)}
 .launcher-overlay{position:fixed;inset:0;pointer-events:none;z-index:40}
 .launcher-overlay>*{pointer-events:auto}
-.launcher-empty{align-items:center;display:flex;flex:none;justify-content:center;min-height:0;overflow:auto;padding:24px 24px 8px}
+.launcher-pane{position:relative}
+.launcher-empty{position:absolute;inset:0 0 150px 0;z-index:6;align-items:center;display:flex;justify-content:center;min-height:0;overflow:auto;padding:24px 24px 8px;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff))}
 .launcher-pane__host{display:flex;flex:1;min-height:0;flex-direction:column}
 .launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%}
 .launcher-empty__theme{align-items:center;background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.14));border-radius:12px;color:var(--dsw-alias-label-secondary,#666);display:flex;font-size:13px;font-weight:600;height:40px;justify-content:center;width:40px}
