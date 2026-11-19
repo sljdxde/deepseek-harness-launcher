@@ -100,7 +100,14 @@ export function runSync({ check = false, target = CLIENT, log = () => {} } = {})
     log('client/client.js 里找不到 children-from-contract 标记区')
     return 3
   }
-  if (next === source) {
+  // BUILD_STAMP 随每次提交变化，不能参与“漂移”判定（否则每次提交都会红）
+  const normalize = (text) => text.replace(/const BUILD_STAMP = "[^"]*"/, 'const BUILD_STAMP = "X"')
+  if (normalize(next) === normalize(source)) {
+    if (next !== source && !check) {
+      writeFileSync(target, next)
+      log('已更新 client/client.js 的 BUILD_STAMP')
+      return 0
+    }
     log('契约块已是最新')
     return 0
   }
