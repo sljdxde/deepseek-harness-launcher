@@ -179,24 +179,69 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * @param {object} ctx - 客户端上下文。
    * @returns {Function[]} dispose 列表。
    */
+  /**
+   * FR-39/42/43：三个会话动作（真槽注册）。
+   * **默认不注册**：等有会话环境的真渲染验证过再开（`window.__DSH_LAUNCHER_TURN_ACTIONS__ === true`）。
+   * 按钮必须真有行为，否则就是"假执行"（05 §6.5：假执行比不提供更糟）。
+   */
   function registerTurnActions(ctx) {
+    if (typeof window === 'undefined' || window.__DSH_LAUNCHER_TURN_ACTIONS__ !== true) return []
     const disposers = []
+
+    // 导出：生成 Markdown 并触发下载（不依赖宿主接口）
+    const downloadExport = (turn) => {
+      const index = Number.isFinite(turn?.turnIndex) && turn.turnIndex > 0 ? Math.trunc(turn.turnIndex) : 1
+      const text = typeof turn?.text === 'string' && turn.text.length > 0 ? turn.text : '（这一轮没有可导出的文本）'
+      const body = `## ${turn?.role === 'assistant' ? '助手' : '用户'}\n\n${text}\n`
+      try {
+        const blob = new Blob([body], { type: 'text/markdown;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `turn-${index}-${Date.now()}.md`
+        link.click()
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+      } catch (error) {
+        console.warn('dsh-client-ui-launcher: 导出失败', error)
+      }
+    }
+
+    // 上下文查看：有锚点就滚过去高亮；没有就固定文案告知（不静默）
+    const viewInContext = (turn) => {
+      const anchor = turn?.anchorId === undefined ? null : document.getElementById(String(turn.anchorId))
+      if (anchor !== null) {
+        anchor.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        anchor.classList.add('launcher-turn-highlight')
+        setTimeout(() => anchor.classList.remove('launcher-turn-highlight'), 1600)
+        return
+      }
+      window.dispatchEvent(new CustomEvent('launcher:turn-action', { detail: { id: 'launcher.viewInContext', message: '上下文视图暂无该轮锚点，已停留在当前会话' } }))
+    }
+
     const rows = [
-      { slot: 'conversation.chat.assistant-actions', id: 'launcher.export', order: 20, label: '导出本轮' },
-      { slot: 'conversation.chat.assistant-actions', id: 'launcher.viewInContext', order: 30, label: '在上下文视图中查看此轮' },
-      { slot: 'conversation.chat.turnTail', id: 'launcher.usage', order: 40, label: '每轮用量' },
+      { slot: 'conversation.chat.assistant-actions', id: 'launcher.export', order: 20, label: '导出本轮', onClick: downloadExport },
+      { slot: 'conversation.chat.assistant-actions', id: 'launcher.viewInContext', order: 30, label: '在上下文视图中查看此轮', onClick: viewInContext },
+      { slot: 'conversation.chat.turnTail', id: 'launcher.usage', order: 40, label: '每轮用量', usage: true },
     ]
+
     for (const row of rows) {
       try {
-        const Component = (slotProps) => h('button', {
-          type: 'button',
-          className: 'launcher-turn-action',
-          'data-action': row.id,
-          title: row.label,
-          onClick: () => {
-            window.dispatchEvent(new CustomEvent('launcher:turn-action', { detail: { id: row.id, turn: slotProps?.turn ?? null } }))
-          },
-        }, row.label)
+        const Component = (slotProps) => {
+          const turn = slotProps?.turn ?? {}
+          if (row.usage === true) {
+            // 每轮用量：取不到 tokens 就不渲染（不显示空壳）
+            const tokens = slotProps?.usage?.tokens ?? slotProps?.tokens
+            if (!Number.isFinite(tokens)) return null
+            return h('span', { className: 'launcher-turn-action launcher-turn-action--usage' }, `${tokens} tokens`)
+          }
+          return h('button', {
+            type: 'button',
+            className: 'launcher-turn-action',
+            'data-action': row.id,
+            title: row.label,
+            onClick: () => row.onClick(turn),
+          }, row.label)
+        }
         if (typeof ctx?.slots?.inject === 'function') {
           disposers.push(ctx.slots.inject(row.slot, () => ctx.slots.register({
             name: row.slot,
@@ -211,6 +256,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     return disposers.filter((d) => typeof d === 'function')
   }
+
 
   function ownCatalogRowsFor(ctx) {
     // 判定放在 resolve() 里现算：注册时 `ctx.slots.entries('main')` 里目标面板可能还没注册
@@ -648,11 +694,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       window.__DSH_LAUNCHER_SHELL__ = false
       if (window.__DSH_LAUNCHER_CTX__ === ctx) delete window.__DSH_LAUNCHER_CTX__
       if (typeof window.removeEventListener === 'function') window.removeEventListener('resize', syncFolded)
-      for (const dispose of disposers.reverse()) {
-        for (const turnDispose of turnDisposers) {
+      // 会话动作的 dispose 只释放一次（之前被外层循环重复调用）
+      for (const turnDispose of turnDisposers) {
         try { turnDispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
       }
-      try { dispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
+      for (const dispose of disposers.reverse()) {
+        try { dispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
       }
     }
   }
