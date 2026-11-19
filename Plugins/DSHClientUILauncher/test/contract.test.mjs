@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 
 import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, DOCK_TABS, diffContract, describeDiff } from '../lib/contract.js'
 import { moduleIdBlock, withContractBlock, withModuleId, runSync } from '../tools/sync-contract.mjs'
+import { checkHostVersion } from '../tools/check-host-version.mjs'
 import { mkdtempSync as mkTmp, rmSync as rmTmp } from 'node:fs'
 
 const baseline = JSON.parse(readFileSync(new URL('../contracts/host-baseline.json', import.meta.url), 'utf8'))
@@ -139,4 +140,25 @@ test('同步脚本 CLI 自己可用：--check', () => {
   } finally {
     rmTmp(out, { recursive: true, force: true })
   }
+})
+
+test('版本锁：包版本必须等于宿主 ui-layout 版本，不符即失败（裁决 §1）', () => {
+  const ok = checkHostVersion()
+  assert.equal(ok.ok, true, JSON.stringify(ok))
+  assert.equal(ok.packageVersion, ok.hostVersion)
+  const bad = checkHostVersion({ hostVersion: '9.9.9' })
+  assert.equal(bad.ok, false)
+  assert.equal(bad.reason, 'version-mismatch')
+  const missing = checkHostVersion({ hostVersion: '' })
+  assert.equal(missing.reason, 'contract-snapshot-missing')
+})
+
+test('版本锁 CLI：一致退出 0、不符退出 1', () => {
+  const tool = fileURLToPath(new URL('../tools/check-host-version.mjs', import.meta.url))
+  const ok = spawnSync(process.execPath, [tool], { encoding: 'utf8' })
+  assert.equal(ok.status, 0, ok.stderr)
+  assert.match(ok.stdout, /版本锁通过/)
+  const bad = spawnSync(process.execPath, [tool, '--host-version', '9.9.9'], { encoding: 'utf8' })
+  assert.equal(bad.status, 1)
+  assert.match(bad.stderr, /版本锁失败/)
 })
