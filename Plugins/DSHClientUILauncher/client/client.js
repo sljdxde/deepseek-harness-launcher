@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+9ffeaa5"
+  const BUILD_STAMP = "0.2.2-rc.5+9cd6f11"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -108,7 +108,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-statusbar{grid-area:status;align-items:center;border-top:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;font-size:11px;gap:10px;padding:0 10px;color:var(--dsw-alias-label-secondary)}
 .launcher-overlay{position:fixed;inset:0;pointer-events:none;z-index:40}
 .launcher-overlay>*{pointer-events:auto}
-.launcher-empty{align-items:center;display:flex;flex:1;justify-content:center;min-height:0;overflow:auto;padding:24px}
+.launcher-empty{align-items:center;display:flex;flex:none;justify-content:center;min-height:0;overflow:auto;padding:24px 24px 8px}
+.launcher-pane__host{display:flex;flex:1;min-height:0;flex-direction:column}
 .launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%}
 .launcher-empty__theme{align-items:center;background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.14));border-radius:12px;color:var(--dsw-alias-label-secondary,#666);display:flex;font-size:13px;font-weight:600;height:40px;justify-content:center;width:40px}
 .launcher-empty__title{font-size:19px;font-weight:600;line-height:1.4;margin:2px 0 0}
@@ -699,6 +700,42 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 
 
 
+  /**
+   * 起手式的 DOM 兜底填充：优先 contenteditable（execCommand insertText），其次 textarea（原生 setter + input 事件）。
+   * 只填入、不发发送键，不提交任何请求。
+   * @param {string} text - 要填入的整句。
+   * @returns {boolean} 是否填成功。
+   */
+  function fillComposerByDom(text) {
+    try {
+      const editable = document.querySelector('[contenteditable="true"]')
+      if (editable !== null) {
+        editable.focus()
+        const selection = window.getSelection()
+        const range = document.createRange()
+        range.selectNodeContents(editable)
+        range.collapse(false)
+        selection?.removeAllRanges()
+        selection?.addRange(range)
+        if (document.execCommand('insertText', false, text)) return true
+        editable.textContent = text
+        editable.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }))
+        return true
+      }
+      const textarea = document.querySelector('textarea')
+      if (textarea !== null) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        setter?.call(textarea, text)
+        textarea.dispatchEvent(new Event('input', { bubbles: true }))
+        textarea.focus()
+        return true
+      }
+    } catch {
+      return false
+    }
+    return false
+  }
+
   /** 空态判据（与 lib/new-session.js 的 emptyStateDecision 同口径）。 */
   function emptyStateDecision(input) {
     const force = input.force ?? (typeof window !== 'undefined' ? window.__DSH_LAUNCHER_EMPTY__ : undefined)
@@ -742,7 +779,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       } catch {
         filled = false
       }
-      if (!filled) window.dispatchEvent(new CustomEvent('launcher:starter', { detail: { id, text: item.text } }))
+      if (!filled) filled = fillComposerByDom(item.text)
+      if (!filled) showLauncherToast('起手式填不进去：没找到输入框')
+      window.dispatchEvent(new CustomEvent('launcher:starter', { detail: { id, text: item.text, filled } }))
     }
     return h('div', { className: 'launcher-empty', 'data-launcher-empty': 'our' },
       h('div', { className: 'launcher-empty__card', style: { maxWidth: `${layout.width}px`, minHeight: `${layout.minHeight}px` } },
@@ -936,9 +975,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             'data-pane': index === 0 ? (activePanelId ?? 'conversation') : key,
           },
             index === 0
-              ? (emptyDecision.render
-                ? h(EmptyStateCard, { layout: cardLayout(viewportWidth, typeof window === 'undefined' ? 900 : window.innerHeight) })
-                : renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' }))
+              ? [
+                emptyDecision.render
+                  ? h(EmptyStateCard, { key: 'empty', layout: cardLayout(viewportWidth, typeof window === 'undefined' ? 900 : window.innerHeight) })
+                  : null,
+                // 宿主子树（含 composer）必须照常渲染：卡片不能顶掉输入框
+                h('div', { key: 'host-main', className: 'launcher-pane__host' }, renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' })),
+              ]
               : renderSlot('main', {}, { entryKey: key }))))),
       h('aside', {
         className: 'launcher-dock',
