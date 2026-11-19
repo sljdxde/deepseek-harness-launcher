@@ -68,6 +68,9 @@ export function moveIndex(index, length, delta) {
   return next < 0 ? next + length : next
 }
 
+/** 调宿主命令 resolve 用的普通上下文（不能传插件 ctx：代理禁止读未 inject 的属性）。 */
+export const MENU_CONTEXT = { region: 'page', modal: null, source: 'menu' }
+
 /** 面板取条目时允许的 region（05 §6.5：只有 page / editable 的行进面板）。 */
 export const PALETTE_REGIONS = ['page', 'editable']
 
@@ -79,7 +82,7 @@ export const PALETTE_REGIONS = ['page', 'editable']
  * @param {object} [context] - 传给 `resolve` 的上下文。
  * @returns {{ id: string, label: string, hint?: string, disabled: boolean, command: object }[]} 面板条目。
  */
-export function catalogCommands(source, context = {}) {
+export function catalogCommands(source, context = MENU_CONTEXT) {
   let rows = source
   if (rows instanceof Map) rows = [...rows.values()]
   else if (rows !== null && typeof rows === 'object' && !Array.isArray(rows)) {
@@ -127,7 +130,7 @@ export function catalogCommands(source, context = {}) {
  * @param {object} [context] - 传给 `resolve` 的上下文。
  * @returns {'ran'|'pass'|'failed'} 执行结果。
  */
-export function executeCommand(entry, context = {}) {
+export function executeCommand(entry, context = MENU_CONTEXT) {
   const command = entry?.command
   if (command === null || typeof command !== 'object') return 'failed'
   try {

@@ -128,6 +128,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     return null
   }
 
+  // 调宿主命令 resolve 用普通上下文：插件 ctx 是代理，读未 inject 的属性会抛
+  // `cannot get property "target" without inject`（实测）
+  const MENU_CONTEXT = { region: 'page', modal: null, source: 'menu' }
+
   const RAIL_CANDIDATES = {
     conversation: ['conversation'],
     schedules: ['dsh-schedule', 'schedule', 'schedules'],
@@ -168,7 +172,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       seen.add(id)
       let disabled = false
       try {
-        const verdict = cmd.resolve?.(ctx)
+        const verdict = cmd.resolve?.(MENU_CONTEXT)
         disabled = !(verdict === 'handled' || verdict?.status === 'handled')
       } catch {
         disabled = true
@@ -219,7 +223,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       setPaletteOpen(false)
       setQuery('')
       try {
-        const verdict = cmd.command?.resolve?.(ctx)
+        const verdict = cmd.command?.resolve?.(MENU_CONTEXT)
         if (verdict !== 'handled' && verdict?.status !== 'handled') return
         const run = verdict?.run ?? cmd.command?.run
         if (typeof run === 'function') run()
