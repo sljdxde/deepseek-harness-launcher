@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+bdcc953"
+  const BUILD_STAMP = "0.2.2-rc.5+5d24eb7"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1312,6 +1312,19 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }, [])
     toggleRef.current.dock = toggleDock
     toggleRef.current.theme = toggleTheme
+    React.useEffect(() => {
+      // 宿主右栏面板内的「收起右侧边栏」在换壳后不会回 closeRightbar：点它时外壳直接收轨道
+      const onHostCollapse = (event) => {
+        const target = event?.target
+        if (target === null || target === undefined || typeof target.closest !== 'function') return
+        const btn = target.closest('[aria-label*="收起右侧边栏"], [title*="收起右侧边栏"], [aria-label*="收起侧边栏"]')
+        if (btn === null) return
+        DOCK_CLOSE_INTENT.user = true
+        setDockOpen(false)
+      }
+      window.addEventListener('click', onHostCollapse, true)
+      return () => window.removeEventListener('click', onHostCollapse, true)
+    }, [])
     React.useEffect(() => {
       // composer 是 Lexical，root 上的 keydown 可能被它 stopPropagation：window capture 抢在前面。
       // 通过 ref 调最新的 toggle，避免拿到首次渲染的陈旧 dockOpen。
