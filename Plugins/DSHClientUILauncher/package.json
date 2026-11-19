@@ -8,7 +8,8 @@
   "exports": {
     ".": "./lib/index.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client": "./client/client.js"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
@@ -18,6 +19,11 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
     }
   }
 }
