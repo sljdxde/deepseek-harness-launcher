@@ -59,12 +59,18 @@ try {
     conflict: document.getElementById('launcher-conflict')?.textContent ?? null,
   }))
   // native 不靠 composer（新开页面没有会话，composer 可能还没渲染）：标记与外壳都不在 + root 槽已挂载即可。
-  const ok = expected === 'launcher'
-    ? seen.launcherMark && seen.launcherShell && !seen.conflict
-    : !seen.launcherMark && !seen.launcherShell && seen.hostRoot
-  process.stdout.write(`${JSON.stringify({ expected, seen, errors: errors.slice(0, 4) })}\n`)
+  // 判决口径：launcher 模式下只要没看到我们自己的标记/外壳，就判 launcher-missing（**失败**），
+  // 不能因为看到原生槽就当成通过——那正是"只写依赖不写 bundles"时会出现的假象。
+  let verdict = 'ok'
+  if (expected === 'launcher') {
+    if (seen.conflict !== null) verdict = 'launcher-conflict'
+    else if (!seen.launcherMark || !seen.launcherShell) verdict = 'launcher-missing'
+  } else if (seen.launcherMark || seen.launcherShell) verdict = 'native-but-launcher'
+  else if (!seen.hostRoot) verdict = 'native-no-host-root'
+  const ok = verdict === 'ok'
+  process.stdout.write(`${JSON.stringify({ expected, verdict, seen, errors: errors.slice(0, 4) })}\n`)
   if (!ok) {
-    process.stderr.write(`壳层断言失败：期望 ${expected}，实测 ${JSON.stringify(seen)}\n`)
+    process.stderr.write(`壳层断言失败：[${verdict}] 期望 ${expected}，实测 ${JSON.stringify(seen)}\n`)
     process.exit(1)
   }
   process.stdout.write(`壳层断言通过：${expected}\n`)

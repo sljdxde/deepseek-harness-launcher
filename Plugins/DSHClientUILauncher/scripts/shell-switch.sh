@@ -137,6 +137,22 @@ require_version_lock() {
 }
 
 # 装之前的 package.json 与锁文件各留一份：native 要证明它们逐字回来了
+# ② profile 的 dsh.profile.bundles：只写 ① 依赖时客户端模块图不枚举它，界面会"看起来像原生"
+set_bundle() {
+  mode=$1
+  "$NODE" -e '
+    const fs = require("node:fs");
+    const [file, mode, name] = process.argv.slice(1);
+    const m = JSON.parse(fs.readFileSync(file, "utf8"));
+    const list = m.dsh?.profile?.bundles;
+    if (!Array.isArray(list)) { process.exit(3) }
+    const next = list.filter((entry) => entry !== name);
+    if (mode === "add") next.push(name);
+    m.dsh.profile.bundles = next;
+    fs.writeFileSync(file, JSON.stringify(m, null, 2) + "\n");
+  ' "$MANIFEST" "$mode" "$HOST_PACKAGE"
+}
+
 snapshot_state() {
   cp -p "$MANIFEST" "$STATE_DIR/package.json.snapshot"
   [ -f "$PROFILE_DIR/pnpm-lock.yaml" ] && cp -p "$PROFILE_DIR/pnpm-lock.yaml" "$STATE_DIR/pnpm-lock.snapshot"
@@ -190,21 +206,23 @@ MANUAL
 
 verify_page() {
   expected=$1
-  # 先断言"profile 里装的是哪一版"（即时层）。launcher：解析到本包；native：不解析到本包（回落安装目录的原包或 .orig）。
-  if [ -e "$LINK" ] || [ -L "$LINK" ]; then
-    actual=$("$NODE" -e 'const fs=require("node:fs");process.stdout.write(fs.realpathSync(process.argv[1]))' "$LINK" 2>/dev/null || echo "")
+  # "装的哪一版"用实现标记判，不用路径：pnpm 的 file: 安装是**拷贝**不是软链，realpath 永远是 profile 里的那份。
+  if [ -f "$LINK/client/client.js" ] && grep -q "__DSH_LAUNCHER_SHELL__" "$LINK/client/client.js" 2>/dev/null; then
+    installed=ours
+  elif [ -e "$LINK" ]; then
+    installed=host
   else
-    actual=""
+    installed=none
   fi
   case "$expected" in
     launcher)
-      if [ "$actual" != "$PACKAGE_DIR" ]; then
-        echo "链向不符：launcher 期望解析到 $PACKAGE_DIR，实际 ${actual:-（profile 里没有该包）}" >&2
+      if [ "$installed" != "ours" ]; then
+        echo "链向不符：launcher 期望 profile 里装的是本包，实际 ${installed}" >&2
         return 1
       fi ;;
     native)
-      if [ -n "$actual" ] && [ "$actual" = "$PACKAGE_DIR" ]; then
-        echo "链向不符：native 但 profile 仍解析到本包（$actual）" >&2
+      if [ "$installed" = "ours" ]; then
+        echo "链向不符：native 但 profile 里装的仍是本包" >&2
         return 1
       fi ;;
   esac
