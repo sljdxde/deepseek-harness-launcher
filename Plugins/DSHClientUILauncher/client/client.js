@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+ed56b67"
+  const BUILD_STAMP = "0.2.2-rc.5+f14e735"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1255,7 +1255,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     /** 右栏开关：宿主 sidebarRight/命令 + 外壳轨道，两条入口（rail ▤ / ⌘⇧B）共用同一份状态。 */
     const toggleRef = React.useRef({ dock: null, theme: null })
     const toggleDock = () => {
-      try { window.__DOCK_TRACE__ = (window.__DOCK_TRACE__ ?? []).concat(`enter open=${getDockOpen()}`) } catch { /* debug */ }
       // 以模块级 store 为准（React 状态可能滞后一帧，导致"永远只开不关"）
       if (getDockOpen()) {
         // 关闭：宿主在 launcher 里不一定回 closeRightbar，外壳直接把轨道收掉（可视结果必须响应）
@@ -1531,17 +1530,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           'aria-label': '开关右栏',
           'aria-pressed': dockOpen,
           title: '开关右栏（宽度 320–520）',
-          onClick: () => {
-            // 双管：宿主命令切它自己的 expanded 状态；轨道由外壳保证（否则内容开、列宽不开）
-            const hostOk = toggleRightbarHost()
-            // 空态没有会话时宿主命令会被 blocked：给出可见提示，别让用户以为按钮坏了
-            if (!hostOk) {
-              setTimeout(() => {
-                const width = document.querySelector('.launcher-dock')?.getBoundingClientRect().width ?? 0
-                if (width < 10) showLauncherToast('先打开一个会话再展开右栏')
-              }, 350)
-            }
-          },
+          onClick: () => toggleRef.current.dock?.(),
         }, '▤'),
         h('button', {
           type: 'button',
