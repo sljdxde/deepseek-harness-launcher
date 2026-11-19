@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+dcd5541"
+  const BUILD_STAMP = "0.2.2-rc.5+862e276"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -120,7 +120,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
 .launcher-empty{position:absolute;inset:0 0 0 0;pointer-events:none;z-index:6;align-items:center;display:flex;justify-content:center;min-height:0;overflow:auto;padding:24px 24px 8px;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff))}
 .launcher-pane__host{display:flex;flex:1;min-height:0;flex-direction:column}
-.launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%;pointer-events:auto;padding-bottom:var(--launcher-composer-h,150px)}
+.launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%}
 .launcher-empty__theme{align-items:center;background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.14));border-radius:12px;color:var(--dsw-alias-label-secondary,#666);display:flex;font-size:13px;font-weight:600;height:40px;justify-content:center;width:40px}
 .launcher-empty__title{font-size:19px;font-weight:600;line-height:1.4;margin:2px 0 0}
 .launcher-empty__body{color:var(--dsw-alias-label-secondary,#666);font-size:12.5px;line-height:1.7;margin:0}
@@ -894,6 +894,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         }
       }
       if (!filled) showLauncherToast('起手式填不进去：没找到输入框')
+      if (filled && typeof props.onFilled === 'function') props.onFilled()
       window.dispatchEvent(new CustomEvent('launcher:starter', { detail: { id, text: item.text, filled } }))
     }
     return h('div', { className: 'launcher-empty', 'data-launcher-empty': 'our' },
@@ -977,6 +978,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       return { 'danger-full-access': '完全权限', 'workspace-write': '工作区内修改', read: '仅可查看' }[level]
     })()
     const [hostHasMessages, setHostHasMessages] = React.useState(false)
+    const [starterFilled, setStarterFilled] = React.useState(false)
     React.useEffect(() => { applyThemeDom() }, [])
     // 空态覆盖层要给 composer 让位：按 composer 实际高度算，不用固定 150px
     const [composerHeight, setComposerHeight] = React.useState(150)
@@ -1208,8 +1210,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           },
             index === 0
               ? [
-                emptyDecision.render
-                  ? h(EmptyStateCard, { key: 'empty', layout: cardLayout(viewportWidth, typeof window === 'undefined' ? 900 : window.innerHeight) })
+                emptyDecision.render && !starterFilled
+                  ? h(EmptyStateCard, { key: 'empty', layout: cardLayout(viewportWidth, typeof window === 'undefined' ? 900 : window.innerHeight), onFilled: () => setStarterFilled(true) })
                   : null,
                 // 宿主子树（含 composer）必须照常渲染：卡片不能顶掉输入框
                 h('div', { key: 'host-main', className: 'launcher-pane__host' }, renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' })),
