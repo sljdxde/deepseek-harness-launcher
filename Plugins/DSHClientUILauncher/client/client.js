@@ -288,11 +288,20 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * @returns {{ system:number, chat:number, files:number, tools:number, used:number, limit:number, pct:number }|null} 用量。
    */
   function readContextUsage(ctx) {
+    // 插件 ctx 是代理：读未 inject 的属性会在 **get 阶段** throw，`?.` 拦不住。
+    // 所以每个候选都单独 try/catch；服务没声明就拿不到，返回 null（入口置灰，不造假数据）。
+    const safe = (fn) => {
+      try {
+        return fn()
+      } catch {
+        return null
+      }
+    }
     const candidates = [
-      ctx?.tokenMeter?.getSnapshot?.(),
-      ctx?.tokenMeter?.snapshot?.(),
-      ctx?.contextMeter?.getSnapshot?.(),
-      ctx?.composer?.meter?.(),
+      safe(() => ctx?.tokenMeter?.getSnapshot?.()),
+      safe(() => ctx?.tokenMeter?.snapshot?.()),
+      safe(() => ctx?.contextMeter?.getSnapshot?.()),
+      safe(() => ctx?.composer?.meter?.()),
     ]
     for (const raw of candidates) {
       if (raw === null || raw === undefined || typeof raw !== 'object') continue
@@ -309,6 +318,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     return null
   }
+
 
   function ownCatalogRowsFor(ctx) {
     // 判定放在 resolve() 里现算：注册时 `ctx.slots.entries('main')` 里目标面板可能还没注册
