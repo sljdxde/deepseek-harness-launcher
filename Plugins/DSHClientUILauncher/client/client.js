@@ -172,6 +172,46 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
   }
 
+  /**
+   * FR-39/42/43：把三个动作注册进真槽（`conversation.chat.assistant-actions` / `conversation.chat.turnTail`）。
+   * 用 `ctx.slots.inject(槽名, () => register(...))`：槽在才注册、返回同步 dispose。
+   * 渲染验证需要有会话的环境，这里只做注册（按钮点了派发事件，由宿主/外壳后续接）。
+   * @param {object} ctx - 客户端上下文。
+   * @returns {Function[]} dispose 列表。
+   */
+  function registerTurnActions(ctx) {
+    const disposers = []
+    const rows = [
+      { slot: 'conversation.chat.assistant-actions', id: 'launcher.export', order: 20, label: '导出本轮' },
+      { slot: 'conversation.chat.assistant-actions', id: 'launcher.viewInContext', order: 30, label: '在上下文视图中查看此轮' },
+      { slot: 'conversation.chat.turnTail', id: 'launcher.usage', order: 40, label: '每轮用量' },
+    ]
+    for (const row of rows) {
+      try {
+        const Component = (slotProps) => h('button', {
+          type: 'button',
+          className: 'launcher-turn-action',
+          'data-action': row.id,
+          title: row.label,
+          onClick: () => {
+            window.dispatchEvent(new CustomEvent('launcher:turn-action', { detail: { id: row.id, turn: slotProps?.turn ?? null } }))
+          },
+        }, row.label)
+        if (typeof ctx?.slots?.inject === 'function') {
+          disposers.push(ctx.slots.inject(row.slot, () => ctx.slots.register({
+            name: row.slot,
+            id: row.id,
+            order: row.order,
+            inject: () => ({}),
+          }, Component)))
+        }
+      } catch (error) {
+        console.warn('dsh-client-ui-launcher: 注册会话动作失败', row.id, error)
+      }
+    }
+    return disposers.filter((d) => typeof d === 'function')
+  }
+
   function ownCatalogRowsFor(ctx) {
     // 判定放在 resolve() 里现算：注册时 `ctx.slots.entries('main')` 里目标面板可能还没注册
     const currentPage = () => {
@@ -502,6 +542,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // 只读暴露，不改行为；卸载时清掉。
     window.__DSH_LAUNCHER_CTX__ = ctx
     CURRENT_CTX = ctx
+    // FR-39/42/43：会话流动作（真槽，槽在才注册）
+    const turnDisposers = registerTurnActions(ctx)
     // FR-16：我们自己的动作也注册进同一个 catalog（与宿主条目同权）
     const OWN_ROWS_REGISTERED = Symbol.for('dsh.launcher.catalogRows')
     if (typeof ctx?.shortcuts?.register === 'function') {
@@ -607,7 +649,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (window.__DSH_LAUNCHER_CTX__ === ctx) delete window.__DSH_LAUNCHER_CTX__
       if (typeof window.removeEventListener === 'function') window.removeEventListener('resize', syncFolded)
       for (const dispose of disposers.reverse()) {
-        try { dispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
+        for (const turnDispose of turnDisposers) {
+        try { turnDispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
+      }
+      try { dispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
       }
     }
   }
