@@ -24,6 +24,29 @@ test('每条 !important 规则都以 .launcher-shell 开头（禁止命中宿主
   }
 })
 
+test('裸元素选择器（pre/code 等）不允许带 !important（05 §6.5 #7）', () => {
+  const rules = SOURCE.split('\n').filter((line) => line.includes('!important'))
+  for (const rule of rules) {
+    const stripped = rule.replace(/^\s*@[^{]+\{/, '').trim()
+    const selector = stripped.split('{')[0].trim()
+    for (const part of selector.split(',')) {
+      const head = part.trim().split(/[\s>+~]/)[0]
+      assert.ok(
+        !/^(pre|code|div|span|button|input|textarea|li|ul|p|a|h[1-6])$/.test(head),
+        `裸元素选择器带 !important：${rule.trim().slice(0, 100)}`,
+      )
+    }
+  }
+})
+
+test('选择器里不得出现宿主哈希类名（形如 .uV2eYG_input）', () => {
+  const hashClass = /\.[A-Za-z0-9]{3,}_[A-Za-z0-9]{5,}/g
+  const rules = SOURCE.split('\n').filter((line) => line.includes('!important'))
+  for (const rule of rules) {
+    assert.equal(rule.match(hashClass), null, `含宿主哈希类名：${rule.trim().slice(0, 100)}`)
+  }
+})
+
 test('代码块换行属性挂在 .launcher-shell 根，不写 documentElement', () => {
   assert.ok(!SOURCE.includes('documentElement.dataset.codeWrap'), '不应把属性挂到 documentElement')
   assert.ok(SOURCE.includes("'data-code-wrap': wrapOn ? 'on' : 'off'"), '应以属性形式输出在外壳根上')
