@@ -6,6 +6,7 @@ const MODULE_ID = "@deepseek-ai/dsh-client-ui-layout"
 window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
+  let CURRENT_CTX = null
 
   // #region children-from-contract
   // 本段由 tools/sync-contract.mjs 从 lib/contract.js 生成，勿手改；
@@ -96,6 +97,32 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
   }
 
+  /**
+   * 从宿主命令源枚举命令（05 §6.5 要求动态枚举，不许硬编码）。接口形状不保证稳定，
+   * 取不到就返回空表，面板显示「未接入命令源」。
+   * @param {object} ctx - 客户端上下文。
+   * @returns {{ id: string, label: string, hint?: string, run?: Function, command?: string }[]} 命令清单。
+   */
+  function collectCommands(ctx) {
+    const source = ctx?.commandUi
+    if (source === undefined || source === null) return []
+    try {
+      const list = source.list?.() ?? source.directory?.list?.() ?? source.commands ?? []
+      if (!Array.isArray(list)) return []
+      const rows = []
+      for (const item of list) {
+        if (item === null || typeof item !== 'object') continue
+        const id = item.id ?? item.name ?? item.command
+        const label = item.label ?? item.title ?? item.name
+        if (typeof id !== 'string' || typeof label !== 'string') continue
+        rows.push({ id, label, hint: item.hint ?? item.description, command: item.name ?? id })
+      }
+      return rows
+    } catch {
+      return []
+    }
+  }
+
   /** 外壳本体：56 图标栏 + 侧栏列 + 主区 + 右栏轨道 + 底状态条 + 浮层。 */
   function LauncherRoot(props) {
     const renderSlot = props.renderSlot
@@ -107,8 +134,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     const [dragWidth, setDragWidth] = React.useState(DOCK_WIDTH)
     const [splitMode, setSplitMode] = React.useState(1)
+    const ctx = CURRENT_CTX
+    const commands = collectCommands(ctx)
     const [paletteOpen, setPaletteOpen] = React.useState(false)
     const [paletteIndex, setPaletteIndex] = React.useState(0)
+    const [query, setQuery] = React.useState('')
+    const shown = commands.filter((cmd) => query === '' || String(cmd.label).includes(query))
     const [cols, rows] = SPLIT_GRID[splitMode] ?? SPLIT_GRID[1]
     const paneKeys = Array.from({ length: splitMode }, (_, i) => (i === 0 ? 'conversation' : `conversation#${i + 1}`))
     const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
@@ -126,12 +157,15 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       window.addEventListener('pointerup', up)
     }
     const collapsed = props.sidebarCollapsed === true
-    const runCommand = (id) => {
+    const runCommand = (cmd) => {
       setPaletteOpen(false)
-      if (id === 'new-session') { props.onNewSession?.(); return }
-      if (id === 'toggle-dock') { props.onToggleDock?.(); return }
-      if (id === 'toggle-sidebar') { props.onToggleSidebar?.(); return }
-      if (id === 'search-sessions') { props.onSearchSessions?.(); return }
+      setQuery('')
+      try {
+        if (typeof cmd.run === 'function') cmd.run()
+        else if (cmd.command !== undefined) ctx?.commandUi?.execute?.(cmd.command)
+      } catch (error) {
+        console.warn('dsh-client-ui-launcher: 命令执行失败', error)
+      }
     }
     const onKeyDown = (event) => {
       const isPaletteKey = (event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'k'
@@ -147,9 +181,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         })
         return
       }
-      if (event.key === 'ArrowDown') { event.preventDefault(); setPaletteIndex((i) => (i + 1) % PALETTE_COMMANDS.length) }
-      if (event.key === 'ArrowUp') { event.preventDefault(); setPaletteIndex((i) => (i - 1 + PALETTE_COMMANDS.length) % PALETTE_COMMANDS.length) }
-      if (event.key === 'Enter') { event.preventDefault(); runCommand(PALETTE_COMMANDS[paletteIndex].id) }
+      if (event.key === 'ArrowDown') { event.preventDefault(); setPaletteIndex((i) => (shown.length === 0 ? 0 : (i + 1) % shown.length)) }
+      if (event.key === 'ArrowUp') { event.preventDefault(); setPaletteIndex((i) => (shown.length === 0 ? 0 : (i - 1 + shown.length) % shown.length)) }
+      if (event.key === 'Enter' && shown[paletteIndex] !== undefined) { event.preventDefault(); runCommand(shown[paletteIndex]) }
     }
     return h('div', { className: 'launcher-shell', 'data-shell': 'launcher', onKeyDown },
       h('div', { className: 'launcher-rail', role: 'navigation', 'aria-label': 'launcher rail' },
@@ -161,7 +195,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           title: entry.label,
           'aria-label': entry.label,
           'aria-pressed': props.activeRail === entry.id,
-          onClick: () => props.onRail?.(entry.id),
+          onClick: () => {
+          try {
+            if (entry.id === 'conversation') ctx?.layout?.selectPanel(null)
+            else ctx?.layout?.selectPanel(entry.id)
+          } catch (error) {
+            console.warn('dsh-client-ui-launcher: 导航失败', error)
+          }
+        },
         }, entry.label.slice(0, 1)))),
       h('aside', { className: 'launcher-sidebar' },
         collapsed ? null : renderSlot('sidebar', { collapsed, width: 280, drawer: false })),
@@ -213,15 +254,18 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           placeholder: '搜索命令…',
           autoFocus: true,
           onKeyDown,
+          value: query,
+          onChange: (e) => { setQuery(e.target.value); setPaletteIndex(0) },
           'aria-controls': 'launcher-palette-list',
         }),
         h('ul', { id: 'launcher-palette-list', role: 'listbox', className: 'launcher-palette__list' },
-          PALETTE_COMMANDS.map((cmd, index) => h('li', {
+          shown.length === 0 ? h('li', { className: 'launcher-palette__empty' }, '未接入命令源（宿主命令表待接线）') : null,
+          shown.map((cmd, index) => h('li', {
             key: cmd.id,
             role: 'option',
             'aria-selected': index === paletteIndex,
             className: `launcher-palette__item${index === paletteIndex ? ' on' : ''}`,
-            onClick: () => runCommand(cmd.id),
+            onClick: () => runCommand(cmd),
             onMouseEnter: () => setPaletteIndex(index),
           }, h('span', { className: 'launcher-palette__label' }, cmd.label),
              h('span', { className: 'launcher-palette__hint' }, cmd.hint))))) : null,
@@ -249,13 +293,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   // 与 lib/panes.js 的 GRID 一致：1/2/4/6 档 → 行列
   const SPLIT_GRID = { 1: [1, 1], 2: [2, 1], 4: [2, 2], 6: [3, 2] }
   const SPLIT_MODES = [1, 2, 4, 6]
-  // W5 命令面板的命令清单（宿主没有命令面板，自建已定稿）
-  const PALETTE_COMMANDS = [
-    { id: 'new-session', label: '新建会话', hint: '与左栏「＋ 新建会话」同效' },
-    { id: 'search-sessions', label: '搜索会话', hint: '按标题/内容过滤' },
-    { id: 'toggle-dock', label: '开关右栏', hint: '⌘J' },
-    { id: 'toggle-sidebar', label: '收起/展开侧栏', hint: '⌘B' },
-  ]
+  // W5 命令清单**动态枚举**：由接线方（clientRoot 包装层）从宿主命令源取；取不到就是空表，
+  // 面板显示「未接入命令源」——不拿硬编码清单充数（05 §6.5 TC-16-3/16-6）。
 
   function apply(ctx) {
     ensureStyle()
@@ -265,6 +304,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // 验证句柄：真机上从 console 调 ctx.layout.selectPanel(null) 等（技术负责人 W1 尾判据第 1 条）。
     // 只读暴露，不改行为；卸载时清掉。
     window.__DSH_LAUNCHER_CTX__ = ctx
+    CURRENT_CTX = ctx
     const panelInfo = createPanelInfo()
     // 右栏轨道宽度是外壳的活，但显隐由 ctx.layout.openRightbar/closeRightbar 记账
     // （ui-sidebar-right 用这两个动作），所以它得是一个能订阅的小观测面。
