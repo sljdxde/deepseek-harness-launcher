@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+ad7dac2"
+  const BUILD_STAMP = "0.2.2-rc.5+6788aaf"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -109,6 +109,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-overlay{position:fixed;inset:0;pointer-events:none;z-index:40}
 .launcher-overlay>*{pointer-events:auto}
 .launcher-pane{position:relative}
+@media (max-width: 860px){
+  .launcher-shell{grid-template-columns:var(--launcher-rail) 0 minmax(0,1fr) 0}
+  .launcher-sidebar{position:fixed;left:var(--launcher-rail);top:0;bottom:var(--launcher-status);width:280px;z-index:30;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff));border-right:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));box-shadow:0 0 0 100vmax rgba(0,0,0,.001)}
+  .launcher-sidebar[data-drawer="closed"]{display:none}
+  .launcher-rail__drawer{display:inline-flex}
+  .launcher-main{min-width:0}
+}
+.launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
 .launcher-empty{position:absolute;inset:0 0 150px 0;z-index:6;align-items:center;display:flex;justify-content:center;min-height:0;overflow:auto;padding:24px 24px 8px;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff))}
 .launcher-pane__host{display:flex;flex:1;min-height:0;flex-direction:column}
 .launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%}
@@ -864,6 +872,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     const [dragWidth, setDragWidth] = React.useState(DOCK_WIDTH)
     const [splitMode, setSplitMode] = React.useState(1)
+    // ≤860：侧栏转抽屉（默认收起），与 rail 互斥；主区从 rail 后起算
+    const [drawerOpen, setDrawerOpen] = React.useState(false)
+    const narrow = viewportWidth <= 860
     // 宿主 MainPanel 的口径：面板 key 是 renderSlot 的第三参 `{ entryKey }`，
     // 当前面板从 usePanelInfo 选择器钩子取（我们自己在 inject 里提供了这个钩子）。
     const hostPolicy = (() => {
@@ -981,6 +992,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     return h('div', {
       className: 'launcher-shell',
+      'data-drawer': narrow ? (drawerOpen ? 'open' : 'closed') : 'static',
       'data-shell': 'launcher',
       // 05 §6.3-7：属性挂外壳根，不挂 documentElement（避免改到宿主自己的代码块）
       'data-code-wrap': wrapOn ? 'on' : 'off',
@@ -989,6 +1001,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     },
       h('div', { className: 'launcher-rail', role: 'navigation', 'aria-label': 'launcher rail' },
         renderSlot('shell.leading', {}),
+        h('button', {
+          type: 'button',
+          className: 'launcher-rail__drawer',
+          'aria-label': '开关侧栏',
+          'aria-expanded': narrow ? drawerOpen : true,
+          onClick: () => setDrawerOpen((open) => !open),
+        }, '≡'),
         RAIL_ENTRIES.map((entry) => {
           const railKey = entry.id === 'conversation'
             ? 'conversation'
@@ -1017,8 +1036,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         },
         }, entry.label.slice(0, 1))
         })),
-      h('aside', { className: 'launcher-sidebar' },
-        collapsed ? null : renderSlot('sidebar', { collapsed, width: 280, drawer: false })),
+      h('aside', { className: 'launcher-sidebar', 'data-drawer': narrow ? (drawerOpen ? 'open' : 'closed') : 'static' },
+        collapsed ? null : renderSlot('sidebar', { collapsed, width: 280, drawer: narrow })),
       h('main', {
         className: 'launcher-main',
         'data-split': splitMode,
