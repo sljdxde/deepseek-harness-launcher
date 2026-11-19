@@ -17,3 +17,5 @@ DerivedData/
 
 # 本地编码助手会话状态（plan 等），不随仓库分发
 /.zcode/
+# 符号链接形式的 node_modules 不被 "node_modules/" 匹配，单独挡一次
+node_modules
