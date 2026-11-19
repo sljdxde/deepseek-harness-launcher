@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+d11503c"
+  const BUILD_STAMP = "0.2.2-rc.5+8f17b56"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1680,6 +1680,17 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const clampDock = (w) => Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.round(w)))
   // 与 lib/panes.js 的 GRID 一致：1/2/4/6 档 → 行列
   const SPLIT_GRID = { 1: [1, 1], 2: [2, 1], 4: [2, 2], 6: [3, 2] }
+
+  // 分屏 key 分配（与 lib/panes.js 的 assignPaneKeys 同口径）：只认真实 key，凑不满给 null（渲染成「本版未接」）
+  const PANE_PREFERENCE = ['conversation', 'dsh-plugin-manager', 'dsh-archive-manager', 'schedules', 'plugins']
+  function assignPaneKeys(availableKeys, count) {
+    const available = new Set(Array.isArray(availableKeys) ? availableKeys : [])
+    const ordered = []
+    for (const key of PANE_PREFERENCE) if (available.has(key)) ordered.push(key)
+    for (const key of available) if (!PANE_PREFERENCE.includes(key)) ordered.push(key)
+    const total = Number.isFinite(count) && count > 0 ? Math.trunc(count) : 1
+    return Array.from({ length: total }, (_, index) => ordered[index] ?? null)
+  }
 
   /** 与 lib/layout.js 的 maxSplit/resolveSplit 同口径：每块最小 360×240，放不下就降档。 */
   function maxSplitFor(width, height) {
