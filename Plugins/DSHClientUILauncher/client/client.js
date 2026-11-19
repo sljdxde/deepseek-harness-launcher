@@ -67,6 +67,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-shell[data-code-wrap="on"] pre code{white-space:pre-wrap!important;word-break:break-word}
 .launcher-diag{position:fixed;right:16px;bottom:40px;width:min(340px,90vw);background:var(--dsw-alias-bg-1,#fff);color:inherit;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.18);z-index:45}
 .launcher-diag__head{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}
+.launcher-perm{position:relative;display:inline-flex;align-items:center}
+.launcher-perm__pill{height:26px;display:inline-flex;align-items:center;gap:4px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:13px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
+.launcher-perm__pill[disabled]{opacity:.6;cursor:not-allowed}
+.launcher-perm__menu{position:absolute;bottom:calc(100% + 6px);left:0;min-width:180px;padding:4px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:8px;background:var(--dsw-alias-bg-1,#fff);z-index:40}
+.launcher-perm__item{display:block;width:100%;text-align:left;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
+.launcher-perm__item.on{background:var(--dsw-alias-bg-2,rgba(127,127,127,.12))}
+@container (max-width: 640px){.launcher-perm__text{display:none}.launcher-perm__pill{padding:0 6px}}
 .launcher-toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:rgba(20,20,20,.9);color:#fff;font-size:12px;z-index:60;pointer-events:none}
 .launcher-turn-action{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
 .launcher-turn-action--usage{opacity:.7;border:0}
@@ -199,6 +206,62 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       setTimeout(() => node.remove(), 2600)
     } catch {
       console.warn('dsh-client-ui-launcher:', text)
+    }
+  }
+
+  /**
+   * FR-35 权限范围 pill（05 §6.3-⑥）：挂 `conversation.composer.bar`，26px、`+` 右侧、模型 chip 左侧。
+   * 默认不注册：宿主是否在槽 props 里给「当前权限 + 设置回调」尚未确认，没有回调时按钮点了就是假执行。
+   * 开闸：`window.__DSH_LAUNCHER_PERMISSION_PILL__ === true`。读不到宿主策略时显示 `workspace-write`，绝不显示 full。
+   * @param {object} ctx - 客户端上下文。
+   * @returns {Function[]} dispose 列表。
+   */
+  function registerPermissionPill(ctx) {
+    if (typeof window === 'undefined' || window.__DSH_LAUNCHER_PERMISSION_PILL__ !== true) return []
+    const LEVELS = [
+      { id: 'read', label: '仅可查看', short: '阅' },
+      { id: 'workspace-write', label: '工作区内修改', short: '改' },
+      { id: 'danger-full-access', label: '完全权限', short: '全' },
+    ]
+    const Component = (slotProps) => {
+      const scope = LEVELS.some((l) => l.id === slotProps?.permission?.scope) ? slotProps.permission.scope : 'workspace-write'
+      const canChange = typeof slotProps?.onSetPermission === 'function'
+      const current = LEVELS.find((l) => l.id === scope) ?? LEVELS[1]
+      const [open, setOpen] = React.useState(false)
+      return h('div', { className: 'launcher-perm' },
+        h('button', {
+          type: 'button',
+          className: 'launcher-perm__pill',
+          'data-scope': current.id,
+          'aria-haspopup': 'menu',
+          'aria-expanded': open,
+          title: current.label,
+          disabled: !canChange,
+          onClick: () => canChange && setOpen((v) => !v),
+        }, h('span', { className: 'launcher-perm__icon', 'aria-hidden': 'true' }, current.short),
+           h('span', { className: 'launcher-perm__text' }, current.label)),
+        open && canChange ? h('div', { className: 'launcher-perm__menu', role: 'menu' },
+          LEVELS.map((level) => h('button', {
+            key: level.id,
+            type: 'button',
+            role: 'menuitemradio',
+            'aria-checked': level.id === current.id,
+            className: `launcher-perm__item${level.id === current.id ? ' on' : ''}`,
+            onClick: () => { slotProps.onSetPermission(level.id); setOpen(false) },
+          }, level.label))) : null)
+    }
+    try {
+      if (typeof ctx?.slots?.inject !== 'function') return []
+      const dispose = ctx.slots.inject('conversation.composer.bar', () => ctx.slots.register({
+        name: 'conversation.composer.bar',
+        id: 'launcher.permissionPill',
+        order: 10,
+        inject: () => ({}),
+      }, Component))
+      return typeof dispose === 'function' ? [dispose] : []
+    } catch (error) {
+      console.warn('dsh-client-ui-launcher: 注册权限 pill 失败', error)
+      return []
     }
   }
 
@@ -671,6 +734,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     CURRENT_CTX = ctx
     // FR-39/42/43：会话流动作（真槽，槽在才注册）
     const turnDisposers = registerTurnActions(ctx)
+    const permDisposers = registerPermissionPill(ctx)
     // FR-16：我们自己的动作也注册进同一个 catalog（与宿主条目同权）
     const OWN_ROWS_REGISTERED = Symbol.for('dsh.launcher.catalogRows')
     if (typeof ctx?.shortcuts?.register === 'function') {
@@ -776,6 +840,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (window.__DSH_LAUNCHER_CTX__ === ctx) delete window.__DSH_LAUNCHER_CTX__
       if (typeof window.removeEventListener === 'function') window.removeEventListener('resize', syncFolded)
       // 会话动作的 dispose 只释放一次（之前被外层循环重复调用）
+      for (const permDispose of permDisposers) {
+        try { permDispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
+      }
       for (const turnDispose of turnDisposers) {
         try { turnDispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
       }
