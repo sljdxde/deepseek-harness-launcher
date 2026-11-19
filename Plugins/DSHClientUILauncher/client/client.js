@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+5a66ab6"
+  const BUILD_STAMP = "0.2.2-rc.5+dfd0b4c"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1248,7 +1248,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         /* 忽略 */
       }
     }
-    const toggleTheme = () => applyTheme(themeMode === 'dark' ? 'light' : 'dark')
+    const toggleTheme = () => applyTheme((() => { try { return CURRENT_CTX?.theme?.getTheme?.()?.preference } catch { return undefined } })() === 'dark' ? 'light' : 'dark')
     /** 右栏开关：宿主 sidebarRight/命令 + 外壳轨道，两条入口（rail ▤ / ⌘⇧B）共用同一份状态。 */
     const toggleDock = () => {
       const hostOk = toggleRightbarHost()
@@ -1281,6 +1281,27 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (typeof window !== 'undefined' && window.__DSH_LAUNCHER_DEBUG__ === true) {
         window.__DSH_LAUNCHER_FILL__ = fillComposerByDom
       }
+    }, [])
+    React.useEffect(() => {
+      // composer 是 Lexical，root 上的 keydown 可能被它 stopPropagation：window capture 抢在前面
+      const onShortcut = (event) => {
+        const withMod = event.metaKey || event.ctrlKey
+        if (!withMod || !event.shiftKey) return
+        const key = String(event.key).toLowerCase()
+        if (key === 'b') {
+          event.preventDefault()
+          event.stopPropagation()
+          toggleDock()
+          return
+        }
+        if (key === 'l') {
+          event.preventDefault()
+          event.stopPropagation()
+          toggleTheme()
+        }
+      }
+      window.addEventListener('keydown', onShortcut, true)
+      return () => window.removeEventListener('keydown', onShortcut, true)
     }, [])
     // 空态覆盖层要给 composer 让位：按 composer 实际高度算，不用固定 150px
     const [composerHeight, setComposerHeight] = React.useState(150)
@@ -1421,19 +1442,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     const onKeyDown = (event) => {
       const isPaletteKey = (event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'k'
-      const isDockKey = (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === 'b'
-      if (isDockKey) {
-        event.preventDefault()
-        event.stopPropagation()
-        toggleDock()
-        return
-      }
-      const isThemeKey = (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === 'l'
-      if (isThemeKey) {
-        event.preventDefault()
-        toggleTheme()
-        return
-      }
       if (isPaletteKey) {
         event.preventDefault()
         if (!paletteOpen) {
