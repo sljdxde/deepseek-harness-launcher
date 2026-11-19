@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  ATTACH_LIMIT, SLASH_QUERY_LIMIT, addAttachment, breakdownOf, createQueue, filterSlash, levelOf, meterOf, meterHint, contextPanelTitle, quoteBlockOf, slashQueryOf,
+  ATTACH_LIMIT, AUTO_SENT_LABEL, SLASH_QUERY_LIMIT, addAttachment, breakdownOf, createQueue, filterSlash, levelOf, meterOf, meterHint, contextPanelTitle, quoteBlockOf, slashQueryOf,
 } from '../lib/composer.js'
 
 test('/ 只在行首、无空白、无第二个斜杠时触发', () => {
@@ -207,4 +207,8 @@ test('排队消息：正常结束自动出队首并带 auto 标记；中断后�
   assert.equal((await queue.drain()).ok, true)
   assert.equal(queue.count(), 0)
   assert.deepEqual(await queue.drain(), { ok: false, reason: 'empty' })
+})
+
+test('自动发出的标记文案就是定稿那一句（逐字）', () => {
+  assert.equal(AUTO_SENT_LABEL, '排队后自动发送')
 })

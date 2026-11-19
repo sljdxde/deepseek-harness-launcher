@@ -15,6 +15,9 @@ export const ATTACH_LIMIT = 5
 export const METER_WARN = 85
 export const METER_HOT = 95
 
+/** 自动发出的那条在会话流里的标记文案（FR-10 V2 定稿，逐字） */
+export const AUTO_SENT_LABEL = '排队后自动发送'
+
 /** 引用单条上限（字符）。 */
 export const QUOTE_LIMIT = 8000
 
