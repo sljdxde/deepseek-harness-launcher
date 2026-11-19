@@ -239,6 +239,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const ctx = CURRENT_CTX
     const commands = collectCommands(ctx)
     const [paletteOpen, setPaletteOpen] = React.useState(false)
+    // #1 焦点回位：打开面板时记住当时的活动元素，Esc 时优先还给它（选择器只作兜底）
+    const openerRef = React.useRef(null)
     const [paletteIndex, setPaletteIndex] = React.useState(0)
     const [query, setQuery] = React.useState('')
     const shown = commands.filter((cmd) => query === '' || String(cmd.label).includes(query))
@@ -273,15 +275,29 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     const onKeyDown = (event) => {
       const isPaletteKey = (event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'k'
-      if (isPaletteKey) { event.preventDefault(); setPaletteOpen((open) => !open); setPaletteIndex(0); return }
+      if (isPaletteKey) {
+        event.preventDefault()
+        if (!paletteOpen) openerRef.current = document.activeElement
+        setPaletteOpen((open) => !open)
+        setPaletteIndex(0)
+        return
+      }
       if (!paletteOpen) return
       if (event.key === 'Escape') {
         event.preventDefault()
         setPaletteOpen(false)
         // Esc 焦点回位：UX 口径是回到 composer 输入框（05-§4.2 / FR-06）
         requestAnimationFrame(() => {
-          const input = document.querySelector('[data-slot="main"] textarea, .launcher-main textarea')
-          input?.focus?.()
+          const opener = openerRef.current
+          if (opener !== null && opener.isConnected !== false && typeof opener.focus === 'function') {
+            opener.focus()
+            return
+          }
+          // 兜底：composer 可能是 input / textarea / contenteditable，别只猜 textarea
+          const fallback = document.querySelector(
+            '[data-slot="main"] textarea, [data-slot="main"] input, [data-slot="main"] [contenteditable="true"], .launcher-main textarea, .launcher-main input, .launcher-main [contenteditable="true"]',
+          )
+          fallback?.focus?.()
         })
         return
       }
