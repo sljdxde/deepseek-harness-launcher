@@ -88,10 +88,13 @@ try {
       await page.goto(process.env.SESSION_URL, { waitUntil: 'domcontentloaded', timeout: 60000 })
       await new Promise((resolve) => setTimeout(resolve, Number(process.env.SESSION_WAIT ?? 12000)))
       sessionActions = await page.evaluate(() => ({
+        emptyState: document.querySelector('[data-launcher-empty="our"]') !== null,
         buttons: document.querySelectorAll('.launcher-turn-action').length,
         actions: [...document.querySelectorAll('[data-action]')].map((n) => n.getAttribute('data-action')),
       }))
       if (sessionActions.buttons < 2) verdict = 'session-actions-missing'
+      // 有会话且没有消息时，空态卡片必须由我们渲染（EXPECT_EMPTY=1 时断言）
+      if (process.env.EXPECT_EMPTY === '1' && sessionActions.emptyState !== true) verdict = 'empty-state-missing'
     } catch {
       sessionActions = { buttons: -1, actions: [] }
       verdict = 'session-actions-missing'
