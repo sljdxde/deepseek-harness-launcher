@@ -65,6 +65,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-palette__hint{opacity:.6;font-size:11px}
 [data-code-wrap="off"] pre, [data-code-wrap="off"] pre code{white-space:pre!important;overflow-x:auto}
 [data-code-wrap="on"] pre code{white-space:pre-wrap!important;word-break:break-word}
+.launcher-diag{position:fixed;right:16px;bottom:40px;width:min(340px,90vw);background:var(--dsw-alias-bg-1,#fff);color:inherit;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.18);z-index:45}
+.launcher-diag__head{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}
+.launcher-diag__list{margin:0;padding:8px 10px;display:grid;gap:6px;font-size:12px}
+.launcher-diag__list div{display:flex;justify-content:space-between;gap:12px}
+.launcher-diag__list dt{opacity:.7}
+.launcher-diag__list dd{margin:0}
 .launcher-dock__handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;background:transparent;z-index:2}
 .launcher-dock__handle:hover{background:var(--dsw-alias-border-l2,rgba(127,127,127,.3))}
 .launcher-statusbar{grid-area:status;align-items:center;border-top:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;font-size:11px;gap:10px;padding:0 10px;color:var(--dsw-alias-label-secondary)}
@@ -184,6 +190,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const resolveWorkbench = () => (onPage() && keyReady() ? { status: 'handled', run: runWorkbench } : { status: 'pass' })
     const wrapReady = () => onPage()
     return [
+      { id: 'launcher.contextDiagnostics', label: '上下文诊断', hint: '只读：外壳与上下文状态', regions: ['page'], aliases: [], resolve: () => (wrapReady() ? { status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:open-diagnostics')) } : { status: 'pass' }) },
       { id: 'launcher.codeWrap.toggle', label: '切换代码块自动换行', hint: '开/关长代码横向滚动', regions: ['page', 'editable'], aliases: [], resolve: () => (wrapReady() ? { status: 'handled', run: toggleCodeWrap } : { status: 'pass' }) },
       { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], aliases: [], resolve: resolveWorkbench },
     ]
@@ -238,14 +245,34 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const [splitMode, setSplitMode] = React.useState(1)
     // 宿主 MainPanel 的口径：面板 key 是 renderSlot 的第三参 `{ entryKey }`，
     // 当前面板从 usePanelInfo 选择器钩子取（我们自己在 inject 里提供了这个钩子）。
+    const hostPolicy = (() => {
+      try {
+        return ctx?.permissions?.getSnapshot?.()?.filePolicy ?? ctx?.policy?.getSnapshot?.()?.filePolicy
+      } catch {
+        return undefined
+      }
+    })()
+    const permissionLabel = (() => {
+      const level = ['danger-full-access', 'workspace-write', 'read'].includes(hostPolicy) ? hostPolicy : 'workspace-write'
+      return { 'danger-full-access': '完全权限', 'workspace-write': '工作区内修改', read: '仅可查看' }[level]
+    })()
     const activePanelId = props.usePanelInfo === undefined
       ? null
       : props.usePanelInfo((info) => info.activePanelId)
     const ctx = CURRENT_CTX
     const commands = collectCommands(ctx)
     const [paletteOpen, setPaletteOpen] = React.useState(false)
+    const [diagOpen, setDiagOpen] = React.useState(false)
     // #1 焦点回位：打开面板时记住当时的活动元素，Esc 时优先还给它（选择器只作兜底）
     const openerRef = React.useRef(null)
+    React.useEffect(() => {
+      const open = () => setDiagOpen(true)
+      window.addEventListener('launcher:open-diagnostics', open)
+      return () => window.removeEventListener('launcher:open-diagnostics', open)
+    }, [])
+    const onDiagKeyDown = (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); setDiagOpen(false) }
+    }
     const [paletteIndex, setPaletteIndex] = React.useState(0)
     const [query, setQuery] = React.useState('')
     const shown = commands.filter((cmd) => query === '' || String(cmd.label).includes(query))
@@ -392,6 +419,16 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         renderSlot('shell.bottom', {})),
       h('div', { className: 'launcher-overlay' },
         renderSlot('shell.overlay', {})),
+      diagOpen ? h('div', { className: 'launcher-diag', role: 'dialog', 'aria-label': '上下文诊断', onKeyDown: onDiagKeyDown },
+        h('header', { className: 'launcher-diag__head' },
+          h('span', null, '上下文诊断'),
+          h('button', { type: 'button', onClick: () => setDiagOpen(false), 'aria-label': '关闭诊断' }, '✕')),
+        h('dl', { className: 'launcher-diag__list' },
+          h('div', null, h('dt', null, '当前面板'), h('dd', null, String(activePanelId ?? 'conversation'))),
+          h('div', null, h('dt', null, '分屏档位'), h('dd', null, String(splitMode))),
+          h('div', null, h('dt', null, '右栏宽度'), h('dd', null, `${dockWidth}px${dockCanShow ? '' : '（隐藏）'}`)),
+          h('div', null, h('dt', null, '代码块换行'), h('dd', null, codeWrapOn() ? '开' : '关')),
+          h('div', null, h('dt', null, '权限范围'), h('dd', null, permissionLabel)))) : null,
       paletteOpen ? h('div', { className: 'launcher-palette', role: 'dialog', 'aria-modal': 'true', 'aria-label': '命令面板' },
         h('input', {
           className: 'launcher-palette__input',
