@@ -67,6 +67,16 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-shell[data-code-wrap="on"] pre code{white-space:pre-wrap!important;word-break:break-word}
 .launcher-diag{position:fixed;right:16px;bottom:40px;width:min(340px,90vw);background:var(--dsw-alias-bg-1,#fff);color:inherit;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.18);z-index:45}
 .launcher-diag__head{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}
+.launcher-ctx{position:relative;display:inline-flex}
+.launcher-ctx__entry{height:26px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:13px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
+.launcher-ctx__entry[data-pct^="9"]{border-color:var(--dsw-alias-warning,#d97706)}
+.launcher-ctx__pop{position:absolute;top:calc(100% + 6px);right:0;min-width:200px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:8px;background:var(--dsw-alias-bg-1,#fff);z-index:40}
+.launcher-ctx__head{font-size:12px;margin-bottom:6px}
+.launcher-ctx__list{margin:0;padding:0;display:grid;gap:4px;font-size:12px}
+.launcher-ctx__list div{display:flex;justify-content:space-between;gap:12px}
+.launcher-ctx__list dt{opacity:.7}
+.launcher-ctx__list dd{margin:0}
+.launcher-ctx__advice{margin:6px 0 0;font-size:12px;opacity:.8}
 .launcher-perm{position:relative;display:inline-flex;align-items:center}
 .launcher-perm__pill{height:26px;display:inline-flex;align-items:center;gap:4px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:13px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
 .launcher-perm__pill[disabled]{opacity:.6;cursor:not-allowed}
@@ -222,30 +232,59 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * 数据只用宿主投影 `contextPressure` / `contextBreakdown`；读不到整条不渲染（不置假数据）。
    */
   function registerContextDiagnostics(ctx) {
-    if (typeof window === 'undefined' || window.__DSH_LAUNCHER_CONTEXT_DIAG__ !== true) return []
-    const pickNumber = (value, keys) => {
-      if (value === null || value === undefined) return null
-      const raw = typeof value === 'function' ? value((v) => v) : value
-      if (raw === null || typeof raw !== 'object') return Number.isFinite(raw) ? Number(raw) : null
-      for (const key of keys) {
-        const n = Number(raw[key])
-        if (Number.isFinite(n)) return n
-      }
-      return null
-    }
     const Component = (slotProps) => {
-      if (window.__DSH_LAUNCHER_CONTEXT_DIAG__ === true) {
-        console.info('launcher:diag useProjection =', typeof slotProps?.useProjection)
+      const readProjection = (name) => {
+        try {
+          const hook = slotProps?.useProjection
+          if (typeof hook !== 'function') return null
+          const value = hook(name)
+          return typeof value === 'function' ? value((v) => v) : value
+        } catch {
+          return null
+        }
       }
-      const pressure = pickNumber(slotProps?.useProjection?.('contextPressure'), ['pct', 'percent', 'used', 'pressure', 'ratio'])
-      const breakdown = slotProps?.useProjection?.('contextBreakdown')
-      const raw = typeof breakdown === 'function' ? breakdown((v) => v) : breakdown
-      const system = pickNumber(raw?.systemTokens ?? raw, ['systemTokens'])
-      if (pressure === null || raw === null || raw === undefined) return null
-      const pct = pressure <= 1 ? Math.round(pressure * 100) : Math.round(pressure)
-      return h('div', { className: 'launcher-diag-inline' },
-        h('button', { type: 'button', className: 'launcher-diag-inline__btn', title: '上下文诊断', 'data-pct': pct }, `上下文 ${pct}%`),
-        pct >= 85 ? h('span', { className: 'launcher-diag-inline__advice' }, pct >= 95 ? '快满了：建议压缩到 40%' : '该压缩了：建议压缩到 40%') : null)
+      const pressure = readProjection('contextPressure')
+      const breakdown = readProjection('contextBreakdown')
+      const num = (value, keys) => {
+        if (value === null || value === undefined) return null
+        if (typeof value === 'number') return Number.isFinite(value) ? value : null
+        for (const key of keys) {
+          const n = Number(value[key])
+          if (Number.isFinite(n)) return n
+        }
+        return null
+      }
+      const used = num(pressure, ['used', 'usedTokens', 'tokens', 'surfaceTokens'])
+      const limit = num(pressure, ['limit', 'limitTokens', 'windowTokens', 'max'])
+      const ratio = num(pressure, ['ratio', 'pct', 'percent', 'pressure'])
+      let pct = null
+      if (used !== null && limit !== null && limit > 0) pct = Math.min(100, Math.round((used / limit) * 100))
+      else if (ratio !== null) pct = ratio <= 1 ? Math.round(ratio * 100) : Math.round(ratio)
+      const system = num(breakdown, ['systemTokens', 'system'])
+      const chat = num(breakdown, ['messageTokens', 'chat'])
+      const files = num(breakdown, ['filesTokens', 'files'])
+      const tools = num(breakdown, ['toolsTokens', 'tools'])
+      if (pct === null || (system === null && chat === null && tools === null)) return null
+      const [open, setOpen] = React.useState(false)
+      const advice = pct >= 95 ? '快满了：建议压缩到 40%' : pct >= 85 ? '该压缩了：建议压缩到 40%' : '占用正常'
+      return h('div', { className: 'launcher-ctx', onKeyDown: (e) => { if (e.key === 'Escape') setOpen(false) } },
+        h('button', {
+          type: 'button',
+          className: 'launcher-ctx__entry',
+          'data-pct': pct,
+          'aria-haspopup': 'dialog',
+          'aria-expanded': open,
+          title: `上下文占用 ${pct}% · 点开看拆分`,
+          onClick: () => setOpen((v) => !v),
+        }, `上下文 ${pct}%`),
+        open ? h('div', { className: 'launcher-ctx__pop', role: 'dialog', 'aria-label': '上下文诊断' },
+          h('header', { className: 'launcher-ctx__head' }, `上下文占用 ${pct}%`),
+          h('dl', { className: 'launcher-ctx__list' },
+            h('div', null, h('dt', null, '系统提示'), h('dd', null, system === null ? '—' : String(system))),
+            h('div', null, h('dt', null, '会话消息'), h('dd', null, chat === null ? '—' : String(chat))),
+            h('div', null, h('dt', null, '文件'), h('dd', null, files === null ? '—' : String(files))),
+            h('div', null, h('dt', null, '工具'), h('dd', null, tools === null ? '—' : String(tools)))),
+          h('p', { className: 'launcher-ctx__advice' }, advice)) : null)
     }
     try {
       if (typeof ctx?.slots?.inject !== 'function') return []
@@ -261,6 +300,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       return []
     }
   }
+
 
   function registerPermissionPill(ctx) {
     if (typeof window === 'undefined' || window.__DSH_LAUNCHER_PERMISSION_PILL__ !== true) return []
