@@ -93,7 +93,28 @@ export function registerApprovalRoutes(server, service) {
         jsonStatus(res, 405, { error: 'GET only' })
         return
       }
-      json(res, { pendingCount: service.pendingCount(), requests: service.pendingSnapshot() })
+      // 轮询只回小结构：count + latest；详情由 /pending/detail 按 requestId 取
+      const list = service.pendingSnapshot()
+      const latest = list.length === 0 ? null : (({ requestId, command, sessionId, turn }) => ({ requestId, command, sessionId, turn }))(list[0])
+      json(res, { count: list.length, latest })
+    },
+  }))
+  disposers.push(server.register({
+    kind: 'exact',
+    path: '/dsh-approval/pending/detail',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        jsonStatus(res, 405, { error: 'GET only' })
+        return
+      }
+      const params = new URL(req.url, 'http://127.0.0.1').searchParams
+      const requestId = params.get('requestId') ?? ''
+      const detail = service.pendingDetail(requestId)
+      if (detail === null) {
+        jsonStatus(res, 404, { error: 'not pending' })
+        return
+      }
+      json(res, detail)
     },
   }))
   disposers.push(server.register({

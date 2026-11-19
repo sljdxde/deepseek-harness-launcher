@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+5568653"
+  const BUILD_STAMP = "0.2.2-rc.5+7e84592"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -613,32 +613,68 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     if (response.ok !== true) throw new Error(`HTTP ${response.status}`)
     return response.json()
   }
-  /** 1s 轮询待审批；页面隐藏停、连续 3 次失败停（请求失败时 UI 显示可读错误）。 */
+  /**
+   * 自适应轮询：有 pending 时 500ms、空队列 2s；页面隐藏暂停、可见立刻拉一次；
+   * 失败静默重试（不 toast、不白屏），连续 3 次失败才在入口显示可读错误。
+   */
   function startApprovalPolling() {
+    let timer = 0
     let ticks = 0
+    let stopped = false
+    const schedule = () => {
+      if (stopped) return
+      clearTimeout(timer)
+      const delay = approvalSnapshot.pending.length > 0 ? 500 : 2000
+      timer = setTimeout(tick, delay)
+    }
     const tick = async () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-      if (approvalSnapshot.failures >= 3) return
+      if (stopped) return
+      if (typeof document !== 'undefined' && document.hidden === true) {
+        schedule()
+        return
+      }
+      if (approvalSnapshot.failures >= 3) {
+        stopped = true
+        return
+      }
       try {
         const [pending, policy] = await Promise.all([
           approvalRequest('/pending'),
           ticks % 10 === 0 ? approvalRequest('/policy') : Promise.resolve(approvalSnapshot.policy),
         ])
         ticks += 1
-        approvalSnapshot.pending = Array.isArray(pending?.requests) ? pending.requests : []
+        const latest = pending?.latest ?? null
+        approvalSnapshot.pending = latest === null ? [] : [latest]
+        approvalSnapshot.count = Number(pending?.count) || 0
         approvalSnapshot.policy = policy
         approvalSnapshot.failures = 0
         approvalSnapshot.error = null
-      } catch (error) {
+        approvalEmit()
+      } catch {
         approvalSnapshot.failures += 1
-        approvalSnapshot.error = approvalSnapshot.failures >= 3 ? '审批状态获取失败，稍后重试' : null
+        if (approvalSnapshot.failures >= 3) {
+          stopped = true
+          approvalSnapshot.error = '审批状态获取失败，稍后重试'
+          approvalEmit()
+        }
       }
-      approvalEmit()
+      schedule()
+    }
+    const onVisibility = () => {
+      if (typeof document !== 'undefined' && document.hidden === false && stopped === false) {
+        clearTimeout(timer)
+        tick()
+      }
     }
     tick()
-    const timer = setInterval(tick, 1000)
-    return () => clearInterval(timer)
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility)
+    }
   }
+
   function useApprovalSnapshot() {
     const [snapshot, setSnapshot] = React.useState(approvalSnapshot)
     React.useEffect(() => {
@@ -652,7 +688,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   /** 待审批入口：只读展示（置灰），不弹独立面板；全名在 title 里。 */
   function ApprovalChip() {
     const snapshot = useApprovalSnapshot()
-    const count = snapshot.pending.length
+    const count = Number(snapshot.count ?? snapshot.pending.length) || 0
     const title = '见 设置 → 审批与权限'
     if (snapshot.error !== null) return h('span', { className: 'launcher-approval-chip is-error', title: snapshot.error }, snapshot.error)
     return h('span', {
@@ -665,7 +701,16 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   /** 审批卡：三选，作答后立刻刷新（不自己记结果）。 */
   function ApprovalCard() {
     const snapshot = useApprovalSnapshot()
-    const request = snapshot.pending[0]
+    const [detail, setDetail] = React.useState(null)
+    const summary = snapshot.pending[0]
+    React.useEffect(() => {
+      setDetail(null)
+      if (summary === undefined) return
+      approvalRequest(`/pending/detail?requestId=${encodeURIComponent(summary.requestId)}`)
+        .then((value) => setDetail(value))
+        .catch(() => setDetail(summary))
+    }, [summary?.requestId])
+    const request = detail ?? summary
     const [busy, setBusy] = React.useState(false)
     if (request === undefined) return null
     const answer = async (choice) => {

@@ -32,7 +32,7 @@ function harness() {
 
 test('五个端点都注册了', () => {
   const { routes, dir } = harness()
-  assert.deepEqual([...routes.keys()].sort(), ['/dsh-approval/audit', '/dsh-approval/decide', '/dsh-approval/pending', '/dsh-approval/policy'])
+  assert.deepEqual([...routes.keys()].sort(), ['/dsh-approval/audit', '/dsh-approval/decide', '/dsh-approval/pending', '/dsh-approval/pending/detail', '/dsh-approval/policy'])
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -59,7 +59,7 @@ test('GET pending 无待审批时为 0 与空数组', async () => {
   const { call, dir } = harness()
   const res = await call('/dsh-approval/pending')
   assert.equal(res.status, 200)
-  assert.deepEqual(res.body, { pendingCount: 0, requests: [] })
+  assert.deepEqual(res.body, { count: 0, latest: null })
   rmSync(dir, { recursive: true, force: true })
 })
 

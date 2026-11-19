@@ -185,8 +185,23 @@ export function createApprovalService(options = {}) {
       tool: item?.call?.tool,
       command: item?.record?.command,
       cwd: item?.record?.cwd,
+      sessionId: item?.record?.sessionId ?? '',
+      turn: item?.record?.runId ?? '',
       requestedAt: item?.record?.ts,
     })),
+    pendingDetail: (requestId) => {
+      const item = pending.get(requestId)
+      if (item === undefined) return null
+      return {
+        requestId,
+        tool: item?.call?.tool,
+        command: item?.record?.command,
+        cwd: item?.record?.cwd,
+        sessionId: item?.record?.sessionId ?? '',
+        turn: item?.record?.runId ?? '',
+        requestedAt: item?.record?.ts,
+      }
+    },
     // 自检可用的内部句柄（不接线、不暴露给 client）。
     policyStore: store,
     auditLog: log,
