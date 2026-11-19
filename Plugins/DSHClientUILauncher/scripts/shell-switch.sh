@@ -130,12 +130,12 @@ require_version_lock() {
   fi
 }
 
-# 装之前的 package.json 与锁文件各留一份：native 要证明它们逐字回来了
-# ② profile 的 dsh.profile.bundles：只写 ① 依赖时客户端模块图不枚举它，界面会"看起来像原生"
+# 装之前的 package.json 与锁文件各留一份：native 要证明它们回来了（逐字做不到，见 compare_snapshot）
 
 
 # 只在**没装本包**时留快照：装之前要有一个"干净原生"的基线，否则比的是上一次装了的状态
 snapshot_state() {
+  mkdir -p "$STATE_DIR"
   if "$NODE" -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(m.dependencies?.["@deepseek-ai/dsh-client-ui-layout"]===undefined?0:1)' "$MANIFEST"; then
     cp -p "$MANIFEST" "$STATE_DIR/package.json.snapshot"
     [ -f "$PROFILE_DIR/pnpm-lock.yaml" ] && cp -p "$PROFILE_DIR/pnpm-lock.yaml" "$STATE_DIR/pnpm-lock.snapshot"
@@ -144,7 +144,7 @@ snapshot_state() {
 }
 
 # 逐字一致做不到：`dsh plugin remove` 会把 package.json 按自己的 canonical 形态重写（键序/缩进变）。
-# 判据改成"语义一致"：dependencies 与 dsh.profile.bundles 两项与装前快照相等即算回到装前。
+# 判据改成"语义一致"：只比 dependencies（bundles 不再写，也就不参与比较）。
 compare_snapshot() {
   if [ ! -f "$STATE_DIR/package.json.snapshot" ]; then return 0; fi
   "$NODE" - "$MANIFEST" "$STATE_DIR/package.json.snapshot" <<'NODE_EOF'
@@ -152,46 +152,28 @@ const fs = require('node:fs')
 const pick = (file) => {
   const m = JSON.parse(fs.readFileSync(file, 'utf8'))
   const deps = Object.fromEntries(Object.entries(m.dependencies ?? {}).sort(([a], [b]) => a.localeCompare(b)))
-  return JSON.stringify({ deps, bundles: m.dsh?.profile?.bundles ?? [] })
+  return JSON.stringify({ deps })
 }
 const [now, before] = process.argv.slice(2)
 if (pick(now) === pick(before)) process.stdout.write('SEMANTIC-OK\n')
 else { process.stderr.write('SEMANTIC-DIFF\n'); process.exit(1) }
 NODE_EOF
   if [ $? -eq 0 ]; then
-    echo "package.json 语义与装前一致（依赖与 bundles）"
+    echo "package.json 语义与装前一致（依赖）"
   else
-    echo "警告：package.json 语义与装前不一致（依赖或 bundles 变了）" >&2
+    echo "警告：package.json 语义与装前不一致（依赖变了）" >&2
     log_line "native=manifest-semantic-diff"
   fi
 }
 
 
 
-set_bundle() {
-  mode=$1
-  "$NODE" -e '
-    const fs = require("node:fs");
-    const [file, mode, name] = process.argv.slice(1);
-    const m = JSON.parse(fs.readFileSync(file, "utf8"));
-    const list = Array.isArray(m.dsh?.profile?.bundles) ? m.dsh.profile.bundles : null;
-    if (list === null) process.exit(3);
-    const next = list.filter((entry) => entry !== name);
-    if (mode === "add") next.push(name);
-    m.dsh.profile.bundles = next;
-    fs.writeFileSync(file, JSON.stringify(m, null, 2) + "\n");
-  ' "$MANIFEST" "$mode" "$HOST_PACKAGE"
-}
-
 set_override() {
   mode=$1
   if [ "$mode" = "add" ]; then
     dsh_plugin add "@deepseek-ai/dsh-client-ui-layout@file:$PACKAGE_DIR" || return 1
-    # 登记写在 plugin add 之后：先写会被 dsh 按 canonical 形态重写掉
-    set_bundle add || return 1
     return 0
   fi
-  set_bundle remove || true
   # 幂等：依赖已经不在了就不调 dsh plugin remove（否则 pnpm remove 会因为该依赖不存在而报错）
   if "$NODE" -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(m.dependencies?.["@deepseek-ai/dsh-client-ui-layout"]===undefined?0:1)' "$MANIFEST"; then
     return 0
