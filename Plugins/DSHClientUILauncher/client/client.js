@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+0f0c454"
+  const BUILD_STAMP = "0.2.2-rc.5+08258df"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -950,7 +950,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // 标准 props 是选择器钩子（SnapshotSelectorHook），必须带 selector 调用，
     // 直接 useDockOpen() 会报 `selector is not a function` 并把 root 整个打崩。
     const dockOpenHook = props.useDockOpen === undefined ? false : props.useDockOpen((open) => open)
-    const [dockOpenEvent, setDockOpenEvent] = React.useState(false)
+    const [dockOpenEvent, setDockOpenEvent] = React.useState(() => {
+      try { return window.__DSH_LAUNCHER_DOCK__ === true } catch { return false }
+    })
     React.useEffect(() => {
       const onDock = (event) => setDockOpenEvent(event?.detail?.open === true)
       window.addEventListener('launcher:dock', onDock)
@@ -1406,8 +1408,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       },
     }
     const setDockOpen = (next) => {
-      if (next === dockOpen) return
       dockOpen = next
+      try { window.__DSH_LAUNCHER_DOCK__ = dockOpen } catch { /* 忽略 */ }
       for (const listener of dockListeners) listener()
       try {
         window.dispatchEvent(new CustomEvent('launcher:dock', { detail: { open: dockOpen } }))
