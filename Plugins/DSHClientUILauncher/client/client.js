@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+0ebe6ae"
+  const BUILD_STAMP = "0.2.2-rc.5+5ff8006"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1362,12 +1362,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const [paletteIndex, setPaletteIndex] = React.useState(0)
     const [query, setQuery] = React.useState('')
     const shown = commands.filter((cmd) => query === '' || String(cmd.label).includes(query))
+    const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
+    const dockWidth = dockCanShow ? Math.max(DOCK_MIN, dragWidth) : 0
     const mainWidth = Math.max(0, viewportWidth - 56 - (props.sidebarCollapsed === true ? 0 : 280) - dockWidth)
     const effectiveSplit = resolveSplit(splitMode, mainWidth, (typeof window === 'undefined' ? 900 : window.innerHeight) - 26)
     const [cols, rows] = SPLIT_GRID[effectiveSplit] ?? SPLIT_GRID[1]
     const paneKeys = Array.from({ length: effectiveSplit }, (_, i) => (i === 0 ? 'conversation' : `conversation#${i + 1}`))
-    const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
-    const dockWidth = dockCanShow ? Math.max(DOCK_MIN, dragWidth) : 0
     const lastPointerRef = React.useRef({ time: 0, x: 0 })
     const startDrag = (event) => {
       event.preventDefault()
