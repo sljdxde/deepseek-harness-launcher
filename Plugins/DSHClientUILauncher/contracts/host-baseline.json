@@ -91,5 +91,18 @@
       "kind": "hoc",
       "scope": "root"
     }
-  ]
+  ],
+  "layoutService": {
+    "face": [
+      "panelInfo",
+      "selectPanel",
+      "beginNavigation",
+      "toggleSidebar",
+      "openRightbar",
+      "closeRightbar"
+    ],
+    "standardProps": [
+      "usePanelInfo"
+    ]
+  }
 }

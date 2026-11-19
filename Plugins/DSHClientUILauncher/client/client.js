@@ -2,16 +2,19 @@ window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) 
   const React = require('react')
   const h = React.createElement
 
-  // 契约常量（与 lib/contract.js 同一份事实，浏览器半区不引 Node 模块，故内联副本；
-  // 两边一致性由 test/contract.test.mjs 与 tools/contract-snapshot.mjs 夹住）。
+  // #region children-from-contract
+  // 本段由 tools/sync-contract.mjs 从 lib/contract.js 生成，勿手改；
+  // 漂移由 test/contract.test.mjs 的同步检查挡住。
   const CHILDREN = {
-    sidebar: { kind: 'single', scope: 'root' },
-    main: { kind: 'keyed', scope: 'root' },
-    rightbar: { kind: 'single', scope: 'root' },
-    'shell.bottom': { kind: 'single', scope: 'root' },
-    'shell.overlay': { kind: 'list', scope: 'root' },
-    'shell.leading': { kind: 'single', scope: 'root' },
+    "sidebar": { kind: "single", scope: 'root' },
+    "main": { kind: "keyed", scope: 'root' },
+    "rightbar": { kind: "single", scope: 'root' },
+    "shell.bottom": { kind: "single", scope: 'root' },
+    "shell.overlay": { kind: "list", scope: 'root' },
+    "shell.leading": { kind: "single", scope: 'root' },
   }
+  const LAYOUT_FACE_MEMBERS = ["panelInfo","selectPanel","beginNavigation","toggleSidebar","openRightbar","closeRightbar"]
+  // #endregion children-from-contract
 
   const CSS = `
 .launcher-shell{--launcher-rail:56px;--launcher-sidebar:280px;--launcher-status:26px;--launcher-dock:0px;
@@ -61,7 +64,8 @@ window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) 
   function LauncherRoot(props) {
     const renderSlot = props.renderSlot
     const viewportWidth = typeof window === 'undefined' ? 1440 : window.innerWidth
-    const dockWidth = props.dockWidth
+    const dockOpen = props.useDockOpen === undefined ? false : props.useDockOpen()
+    const dockWidth = dockOpen ? DOCK_WIDTH : 0
     const collapsed = props.sidebarCollapsed === true
     return h('div', { className: 'launcher-shell', 'data-shell': 'launcher' },
       h('div', { className: 'launcher-rail', role: 'navigation', 'aria-label': 'launcher rail' },
@@ -91,9 +95,27 @@ window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) 
     document.body.prepend(bar)
   }
 
+  const DOCK_WIDTH = 380
+
   function apply(ctx) {
     ensureStyle()
     const panelInfo = createPanelInfo()
+    // 右栏轨道宽度是外壳的活，但显隐由 ctx.layout.openRightbar/closeRightbar 记账
+    // （ui-sidebar-right 用这两个动作），所以它得是一个能订阅的小观测面。
+    let dockOpen = false
+    const dockListeners = new Set()
+    const dockHook = {
+      getSnapshot: () => dockOpen,
+      subscribe: (listener) => {
+        dockListeners.add(listener)
+        return () => dockListeners.delete(listener)
+      },
+    }
+    const setDockOpen = (next) => {
+      if (next === dockOpen) return
+      dockOpen = next
+      for (const listener of dockListeners) listener()
+    }
     const disposers = []
     try {
       // 面板选中的观测面：ui-sidebar 用 usePanelInfo(info => info.activePanelId === id) 决定高亮。
@@ -104,11 +126,14 @@ window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) 
         selectPanel: (id) => panelInfo.set(id ?? null),
         beginNavigation: () => new AbortController().signal,
         toggleSidebar: () => {},
+        // track=false 表示全屏覆盖，不占主区轨道；两种都不改变主区宽度以外的排版
+        openRightbar: (track) => setDockOpen(track !== false),
+        closeRightbar: () => setDockOpen(false),
       }))
       disposers.push(ctx.slots.register({
         name: 'root',
         children: CHILDREN,
-        inject: () => ({ hooks: { dockWidth: 0, sidebarCollapsed: false } }),
+        inject: () => ({ hooks: { dockOpen: dockHook } }),
       }, LauncherRoot))
     } catch (error) {
       // 两个声明方同时注册 root：不抛白屏，退回原生界面 + 一条提示。

@@ -6,9 +6,14 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
-import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, OVERLAY_IDS, DOCK_TABS, diffContract, describeDiff } from '../lib/contract.js'
+import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, DOCK_TABS, diffContract, describeDiff } from '../lib/contract.js'
+import { withContractBlock, runSync } from '../tools/sync-contract.mjs'
 
 const baseline = JSON.parse(readFileSync(new URL('../contracts/host-baseline.json', import.meta.url), 'utf8'))
 
@@ -62,4 +67,37 @@ test('diffContract 能报出缺槽、kind 变化与多余槽', () => {
 test('describeDiff 对空 diff 返回空串（不要一条空黄条）', () => {
   assert.equal(describeDiff([]), '')
   assert.equal(describeDiff(undefined), '')
+})
+
+test('布局服务面：包内成员表与宿主 baseline 的 ILayout 逐条一致（服务面缺口，W1 尾补）', () => {
+  assert.deepEqual([...LAYOUT_FACE_MEMBERS], baseline.layoutService.face)
+  assert.deepEqual(baseline.layoutService.standardProps, ['usePanelInfo'], 'ui-sidebar 靠它决定侧栏高亮')
+})
+
+test('client/client.js 的契约块是生成的，手改就会红', () => {
+  const source = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
+  const synced = withContractBlock(source)
+  assert.notEqual(synced, null, 'client.js 里必须有 children-from-contract 标记区')
+  assert.equal(synced, source, '跑 node tools/sync-contract.mjs 更新，别手改')
+})
+
+test('同步脚本 CLI 自己可用：--check 退出码 0', () => {
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../tools/sync-contract.mjs', import.meta.url)), '--check'], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /契约块已是最新/)
+})
+
+test('同步脚本：漂移时 --check 退出 1、写回后 0、没有标记区退出 3', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'launcher-sync-'))
+  const target = join(dir, 'client.js')
+  const drifted = 'x\n  // #region children-from-contract\n  const CHILDREN = {}\n  // #endregion children-from-contract\ny\n'
+  writeFileSync(target, drifted)
+  const lines = []
+  const log = (line) => lines.push(line)
+  assert.equal(runSync({ check: true, target, log }), 1, '手改过的块要被拒')
+  assert.equal(runSync({ target, log }), 0, '不带 --check 时写回')
+  assert.equal(runSync({ check: true, target, log }), 0, '写回后检查通过')
+  writeFileSync(join(dir, 'plain.js'), 'no markers here\n')
+  assert.equal(runSync({ check: true, target: join(dir, 'plain.js'), log }), 3)
+  rmSync(dir, { recursive: true, force: true })
 })

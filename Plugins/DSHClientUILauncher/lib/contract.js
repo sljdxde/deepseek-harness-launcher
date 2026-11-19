@@ -49,6 +49,19 @@ export const OVERLAY_IDS = Object.freeze({
   contractWarning: 'launcher.contract-warning',
 })
 
+/**
+ * 宿主 ui-layout 提供的「布局服务面」成员（05-§4.2 的服务面缺口，W1 尾补）。
+ *
+ * 关掉 ui-layout 之后这两个面没人提供，宿主插件会静默失去面板导航：
+ * - `ctx.slots.provideRoot({ hooks: { panelInfo } })`：`usePanelInfo` 是全局标准 props，
+ *   ui-sidebar 用它决定哪条侧栏高亮；
+ * - `ctx.reflect.provide('layout', …)`：ILayout，本仓 plugin-manager / archive-manager 都 inject 它。
+ * 快照把成员名纳入比对，成员增减即 CI 红。
+ */
+export const LAYOUT_FACE_MEMBERS = Object.freeze([
+  'panelInfo', 'selectPanel', 'beginNavigation', 'toggleSidebar', 'openRightbar', 'closeRightbar',
+])
+
 /** 右栏 6 个内置标签，顺序即标签栏顺序（原型 DOCK_TABS）。 */
 export const DOCK_TABS = Object.freeze(['review', 'files', 'browser', 'terminal', 'tasks', 'side'])
 

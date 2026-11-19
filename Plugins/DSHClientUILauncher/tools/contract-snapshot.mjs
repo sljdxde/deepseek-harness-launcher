@@ -75,6 +75,18 @@ function bracesAt(source, openIndex) {
   return null
 }
 
+/** 从 `interface ILayout {…}` 里抽成员名（服务面缺口，W1 尾补）。 */
+function faceMembersOf(source) {
+  const body = interfaceBlock(source, 'ILayout')
+  if (body === null) return []
+  const members = []
+  for (const line of body.split('\n')) {
+    const name = /^\s*readonly\s+([A-Za-z_$][\w$]*)/.exec(line)?.[1] ?? /^\s*([A-Za-z_$][\w$]*)\s*\(/.exec(line)?.[1]
+    if (name !== undefined) members.push(name)
+  }
+  return members
+}
+
 /** 从 AppFrame 的 `PropsRenderSlots<'a' | 'b'>` 里抽子槽名。 */
 function renderSlotsOf(source) {
   const match = /PropsRenderSlots<([^>]+)>/.exec(source)
@@ -108,6 +120,7 @@ function collect({ layoutFrom, sidebarFrom }) {
   const seats = sidebarFrom === null
     ? null
     : slotsOf(interfaceBlock(readOrThrow(join(sidebarFrom, 'lib/types/client/contract/slots.d.ts'), 'ui-sidebar 的槽契约'), 'SlotMap'))
+  const serviceSource = readOrThrow(join(layoutFrom, 'lib/types/client/service.d.ts'), 'ui-layout 的服务面类型')
   return {
     host: {
       layoutPackage: '@deepseek-ai/dsh-client-ui-layout',
@@ -118,6 +131,10 @@ function collect({ layoutFrom, sidebarFrom }) {
     slots: slots.map((slot) => ({ name: slot.name, kind: slot.kind, scope: slot.scope })),
     rootRenderSlots: renderSlotsOf(frameSource),
     seats: seats === null ? null : seats.map((seat) => ({ name: seat.name, kind: seat.kind, scope: seat.scope })),
+    layoutService: {
+      face: faceMembersOf(serviceSource),
+      standardProps: [...new Set([...frameSource.matchAll(/usePanelInfo/g)].map(() => 'usePanelInfo'))],
+    },
   }
 }
 
@@ -138,6 +155,9 @@ function diff(baseline, current) {
     else if (seatsBefore.get(name).kind !== seat.kind) out.push(`seat:kind-changed ${name}: ${seatsBefore.get(name).kind} → ${seat.kind}`)
   }
   for (const name of seatsBefore.keys()) if (!seatsAfter.has(name)) out.push(`seat:removed ${name}`)
+  const faceBefore = JSON.stringify(baseline.layoutService?.face ?? [])
+  const faceAfter = JSON.stringify(current.layoutService?.face ?? [])
+  if (faceBefore !== faceAfter) out.push(`layout:face ${faceBefore} → ${faceAfter}`)
   const renderBefore = JSON.stringify(baseline.rootRenderSlots ?? [])
   const renderAfter = JSON.stringify(current.rootRenderSlots ?? [])
   if (renderBefore !== renderAfter) out.push(`root:render-slots ${renderBefore} → ${renderAfter}`)
