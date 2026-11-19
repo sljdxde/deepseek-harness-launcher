@@ -109,6 +109,19 @@ export function meterOf({ used, window } = {}) {
 }
 
 /**
+ * 计量状态的提示文案（04-A2 · D2，口径来自 v4-变更与分工 §2）：
+ * `≥85%` 的 tooltip 提示「该压缩了」；`≥95%` 是同一句话的更强呈现（红档 + role=alert，
+ * 由渲染层决定），不另起文案——设计师若给了 ≥95 的原话，改这一个常量即可。
+ * @param {'normal'|'warn'|'hot'} level - meterOf 的档位。
+ * @returns {{ text: string, urgency: 'none'|'warn'|'alert' }} tooltip 文案与告警强度。
+ */
+export function meterHint(level) {
+  if (level === 'hot') return { text: '该压缩了', urgency: 'alert' }
+  if (level === 'warn') return { text: '该压缩了', urgency: 'warn' }
+  return { text: '', urgency: 'none' }
+}
+
+/**
  * 四项拆分：按最大余数法取整，保证四项之和 === 显示的 pct（§10-14 的断言）。
  * @param {{ system: number, chat: number, files: number, tools: number }} raw - 四项原始占比（同口径的任意正数）。
  * @param {number} pct - 要凑到的总百分比（meterOf 的结果）。
