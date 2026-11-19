@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+08258df"
+  const BUILD_STAMP = "0.2.2-rc.5+414f460"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -116,6 +116,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   .launcher-main{min-width:0}
 }
 .launcher-theme-chip{margin-left:auto;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;font-size:12px;line-height:1;padding:2px 6px;cursor:pointer}
+.launcher-rail__dock{display:inline-flex;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
 .launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
 .launcher-panel-back{flex:0 0 auto;padding:6px 12px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}
 .launcher-panel-back__btn{border:0;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;opacity:.8}
@@ -950,6 +951,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // 标准 props 是选择器钩子（SnapshotSelectorHook），必须带 selector 调用，
     // 直接 useDockOpen() 会报 `selector is not a function` 并把 root 整个打崩。
     const dockOpenHook = props.useDockOpen === undefined ? false : props.useDockOpen((open) => open)
+    const [dockSticky, setDockSticky] = React.useState(false)
     const [dockOpenEvent, setDockOpenEvent] = React.useState(() => {
       try { return window.__DSH_LAUNCHER_DOCK__ === true } catch { return false }
     })
@@ -958,7 +960,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       window.addEventListener('launcher:dock', onDock)
       return () => window.removeEventListener('launcher:dock', onDock)
     }, [])
-    const dockOpen = dockOpenHook || dockOpenEvent
+    const dockOpen = dockOpenHook || dockOpenEvent || dockSticky
     const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     const [dragWidth, setDragWidth] = React.useState(DOCK_WIDTH)
@@ -1197,6 +1199,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     },
       h('div', { className: 'launcher-rail', role: 'navigation', 'aria-label': 'launcher rail' },
         renderSlot('shell.leading', {}),
+        h('button', {
+          type: 'button',
+          className: 'launcher-rail__dock',
+          'aria-label': '开关右栏',
+          'aria-pressed': dockOpen,
+          title: '开关右栏（宽度 320–520）',
+          onClick: () => setDockSticky((open) => !open),
+        }, '▤'),
         h('button', {
           type: 'button',
           className: 'launcher-rail__drawer',
