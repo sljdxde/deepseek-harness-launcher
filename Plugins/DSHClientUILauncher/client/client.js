@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+4b2fd35"
+  const BUILD_STAMP = "0.2.2-rc.5+65fa39b"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -529,6 +529,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     try {
       if (typeof ctx?.slots?.inject !== 'function') return []
+      // composer.bar 若是 single 槽，注册会打断 required 插件激活：先确认它是 list 再注册
+      const spec = ctx.slots.spec?.('conversation.composer.bar')
+      if (spec === undefined || spec === null || spec.kind !== 'list') return []
       const dispose = ctx.slots.inject('conversation.composer.bar', () => ctx.slots.register({
         name: 'conversation.composer.bar',
         id: 'launcher.modelChip',
