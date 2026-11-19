@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+2ce431c"
+  const BUILD_STAMP = "0.2.2-rc.5+c4422a1"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1449,7 +1449,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const shown = commands.filter((cmd) => query === '' || String(cmd.label).includes(query))
     const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
     const dockWidth = dockCanShow ? clampDock(dragWidth, viewportWidth) : 0
-    const mainWidth = Math.max(0, viewportWidth - 56 - (props.sidebarCollapsed === true ? 0 : 280) - dockWidth)
+    // ≤860 时侧栏是抽屉（列宽 0）；此前这里仍扣 280，导致 788–860 误降档
+    const sidebarColumnWidth = viewportWidth <= 860 ? 0 : (props.sidebarCollapsed === true ? 0 : 280)
+    const mainWidth = Math.max(0, viewportWidth - 56 - sidebarColumnWidth - dockWidth)
     const effectiveSplit = resolveSplit(splitMode, mainWidth, (typeof window === 'undefined' ? 900 : window.innerHeight) - 26)
     const [cols, rows] = SPLIT_GRID[effectiveSplit] ?? SPLIT_GRID[1]
     const mainKeys = (() => {
