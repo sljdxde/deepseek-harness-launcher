@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+35695c6"
+  const BUILD_STAMP = "0.2.2-rc.5+10459b7"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1255,7 +1255,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     /** 右栏开关：宿主 sidebarRight/命令 + 外壳轨道，两条入口（rail ▤ / ⌘⇧B）共用同一份状态。 */
     const toggleRef = React.useRef({ dock: null, theme: null })
     const toggleDock = () => {
-      if (dockOpen) {
+      // 以模块级 store 为准（React 状态可能滞后一帧，导致"永远只开不关"）
+      if (getDockOpen()) {
         // 关闭：宿主在 launcher 里不一定回 closeRightbar，外壳直接把轨道收掉（可视结果必须响应）
         DOCK_CLOSE_INTENT.user = true
         setDockOpen(false)
