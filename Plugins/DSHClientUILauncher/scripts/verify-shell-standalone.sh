@@ -116,6 +116,26 @@ is_ours() {
   is_ours_at "$LAYOUT"
 }
 
+# 30 秒硬超时：URL 捕获或浏览器断言卡住时打印手工三步并 exit 2（明确"未验证"），绝不允许挂住
+VERIFY_TIMEOUT=${VERIFY_TIMEOUT:-30}
+run_with_timeout() {
+  secs=$1; shift
+  "$@" & pid=$!
+  ( sleep "$secs"; kill -9 "$pid" 2>/dev/null ) & watcher=$!
+  wait "$pid"; code=$?
+  kill "$watcher" 2>/dev/null || true
+  return $code
+}
+
+manual_steps() {
+  cat >&2 <<'MANUAL'
+未验证：独立实例在 30 秒内没给出可判定的结果。请按手工三步（runbook 同款）：
+  1) 起独立实例：DSH_HOME=<临时 home> node <dsh 安装>/lib/bin.js web --no-open --port <端口>
+  2) 从启动日志读带 token 的 URL
+  3) DSH_HOME=<临时 home> PKG_DIR=<本包> sh scripts/shell-switch.sh verify launcher|native
+MANUAL
+}
+
 run_state() {
   want=$1
   port=$(pick_port)
@@ -127,13 +147,18 @@ run_state() {
     is_ours && { echo "独立实例里仍是我们的实现，native 未生效" >&2; return 3; }
   fi
   start_web "$port" || { stop_web "$port"; return 3; }
+  [ -f "$WORK/url" ] || { manual_steps; return 2; }
   url=$(cat "$WORK/url")
   echo "URL: $url"
   DSH_HOME="$HOME2" DSH_URL="$url" PACKAGE_DIR="$PACKAGE_DIR" \
-    "$NODE" "$HERE/verify-shell.mjs" "$url" "$want"
+    run_with_timeout "$VERIFY_TIMEOUT" "$NODE" "$HERE/verify-shell.mjs" "$url" "$want"
   code=$?
   stop_web "$port"
-  return $code
+  if [ "$code" -ne 0 ]; then
+    manual_steps
+    return 2
+  fi
+  return 0
 }
 
 case "$TARGET" in
