@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+593415a"
+  const BUILD_STAMP = "0.2.2-rc.5+e56f7e6"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -898,9 +898,21 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           selection?.removeAllRanges()
           selection?.addRange(range)
         }
-        if (document.execCommand('insertText', false, text)) return true
-        editable.textContent = text
-        editable.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }))
+        // 多行要逐行插：contenteditable 里 insertText 的 \n 会被吞，多行会并成一行
+        const lines = String(text).split('\n')
+        for (let index = 0; index < lines.length; index += 1) {
+          const line = lines[index]
+          if (line.length > 0) document.execCommand('insertText', false, line)
+          if (index < lines.length - 1) {
+            if (!document.execCommand('insertParagraph')) document.execCommand('insertLineBreak')
+          }
+        }
+        // 光标放到文末，别留全选
+        const endRange = document.createRange()
+        endRange.selectNodeContents(editable)
+        endRange.collapse(false)
+        window.getSelection()?.removeAllRanges()
+        window.getSelection()?.addRange(endRange)
         return true
       }
       const textarea = document.querySelector('textarea')
