@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+1c07352"
+  const BUILD_STAMP = "0.2.2-rc.5+0208711"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -878,6 +878,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const [drawerOpen, setDrawerOpen] = React.useState(false)
     const [themeMode, setThemeMode] = React.useState(() => {
       try {
+        const pref = CURRENT_CTX?.theme?.getTheme?.()?.preference
+        if (pref === 'dark' || pref === 'light') return pref
+      } catch {
+        /* 读不到就用 DOM 兜底 */
+      }
+      try {
         return document.documentElement.dataset.dsTheme === 'dark' ? 'dark' : 'light'
       } catch {
         return 'light'
@@ -946,7 +952,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const flip = () => setWrapOn((on) => { setCodeWrapPref(!on); return !on })
       window.addEventListener('launcher:open-dev-panel', openDev)
       window.addEventListener('launcher:toggle-code-wrap', flip)
-      const onThemeToggle = () => applyTheme(document.documentElement.dataset.dsTheme === 'dark' ? 'light' : 'dark')
+      const onThemeToggle = () => applyTheme((CURRENT_CTX?.theme?.getTheme?.()?.preference === 'dark') ? 'light' : 'dark')
       window.addEventListener('launcher:toggle-theme', onThemeToggle)
       return () => {
         window.removeEventListener('launcher:open-dev-panel', openDev)
