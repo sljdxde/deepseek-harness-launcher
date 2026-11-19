@@ -1,300 +1,247 @@
 #!/bin/sh
-# 壳层开关（新 05-§9 R1 定稿口径：持久层 override + 即时层链接，两者都要）。
+# shell-switch.sh —— 换壳开关（依赖模型）
 #
-#   即时层：profiles/<name>/node_modules/@deepseek-ai/dsh-client-ui-layout 这条链接决定「现在是谁」
-#   切换   = 换链接 + 重启；链接会被 pnpm install 改回依赖图解析结果，所以换完链路要再跑一次本脚本（幂等）
-#   回滚   = 换回链接（原包在 profiles/<name>/.orig/ 里留了一份，不靠重装），5 分钟口径靠这个
+# 裁决口径（2026-11-19，Super-agent；技术负责人落脚本）：
+#   外壳 = 谁提供 @deepseek-ai/dsh-client-ui-layout 这个包。
+#   launcher = profile 依赖用 file: 指向本包 + 在 dsh.profile.bundles 里登记本包（缺一客户端半区不进图）
+#   native   = 删掉那条依赖（bundles 里同名条目可留，解析回宿主自带包）
+#   行 id / name / cordis.patch.yml 一个字不动；切换 = 改依赖 + pnpm install + 重启 + verify。
 #
 # 用法：
-#   ./scripts/shell-switch.sh status | launcher | native | verify
-# 环境：DSH_HOME、DSH_PROFILE（默认 web）、PACKAGE_DIR（本包绝对路径）、DSH_URL（verify 用）
+#   ./shell-switch.sh status            # 只读：依赖/登记/链接/版本锁判定
+#   ./shell-switch.sh launcher          # 切到新外壳
+#   ./shell-switch.sh native            # 切回原生
+#   ./shell-switch.sh verify            # 断言页面特征（需要 DSH_URL）
+#
+# 环境变量：
+#   PROFILE_DIR          profile 目录（默认 $DSH_HOME/profiles/web 或 ~/.dsh/profiles/web）
+#   PKG_DIR              本包目录（默认与本脚本同级的 Plugins/DSHClientUILauncher）
+#   DSH_URL              页面 URL（verify 用，含 token）
+#   DSH_RESTART_CMD      重启钩子（默认打印、不重启；真机上配成实际命令）
+#   PNPM                 pnpm 可执行（默认 pnpm）
+#   ALLOW_UNVERIFIED=1   没有 DSH_URL 时允许 verify 记 SKIP 而不失败（仅 dry-run 用）
+#   EXPECTED_HOST_VERSION 期望的宿主版本（默认 0.2.2-rc.5）
+#
+# 退出码：0 成功；2 版本锁；3 无法验证；4 依赖操作失败（已还原）；5 断言失败
 set -eu
 
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-PACKAGE_DIR=${PACKAGE_DIR:-$(CDPATH= cd -- "$HERE/.." && pwd)}
-NODE=${NODE:-node}
-DSH_DATA=${DSH_HOME:-$HOME/.dsh}
-PROFILE=${DSH_PROFILE:-web}
-PROFILE_DIR="$DSH_DATA/profiles/$PROFILE"
-MANIFEST="$PROFILE_DIR/package.json"
-LINK="$PROFILE_DIR/node_modules/@deepseek-ai/dsh-client-ui-layout"
-ORIG_DIR="$PROFILE_DIR/.orig/@deepseek-ai"
-ORIG="$ORIG_DIR/dsh-client-ui-layout"
-STATE="$DSH_DATA/state/ui-shell.json"
-STATE_DIR="$(dirname "$STATE")"
-LOG="$DSH_DATA/state/ui-shell.log"
-HOST_PACKAGE='@deepseek-ai/dsh-client-ui-layout'
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PKG_DIR=${PKG_DIR:-$(CDPATH= cd -- "$SELF_DIR/.." && pwd)}  # 默认就是本包目录（脚本在 <包>/scripts 下）
+EXPECTED_HOST_VERSION=${EXPECTED_HOST_VERSION:-0.2.2-rc.5}
+PNPM=${PNPM:-pnpm}
+STATE_DIR_NAME=.shell-switch
 
-usage() {
-  cat <<'USAGE'
-用法：shell-switch.sh <status|launcher|native|verify>
-  status    打印状态、override、链接指向
-  launcher  override 指向本包 + 链接指向本包 + 重启 + 自检（失败自动回落）；幂等
-  native    override 删掉 + 链接指回 .orig 原包 + 重启 + 自检
-  verify    断言：当前链向正确 + [data-shell]（launcher）/原生特征（native）+ 0 报错（需要 DSH_URL）
-USAGE
-}
+log()  { printf '%s\n' "$*" >&2; }
+die()  { code=$1; shift; log "错误：$*"; exit "$code"; }
 
-log_line() {
-  mkdir -p "$(dirname "$LOG")"
-  printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" >> "$LOG"
-}
-
-require_profile() {
-  [ -f "$MANIFEST" ] || { echo "找不到 profile 清单：$MANIFEST" >&2; exit 3; }
-  [ -d "$PROFILE_DIR/node_modules" ] || { echo "profile 还没装依赖：$PROFILE_DIR/node_modules" >&2; exit 3; }
-}
-
-# 第一次切走时把原包整体复制到 .orig/，之后回滚只换链接、不重装
-# 原包留底：**必须**留一份真正的上游实现。实测过一次教训——如果备份时 profile 里装的正好是本包，
-# 备份下来的就是"自己"，回滚会把新外壳又装回去（rev 不变、页面还是 launcher）。
-# 所以：只在确认不是本包时才留底；优先从 dsh 安装目录取。
-preserve_original() {
-  if [ -e "$ORIG" ] && ! is_own_package "$ORIG"; then return 0; fi
-  rm -rf "$ORIG"
-  mkdir -p "$ORIG_DIR"
-  for candidate in "${HOST_LAYOUT_DIR:-}" "$LINK"; do
-    [ -n "$candidate" ] || continue
-    [ -d "$candidate" ] || [ -L "$candidate" ] || continue
-    if is_own_package "$candidate"; then continue; fi
-    cp -R "$candidate" "$ORIG"
-    if is_own_package "$ORIG"; then rm -rf "$ORIG"; continue; fi
-    log_line "preserved-original=$ORIG from=$candidate"
-    return 0
+# ---------- 定位 profile ----------
+resolve_profile() {
+  if [ -n "${PROFILE_DIR:-}" ]; then
+    [ -d "$PROFILE_DIR" ] || die 4 "PROFILE_DIR 不存在：$PROFILE_DIR"
+    printf '%s' "$PROFILE_DIR"; return 0
+  fi
+  for base in "${DSH_HOME:-}" "$HOME/.dsh"; do
+    [ -n "$base" ] || continue
+    if [ -d "$base/profiles/web" ]; then printf '%s' "$base/profiles/web"; return 0; fi
   done
-  echo "找不到可留底的上游 layout 实现（设 HOST_LAYOUT_DIR 指向 dsh 安装目录里的 @deepseek-ai/dsh-client-ui-layout）；"
-  echo "同名 drop-in 的回滚必须有它，已停止。" >&2
-  exit 3
+  die 4 "找不到 profile 目录：请设 PROFILE_DIR"
 }
 
-# 这份目录是不是我们自己的包（以客户端文件里的运行时标记为准，名字不可信——同名）
-is_own_package() {
-  [ -f "$1/client/client.js" ] || return 1
-  grep -q "__DSH_LAUNCHER_SHELL__" "$1/client/client.js" 2>/dev/null
+PROFILE=$(resolve_profile)
+PKG_JSON="$PROFILE/package.json"
+LOCK="$PROFILE/pnpm-lock.yaml"
+STATE="$PROFILE/$STATE_DIR_NAME"
+BASE_LOCK_HASH_FILE="$STATE/lockfile.before-launcher.sha256"
+
+[ -f "$PKG_JSON" ] || die 4 "缺少 $PKG_JSON"
+
+# ---------- JSON 读写（只用 node，避免 jq 依赖） ----------
+NODE_BIN=${NODE_BIN:-node}
+command -v "$NODE_BIN" >/dev/null 2>&1 || die 4 "找不到 node"
+
+pkg_field() { # $1: dep | bundles | deps-all
+  "$NODE_BIN" -e '
+    const fs = require("node:fs");
+    const p = process.argv[1], what = process.argv[2];
+    let d; try { d = JSON.parse(fs.readFileSync(p, "utf8")); } catch { console.log(""); process.exit(0); }
+    if (what === "dep") console.log((d.dependencies || {})["@deepseek-ai/dsh-client-ui-layout"] || "");
+    else if (what === "bundles") console.log(((d.dsh?.profile?.bundles) || []).includes("@deepseek-ai/dsh-client-ui-layout") ? "yes" : "no");
+    else if (what === "deps-all") console.log(JSON.stringify(d.dependencies || {}));
+  ' "$PKG_JSON" "$1"
 }
 
-
-
-dsh_plugin() {
-  if [ -n "${DSH_BIN:-}" ]; then
-    "$DSH_BIN" plugin --profile "$PROFILE" "$@"
-  elif command -v dsh >/dev/null 2>&1; then
-    dsh plugin --profile "$PROFILE" "$@"
-  else
-    cat >&2 <<'MANUAL'
-找不到 dsh 命令（设 DSH_BIN 指向 <dsh 安装>/lib/bin.js）。手工等价操作：
-  1) cd <profile 目录>，在 package.json 的 dependencies 里加/删 "@deepseek-ai/dsh-client-ui-layout": "file:<本包绝对路径>"
-  2) 在该目录跑 pnpm install
-  3) 重启 dsh web 并硬刷新页面
-MANUAL
-    exit 3
-  fi
+pkg_write() { # $1: mode(add|remove)  $2: file: spec
+  "$NODE_BIN" -e '
+    const fs = require("node:fs");
+    const [p, mode, spec] = process.argv.slice(1);
+    const doc = JSON.parse(fs.readFileSync(p, "utf8"));
+    const NAME = "@deepseek-ai/dsh-client-ui-layout";
+    doc.dependencies = doc.dependencies || {};
+    if (mode === "add") {
+      doc.dependencies[NAME] = spec;
+      doc.dsh = doc.dsh || {}; doc.dsh.profile = doc.dsh.profile || {};
+      const b = doc.dsh.profile.bundles = doc.dsh.profile.bundles || [];
+      if (!b.includes(NAME)) b.push(NAME);
+    } else if (mode === "remove") {
+      delete doc.dependencies[NAME];
+      // bundles 里的同名字段保留（解析回宿主自带包），按裁决不动
+    } else throw new Error("bad mode " + mode);
+    fs.writeFileSync(p, JSON.stringify(doc, null, 2) + "\n");
+  ' "$PKG_JSON" "$1" "${2:-}"
 }
 
-# 宿主版本：优先 profile 里的 dsh 包，其次 dsh --version；读不到返回空（调用方退出 3）
+hash_file() { "$NODE_BIN" -e '
+  const { createHash } = require("node:crypto"), fs = require("node:fs");
+  const p = process.argv[1];
+  if (!fs.existsSync(p)) { console.log("missing"); process.exit(0); }
+  console.log(createHash("sha256").update(fs.readFileSync(p)).digest("hex"));
+' "$1"; }
+
+# ---------- 版本锁 ----------
 host_version() {
-  if [ -n "${HOST_VERSION_FILE:-}" ]; then
-    "$NODE" -e 'const fs=require("node:fs");try{process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).version??"")}catch{}' "$HOST_VERSION_FILE"
+  # 测试接缝：指向一个 dsh 包目录或其中的 package.json 均可（真机不需要设）
+  if [ -n "${HOST_VERSION_FILE:-}" ] && [ -f "$HOST_VERSION_FILE" ]; then
+    "$NODE_BIN" -e 'const fs=require("node:fs");process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).version||""))' "$HOST_VERSION_FILE"
     return 0
   fi
-  dsh_pkg="$PROFILE_DIR/node_modules/@deepseek-ai/dsh/package.json"
-  if [ -f "$dsh_pkg" ]; then
-    "$NODE" -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).version??"")' "$dsh_pkg"
+  if [ -n "${HOST_VERSION_FILE:-}" ] && [ -f "$HOST_VERSION_FILE/package.json" ]; then
+    "$NODE_BIN" -e 'const fs=require("node:fs");process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).version||""))' "$HOST_VERSION_FILE/package.json"
     return 0
   fi
-  if [ -n "${DSH_BIN:-}" ]; then
-    "$NODE" "$DSH_BIN" --version 2>/dev/null | head -1 | sed 's/^v//'
+  local p="$PROFILE/node_modules/@deepseek-ai/dsh/package.json"
+  if [ -f "$p" ]; then
+    "$NODE_BIN" -e 'try{process.stdout.write(String(JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).version||""))}catch{}' "$p"
     return 0
   fi
-  if command -v dsh >/dev/null 2>&1; then
-    dsh --version 2>/dev/null | head -1 | sed 's/^v//'
+  if command -v dsh >/dev/null 2>&1; then dsh --version 2>/dev/null | tr -d '[:space:]' | sed 's/^v//'; return 0; fi
+  printf ''
+}
+
+check_version_lock() {
+  # 先走包内版本锁工具（包 version ↔ contracts/host-baseline.json 的宿主 ui-layout 版本）
+  if [ -f "$PKG_DIR/tools/check-host-version.mjs" ]; then
+    if ! "$NODE_BIN" "$PKG_DIR/tools/check-host-version.mjs" >/dev/null 2>"$PKG_DIR/.version-lock.err"; then
+      code=$?
+      cat "$PKG_DIR/.version-lock.err" >&2 || true
+      rm -f "$PKG_DIR/.version-lock.err"
+      die 2 "版本锁：包版本与宿主基线不一致（check-host-version 退出 $code）"
+    fi
+    rm -f "$PKG_DIR/.version-lock.err"
   fi
-}
-
-package_version() {
-  "$NODE" -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).version??"")' "$PACKAGE_DIR/package.json"
-}
-
-# 版本锁（裁决 §1）：宿主 X ≠ 本包 Y 时拒绝安装，且不碰 manifest
-require_version_lock() {
-  lock_host=$(host_version)
-  lock_own=$(package_version)
-  if [ -z "$lock_host" ] || [ -z "$lock_own" ]; then
-    echo "读不到版本（宿主 [$lock_host] / 本包 [$lock_own]），拒绝安装" >&2
-    exit 3
+  local hv; hv=$(host_version)
+  if [ -z "$hv" ]; then die 2 "版本锁：读不到宿主版本（$PROFILE/node_modules/@deepseek-ai/dsh/package.json 与 dsh --version 都不可用）"; fi
+  local pv=""
+  if [ -n "${PKG_DIR:-}" ] && [ -f "$PKG_DIR/package.json" ]; then
+    pv=$("$NODE_BIN" -e 'try{process.stdout.write(String(JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).version||""))}catch{}' "$PKG_DIR/package.json")
   fi
-  if [ "$lock_host" != "$lock_own" ]; then
-    echo "宿主 $lock_host ≠ 本包 $lock_own，拒绝安装" >&2
-    log_line "version-lock=REFUSED host=$lock_host package=$lock_own"
-    exit 1
+  if [ "$hv" != "$EXPECTED_HOST_VERSION" ]; then
+    die 2 "版本锁：宿主 $hv ≠ 期望 $EXPECTED_HOST_VERSION（拒绝安装；不静默用旧产物）"
   fi
-}
-
-# 装之前的 package.json 与锁文件各留一份：native 要证明它们回来了（逐字做不到，见 compare_snapshot）
-
-
-# 只在**没装本包**时留快照：装之前要有一个"干净原生"的基线，否则比的是上一次装了的状态
-snapshot_state() {
-  mkdir -p "$STATE_DIR"
-  if "$NODE" -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(m.dependencies?.["@deepseek-ai/dsh-client-ui-layout"]===undefined?0:1)' "$MANIFEST"; then
-    cp -p "$MANIFEST" "$STATE_DIR/package.json.snapshot"
-    [ -f "$PROFILE_DIR/pnpm-lock.yaml" ] && cp -p "$PROFILE_DIR/pnpm-lock.yaml" "$STATE_DIR/pnpm-lock.snapshot"
+  if [ -n "$pv" ] && [ "$pv" != "$hv" ]; then
+    die 2 "版本锁：本包 version=$pv ≠ 宿主 version=$hv（拒绝安装，先构建对齐的版本）"
   fi
-  return 0
+  printf '版本锁 OK：宿主=%s 本包=%s\n' "$hv" "${pv:-未读}"
 }
 
-# 逐字一致做不到：`dsh plugin remove` 会把 package.json 按自己的 canonical 形态重写（键序/缩进变）。
-# 判据改成"语义一致"：只比 dependencies（bundles 不再写，也就不参与比较）。
-compare_snapshot() {
-  if [ ! -f "$STATE_DIR/package.json.snapshot" ]; then return 0; fi
-  "$NODE" - "$MANIFEST" "$STATE_DIR/package.json.snapshot" <<'NODE_EOF'
-const fs = require('node:fs')
-const pick = (file) => {
-  const m = JSON.parse(fs.readFileSync(file, 'utf8'))
-  const deps = Object.fromEntries(Object.entries(m.dependencies ?? {}).sort(([a], [b]) => a.localeCompare(b)))
-  return JSON.stringify({ deps })
-}
-const [now, before] = process.argv.slice(2)
-if (pick(now) === pick(before)) process.stdout.write('SEMANTIC-OK\n')
-else { process.stderr.write('SEMANTIC-DIFF\n'); process.exit(1) }
-NODE_EOF
-  if [ $? -eq 0 ]; then
-    echo "package.json 语义与装前一致（依赖）"
+# ---------- 重启钩子 ----------
+restart_hook() {
+  if [ -n "${DSH_RESTART_CMD:-}" ]; then
+    log "→ 重启：$DSH_RESTART_CMD"
+    sh -c "$DSH_RESTART_CMD"
   else
-    echo "警告：package.json 语义与装前不一致（依赖变了）" >&2
-    log_line "native=manifest-semantic-diff"
+    log "→ 重启：未配置 DSH_RESTART_CMD（dry-run 模式，跳过；真机请配置成实际重启命令）"
   fi
 }
 
-
-
-set_override() {
-  mode=$1
-  if [ "$mode" = "add" ]; then
-    dsh_plugin add "@deepseek-ai/dsh-client-ui-layout@file:$PACKAGE_DIR" || return 1
-    return 0
+# ---------- pnpm install（失败还原 package.json） ----------
+install_with_restore() {
+  local backup="$1"
+  log "→ $PNPM install（cwd=$PROFILE）"
+  if ! ( cd "$PROFILE" && "$PNPM" install --prefer-offline --no-frozen-lockfile >/dev/null 2>&1 ); then
+    log "install 失败，正在还原 package.json"
+    cp -f "$backup" "$PKG_JSON"
+    local a b; a=$(hash_file "$backup"); b=$(hash_file "$PKG_JSON")
+    [ "$a" = "$b" ] || die 4 "还原后 hash 不一致：$a ≠ $b（package.json 可能已被破坏）"
+    die 4 "pnpm install 失败，已还原 package.json（hash=$a）"
   fi
-  # 幂等：依赖已经不在了就不调 dsh plugin remove（否则 pnpm remove 会因为该依赖不存在而报错）
-  if "$NODE" -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(m.dependencies?.["@deepseek-ai/dsh-client-ui-layout"]===undefined?0:1)' "$MANIFEST"; then
-    return 0
-  fi
-  dsh_plugin remove "@deepseek-ai/dsh-client-ui-layout"
+  # 成功也校验一次备份未被破坏（防止 install 期间外部改动）
+  [ -f "$backup" ] || die 4 "备份丢失：$backup"
 }
 
-write_state() {
-  mkdir -p "$(dirname "$STATE")"
-  tmp="$STATE.tmp.$$"
-  "$NODE" -e 'const fs=require("node:fs");const [f,v]=process.argv.slice(1);fs.writeFileSync(f,JSON.stringify({shell:v,updatedAt:new Date().toISOString()},null,2)+"\n",{mode:0o600})' "$tmp" "$1"
-  mv -f "$tmp" "$STATE"
-}
-
-read_state() {
-  if [ ! -f "$STATE" ]; then echo native; return 0; fi
-  "$NODE" -e 'const fs=require("node:fs");try{const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(d&&d.shell==="launcher"?"launcher":"native")}catch{process.stdout.write("native")}' "$STATE" 2>/dev/null || echo native
-}
-
-restart_web() {
-  if command -v dsh >/dev/null 2>&1 && dsh web --help 2>&1 | grep -q restart; then
-    dsh web restart
-    echo "已重启 dsh web"
-    return 0
-  fi
-  cat >&2 <<'MANUAL'
-探测不到 `dsh web restart`（R-12：不假装成功）。手工等价操作：
-  1) 退出当前 dsh web  2) 重新打开 dsh web  3) 浏览器硬刷新（Command+Shift+R）
-MANUAL
-  return 3
-}
-
-verify_page() {
-  expected=$1
-  # "装的哪一版"用实现标记判，不用路径：pnpm 的 file: 安装是**拷贝**不是软链，realpath 永远是 profile 里的那份。
-  if [ -f "$LINK/client/client.js" ] && grep -q "__DSH_LAUNCHER_SHELL__" "$LINK/client/client.js" 2>/dev/null; then
-    installed=ours
-  elif [ -e "$LINK" ]; then
-    installed=host
-  else
-    installed=none
-  fi
-  case "$expected" in
-    launcher)
-      if [ "$installed" != "ours" ]; then
-        echo "链向不符：launcher 期望 profile 里装的是本包，实际 ${installed}" >&2
-        return 1
-      fi ;;
-    native)
-      if [ "$installed" = "ours" ]; then
-        echo "链向不符：native 但 profile 里装的仍是本包" >&2
-        return 1
-      fi ;;
-  esac
+# ---------- verify（headless Chrome；找不到 puppeteer 就明确 SKIP/失败） ----------
+verify_page() { # $1 = launcher|native
   if [ -z "${DSH_URL:-}" ]; then
-    echo "未提供 DSH_URL，无法断言页面（期望 $expected）" >&2
-    return 3
+    if [ "${ALLOW_UNVERIFIED:-0}" = "1" ]; then log "verify SKIP：未提供 DSH_URL（ALLOW_UNVERIFIED=1）"; return 0; fi
+    die 3 "verify 需要 DSH_URL（带 token 的页面地址）"
   fi
-  "$NODE" "$HERE/verify-shell.mjs" "$DSH_URL" "$expected"
+  # 判据用仓库里的 verify-shell.mjs：靠实现运行时标记 + [data-shell] 判"装的是哪一版"，
+  # 不用 [data-slot="sidebar"]（实测两态都会出现，当判据会假阳性）。
+  if [ -x "$PKG_DIR/scripts/verify-shell.mjs" ] || [ -f "$PKG_DIR/scripts/verify-shell.mjs" ]; then
+    if ! "$NODE_BIN" "$PKG_DIR/scripts/verify-shell.mjs" "$DSH_URL" "$1"; then
+      die 5 "壳层断言失败（$1）"
+    fi
+    return 0
+  fi
+  log "verify：找不到 $PKG_DIR/scripts/verify-shell.mjs"; die 3 "缺少断言脚本"
 }
 
-link_target() {
-  [ -L "$LINK" ] && readlink "$LINK" || echo "$LINK"
+# ---------- 动作 ----------
+do_launcher() {
+  [ -n "$PKG_DIR" ] && [ -d "$PKG_DIR" ] || die 4 "找不到本包目录：PKG_DIR=$PKG_DIR"
+  check_version_lock
+  mkdir -p "$STATE"
+  local backup="$STATE/package.json.before-launcher"
+  cp -f "$PKG_JSON" "$backup"
+  # 基线只在"从 native 切过去"时记录一次；重复 launcher 不能覆盖它（否则 native 比对失真）
+  if [ -f "$LOCK" ] && [ "$(pkg_field dep)" = "" ]; then
+    hash_file "$LOCK" > "$BASE_LOCK_HASH_FILE"
+    log "记录 lockfile 基线：$(cat "$BASE_LOCK_HASH_FILE")"
+  fi
+  pkg_write add "file:$PKG_DIR"
+  install_with_restore "$backup"
+  restart_hook
+  verify_page launcher
+  log "launcher 完成：dependencies + bundles 已登记（patch/行未动）"
+}
+
+do_native() {
+  local backup="$STATE/package.json.before-native"
+  mkdir -p "$STATE"
+  cp -f "$PKG_JSON" "$backup"
+  if [ "$(pkg_field dep)" = "" ]; then
+    log "native：dependencies 里已无该包（幂等，继续做 install/verify）"
+  fi
+  pkg_write remove
+  install_with_restore "$backup"
+  if [ -f "$BASE_LOCK_HASH_FILE" ] && [ -f "$LOCK" ]; then
+    local want got; want=$(cat "$BASE_LOCK_HASH_FILE"); got=$(hash_file "$LOCK")
+    if [ "$want" != "$got" ]; then die 4 "lockfile 与切换前不一致：want=$want got=$got（回原生未逐字还原）"; fi
+    log "lockfile 校验：与切换前逐字一致（sha256=$got）"
+  else
+    log "lockfile 校验：缺少切换前基线，跳过（首次 native 时正常）"
+  fi
+  restart_hook
+  verify_page native
+  log "native 完成：依赖已删除（bundles 条目保留，解析回宿主包）"
+}
+
+do_status() {
+  printf 'profile            : %s\n' "$PROFILE"
+  printf '本包目录           : %s\n' "${PKG_DIR:-未找到}"
+  printf 'dependencies[layout]: %s\n' "$(pkg_field dep)"
+  printf 'bundles 登记       : %s\n' "$(pkg_field bundles)"
+  printf 'node_modules 链接  : %s\n' "$( [ -L "$PROFILE/node_modules/@deepseek-ai/dsh-client-ui-layout" ] && readlink "$PROFILE/node_modules/@deepseek-ai/dsh-client-ui-layout" || ([ -d "$PROFILE/node_modules/@deepseek-ai/dsh-client-ui-layout" ] && echo "目录（非链接）" || echo "不存在") )"
+  hv=$(host_version)
+  printf '宿主版本           : %s（期望 %s）\n' "$hv" "$EXPECTED_HOST_VERSION"
+  if [ "$hv" = "$EXPECTED_HOST_VERSION" ]; then printf '版本锁判定         : OK（可切换）\n'; else printf '版本锁判定         : 不匹配（安装会被拒绝，退出码 2）\n'; fi
+  printf 'lockfile 基线      : %s\n' "$( [ -f "$BASE_LOCK_HASH_FILE" ] && cat "$BASE_LOCK_HASH_FILE" || echo "无")"
+  printf 'patch/行            : 未改动（本脚本从不写 cordis.patch.yml）\n'
 }
 
 case "${1:-}" in
-  status)
-    echo "shell=$(read_state)"
-    echo "profile=$PROFILE_DIR"
-    echo "link=$(link_target)"
-    "$NODE" -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write("dependency="+JSON.stringify(m.dependencies?.[process.argv[2]]??null)+"\n")' "$MANIFEST" "$HOST_PACKAGE" 2>/dev/null || echo "dependency=?"
-    ;;
-  launcher)
-    require_profile
-    require_version_lock
-    snapshot_state
-    cp -p "$MANIFEST" "$MANIFEST.bak.$$"
-    if ! set_override add; then
-      mv -f "$MANIFEST.bak.$$" "$MANIFEST"
-      log_line "install=FAILED manifest=restored"
-      echo "安装失败，profile 的 package.json 已还原，未生效" >&2
-      exit 3
-    fi
-    rm -f "$MANIFEST.bak.$$"
-    write_state launcher
-    log_line "switch=launcher link=$LINK -> $PACKAGE_DIR"
-    echo "已装本包：$HOST_PACKAGE -> $PACKAGE_DIR"
-    restart_web || exit 3
-    if ! verify_page launcher; then
-      log_line "boot-self-check=FAILED fallback=native"
-      printf '%s\n' "新外壳启动自检失败，自动回落原生（日志：$LOG）" >&2
-      set_override remove
-      write_state native
-      restart_web || true
-      exit 1
-    fi
-    log_line "boot-self-check=OK link=$(link_target)"
-    ;;
-  native)
-    require_profile
-    cp -p "$MANIFEST" "$MANIFEST.bak.$$"
-    if ! set_override remove; then
-      mv -f "$MANIFEST.bak.$$" "$MANIFEST"
-      log_line "uninstall=FAILED manifest=restored"
-      echo "卸载失败，profile 的 package.json 已还原，未生效" >&2
-      exit 3
-    fi
-    rm -f "$MANIFEST.bak.$$"
-    write_state native
-    log_line "switch=native link=$(link_target)"
-    echo "已卸回宿主实现（依赖移除）"
-    compare_snapshot
-    snapshot_state
-    restart_web || exit 3
-    if [ -n "${DSH_URL:-}" ]; then verify_page native || { log_line "verify=native FAILED"; exit 1; }; fi
-    ;;
-  verify)
-    verify_page "$(read_state)"
-    ;;
-  *)
-    usage
-    exit 2
-    ;;
+  launcher) do_launcher ;;
+  native)   do_native ;;
+  verify)   verify_page "${2:-launcher}" ;;
+  status)   do_status ;;
+  *) die 64 "用法：$0 <status|launcher|native|verify [launcher|native]>" ;;
 esac
