@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+acae4d9"
+  const BUILD_STAMP = "0.2.2-rc.5+ad7dac2"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -793,6 +793,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // 开发期开关放最前面：否则没有会话时永远走不到 forced-on
     if (force === 'off') return { render: false, reason: 'forced-off' }
     if (force === 'on') return { render: true, reason: 'forced-on' }
+    // 不在会话页（面板已切到插件/归档等）就不画
+    if (input.activePanelId !== null && input.activePanelId !== undefined) return { render: false, reason: 'other-panel' }
     // 宿主自己画了空态就不画（不许双空态）
     if (input.hostEmptyState === true) return { render: false, reason: 'host-empty-state' }
     // 有消息就不画
@@ -888,6 +890,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       messageCount: props.messageCount,
       hostEmptyState: props.hostEmptyState,
       messageCount: hostHasMessages ? 1 : props.messageCount,
+      activePanelId: props.usePanelInfo === undefined ? null : props.usePanelInfo((info) => info.activePanelId),
     })
     const activePanelId = props.usePanelInfo === undefined
       ? null
