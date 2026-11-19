@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+e6fb6bd"
+  const BUILD_STAMP = "0.2.2-rc.5+f6958c8"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -85,6 +85,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-perm__item{display:block;width:100%;text-align:left;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
 .launcher-perm__item.on{background:var(--dsw-alias-bg-2,rgba(127,127,127,.12))}
 @container (max-width: 640px){.launcher-perm__text{display:none}.launcher-perm__pill{padding:0 6px}}
+.launcher-dock-summary{font-size:12px;opacity:.75}
 .launcher-toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:rgba(20,20,20,.9);color:#fff;font-size:12px;z-index:60;pointer-events:none}
 .launcher-turn-action{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
 .launcher-turn-action--usage{opacity:.7;border:0}
@@ -321,6 +322,32 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
   }
 
+
+  /**
+   * C 方案：`conversation.composer.dock`（list，session）只挂**只读镜像**——排队数量。
+   * 不抢宿主状态、不重复渲染同一数字：宿主管生一条，我们只在「有排队且宿主没给这条」时显示；
+   * 拿不到就整条不渲染。
+   */
+  function registerComposerDock(ctx) {
+    const Component = (slotProps) => {
+      const queued = Number(slotProps?.queue?.length ?? slotProps?.queued ?? slotProps?.queueCount)
+      if (!Number.isFinite(queued) || queued <= 0) return null
+      return h('span', { className: 'launcher-dock-summary', title: `排队 ${queued} 条` }, `排队 ${queued}`)
+    }
+    try {
+      if (typeof ctx?.slots?.inject !== 'function') return []
+      const dispose = ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+        name: 'conversation.composer.dock',
+        id: 'launcher.composerDock',
+        order: 10,
+        inject: () => ({}),
+      }, Component))
+      return typeof dispose === 'function' ? [dispose] : []
+    } catch (error) {
+      console.warn('dsh-client-ui-launcher: 注册 composer.dock 摘要失败', error)
+      return []
+    }
+  }
 
   function registerPermissionPill(ctx) {
     if (typeof window === 'undefined' || window.__DSH_LAUNCHER_PERMISSION_PILL__ !== true) return []
@@ -915,6 +942,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const turnDisposers = registerTurnActions(ctx)
     const permDisposers = registerPermissionPill(ctx)
     const diagDisposers = registerContextDiagnostics(ctx)
+    const dockDisposers = registerComposerDock(ctx)
     // FR-16：我们自己的动作也注册进同一个 catalog（与宿主条目同权）
     const OWN_ROWS_REGISTERED = Symbol.for('dsh.launcher.catalogRows')
     if (typeof ctx?.shortcuts?.register === 'function') {
@@ -1020,6 +1048,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (window.__DSH_LAUNCHER_CTX__ === ctx) delete window.__DSH_LAUNCHER_CTX__
       if (typeof window.removeEventListener === 'function') window.removeEventListener('resize', syncFolded)
       // 会话动作的 dispose 只释放一次（之前被外层循环重复调用）
+      for (const dockDispose of dockDisposers) {
+        try { dockDispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
+      }
       for (const diagDispose of diagDisposers) {
         try { diagDispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
       }
