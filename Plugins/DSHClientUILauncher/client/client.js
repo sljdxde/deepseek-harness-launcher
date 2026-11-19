@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+b319b69"
+  const BUILD_STAMP = "0.2.2-rc.5+fa4b0ba"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -105,6 +105,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-diag__list div{display:flex;justify-content:space-between;gap:12px}
 .launcher-diag__list dt{opacity:.7}
 .launcher-diag__list dd{margin:0}
+.launcher-dock__host{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.launcher-dock[data-dock-width="0"]{border-left:0}
+.launcher-dock[data-dock-width="0"] .launcher-dock__host{visibility:hidden;pointer-events:none;width:0}
 .launcher-dock__handle{position:absolute;left:0;top:0;bottom:0;width:8px;cursor:col-resize;background:transparent;z-index:30;touch-action:none}
 .launcher-dock__handle:hover{background:var(--dsw-alias-border-l2,rgba(127,127,127,.3))}
 .launcher-statusbar{grid-area:status;align-items:center;border-top:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;font-size:11px;gap:10px;padding:0 10px;color:var(--dsw-alias-label-secondary)}
@@ -1604,20 +1607,24 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         className: 'launcher-dock',
         'data-dock-width': dockWidth,
       },
-        dockWidth > 0
-          ? [
-            h('div', {
-              key: 'handle',
-              className: 'launcher-dock__handle',
-              role: 'separator',
-              'aria-orientation': 'vertical',
-              'aria-label': '右栏宽度（拖拽 320–520）',
-              onPointerDown: startDrag,
-              onDoubleClick: () => { setDragWidth(DOCK_WIDTH); try { window.localStorage.setItem('dsh.launcher.dockWidth', String(DOCK_WIDTH)) } catch { /* 忽略 */ } },
-            }),
-            renderSlot('rightbar', { width: dockWidth, viewportWidth, canShow: dockCanShow }),
-          ]
-          : null),
+        // rightbar 是 single/root 槽：必须常驻挂载，否则宿主认为没有 occupant →
+        // sidebarRight 没有可开 tab → toggle 永远 blocked → dockWidth 永远 0（互相等）。
+        // 收起态用 CSS 隐藏（width:0/visibility:hidden），状态仍以宿主为准。
+        h('div', {
+          key: 'handle',
+          className: 'launcher-dock__handle',
+          role: 'separator',
+          'aria-orientation': 'vertical',
+          'aria-label': '右栏宽度（拖拽 320–520）',
+          onPointerDown: startDrag,
+          onDoubleClick: () => { setDragWidth(DOCK_WIDTH); try { window.localStorage.setItem('dsh.launcher.dockWidth', String(DOCK_WIDTH)) } catch { /* 忽略 */ } },
+        }),
+        h('div', {
+          key: 'rightbar-host',
+          className: 'launcher-dock__host',
+          'data-dock-hidden': dockWidth > 0 ? 'false' : 'true',
+          'aria-hidden': dockWidth > 0 ? 'false' : 'true',
+        }, renderSlot('rightbar', { width: dockWidth, viewportWidth, canShow: dockCanShow }))),
       h('footer', { className: 'launcher-statusbar' },
         h('span', { className: 'launcher-statusbar__page' }, status().page),
         h('span', { className: 'launcher-statusbar__mode' }, status().mode),
