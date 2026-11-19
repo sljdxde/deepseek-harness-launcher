@@ -55,6 +55,16 @@ if rg -q 'stopRunningAgents|需要二次确认删除|只能删除已归档' "$RO
   exit 1
 fi
 rg -Fq 'body: JSON.stringify({ sessionIds: confirmIds })' "$ROOT/Plugins/DSHArchiveManager/client/client.js"
+node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/audit.mjs"
+node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/decision.mjs"
+node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/index.mjs"
+node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/policy-store.mjs"
+node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/queue.mjs"
+node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/ulid.mjs"
+node --test "$ROOT/Plugins/DSHClientUILauncher/test/approval-audit.test.mjs"
+node --test "$ROOT/Plugins/DSHClientUILauncher/test/approval-decision.test.mjs"
+node --test "$ROOT/Plugins/DSHClientUILauncher/test/approval-policy-store.test.mjs"
+node --test "$ROOT/Plugins/DSHClientUILauncher/test/approval-service.test.mjs"
 node --check "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHPluginManager/client/client.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-manager.test.js"
