@@ -81,6 +81,45 @@ MANUAL
   fi
 }
 
+# 宿主版本：优先 profile 里的 dsh 包，其次 dsh --version；读不到返回空（调用方退出 3）
+host_version() {
+  if [ -n "${HOST_VERSION_FILE:-}" ]; then
+    "$NODE" -e 'const fs=require("node:fs");try{process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).version??"")}catch{}' "$HOST_VERSION_FILE"
+    return 0
+  fi
+  dsh_pkg="$PROFILE_DIR/node_modules/@deepseek-ai/dsh/package.json"
+  if [ -f "$dsh_pkg" ]; then
+    "$NODE" -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).version??"")' "$dsh_pkg"
+    return 0
+  fi
+  if [ -n "${DSH_BIN:-}" ]; then
+    "$NODE" "$DSH_BIN" --version 2>/dev/null | head -1 | sed 's/^v//'
+    return 0
+  fi
+  if command -v dsh >/dev/null 2>&1; then
+    dsh --version 2>/dev/null | head -1 | sed 's/^v//'
+  fi
+}
+
+package_version() {
+  "$NODE" -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).version??"")' "$PACKAGE_DIR/package.json"
+}
+
+# 版本锁（裁决 §1）：宿主 X ≠ 本包 Y 时拒绝安装，且不碰 manifest
+require_version_lock() {
+  lock_host=$(host_version)
+  lock_own=$(package_version)
+  if [ -z "$lock_host" ] || [ -z "$lock_own" ]; then
+    echo "读不到版本（宿主 [$lock_host] / 本包 [$lock_own]），拒绝安装" >&2
+    exit 3
+  fi
+  if [ "$lock_host" != "$lock_own" ]; then
+    echo "宿主 $lock_host ≠ 本包 $lock_own，拒绝安装" >&2
+    log_line "version-lock=REFUSED host=$lock_host package=$lock_own"
+    exit 1
+  fi
+}
+
 set_override() {
   mode=$1
   if [ "$mode" = "add" ]; then
@@ -151,15 +190,23 @@ case "${1:-}" in
     echo "shell=$(read_state)"
     echo "profile=$PROFILE_DIR"
     echo "link=$(link_target)"
-    "$NODE" -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write("override="+JSON.stringify(m.pnpm?.overrides?.[process.argv[2]]??null)+"\n")' "$MANIFEST" "$HOST_PACKAGE" 2>/dev/null || echo "override=?"
+    "$NODE" -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write("dependency="+JSON.stringify(m.dependencies?.[process.argv[2]]??null)+"\n")' "$MANIFEST" "$HOST_PACKAGE" 2>/dev/null || echo "dependency=?"
     ;;
   launcher)
     require_profile
+    require_version_lock
     preserve_original
-    set_override add
+    cp -p "$MANIFEST" "$MANIFEST.bak.$$"
+    if ! set_override add; then
+      mv -f "$MANIFEST.bak.$$" "$MANIFEST"
+      log_line "install=FAILED manifest=restored"
+      echo "安装失败，profile 的 package.json 已还原，未生效" >&2
+      exit 3
+    fi
+    rm -f "$MANIFEST.bak.$$"
     write_state launcher
     log_line "switch=launcher link=$LINK -> $PACKAGE_DIR"
-    echo "链接已指向本包：$LINK -> $PACKAGE_DIR（override 已写）"
+    echo "已装本包：$HOST_PACKAGE -> $PACKAGE_DIR"
     restart_web || exit 3
     if ! verify_page launcher; then
       log_line "boot-self-check=FAILED fallback=native"
@@ -174,10 +221,17 @@ case "${1:-}" in
     ;;
   native)
     require_profile
-    set_override remove
+    cp -p "$MANIFEST" "$MANIFEST.bak.$$"
+    if ! set_override remove; then
+      mv -f "$MANIFEST.bak.$$" "$MANIFEST"
+      log_line "uninstall=FAILED manifest=restored"
+      echo "卸载失败，profile 的 package.json 已还原，未生效" >&2
+      exit 3
+    fi
+    rm -f "$MANIFEST.bak.$$"
     write_state native
     log_line "switch=native link=$(link_target)"
-    echo "链接已指回原包：$LINK -> $(link_target)"
+    echo "已卸回宿主实现（依赖移除）"
     restart_web || exit 3
     if [ -n "${DSH_URL:-}" ]; then verify_page native || { log_line "verify=native FAILED"; exit 1; }; fi
     ;;
