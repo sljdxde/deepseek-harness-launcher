@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+fa2bb1d"
+  const BUILD_STAMP = "0.2.2-rc.5+2fe07cf"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1197,9 +1197,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       window.addEventListener('launcher:dock', onDock)
       return () => window.removeEventListener('launcher:dock', onDock)
     }, [])
-    // 用户显式开关优先（宿主 hook 一旦为 true 会一直 true，没有 override 就永远关不掉）
-    const [dockOverride, setDockOverride] = React.useState(null)
-    const dockOpen = dockOverride === null ? (dockOpenHook || dockOpenEvent) : dockOverride
+    const dockOpen = dockOpenHook || dockOpenEvent
     const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     // 03 FR-13：宽度按会话记忆（localStorage['dsh.launcher.dockWidth']），刷新后右栏默认收起、重开回该值
@@ -1260,12 +1258,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (dockOpen) {
         // 关闭：宿主在 launcher 里不一定回 closeRightbar，外壳直接把轨道收掉（可视结果必须响应）
         DOCK_CLOSE_INTENT.user = true
+        setDockOpen(false)
         setDockOpenEvent(false)
-        setDockOverride(false)
         toggleRightbarHost()
         return
       }
-      setDockOverride(true)
+      setDockOpen(true)
       toggleRightbarHost()
       // 打开：先给宿主一帧；若宿主没接管（blocked / 无 occupant 等），外壳自己展开轨道
       setTimeout(() => {
@@ -1705,6 +1703,26 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const DOCK_MIN = 320
   // 用户主动关右栏的意图：宿主「开→立刻关」的自动 close 要被吞一次，用户关必须生效
   const DOCK_CLOSE_INTENT = { user: false }
+  // 右栏显隐的唯一一份 store：apply() 的 layout face 与组件开关共用，避免 hook 恒 true 关不掉
+  let DOCK_OPEN_STATE = false
+  const DOCK_LISTENERS = new Set()
+  let dockAutoCloseSwallowed = false
+  function getDockOpen() { return DOCK_OPEN_STATE }
+  function subscribeDock(listener) {
+    DOCK_LISTENERS.add(listener)
+    return () => DOCK_LISTENERS.delete(listener)
+  }
+  function setDockOpen(next) {
+    if (next === true) dockAutoCloseSwallowed = false
+    if (next === false) {
+      if (DOCK_CLOSE_INTENT.user) DOCK_CLOSE_INTENT.user = false
+      else if (!dockAutoCloseSwallowed) { dockAutoCloseSwallowed = true; return }
+    }
+    DOCK_OPEN_STATE = next
+    try { window.__DSH_LAUNCHER_DOCK__ = DOCK_OPEN_STATE } catch { /* 忽略 */ }
+    for (const listener of DOCK_LISTENERS) listener()
+    try { window.dispatchEvent(new CustomEvent('launcher:dock', { detail: { open: DOCK_OPEN_STATE } })) } catch { /* 忽略 */ }
+  }
   const DOCK_MAX = 520
   const DOCK_HIDE_BELOW = 1020
   const clampDock = (w) => Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.round(w)))
@@ -1793,36 +1811,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const panelInfo = createPanelInfo()
     // 右栏轨道宽度是外壳的活，但显隐由 ctx.layout.openRightbar/closeRightbar 记账
     // （ui-sidebar-right 用这两个动作），所以它得是一个能订阅的小观测面。
-    let dockOpen = false
-    const dockListeners = new Set()
-    const dockHook = {
-      getSnapshot: () => dockOpen,
-      subscribe: (listener) => {
-        dockListeners.add(listener)
-        return () => dockListeners.delete(listener)
-      },
-    }
-    // 宿主会在每次 open 后立刻发一次 close；只吞「非用户意图」的那次，用户关必须生效。
-    let dockAutoCloseSwallowed = false
-    const setDockOpen = (next) => {
-      if (next === true) dockAutoCloseSwallowed = false
-      if (next === false) {
-        if (DOCK_CLOSE_INTENT.user) {
-          DOCK_CLOSE_INTENT.user = false
-        } else if (!dockAutoCloseSwallowed) {
-          dockAutoCloseSwallowed = true
-          return
-        }
-      }
-      dockOpen = next
-      try { window.__DSH_LAUNCHER_DOCK__ = dockOpen } catch { /* 忽略 */ }
-      for (const listener of dockListeners) listener()
-      try {
-        window.dispatchEvent(new CustomEvent('launcher:dock', { detail: { open: dockOpen } }))
-      } catch {
-        /* 事件派发失败不影响状态 */
-      }
-    }
+    const dockHook = { getSnapshot: getDockOpen, subscribe: subscribeDock }
     // 上游 AppFrame 注册时带 foldedLandscape（窄窗折起），占据者可能会取 useFoldedLandscape；
     // 不 provide 会留下"required 未激活"的下一个坑，所以照带。
     let foldedLandscape = typeof window !== 'undefined' && window.innerWidth < 900
