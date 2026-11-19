@@ -103,6 +103,29 @@ export function collapseComposerBar(availableWidth) {
   return { labels: 'full', extras: 'inline', sendVisible: true }
 }
 
+/** 窄窗阈值：低于它把次要入口收进菜单，但每个入口都必须还有一条可见路径（FR-31）。 */
+export const NARROW = Object.freeze({ chip: 360, rail: 400 })
+
+/**
+ * 320 这类窄窗的降级计划（FR-31）。
+ *
+ * 判据（03 为准）：`document.body.scrollWidth ≤ 321`、五个动作不需要横向滚动、composer 不溢出、
+ * 发送键可见、审批 chip 不被裁；右栏/侧栏收起时**必须有可见入口，不能静默消失**。
+ * 所以这里没有 `hidden` 这种取值：收起来的一律给 `menu` / `rail`，由渲染层留一个可见按钮。
+ * @param {number} viewportWidth - 视口宽（CSS 像素）。
+ * @returns {{ composer: ReturnType<typeof collapseComposerBar>, approvalChip: 'inline'|'menu', dockEntry: 'track'|'rail', sidebarEntry: 'column'|'rail' }} 降级计划。
+ */
+export function narrowPlanOf(viewportWidth) {
+  const width = Number(viewportWidth)
+  const safe = Number.isFinite(width) ? width : 0
+  return {
+    composer: collapseComposerBar(safe),
+    approvalChip: safe < NARROW.chip ? 'menu' : 'inline',
+    dockEntry: safe < DOCK.hideBelow ? 'rail' : 'track',
+    sidebarEntry: safe < NARROW.rail ? 'rail' : 'column',
+  }
+}
+
 /**
  * §4.4 的宽度预算检查（1440 参考：56 + 280 + 480 + 380 = 1196，余量给间距与把手）。
  * @param {{ viewportWidth: number, rail?: number, sidebar?: number, dock?: number }} input - 各列宽度。

@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { DOCK, PANE_MIN_WIDTH, setDockWidth, dockCanShow, maxSplit, resolveSplit, mainAreaWidth, widthBudget, collapseComposerBar } from '../lib/layout.js'
+import { DOCK, PANE_MIN_WIDTH, setDockWidth, dockCanShow, maxSplit, resolveSplit, mainAreaWidth, widthBudget, collapseComposerBar, narrowPlanOf, NARROW } from '../lib/layout.js'
 
 test('右栏宽度：区间内原样、越界夹回并报原因', () => {
   assert.deepEqual(setDockWidth(380), { ok: true, width: 380 })
@@ -59,4 +59,19 @@ test('composer 工具条：320 下改成图标 + 收进 + 菜单，发送键永�
   assert.deepEqual(collapseComposerBar(420), { labels: 'icon', extras: 'inline', sendVisible: true })
   assert.deepEqual(collapseComposerBar(600), { labels: 'full', extras: 'inline', sendVisible: true })
   assert.deepEqual(collapseComposerBar(Number.NaN), { labels: 'icon', extras: 'menu', sendVisible: true })
+})
+
+test('320 窄窗降级计划：入口一个都不许静默消失（FR-31）', () => {
+  const narrow = narrowPlanOf(320)
+  assert.deepEqual(narrow.composer, { labels: 'icon', extras: 'menu', sendVisible: true })
+  assert.equal(narrow.approvalChip, 'menu', '审批 chip 收进可见菜单，不是裁掉')
+  assert.equal(narrow.dockEntry, 'rail', '右栏收起后留可见入口')
+  assert.equal(narrow.sidebarEntry, 'rail', '侧栏收起后留可见入口')
+  for (const value of [narrow.approvalChip, narrow.dockEntry, narrow.sidebarEntry]) {
+    assert.notEqual(value, 'hidden')
+  }
+  assert.equal(narrowPlanOf(1440).approvalChip, 'inline')
+  assert.equal(narrowPlanOf(1440).dockEntry, 'track')
+  assert.equal(narrowPlanOf(Number.NaN).composer.labels, 'icon')
+  assert.ok(NARROW.chip < NARROW.rail)
 })

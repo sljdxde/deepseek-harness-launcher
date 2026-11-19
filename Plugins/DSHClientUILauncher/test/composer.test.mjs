@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  ATTACH_LIMIT, SLASH_QUERY_LIMIT, addAttachment, breakdownOf, createQueue, filterSlash, levelOf, meterOf, meterHint, quoteBlockOf, slashQueryOf,
+  ATTACH_LIMIT, SLASH_QUERY_LIMIT, addAttachment, breakdownOf, createQueue, filterSlash, levelOf, meterOf, meterHint, contextPanelTitle, quoteBlockOf, slashQueryOf,
 } from '../lib/composer.js'
 
 test('/ 只在行首、无空白、无第二个斜杠时触发', () => {
@@ -174,4 +174,11 @@ test('引用插入：每行前置 > ，空内容与超长拒绝', () => {
   assert.equal(ok.lines, 2)
   assert.equal(quoteBlockOf('   ').reason, 'empty')
   assert.equal(quoteBlockOf('x'.repeat(8001)).reason, 'too-long')
+})
+
+test('上下文面板标题行带输入规模（D2 尾巴）', () => {
+  assert.equal(contextPanelTitle({ pct: 88, chars: 1308, attachments: 2 }), '上下文占用 88% · 输入 1308 字 · 2 个附件')
+  assert.equal(contextPanelTitle({ pct: 59, chars: 0, attachments: 0 }), '上下文占用 59% · 输入 0 字')
+  assert.equal(contextPanelTitle({ pct: 97.6, chars: 2048.4, attachments: 1 }), '上下文占用 98% · 输入 2048 字 · 1 个附件')
+  assert.equal(contextPanelTitle({}), '上下文占用 0% · 输入 0 字')
 })

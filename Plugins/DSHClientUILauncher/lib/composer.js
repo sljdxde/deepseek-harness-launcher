@@ -140,6 +140,20 @@ export function meterHint(pct) {
 }
 
 /**
+ * 上下文面板的标题行（04-A2 留给 T3 的 D2 尾巴）：h5 除百分比还要给输入规模。
+ * 例：`上下文占用 88% · 输入 1308 字 · 2 个附件`。
+ * @param {{ pct: number, chars: number, attachments: number }} input - 百分比、输入字数、附件数。
+ * @returns {string} h5 那一行；没有附件时不写附件段，有附件才写。
+ */
+export function contextPanelTitle({ pct, chars, attachments } = {}) {
+  const value = Number.isFinite(Number(pct)) ? Math.min(100, Math.max(0, Math.round(Number(pct)))) : 0
+  const count = Number.isFinite(Number(chars)) ? Math.max(0, Math.round(Number(chars))) : 0
+  const files = Number.isFinite(Number(attachments)) ? Math.max(0, Math.round(Number(attachments))) : 0
+  const tail = files > 0 ? ` · ${files} 个附件` : ''
+  return `上下文占用 ${value}% · 输入 ${count} 字${tail}`
+}
+
+/**
  * 四项拆分：按最大余数法取整，保证四项之和 === 显示的 pct（§10-14 的断言）。
  * @param {{ system: number, chat: number, files: number, tools: number }} raw - 四项原始占比（同口径的任意正数）。
  * @param {number} pct - 要凑到的总百分比（meterOf 的结果）。
