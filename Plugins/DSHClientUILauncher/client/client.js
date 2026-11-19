@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+183890d"
+  const BUILD_STAMP = "0.2.2-rc.5+58d59ba"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -95,7 +95,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-perm__item.on{background:var(--dsw-alias-bg-2,rgba(127,127,127,.12))}
 @container (max-width: 640px){.launcher-perm__text{display:none}.launcher-perm__pill{padding:0 6px}}
 .launcher-approval-chip{font-size:11px;color:var(--dsw-alias-label-secondary,#666);opacity:.65;pointer-events:none;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:8px;padding:0 6px;line-height:18px}
-.launcher-approval-chip.is-error{color:var(--dsw-alias-state-warn-border,#d9a441);opacity:1}
+.launcher-approval-chip.is-error{color:var(--dsw-alias-state-warn-border,#d9a441);opacity:1;pointer-events:auto;cursor:pointer;background:transparent;font:inherit;border-style:solid}
 .launcher-approval-card{position:fixed;right:16px;bottom:48px;z-index:1000;width:min(360px,92vw);border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;background:var(--dsw-alias-bg-1,#fff);box-shadow:0 10px 28px rgba(0,0,0,.18);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
 .launcher-approval-card__head{font-size:12px;font-weight:600}
 .launcher-approval-card__cmd{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--dsw-alias-bg-2,rgba(127,127,127,.08));border-radius:6px;padding:6px;max-height:120px;overflow:auto}
@@ -107,6 +107,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-approval-settings__mode.on{background:var(--dsw-alias-bg-2,rgba(127,127,127,.14))}
 .launcher-approval-settings__tool{display:inline-flex;align-items:center;gap:4px}
 .launcher-approval-settings__input{height:24px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;padding:0 8px;min-width:180px}
+.launcher-approval-settings__dir{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:6px;padding:0 6px;font-size:11px}
+.launcher-approval-settings__dir button{border:0;background:transparent;color:inherit;cursor:pointer;font:inherit}
 .launcher-approval-settings__error{color:var(--dsw-alias-state-warn-border,#d9a441);margin:0}
 .launcher-dock-summary{font-size:12px;opacity:.75}
 .launcher-model-chip{font-size:12px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;opacity:.85}
@@ -592,7 +594,15 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     { id: 'auto-safe', label: '自动批准安全命令' },
     { id: 'full', label: '全自动' },
   ]
-  const APPROVAL_TOOLS = ['shell', 'file', 'network', 'browser', 'mcp', 'task']
+  // 真 schema（policy-store.mjs）：tools 的键是这六类
+  const APPROVAL_TOOLS = [
+    { id: 'fs.read', label: '读文件' },
+    { id: 'fs.write', label: '写文件' },
+    { id: 'exec', label: '执行命令' },
+    { id: 'net', label: '网络' },
+    { id: 'browser', label: '浏览器' },
+    { id: 'git.push', label: 'git push' },
+  ]
   const APPROVAL_CHOICES = [
     { id: 'allow-once', label: '允许这一次' },
     { id: 'allow-always', label: '永久允许' },
@@ -663,18 +673,31 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }
       schedule()
     }
-    const onVisibility = () => {
-      if (typeof document !== 'undefined' && document.hidden === false && stopped === false) {
-        clearTimeout(timer)
-        tick()
+    const resume = () => {
+      if (stopped) {
+        stopped = false
+        approvalSnapshot.failures = 0
+        approvalSnapshot.error = null
+        approvalEmit()
       }
+      clearTimeout(timer)
+      tick()
+    }
+    const onVisibility = () => {
+      if (typeof document !== 'undefined' && document.hidden === false) resume()
     }
     tick()
-    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibility)
+      window.addEventListener('launcher:approval-retry', resume)
+    }
     return () => {
       stopped = true
       clearTimeout(timer)
-      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibility)
+        window.removeEventListener('launcher:approval-retry', resume)
+      }
     }
   }
 
@@ -693,7 +716,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const snapshot = useApprovalSnapshot()
     const count = Number(snapshot.count ?? snapshot.pending.length) || 0
     const title = '见 设置 → 审批与权限'
-    if (snapshot.error !== null) return h('span', { className: 'launcher-approval-chip is-error', title: snapshot.error }, snapshot.error)
+    if (snapshot.error !== null) {
+      return h('button', {
+        type: 'button',
+        className: 'launcher-approval-chip is-error',
+        title: '点此重试',
+        onClick: () => window.dispatchEvent(new CustomEvent('launcher:approval-retry')),
+      }, snapshot.error)
+    }
     return h('span', {
       className: `launcher-approval-chip${count === 0 ? ' is-idle' : ''}`,
       'data-approval-count': count,
@@ -769,12 +799,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         }, mode.label))),
       h('div', { className: 'launcher-approval-settings__row' },
         h('span', null, '工具类别'),
-        APPROVAL_TOOLS.map((tool) => h('label', { key: tool, className: 'launcher-approval-settings__tool' },
-          tool,
+        APPROVAL_TOOLS.map((tool) => h('label', { key: tool.id, className: 'launcher-approval-settings__tool' },
+          tool.label,
           h('select', {
-            'data-tool': tool,
-            value: draft.tools?.[tool] ?? 'ask',
-            onChange: (event) => { setTool(tool, event.target.value); save({ tools: { ...(draft.tools ?? {}), [tool]: event.target.value } }) },
+            'data-tool': tool.id,
+            value: draft.tools?.[tool.id] ?? 'ask',
+            onChange: (event) => { setTool(tool.id, event.target.value); save({ tools: { ...(draft.tools ?? {}), [tool.id]: event.target.value } }) },
           }, levels.map((level) => h('option', { key: level.id, value: level.id }, level.label)))))),
       h('div', { className: 'launcher-approval-settings__row' },
         h('span', null, '目录白名单'),
@@ -787,14 +817,38 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         }),
         h('button', {
           type: 'button', 'data-approval-whitelist': 'add',
-          onClick: () => { const next = [...new Set([...(draft.allowDirs ?? []), path.trim()].filter(Boolean))]; setDraft({ ...draft, allowDirs: next }); save({ allowDirs: next }); setPath('') },
+          onClick: () => {
+            const next = [...new Set([...(draft.dirWhitelist ?? []), path.trim()].filter(Boolean))]
+            setDraft({ ...draft, dirWhitelist: next })
+            save({ dirWhitelist: next })
+            setPath('')
+          },
         }, '添加')),
+      h('div', { className: 'launcher-approval-settings__row' },
+        h('span', null, '已白名单'),
+        (draft.dirWhitelist ?? []).map((dir) => h('span', { key: dir, className: 'launcher-approval-settings__dir' },
+          dir,
+          h('button', {
+            type: 'button',
+            'data-approval-whitelist': 'remove',
+            'data-dir': dir,
+            onClick: () => {
+              const next = (draft.dirWhitelist ?? []).filter((item) => item !== dir)
+              setDraft({ ...draft, dirWhitelist: next })
+              save({ dirWhitelist: next })
+            },
+          }, '×')))),
       h('label', { className: 'launcher-approval-settings__row' },
         h('input', {
           type: 'checkbox',
           'data-approval-danger': 'toggle',
-          checked: draft.dangerousEnabled !== false,
-          onChange: (event) => { const on = event.target.checked; setDraft({ ...draft, dangerousEnabled: on }); save({ dangerousEnabled: on }) },
+          checked: draft.dangerousGuard?.enabled !== false,
+          onChange: (event) => {
+            const on = event.target.checked
+            const guard = { ...(draft.dangerousGuard ?? { enabled: true, patterns: [] }), enabled: on }
+            setDraft({ ...draft, dangerousGuard: guard })
+            save({ dangerousGuard: guard })
+          },
         }),
         '标注危险命令'),
       error === null ? null : h('p', { className: 'launcher-approval-settings__error' }, error))

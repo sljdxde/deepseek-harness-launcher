@@ -127,6 +127,11 @@ export function registerApprovalRoutes(server, service) {
       }
       try {
         const value = await readBody(req)
+        const ALLOWED_CHOICES = ['allow-once', 'allow-always', 'deny']
+        if (!ALLOWED_CHOICES.includes(value?.choice)) {
+          jsonStatus(res, 400, { ok: false, reason: 'invalid-choice' })
+          return
+        }
         json(res, await service.decide({ requestId: String(value?.requestId ?? ''), choice: value?.choice }))
       } catch (error) {
         jsonStatus(res, 400, { ok: false, error: String(error?.message ?? error) })

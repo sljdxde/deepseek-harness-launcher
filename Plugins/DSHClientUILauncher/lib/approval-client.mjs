@@ -37,3 +37,8 @@ export function createApprovalClient({ fetchImpl, base = APPROVAL_BASE, headers 
     pending: () => request('/pending'),
   }
 }
+
+/** 失败后的恢复策略：可见/手动重试时清零失败计数与错误文案（与 client 轮询同口径）。 */
+export function resumePolling({ failures = 0 } = {}) {
+  return { failures: 0, error: null, stopped: false }
+}

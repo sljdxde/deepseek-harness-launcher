@@ -1,7 +1,7 @@
 /** PR-B 客户端封装：URL/方法/失败策略（注入 fetch，不发真请求）。 */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createApprovalClient, shouldPoll } from '../lib/approval-client.mjs'
+import { createApprovalClient, resumePolling, shouldPoll } from '../lib/approval-client.mjs'
 
 function recorder(payload = { ok: true }) {
   const calls = []
@@ -35,4 +35,9 @@ test('shouldPoll：隐藏停、失败到 3 次停、可见且未超限继续', (
   assert.equal(shouldPoll({ visibility: 'hidden' }), false)
   assert.equal(shouldPoll({ visibility: 'visible', failures: 3 }), false)
   assert.equal(shouldPoll({ visibility: 'visible', failures: 2 }), true)
+})
+
+test('resumePolling：可见/手动重试后失败计数与错误清零，可继续轮询', () => {
+  assert.deepEqual(resumePolling({ failures: 3 }), { failures: 0, error: null, stopped: false })
+  assert.equal(shouldPoll({ visibility: 'visible', failures: 0 }), true)
 })

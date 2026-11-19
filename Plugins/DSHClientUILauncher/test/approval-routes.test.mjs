@@ -70,3 +70,32 @@ test('decide 未知 requestId 返回 ok:false 而不是抛错', async () => {
   assert.equal(res.body.ok, false)
   rmSync(dir, { recursive: true, force: true })
 })
+
+test('decide 非法 choice 回 400（不许任意字符串当 allow 落审计）', async () => {
+  const { call, dir } = harness()
+  const res = await call('/dsh-approval/decide', { method: 'POST', body: { requestId: 'r1', choice: 'yes-please' } })
+  assert.equal(res.status, 400)
+  assert.equal(res.body.reason, 'invalid-choice')
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('真实 payload：dirWhitelist / dangerousGuard.enabled / tools 真生效', async () => {
+  const { call, dir } = harness()
+  const doc = (await call('/dsh-approval/policy')).body
+  const next = await call('/dsh-approval/policy', {
+    method: 'POST',
+    body: {
+      patch: {
+        dirWhitelist: [...doc.dirWhitelist, '/tmp/approval-test-dir'],
+        dangerousGuard: { ...doc.dangerousGuard, enabled: false },
+        tools: { ...doc.tools, 'git.push': 'ask' },
+      },
+      ifVersion: doc.version,
+    },
+  })
+  assert.equal(next.body.ok, true)
+  assert.ok(next.body.doc.dirWhitelist.includes('/tmp/approval-test-dir'))
+  assert.equal(next.body.doc.dangerousGuard.enabled, false)
+  assert.equal(next.body.doc.tools['git.push'], 'ask')
+  rmSync(dir, { recursive: true, force: true })
+})
