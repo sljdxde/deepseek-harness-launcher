@@ -152,7 +152,7 @@ export function executeCommand(entry, context = MENU_CONTEXT) {
 /** 我们自己的动作要注册进同一个 catalog（FR-16）：只注册宿主没有的三条，「新建会话」用宿主 session.new。 */
 export const OWN_CATALOG_ROWS = [
   { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], aliases: [] },
-  { id: 'launcher.settings', label: '打开设置', hint: '设置面板', regions: ['page', 'editable'], aliases: [] },
+
 ]
 
 /**
@@ -169,6 +169,6 @@ export function ownCatalogRows(ctx = {}, actions = {}) {
   const guard = (enabled, run) => ({ resolve: () => (enabled ? { status: 'handled', run } : { status: 'pass' }) })
   return [
     { ...OWN_CATALOG_ROWS[0], ...guard(onPage, () => actions.onOpenWorkbench?.()) },
-    { ...OWN_CATALOG_ROWS[1], ...guard(onPage && hasSession, () => actions.onOpenSettings?.()) },
+
   ]
 }

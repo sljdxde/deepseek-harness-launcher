@@ -81,21 +81,19 @@ test('自己注册的行：能进 catalogCommands 且能执行（FR-16）', () =
   const calls = []
   const rows = ownCatalogRows({}, {
     onOpenWorkbench: () => calls.push('bench'),
-    onOpenSettings: () => calls.push('settings'),
   })
   const entries = catalogCommands(rows)
-  assert.deepEqual(entries.map((e) => e.id), ['launcher.pluginWorkbench', 'launcher.settings'])
+  assert.deepEqual(entries.map((e) => e.id), ['launcher.pluginWorkbench'])
   assert.equal(entries.every((e) => e.disabled === false), true)
   assert.equal(executeCommand(entries[0]), 'ran')
-  assert.equal(executeCommand(entries[1]), 'ran')
-  assert.deepEqual(calls, ['bench', 'settings'])
+  assert.deepEqual(calls, ['bench'])
 })
 
 test('自己注册的行：没有会话/不在页面级时 resolve 返回 pass（置灰）', () => {
   const rows = ownCatalogRows({ hasSession: false, currentPage: 'settings' })
   const entries = catalogCommands(rows)
   assert.equal(entries.every((e) => e.disabled === true), true)
-  assert.equal(executeCommand(entries[1]), 'pass')
+  assert.equal(executeCommand(entries[0]), 'pass')
 })
 
 test('resolve 返回对象形态（{status}）：handled 可执行、pass 置灰（宿主 catalog 口径）', () => {
@@ -126,4 +124,18 @@ test('registry.commands（Map）：label() 函数、regions 过滤、resolve 对
   assert.equal(executeCommand(entries[0]), 'ran')
   assert.deepEqual(run, ['new'])
   assert.equal(executeCommand(entries[1]), 'pass')
+})
+
+test('自有行：actions 缺省时 run 不抛（可选回调）', () => {
+  const rows = ownCatalogRows({}, {})
+  const entries = catalogCommands(rows)
+  assert.equal(entries.every((e) => e.disabled === false), true)
+  assert.equal(executeCommand(entries[0]), 'ran')
+})
+
+test('执行：字符串 handled 且 entry 自带 run 时也执行（兼容旧形态）', () => {
+  const calls = []
+  const entry = { command: { resolve: () => 'handled' }, run: () => calls.push('x') }
+  assert.equal(executeCommand(entry), 'ran')
+  assert.deepEqual(calls, ['x'])
 })
