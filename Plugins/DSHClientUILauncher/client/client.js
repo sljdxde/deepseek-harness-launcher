@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+b92a976"
+  const BUILD_STAMP = "0.2.2-rc.5+84a9933"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1198,8 +1198,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       return () => window.removeEventListener('launcher:dock', onDock)
     }, [])
     const dockOpen = dockOpenHook || dockOpenEvent
-    // 视口变化时把宽度夹回合法区间（1200 宽上限 384、320 下限 320）
-    React.useEffect(() => { setDragWidth((width) => clampDock(width, viewportWidth)) }, [viewportWidth])
     const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     // 03 FR-13：宽度按会话记忆（localStorage['dsh.launcher.dockWidth']），刷新后右栏默认收起、重开回该值
