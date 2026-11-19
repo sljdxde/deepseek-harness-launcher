@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+68786a1"
+  const BUILD_STAMP = "0.2.2-rc.5+b4e92e4"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1083,8 +1083,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }
     }
     const onKeyDown = (event) => {
-      // 面板内的按键只在 input 自己的 handler 里处理；这里跳过，避免 Enter/↑↓ 双执行
-      if (event.target !== null && event.target !== undefined && event.target.closest?.('.launcher-palette') !== null) return
       const isPaletteKey = (event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'k'
       const isThemeKey = (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === 'l'
       if (isThemeKey) {
@@ -1126,6 +1124,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (event.key === 'ArrowUp') { event.preventDefault(); setPaletteIndex((i) => (shown.length === 0 ? 0 : (i - 1 + shown.length) % shown.length)) }
       if (event.key === 'Enter' && shown[paletteIndex] !== undefined) { event.preventDefault(); runCommand(shown[paletteIndex]) }
     }
+    const onRootKeyDown = (event) => {
+      if (event?.target?.closest?.('.launcher-palette') !== null && event?.target?.closest?.('.launcher-palette') !== undefined) return
+      onKeyDown(event)
+    }
     return h('div', {
       className: 'launcher-shell',
       'data-drawer': narrow ? (drawerOpen ? 'open' : 'closed') : 'static',
@@ -1134,7 +1136,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       'data-code-wrap': wrapOn ? 'on' : 'off',
       style: { '--launcher-composer-h': `${composerHeight}px` },
       'data-build': BUILD_STAMP,
-      onKeyDown,
+      onKeyDown: onRootKeyDown,
     },
       h('div', { className: 'launcher-rail', role: 'navigation', 'aria-label': 'launcher rail' },
         renderSlot('shell.leading', {}),
