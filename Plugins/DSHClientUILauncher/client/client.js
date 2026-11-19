@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+b6ffe12"
+  const BUILD_STAMP = "0.2.2-rc.5+ea53a48"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -118,6 +118,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 }
 .launcher-theme-chip{margin-left:auto;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;font-size:12px;line-height:1;padding:2px 6px;cursor:pointer}
 .launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
+.launcher-panel-back{flex:0 0 auto;padding:6px 12px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}
+.launcher-panel-back__btn{border:0;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;opacity:.8}
 .launcher-empty{position:static;flex:0 0 auto;z-index:auto;align-items:center;display:flex;justify-content:center;min-height:0;max-height:260px;overflow:auto;padding:16px 16px 8px;background:transparent}
 .launcher-pane__host{display:flex;flex:1 1 0;min-height:0;flex-direction:column;overflow:hidden}
 .launcher-empty__card{display:flex;flex-direction:column;gap:10px;margin:auto;width:100%}
@@ -177,6 +179,21 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * @param {string[]} candidates - 候选 key。
    * @returns {string|null} 真 key。
    */
+  /** 打开插件工作台：宿主 pluginNavigation.openList() 优先，退 selectPanel 真 key。 */
+  function openPluginWorkbench(ctx) {
+    try {
+      if (typeof ctx?.pluginNavigation?.openList === 'function') {
+        ctx.pluginNavigation.openList()
+        return true
+      }
+    } catch {
+      /* 落到 selectPanel */
+    }
+    const key = resolveMainKey(ctx, RAIL_CANDIDATES.plugins)
+    if (key !== null) return selectPanel(key)
+    return false
+  }
+
   function resolveMainKey(ctx, candidates) {
     try {
       const entries = ctx?.slots?.entries?.('main') ?? []
@@ -191,6 +208,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   // 调宿主命令 resolve 用普通上下文：插件 ctx 是代理，读未 inject 的属性会抛
   // `cannot get property "target" without inject`（实测）
   const MENU_CONTEXT = { region: 'page', modal: null, source: 'menu' }
+
+  /** 宿主面板里「自己不带返回」的那些——由外壳补一条回链（插件页自带，不重复）。 */
+  const PANELS_NEEDING_BACK = ['dsh-archive-manager']
 
   const RAIL_CANDIDATES = {
     conversation: ['conversation'],
@@ -1228,6 +1248,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
               ? [
                 emptyDecision.render && !starterFilled
                   ? h(EmptyStateCard, { key: 'empty', layout: cardLayout(viewportWidth, typeof window === 'undefined' ? 900 : window.innerHeight), onFilled: () => setStarterFilled(true) })
+                  : null,
+                activePanelId !== null && PANELS_NEEDING_BACK.includes(activePanelId)
+                  ? h('div', { key: 'panel-back', className: 'launcher-panel-back' },
+                    h('button', { type: 'button', className: 'launcher-panel-back__btn', onClick: () => selectPanel(null) }, '← 返回会话'))
                   : null,
                 // 宿主子树（含 composer）必须照常渲染：卡片不能顶掉输入框
                 h('div', { key: 'host-main', className: 'launcher-pane__host' }, renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' })),

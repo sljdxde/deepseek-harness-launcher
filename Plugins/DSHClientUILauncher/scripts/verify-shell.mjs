@@ -90,12 +90,29 @@ try {
       await new Promise((resolve) => setTimeout(resolve, Number(process.env.SESSION_WAIT ?? 12000)))
       sessionActions = await page.evaluate(() => ({
         emptyState: document.querySelector('[data-launcher-empty="our"]') !== null,
+        paneDisplay: getComputedStyle(document.querySelector('.launcher-pane') ?? document.body).display,
+        geometry: (() => {
+          const main = document.querySelector('.launcher-main')?.getBoundingClientRect()
+          const send = [...document.querySelectorAll('button')].find((b) => /发送|send/i.test(b.getAttribute('aria-label') ?? b.title ?? ''))
+          const sr = send?.getBoundingClientRect()
+          return {
+            scrollWidth: document.body.scrollWidth,
+            innerWidth: window.innerWidth,
+            sendBottom: sr ? Math.round(sr.bottom) : null,
+            mainBottom: main ? Math.round(main.bottom) : null,
+          }
+        })(),
         buttons: document.querySelectorAll('.launcher-turn-action').length,
         actions: [...document.querySelectorAll('[data-action]')].map((n) => n.getAttribute('data-action')),
       }))
       if (sessionActions.buttons < 2) verdict = 'session-actions-missing'
       // 有会话且没有消息时，空态卡片必须由我们渲染（EXPECT_EMPTY=1 时断言）
       if (process.env.EXPECT_EMPTY === '1' && sessionActions.emptyState !== true) verdict = 'empty-state-missing'
+      // 几何判据：pane 必须是 flex column、主区不横向溢出、发送键不越出主区
+      if (sessionActions.paneDisplay !== 'flex') verdict = 'pane-not-flex'
+      const geometry = sessionActions.geometry ?? {}
+      if (geometry.scrollWidth > (geometry.innerWidth ?? 0) + 1) verdict = 'horizontal-overflow'
+      if (geometry.sendBottom !== null && geometry.mainBottom !== null && geometry.sendBottom > geometry.mainBottom) verdict = 'send-outside-main'
     } catch {
       sessionActions = { buttons: -1, actions: [] }
       verdict = 'session-actions-missing'
