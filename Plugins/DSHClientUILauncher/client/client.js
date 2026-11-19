@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+26f73ee"
+  const BUILD_STAMP = "0.2.2-rc.5+980ca79"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -702,15 +702,18 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   /** 空态判据（与 lib/new-session.js 的 emptyStateDecision 同口径）。 */
   function emptyStateDecision(input) {
     const force = input.force ?? (typeof window !== 'undefined' ? window.__DSH_LAUNCHER_EMPTY__ : undefined)
+    // 开发期开关放最前面：否则没有会话时永远走不到 forced-on
     if (force === 'off') return { render: false, reason: 'forced-off' }
-    const session = input.selectedSessionId
-    if (session === null || session === undefined || session === '') return { render: false, reason: 'no-session' }
     if (force === 'on') return { render: true, reason: 'forced-on' }
+    // 宿主自己画了空态就不画（不许双空态）
     if (input.hostEmptyState === true) return { render: false, reason: 'host-empty-state' }
+    // 有消息就不画
     const messages = Number(input.messageCount)
-    if ((Number.isFinite(messages) ? messages : 0) > 0) return { render: false, reason: 'has-messages' }
+    if (Number.isFinite(messages) && messages > 0) return { render: false, reason: 'has-messages' }
+    // root 拿不到 sessionId：只要当前在会话页、宿主没画空态、没有消息，就用我们的卡片
     return { render: true, reason: 'ok' }
   }
+
 
   /** 卡片布局量（与 lib/new-session.js 的 cardLayout 同口径）。 */
   function cardLayout(width, height) {
