@@ -392,6 +392,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           rows.forEach((row) => register.call(ctx.shortcuts, {
             ...row,
             label: typeof row.label === 'function' ? row.label : () => row.label,
+            aliases: [],
             modals: [],
             defaults: {},
           }))
