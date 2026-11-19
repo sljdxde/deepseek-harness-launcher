@@ -182,3 +182,29 @@ test('上下文面板标题行带输入规模（D2 尾巴）', () => {
   assert.equal(contextPanelTitle({ pct: 97.6, chars: 2048.4, attachments: 1 }), '上下文占用 98% · 输入 2048 字 · 1 个附件')
   assert.equal(contextPanelTitle({}), '上下文占用 0% · 输入 0 字')
 })
+
+test('排队消息：正常结束自动出队首并带 auto 标记；中断后不自动发（FR-10 三条）', async () => {
+  const sent = []
+  const queue = createQueue({
+    isSending: () => true,
+    send: async (sessionId, message) => sent.push({ sessionId, ...message }),
+    makeId: (() => { let n = 0; return () => `q${++n}` })(),
+  })
+  queue.enqueue({ text: '第一条' }, 's1')
+  queue.enqueue({ text: '第二条' }, 's1')
+  const first = await queue.drain()
+  assert.equal(first.ok, true)
+  assert.equal(first.item.id, 'q1')
+  assert.equal(first.item.text, '第一条')
+  assert.equal(first.item.auto, true)
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].auto, true, '自动发出的那条要带标记')
+  queue.markInterrupted()
+  assert.deepEqual(await queue.drain(), { ok: false, reason: 'interrupted' })
+  assert.equal(sent.length, 1, '中断后不替他发下一条')
+  assert.equal(queue.count(), 1, '队列保持原样')
+  queue.resume()
+  assert.equal((await queue.drain()).ok, true)
+  assert.equal(queue.count(), 0)
+  assert.deepEqual(await queue.drain(), { ok: false, reason: 'empty' })
+})

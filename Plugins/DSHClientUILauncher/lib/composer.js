@@ -201,6 +201,7 @@ export function createQueue(deps = {}) {
   const now = deps.now ?? (() => Date.now())
   const items = []
   const inFlight = new Set()
+  let interrupted = false
   const sessionOf = new Map()
 
   const find = (id) => items.find((item) => item.id === id) ?? null
@@ -262,9 +263,34 @@ export function createQueue(deps = {}) {
         inFlight.delete(id)
       }
     },
+    /**
+     * 一轮**正常结束**后自动出队首条（FR-10 第 1 条）。中断后不自动发（第 2 条）：
+     * 由调用方在用户点中断时先 `markInterrupted()`，直到下一次正常结束前 drain 都不动队列。
+     * 自动发出的那条带 `auto: true`，界面据此标「排队后自动发送」（第 3 条）。
+     * @returns {Promise<{ ok: true, item: object } | { ok: false, reason: 'empty'|'interrupted' }>} 结果。
+     */
+    async drain() {
+      if (interrupted) return { ok: false, reason: 'interrupted' }
+      const item = items[0]
+      if (item === undefined) return { ok: false, reason: 'empty' }
+      const sessionId = sessionOf.get(item.id) ?? ''
+      items.shift()
+      sessionOf.delete(item.id)
+      await send(sessionId, { text: item.text, attachments: item.attachments, auto: true })
+      return { ok: true, item: { ...item, auto: true } }
+    },
+    /** 用户点了中断：下一条不许替他自动发（FR-10 第 2 条）。 */
+    markInterrupted() {
+      interrupted = true
+    },
+    /** 有新的正常结束后解除中断标记。 */
+    resume() {
+      interrupted = false
+    },
     clear() {
       items.length = 0
       sessionOf.clear()
+      interrupted = false
     },
   }
 }
