@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+0208711"
+  const BUILD_STAMP = "0.2.2-rc.5+03fd7ff"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -895,10 +895,15 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         const ctx = CURRENT_CTX
         if (typeof ctx?.theme?.setTheme === 'function') {
           ctx.theme.setTheme(next)
+          // 宿主没写标记时补写（便于断言；不覆盖宿主自己的值）
+          const root = document.documentElement
+          if (root.dataset.dsThemeSource === undefined || root.dataset.dsThemeSource === 'system') {
+            root.dataset.dsThemeSource = next
+          }
           return
         }
-      } catch {
-        /* 落到 DOM 兜底 */
+      } catch (error) {
+        console.warn('dsh-client-ui-launcher: setTheme 失败，转 DOM 兜底', error)
       }
       try {
         document.documentElement.dataset.dsTheme = next
@@ -943,6 +948,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const ctx = CURRENT_CTX
     const commands = collectCommands(ctx)
     const [paletteOpen, setPaletteOpen] = React.useState(false)
+    const paneScrollRef = React.useRef(0)
     const [devOpen, setDevOpen] = React.useState(false)
     const [wrapOn, setWrapOn] = React.useState(codeWrapOn)
     // #1 焦点回位：打开面板时记住当时的活动元素，Esc 时优先还给它（选择器只作兜底）
@@ -1005,7 +1011,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }
       if (isPaletteKey) {
         event.preventDefault()
-        if (!paletteOpen) openerRef.current = document.activeElement
+        if (!paletteOpen) {
+          openerRef.current = document.activeElement
+          paneScrollRef.current = document.querySelector('.launcher-pane')?.scrollTop ?? 0
+        }
         setPaletteOpen((open) => !open)
         setPaletteIndex(0)
         return
@@ -1014,6 +1023,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (event.key === 'Escape') {
         event.preventDefault()
         setPaletteOpen(false)
+        requestAnimationFrame(() => { const pane = document.querySelector('.launcher-pane'); if (pane !== null) pane.scrollTop = paneScrollRef.current })
         // Esc 焦点回位：UX 口径是回到 composer 输入框（05-§4.2 / FR-06）
         requestAnimationFrame(() => {
           const opener = openerRef.current
