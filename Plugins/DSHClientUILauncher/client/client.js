@@ -246,7 +246,22 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const pressure = readProjection('contextPressure')
       const breakdown = readProjection('contextBreakdown')
       if (typeof window !== 'undefined' && window.__DSH_LAUNCHER_DEBUG__ === true) {
-        console.info('launcher:ctx shapes', JSON.stringify({ pressure, breakdown }).slice(0, 240))
+        // 一次把「这个槽到底给了什么」打全：props 键、useProjection 类型、两条真实返回值
+        const readSafe = (name) => {
+          try {
+            const hook = slotProps?.useProjection
+            return typeof hook === 'function' ? hook(name) : 'no-hook'
+          } catch (error) {
+            return `throw:${String(error?.message ?? error).slice(0, 60)}`
+          }
+        }
+        console.info('launcher:ctx props', JSON.stringify({
+          keys: Object.keys(slotProps ?? {}),
+          useProjection: typeof slotProps?.useProjection,
+          contextPressure: readSafe('contextPressure'),
+          contextBreakdown: readSafe('contextBreakdown'),
+          tokenUsage: readSafe('tokenUsage'),
+        }).slice(0, 600))
       }
       const num = (value, keys) => {
         if (value === null || value === undefined) return null
