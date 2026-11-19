@@ -233,6 +233,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    */
   function registerContextDiagnostics(ctx) {
     const Component = (slotProps) => {
+      // hooks 必须无条件、顺序稳定：全部放在组件最顶部（React #310 的根因就是放在了 early return 之后）
+      const [open, setOpen] = React.useState(false)
       const readProjection = (name) => {
         try {
           const hook = slotProps?.useProjection
@@ -285,7 +287,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const files = num(breakdown, ['filesTokens', 'files'])
       const tools = num(breakdown, ['toolsTokens', 'tools'])
       if (pct === null || (system === null && chat === null && tools === null)) return null
-      const [open, setOpen] = React.useState(false)
       const advice = pct >= 95 ? '快满了：建议压缩到 40%' : pct >= 85 ? '该压缩了：建议压缩到 40%' : '占用正常'
       return h('div', { className: 'launcher-ctx', onKeyDown: (e) => { if (e.key === 'Escape') setOpen(false) } },
         h('button', {
@@ -382,6 +383,22 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
      * @param {Element|null} node - 触发按钮或包含按钮的节点。
      * @returns {{ text: string, role: string, turnIndex: number }} 这一轮的数据。
      */
+    /**
+     * 取消息正文并把代码块还原成围栏：宿主把 ``` 渲染成 `pre>code`，`innerText` 会丢掉反引号。
+     * @param {Element} root - 消息节点。
+     * @returns {string} 带围栏的正文。
+     */
+    const textWithFences = (root) => {
+      const clone = root.cloneNode(true)
+      for (const pre of clone.querySelectorAll('pre')) {
+        const code = pre.querySelector('code')
+        const lang = (code?.className ?? '').match(/language-([\w-]+)/)?.[1] ?? ''
+        const body = (code?.textContent ?? pre.textContent ?? '').replace(/\n$/, '')
+        pre.replaceWith(document.createTextNode(`\n\n\`\`\`${lang}\n${body}\n\`\`\`\n\n`))
+      }
+      return (clone.textContent ?? '').trim()
+    }
+
     const readTurnFromNode = (node) => {
       const tail = node?.closest?.('[data-chat-flow-kind="turn-tail"]') ?? null
       const tails = [...document.querySelectorAll('[data-chat-flow-kind="turn-tail"]')]
@@ -396,7 +413,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         return null
       }
       const assistant = previous('assistant-step')
-      if (assistant !== null) return { text: (assistant.innerText ?? assistant.textContent ?? '').trim(), role: 'assistant', turnIndex }
+      if (assistant !== null) return { text: textWithFences(assistant), role: 'assistant', turnIndex }
       const user = previous('user')
       return { text: (user?.innerText ?? user?.textContent ?? '').trim(), role: 'user', turnIndex }
     }
