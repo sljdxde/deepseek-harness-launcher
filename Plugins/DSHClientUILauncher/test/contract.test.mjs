@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url'
 
 import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, DOCK_TABS, diffContract, describeDiff } from '../lib/contract.js'
 import { moduleIdBlock, withContractBlock, withModuleId, runSync } from '../tools/sync-contract.mjs'
-import { checkHostVersion } from '../tools/check-host-version.mjs'
-import { mkdtempSync as mkTmp, rmSync as rmTmp } from 'node:fs'
+import { checkHostVersion, realHostVersion } from '../tools/check-host-version.mjs'
+import { chmodSync, mkdirSync, mkdtempSync as mkTmp, rmSync as rmTmp } from 'node:fs'
 
 const baseline = JSON.parse(readFileSync(new URL('../contracts/host-baseline.json', import.meta.url), 'utf8'))
 
@@ -142,23 +142,70 @@ test('同步脚本 CLI 自己可用：--check', () => {
   }
 })
 
-test('版本锁：包版本必须等于宿主 ui-layout 版本，不符即失败（裁决 §1）', () => {
-  const ok = checkHostVersion()
+test('版本锁：三方比对（宿主 = 基线 = 本包），不符即失败（裁决 §1）', () => {
+  // 用 fixture 注入宿主版本，避免依赖机器上有没有装宿主（否则无宿主环境恒红）
+  const ok = checkHostVersion({ hostVersion: '0.2.2-rc.5' })
   assert.equal(ok.ok, true, JSON.stringify(ok))
-  assert.equal(ok.packageVersion, ok.hostVersion)
-  const bad = checkHostVersion({ hostVersion: '9.9.9' })
-  assert.equal(bad.ok, false)
-  assert.equal(bad.reason, 'version-mismatch')
-  const missing = checkHostVersion({ hostVersion: '' })
-  assert.equal(missing.reason, 'contract-snapshot-missing')
+  assert.equal(ok.baseline, ok.packageVersion)
+  const hostMismatch = checkHostVersion({ hostVersion: '9.9.9' })
+  assert.equal(hostMismatch.ok, false)
+  assert.equal(hostMismatch.reason, 'host-vs-baseline')
+  const noHost = checkHostVersion({ hostVersion: '' })
+  assert.equal(noHost.reason, 'host-version-unreadable')
+  const noBaseline = checkHostVersion({ hostVersion: '0.2.2-rc.5', baselineVersion: '' })
+  assert.equal(noBaseline.reason, 'contract-snapshot-missing')
 })
 
-test('版本锁 CLI：一致退出 0、不符退出 1', () => {
+test('版本锁 CLI：一致退 0、不符退 1、读不到宿主退 3（用 --host-version 注入 fixture）', () => {
   const tool = fileURLToPath(new URL('../tools/check-host-version.mjs', import.meta.url))
-  const ok = spawnSync(process.execPath, [tool], { encoding: 'utf8' })
+  const ok = spawnSync(process.execPath, [tool, '--host-version', '0.2.2-rc.5'], { encoding: 'utf8' })
   assert.equal(ok.status, 0, ok.stderr)
   assert.match(ok.stdout, /版本锁通过/)
   const bad = spawnSync(process.execPath, [tool, '--host-version', '9.9.9'], { encoding: 'utf8' })
   assert.equal(bad.status, 1)
   assert.match(bad.stderr, /版本锁失败/)
+  const unreadable = spawnSync(process.execPath, [tool, '--host-version', ''], { encoding: 'utf8' })
+  assert.equal(unreadable.status, 3)
+})
+
+test('版本锁工具：读不到宿主时给出可判定结果（不靠机器环境）', () => {
+  const noHost = checkHostVersion({ hostVersion: '' })
+  assert.equal(noHost.ok, false)
+  assert.equal(noHost.reason, 'host-version-unreadable')
+  assert.equal(typeof noHost.host, 'string')
+})
+
+test('宿主版本读取：profile 里的 dsh 包优先，其次 DSH_BIN --version，都读不到返回空串', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hostver-'))
+  try {
+    mkdirSync(join(dir, 'node_modules/@deepseek-ai/dsh'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules/@deepseek-ai/dsh/package.json'), JSON.stringify({ version: '1.2.3' }))
+    assert.equal(realHostVersion({ profileDir: dir }), '1.2.3')
+    assert.equal(realHostVersion({}), '', '没有 profile 也没有 dsh 时返回空串')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('宿主版本读取：没有 profile 时退回 DSH_BIN --version（带 v 前缀也能解析）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hostbin-'))
+  const bin = join(dir, 'fake-dsh.mjs')
+  writeFileSync(bin, '#!/usr/bin/env node\nprocess.stdout.write("v2.3.4\\n")\n')
+  chmodSync(bin, 0o755)
+  try {
+    assert.equal(realHostVersion({ dshBin: bin }), '2.3.4')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('宿主版本读取：profile 里 dsh 包是坏 JSON 时落到下一档（不抛错）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hostbad-'))
+  try {
+    mkdirSync(join(dir, 'node_modules/@deepseek-ai/dsh'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules/@deepseek-ai/dsh/package.json'), '{ not json')
+    assert.equal(realHostVersion({ profileDir: dir }), '')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
