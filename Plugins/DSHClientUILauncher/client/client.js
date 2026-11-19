@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+10459b7"
+  const BUILD_STAMP = "0.2.2-rc.5+7610c5c"
   let CURRENT_CTX = null
 
   // #region children-from-contract
