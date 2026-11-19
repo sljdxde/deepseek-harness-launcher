@@ -57,6 +57,8 @@ try {
   // 实测：[data-slot="sidebar"] 在两侧都会出现（framework 给声明的一方打标），所以不能用它判原生。
   // 判据换成"本实现的运行时标记 + 界面特征"双特征：launcher 有标记与 [data-shell]；
   // native 没有标记，且有宿主自己的 composer（textarea）与 root 槽挂载点。
+  // 冒烟门禁：控制台里出现 `slot entry crashed` 一律算失败（单测覆盖不到浏览器侧）
+  const crashed = errors.filter((line) => line.includes('slot entry crashed'))
   const seen = await page.evaluate(() => ({
     launcherMark: window.__DSH_LAUNCHER_SHELL__ === true,
     launcherShell: document.querySelector('[data-shell="launcher"]') !== null,
@@ -73,6 +75,7 @@ try {
     else if (!seen.launcherMark || !seen.launcherShell) verdict = 'launcher-missing'
   } else if (seen.launcherMark || seen.launcherShell) verdict = 'native-but-launcher'
   else if (!seen.hostRoot) verdict = 'native-no-host-root'
+  if (crashed.length > 0) verdict = 'slot-entry-crashed'
   const ok = verdict === 'ok'
   process.stdout.write(`${JSON.stringify({ expected, verdict, seen, errors: errors.slice(0, 4) })}\n`)
   if (!ok) {

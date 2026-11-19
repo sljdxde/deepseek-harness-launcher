@@ -272,8 +272,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         }
         return null
       }
-      const used = num(pressure, ['used', 'usedTokens', 'tokens', 'surfaceTokens'])
-      const limit = num(pressure, ['limit', 'limitTokens', 'windowTokens', 'max'])
+      // 实测形状：{pressureTokens, projectedTokens, contextWindow}
+      const used = num(pressure, ['pressureTokens', 'used', 'usedTokens', 'tokens', 'surfaceTokens', 'projectedTokens'])
+      const limit = num(pressure, ['contextWindow', 'limit', 'limitTokens', 'windowTokens', 'max'])
       const ratio = num(pressure, ['ratio', 'pct', 'percent', 'pressure'])
       let pct = null
       if (used !== null && limit !== null && limit > 0) pct = Math.min(100, Math.round((used / limit) * 100))
@@ -374,17 +375,31 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   function registerTurnActions(ctx) {
     const disposers = []
 
-    /** 宿主只传 messageId：按 DOM 里的消息节点取正文/角色/轮次。 */
-    const readTurnByMessageId = (messageId, fallbackNode) => {
-      const nodes = [...document.querySelectorAll('[data-message-id]')]
-      const node = nodes.find((n) => n.getAttribute('data-message-id') === String(messageId))
-        ?? fallbackNode?.closest?.('[data-message-id]')
-        ?? null
-      const text = (node?.innerText ?? node?.textContent ?? '').trim()
-      const index = node === null ? 1 : nodes.indexOf(node) + 1
-      const role = node?.getAttribute('data-role') === 'assistant' || /assistant/.test(node?.className ?? '') ? 'assistant' : 'user'
-      return { messageId, text, turnIndex: index > 0 ? index : 1, role, nodes }
+    /**
+     * 按宿主真实结构取「这一轮」：按钮在 `[data-chat-flow-kind="turn-tail"]` 里，
+     * 正文取它前面最近的 `assistant-step`（助手）或 `user`（用户），轮次 = tail 在会话里的序号。
+     * @param {Element|null} node - 触发按钮或包含按钮的节点。
+     * @returns {{ text: string, role: string, turnIndex: number }} 这一轮的数据。
+     */
+    const readTurnFromNode = (node) => {
+      const tail = node?.closest?.('[data-chat-flow-kind="turn-tail"]') ?? null
+      const tails = [...document.querySelectorAll('[data-chat-flow-kind="turn-tail"]')]
+      const turnIndex = tail === null ? 1 : Math.max(1, tails.indexOf(tail) + 1)
+      if (tail === null) return { text: '', role: 'assistant', turnIndex }
+      const previous = (kind) => {
+        let cursor = tail.previousElementSibling
+        while (cursor !== null) {
+          if (cursor.getAttribute?.('data-chat-flow-kind') === kind) return cursor
+          cursor = cursor.previousElementSibling
+        }
+        return null
+      }
+      const assistant = previous('assistant-step')
+      if (assistant !== null) return { text: (assistant.innerText ?? assistant.textContent ?? '').trim(), role: 'assistant', turnIndex }
+      const user = previous('user')
+      return { text: (user?.innerText ?? user?.textContent ?? '').trim(), role: 'user', turnIndex }
     }
+
 
     // 导出：生成 Markdown 并触发下载（不依赖宿主接口）
     const downloadExport = (turn) => {
