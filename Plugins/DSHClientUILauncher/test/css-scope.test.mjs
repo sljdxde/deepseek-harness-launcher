@@ -9,7 +9,9 @@ test('每条 !important 规则都以 .launcher-shell 开头（禁止命中宿主
   const rules = SOURCE.split('\n').filter((line) => line.includes('!important'))
   assert.ok(rules.length > 0, '至少应有一条 !important 规则')
   for (const rule of rules) {
-    const selector = rule.split('{')[0].trim()
+    // 去掉 at-rule 外壳（@container/@media）后再看真正的选择器
+    const stripped = rule.replace(/^\s*@[^{]+\{/, '').trim()
+    const selector = stripped.split('{')[0].trim()
     for (const part of selector.split(',')) {
       assert.ok(
         // 我们的根就是 .launcher-shell；任何 .launcher-* 都是外壳自己的 class（不含宿主 class）
