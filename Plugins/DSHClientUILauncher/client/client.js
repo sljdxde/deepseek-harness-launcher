@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+2f71e77"
+  const BUILD_STAMP = "0.2.2-rc.5+da2ee57"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1231,6 +1231,17 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }
     }
     const toggleTheme = () => applyTheme(themeMode === 'dark' ? 'light' : 'dark')
+    /** 右栏开关：宿主 sidebarRight/命令 + 外壳轨道，两条入口（rail ▤ / ⌘⇧B）共用同一份状态。 */
+    const toggleDock = () => {
+      const hostOk = toggleRightbarHost()
+      setDockSticky((open) => !open)
+      if (!hostOk) {
+        setTimeout(() => {
+          const width = document.querySelector('.launcher-dock')?.getBoundingClientRect().width ?? 0
+          if (width < 10) showLauncherToast('先打开一个会话再展开右栏')
+        }, 350)
+      }
+    }
     const narrow = viewportWidth <= 860
     // 宿主 MainPanel 的口径：面板 key 是 renderSlot 的第三参 `{ entryKey }`，
     // 当前面板从 usePanelInfo 选择器钩子取（我们自己在 inject 里提供了这个钩子）。
@@ -1389,6 +1400,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     const onKeyDown = (event) => {
       const isPaletteKey = (event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'k'
+      const isDockKey = (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === 'b'
+      if (isDockKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        toggleDock()
+        return
+      }
       const isThemeKey = (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === 'l'
       if (isThemeKey) {
         event.preventDefault()
