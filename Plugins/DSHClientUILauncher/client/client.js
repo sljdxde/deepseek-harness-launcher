@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+0742e50"
+  const BUILD_STAMP = "0.2.2-rc.5+bff5c89"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -497,7 +497,16 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         const editable = root.querySelector('[contenteditable="true"]')
         // Lexical 空编辑器保留一个换行：先去首尾空白再数字符，否则清空后仍会显示「输入 1 字」
         const chars = editable === null ? 0 : [...(editable.innerText ?? '').trim()].length
-        const attachments = root.querySelectorAll('[data-attachment-id], [class*="attachmentChip"], [class*="attachment-chip"]').length
+        // 同一 chip 只算一次：优先按 data-attachment-id 去重；纯 class 命中时跳过已被外层 id 覆盖的节点
+        const nodes = [...root.querySelectorAll('[data-attachment-id], [class*="attachmentChip"], [class*="attachment-chip"]')]
+        const ids = new Set()
+        let classOnly = 0
+        for (const node of nodes) {
+          const id = node.getAttribute?.('data-attachment-id')
+          if (typeof id === 'string' && id.length > 0) ids.add(id)
+          else if (node.closest?.('[data-attachment-id]') === null) classOnly += 1
+        }
+        const attachments = ids.size + classOnly
         return { chars, attachments }
       } catch {
         return { chars: 0, attachments: 0 }
