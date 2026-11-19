@@ -1,0 +1,129 @@
+#!/bin/sh
+# verify-shell-standalone.sh —— 在**独立实例**上验一次换壳，不碰正在使用的 dsh。
+#
+# 做的事：把 profile 的清单类文件复制到临时 DSH_HOME → node_modules 软链回源 profile →
+# 用 shell-switch.sh 切到目标实现 → 起一个独立端口的 dsh web → 跑 verify 断言 → 收工。
+# 退出码：0 断言通过；1 断言失败；2 参数错误；3 环境缺件（不假装成功）。
+#
+# 用法：
+#   DSH_INSTALL=/path/to/dsh-install \
+#   PROFILE_SRC=$HOME/.dsh/profiles/web \
+#   PACKAGE_DIR=/path/to/Plugins/DSHClientUILauncher \
+#   ./scripts/verify-shell-standalone.sh launcher|native|both [--port 64800]
+#
+# 依赖：被验的 dsh 安装、一个已存在的 profile（默认当前 DSH_HOME 的 web profile）、本包目录。
+set -eu
+
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PACKAGE_DIR=${PACKAGE_DIR:-$(CDPATH= cd -- "$HERE/.." && pwd)}
+DSH_INSTALL=${DSH_INSTALL:-}
+PROFILE_SRC=${PROFILE_SRC:-${DSH_HOME:-$HOME/.dsh}/profiles/web}
+TARGET=${1:-both}
+PORT=0
+shift || true
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --port) PORT=$2; shift 2 ;;
+    *) echo "未知参数：$1" >&2; exit 2 ;;
+  esac
+done
+TIMEOUT=${START_TIMEOUT:-40}
+
+[ -d "$DSH_INSTALL" ] || { echo "缺 DSH_INSTALL（dsh 安装目录，含 lib/bin.js）" >&2; exit 2; }
+[ -f "$DSH_INSTALL/lib/bin.js" ] || { echo "DSH_INSTALL 下没有 lib/bin.js：$DSH_INSTALL" >&2; exit 2; }
+[ -f "$PROFILE_SRC/package.json" ] || { echo "PROFILE_SRC 不是有效 profile：$PROFILE_SRC" >&2; exit 2; }
+[ -f "$PACKAGE_DIR/package.json" ] || { echo "PACKAGE_DIR 不是有效包：$PACKAGE_DIR" >&2; exit 2; }
+
+WORK=${STANDALONE_HOME:-/tmp/dsh-shell-standalone}
+HOME2="$WORK/home"
+FRESH=${FRESH:-1}
+if [ "$FRESH" = "1" ]; then rm -rf "$WORK"; fi
+mkdir -p "$HOME2/profiles"
+if [ ! -d "$HOME2/profiles/web" ]; then
+  cp -R "$PROFILE_SRC" "$HOME2/profiles/web"
+  rm -rf "$HOME2/profiles/web/node_modules"
+  # 不能用软链：pnpm 在软链的 node_modules 上会拒绝安装（exit 254），而独立实例要靠它切实现。
+  # 用硬链接复制（cp -al），几秒完成、不占额外空间，且是真实目录。
+  cp -al "$PROFILE_SRC/node_modules" "$HOME2/profiles/web/node_modules"
+fi
+DSH_HOME_DIR=$HOME2
+NODE=${NODE:-node}
+
+pick_port() {
+  if [ "$PORT" != "0" ]; then echo "$PORT"; return 0; fi
+  "$NODE" -e 'const s=require("node:net").createServer();s.listen(0,"127.0.0.1",()=>{const p=s.address().port;s.close(()=>process.stdout.write(String(p)))})'
+}
+
+# 起一个独立 dsh web，回显 URL；日志留在 $WORK/web.log
+start_web() {
+  log="$WORK/web.log"
+  : > "$log"
+  ( cd "$DSH_INSTALL" && DSH_HOME="$HOME2" "$NODE" lib/bin.js web --no-open --port "$1" > "$log" 2>&1 & )
+  i=0
+  while [ $i -lt "$TIMEOUT" ]; do
+    url=$(grep -o 'http://127\.0\.0\.1:[0-9]*/?token=[A-Za-z0-9_-]*' "$log" | head -1 || true)
+    [ -n "${url:-}" ] && { echo "$url"; return 0; }
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "起不来（${TIMEOUT}s 内没拿到 URL），日志：$log" >&2
+  return 3
+}
+
+stop_web() {
+  pkill -f "lib/bin.js web --no-open --port $1" 2>/dev/null || true
+  sleep 1
+}
+
+# 在独立实例里换实现：直接换 node_modules 里那份包（独立实例不需要 pnpm；
+# pnpm 在复制/硬链的 node_modules 上会 exit 254 且日志为空，见 09-自测）。
+LAYOUT="$HOME2/profiles/web/node_modules/@deepseek-ai/dsh-client-ui-layout"
+ORIG="$HOME2/profiles/web/.orig-layout"
+
+switch_impl() {
+  want=$1
+  case "$want" in
+    launcher)
+      if [ -d "$LAYOUT" ] && [ ! -d "$ORIG" ]; then cp -R "$LAYOUT" "$ORIG"; fi
+      rm -rf "$LAYOUT"
+      # 只拷实现需要的部分：不能整个 cp -R（包里若有 node_modules 软链会被解引用，复制几百 MB 卡住）
+      mkdir -p "$LAYOUT"
+      for entry in package.json client lib cordis.patch.yml contracts; do
+        if [ -e "$PACKAGE_DIR/$entry" ]; then cp -R "$PACKAGE_DIR/$entry" "$LAYOUT/"; fi
+      done ;;
+    native)
+      if [ -d "$ORIG" ]; then rm -rf "$LAYOUT"; cp -R "$ORIG" "$LAYOUT"; fi ;;
+  esac
+}
+
+is_ours() {
+  [ -f "$LAYOUT/client/client.js" ] && grep -q '__DSH_LAUNCHER_SHELL__' "$LAYOUT/client/client.js"
+}
+
+run_state() {
+  want=$1
+  port=$(pick_port)
+  echo "── $want（端口 $port，DSH_HOME=$HOME2）──"
+  switch_impl "$want"
+  if [ "$want" = "launcher" ]; then
+    is_ours || { echo "独立实例里没换上我们的实现（$LAYOUT）" >&2; return 3; }
+  else
+    is_ours && { echo "独立实例里仍是我们的实现，native 未生效" >&2; return 3; }
+  fi
+  url=$(start_web "$port") || { stop_web "$port"; return 3; }
+  echo "URL: $url"
+  DSH_HOME="$HOME2" DSH_URL="$url" PACKAGE_DIR="$PACKAGE_DIR" \
+    "$NODE" "$HERE/verify-shell.mjs" "$url" "$want"
+  code=$?
+  stop_web "$port"
+  return $code
+}
+
+case "$TARGET" in
+  launcher|native) run_state "$TARGET" ;;
+  both)
+    run_state launcher || exit $?
+    run_state native || exit $?
+    ;;
+  *) echo "用法：$0 launcher|native|both [--port N]" >&2; exit 2 ;;
+esac

@@ -28,7 +28,7 @@ if (chrome === undefined) {
 
 let puppeteer = null
 try {
-  puppeteer = (await import('puppeteer-core')).default
+  puppeteer = (await import(process.env.PUPPETEER_PATH ?? 'puppeteer-core')).default
 } catch {
   process.stderr.write('没有 puppeteer-core（npm i -D puppeteer-core）。手工断言见 shell-switch.sh verify 的输出。\n')
   process.exit(3)
