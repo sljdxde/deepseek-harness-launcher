@@ -76,6 +76,13 @@ pkg_field() { # $1: dep | bundles | deps-all
   ' "$PKG_JSON" "$1"
 }
 
+# 官方接口：dsh plugin add/remove（DSH_BIN 指向 <dsh>/lib/bin.js 时用 node 跑）
+dsh_plugin_available() { [ -n "${DSH_BIN:-}" ] || command -v dsh >/dev/null 2>&1; }
+dsh_plugin() {
+  if [ -n "${DSH_BIN:-}" ]; then "$NODE_BIN" "$DSH_BIN" plugin --profile "$(basename "$PROFILE")" "$@"
+  else dsh plugin --profile "$(basename "$PROFILE")" "$@"; fi
+}
+
 pkg_write_bundles() { # $1: add|remove —— 只动 dsh.profile.bundles，不碰 dependencies
   "$NODE_BIN" -e '
     const fs = require("node:fs");
@@ -239,8 +246,8 @@ do_launcher() {
     log "记录 lockfile 基线：$(cat "$BASE_LOCK_HASH_FILE")"
   fi
   if dsh_plugin_available; then
-    log "→ ${DSH_CMD:-dsh} plugin add @deepseek-ai/dsh-client-ui-layout@file:$PKG_DIR"
-    if ! "${DSH_CMD:-dsh}" plugin --profile "$(basename "$PROFILE")" add "@deepseek-ai/dsh-client-ui-layout@file:$PKG_DIR"; then
+    log "→ dsh plugin add @deepseek-ai/dsh-client-ui-layout@file:$PKG_DIR"
+    if ! dsh_plugin add "@deepseek-ai/dsh-client-ui-layout@file:$PKG_DIR"; then
       cp -f "$backup" "$PKG_JSON"
       log "reason=dsh-plugin-add-failed restored=$PKG_JSON"
       die 4 "dsh plugin add 失败，已还原 package.json"
@@ -264,7 +271,7 @@ do_native() {
     log "native：dependencies 里已无该包（幂等，继续做 install/verify）"
   fi
   if dsh_plugin_available; then
-    if "${DSH_CMD:-dsh}" plugin --profile "$(basename "$PROFILE")" remove "@deepseek-ai/dsh-client-ui-layout"; then
+    if dsh_plugin remove "@deepseek-ai/dsh-client-ui-layout"; then
       pkg_write_bundles remove || true
     else
       log "reason=dsh-plugin-remove-failed（依赖可能已不存在，继续）"
@@ -282,6 +289,16 @@ do_native() {
   fi
   restart_hook
   verify_page native
+  if [ -f "$backup" ] && ! cmp -s "$backup" "$PKG_JSON"; then
+    if "$NODE_BIN" -e '
+      const fs=require("node:fs");const [a,b]=process.argv.slice(1);
+      const pick=(f)=>{const m=JSON.parse(fs.readFileSync(f,"utf8"));return JSON.stringify({d:Object.entries(m.dependencies||{}).sort(),b:m.dsh?.profile?.bundles??[]})};
+      process.exit(pick(a)===pick(b)?0:1)' "$backup" "$PKG_JSON"; then
+      cp -f "$backup" "$PKG_JSON"; log "package.json 语义一致但字节不同，已按备份逐字恢复"
+    else
+      log "reason=manifest-semantic-diff 未逐字恢复"
+    fi
+  fi
   log "native 完成：依赖已删除（bundles 条目保留，解析回宿主包）"
 }
 
