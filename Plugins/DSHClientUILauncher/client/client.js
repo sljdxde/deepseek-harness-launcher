@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+a576721"
+  const BUILD_STAMP = "0.2.2-rc.5+133466b"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -984,16 +984,21 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const measure = () => {
         const editable = document.querySelector('[contenteditable="true"]')
         if (editable === null) return
+        // 从输入框往上找「composer 本体」：class 含 composer 或 _root，且高度 < 200（不要拿到整块会话区）
         let node = editable
-        let best = editable.getBoundingClientRect().height
+        let height = Math.round(editable.getBoundingClientRect().height)
         while (node !== null && node !== document.body) {
           const rect = node.getBoundingClientRect()
-          if (rect.height > best && rect.height < 400) best = rect.height
-          if (String(node.className ?? '').includes('composer')) break
+          const cls = String(node.className ?? '')
+          if (rect.height > 0 && rect.height < 200 && /composer|_root/.test(cls)) {
+            height = Math.round(rect.height)
+            break
+          }
           node = node.parentElement
         }
-        setComposerHeight(Math.round(best) + 24)
+        setComposerHeight(height + 24)
       }
+
       measure()
       const observer = new MutationObserver(measure)
       observer.observe(document.body, { childList: true, subtree: true })
