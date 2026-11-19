@@ -87,6 +87,17 @@ export function registerApprovalRoutes(server, service) {
   }))
   disposers.push(server.register({
     kind: 'exact',
+    path: '/dsh-approval/pending',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        jsonStatus(res, 405, { error: 'GET only' })
+        return
+      }
+      json(res, { pendingCount: service.pendingCount(), requests: service.pendingSnapshot() })
+    },
+  }))
+  disposers.push(server.register({
+    kind: 'exact',
     path: '/dsh-approval/decide',
     handler: async (req, res) => {
       if (req.method !== 'POST') {

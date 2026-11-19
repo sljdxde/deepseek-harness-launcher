@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+8aa6b97"
+  const BUILD_STAMP = "0.2.2-rc.5+990125b"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -94,6 +94,20 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-perm__item{display:block;width:100%;text-align:left;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
 .launcher-perm__item.on{background:var(--dsw-alias-bg-2,rgba(127,127,127,.12))}
 @container (max-width: 640px){.launcher-perm__text{display:none}.launcher-perm__pill{padding:0 6px}}
+.launcher-approval-chip{font-size:11px;color:var(--dsw-alias-label-secondary,#666);opacity:.65;pointer-events:none;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:8px;padding:0 6px;line-height:18px}
+.launcher-approval-chip.is-error{color:var(--dsw-alias-state-warn-border,#d9a441);opacity:1}
+.launcher-approval-card{position:fixed;right:16px;bottom:48px;z-index:1000;width:min(360px,92vw);border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;background:var(--dsw-alias-bg-1,#fff);box-shadow:0 10px 28px rgba(0,0,0,.18);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.launcher-approval-card__head{font-size:12px;font-weight:600}
+.launcher-approval-card__cmd{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--dsw-alias-bg-2,rgba(127,127,127,.08));border-radius:6px;padding:6px;max-height:120px;overflow:auto}
+.launcher-approval-card__actions{display:flex;gap:6px;justify-content:flex-end}
+.launcher-approval-card__btn{font:inherit;font-size:12px;height:26px;padding:0 10px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;cursor:pointer}
+.launcher-approval-settings{display:flex;flex-direction:column;gap:8px;font-size:12px}
+.launcher-approval-settings__row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.launcher-approval-settings__mode{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;height:24px;padding:0 8px;cursor:pointer}
+.launcher-approval-settings__mode.on{background:var(--dsw-alias-bg-2,rgba(127,127,127,.14))}
+.launcher-approval-settings__tool{display:inline-flex;align-items:center;gap:4px}
+.launcher-approval-settings__input{height:24px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;padding:0 8px;min-width:180px}
+.launcher-approval-settings__error{color:var(--dsw-alias-state-warn-border,#d9a441);margin:0}
 .launcher-dock-summary{font-size:12px;opacity:.75}
 .launcher-model-chip{font-size:12px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;opacity:.85}
 .launcher-toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:rgba(20,20,20,.9);color:#fff;font-size:12px;z-index:60;pointer-events:none}
@@ -569,6 +583,174 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
   }
 
+
+  // ---- PR-B：审批（策略设置 / 待审批卡 / 置灰入口） ----
+  const APPROVAL_BASE = '/dsh-approval'
+  const APPROVAL_MODES = [
+    { id: 'readonly', label: '只读' },
+    { id: 'ask', label: '每次询问' },
+    { id: 'auto-safe', label: '自动批准安全命令' },
+    { id: 'full', label: '全自动' },
+  ]
+  const APPROVAL_TOOLS = ['shell', 'file', 'network', 'browser', 'mcp', 'task']
+  const APPROVAL_CHOICES = [
+    { id: 'allow-once', label: '允许这一次' },
+    { id: 'allow-always', label: '永久允许' },
+    { id: 'deny', label: '拒绝' },
+  ]
+  const approvalSnapshot = { pending: [], policy: null, failures: 0, error: null }
+  const approvalListeners = new Set()
+  function approvalEmit() {
+    for (const listener of approvalListeners) {
+      try { listener(approvalSnapshot) } catch { /* 单个订阅者失败不影响其它 */ }
+    }
+  }
+  async function approvalRequest(path, init) {
+    const response = await fetch(`${APPROVAL_BASE}${path}`, {
+      ...init,
+      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    })
+    if (response.ok !== true) throw new Error(`HTTP ${response.status}`)
+    return response.json()
+  }
+  /** 1s 轮询待审批；页面隐藏停、连续 3 次失败停（请求失败时 UI 显示可读错误）。 */
+  function startApprovalPolling() {
+    let ticks = 0
+    const tick = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      if (approvalSnapshot.failures >= 3) return
+      try {
+        const [pending, policy] = await Promise.all([
+          approvalRequest('/pending'),
+          ticks % 10 === 0 ? approvalRequest('/policy') : Promise.resolve(approvalSnapshot.policy),
+        ])
+        ticks += 1
+        approvalSnapshot.pending = Array.isArray(pending?.requests) ? pending.requests : []
+        approvalSnapshot.policy = policy
+        approvalSnapshot.failures = 0
+        approvalSnapshot.error = null
+      } catch (error) {
+        approvalSnapshot.failures += 1
+        approvalSnapshot.error = approvalSnapshot.failures >= 3 ? '审批状态获取失败，稍后重试' : null
+      }
+      approvalEmit()
+    }
+    tick()
+    const timer = setInterval(tick, 1000)
+    return () => clearInterval(timer)
+  }
+  function useApprovalSnapshot() {
+    const [snapshot, setSnapshot] = React.useState(approvalSnapshot)
+    React.useEffect(() => {
+      const listener = (next) => setSnapshot({ ...next })
+      approvalListeners.add(listener)
+      listener(approvalSnapshot)
+      return () => approvalListeners.delete(listener)
+    }, [])
+    return snapshot
+  }
+  /** 待审批入口：只读展示（置灰），不弹独立面板；全名在 title 里。 */
+  function ApprovalChip() {
+    const snapshot = useApprovalSnapshot()
+    const count = snapshot.pending.length
+    const title = '见 设置 → 审批与权限'
+    if (snapshot.error !== null) return h('span', { className: 'launcher-approval-chip is-error', title: snapshot.error }, snapshot.error)
+    return h('span', {
+      className: `launcher-approval-chip${count === 0 ? ' is-idle' : ''}`,
+      'data-approval-count': count,
+      title,
+      'aria-disabled': 'true',
+    }, count === 0 ? '待审批 0' : `待审批 ${count}`)
+  }
+  /** 审批卡：三选，作答后立刻刷新（不自己记结果）。 */
+  function ApprovalCard() {
+    const snapshot = useApprovalSnapshot()
+    const request = snapshot.pending[0]
+    const [busy, setBusy] = React.useState(false)
+    if (request === undefined) return null
+    const answer = async (choice) => {
+      setBusy(true)
+      try {
+        await approvalRequest('/decide', { method: 'POST', body: JSON.stringify({ requestId: request.requestId, choice }) })
+      } catch { /* 失败由轮询错误态呈现 */ }
+      setBusy(false)
+      approvalSnapshot.pending = approvalSnapshot.pending.filter((item) => item.requestId !== request.requestId)
+      approvalEmit()
+    }
+    return h('div', { className: 'launcher-approval-card', role: 'dialog', 'aria-label': '待审批请求' },
+      h('div', { className: 'launcher-approval-card__head' }, `待审批 · ${request.tool ?? 'tool'}`),
+      h('code', { className: 'launcher-approval-card__cmd' }, request.command ?? ''),
+      h('div', { className: 'launcher-approval-card__actions' },
+        APPROVAL_CHOICES.map((choice) => h('button', {
+          key: choice.id,
+          type: 'button',
+          className: 'launcher-approval-card__btn',
+          'data-approval-choice': choice.id,
+          disabled: busy,
+          onClick: () => answer(choice.id),
+        }, choice.label))))
+  }
+  /** 设置页四项（4 档 / 6 类 / 白名单 / 危险标注），保存走 Remote 的 set + 版本冲突重读。 */
+  function ApprovalSettings() {
+    const [doc, setDoc] = React.useState(null)
+    const [draft, setDraft] = React.useState(null)
+    const [path, setPath] = React.useState('')
+    const [error, setError] = React.useState(null)
+    React.useEffect(() => {
+      approvalRequest('/policy').then((value) => { setDoc(value); setDraft(value) }).catch(() => setError('读取失败'))
+    }, [])
+    if (draft === null) return h('div', { className: 'launcher-approval-settings' }, error ?? '加载中…')
+    const setMode = (runMode) => setDraft({ ...draft, runMode })
+    const setTool = (tool, level) => setDraft({ ...draft, tools: { ...(draft.tools ?? {}), [tool]: level } })
+    const save = async (patch) => {
+      try {
+        const result = await approvalRequest('/policy', { method: 'POST', body: JSON.stringify({ patch, ifVersion: doc.version }) })
+        if (result?.ok === true) { setDoc(result.doc); setDraft(result.doc); setError(null); approvalSnapshot.policy = result.doc; approvalEmit() }
+        else { setError(result?.reason === 'conflict' ? '策略已被别处修改，已重新加载' : String(result?.message ?? '保存失败')) ; approvalRequest('/policy').then((value) => { setDoc(value); setDraft(value) }) }
+      } catch { setError('保存失败') }
+    }
+    const levels = [{ id: 'allow', label: '允许' }, { id: 'ask', label: '询问' }, { id: 'deny', label: '拒绝' }]
+    return h('div', { className: 'launcher-approval-settings', 'data-slot': 'launcher.approvalSettings' },
+      h('div', { className: 'launcher-approval-settings__row' },
+        h('span', null, '运行模式'),
+        APPROVAL_MODES.map((mode) => h('button', {
+          key: mode.id, type: 'button', 'data-mode': mode.id,
+          'aria-pressed': draft.runMode === mode.id,
+          className: `launcher-approval-settings__mode${draft.runMode === mode.id ? ' on' : ''}`,
+          onClick: () => { setMode(mode.id); save({ runMode: mode.id }) },
+        }, mode.label))),
+      h('div', { className: 'launcher-approval-settings__row' },
+        h('span', null, '工具类别'),
+        APPROVAL_TOOLS.map((tool) => h('label', { key: tool, className: 'launcher-approval-settings__tool' },
+          tool,
+          h('select', {
+            'data-tool': tool,
+            value: draft.tools?.[tool] ?? 'ask',
+            onChange: (event) => { setTool(tool, event.target.value); save({ tools: { ...(draft.tools ?? {}), [tool]: event.target.value } }) },
+          }, levels.map((level) => h('option', { key: level.id, value: level.id }, level.label)))))),
+      h('div', { className: 'launcher-approval-settings__row' },
+        h('span', null, '目录白名单'),
+        h('input', {
+          className: 'launcher-approval-settings__input',
+          'data-approval-whitelist': 'input',
+          placeholder: '/path/to/dir',
+          value: path,
+          onChange: (event) => setPath(event.target.value),
+        }),
+        h('button', {
+          type: 'button', 'data-approval-whitelist': 'add',
+          onClick: () => { const next = [...new Set([...(draft.allowDirs ?? []), path.trim()].filter(Boolean))]; setDraft({ ...draft, allowDirs: next }); save({ allowDirs: next }); setPath('') },
+        }, '添加')),
+      h('label', { className: 'launcher-approval-settings__row' },
+        h('input', {
+          type: 'checkbox',
+          'data-approval-danger': 'toggle',
+          checked: draft.dangerousEnabled !== false,
+          onChange: (event) => { const on = event.target.checked; setDraft({ ...draft, dangerousEnabled: on }); save({ dangerousEnabled: on }) },
+        }),
+        '标注危险命令'),
+      error === null ? null : h('p', { className: 'launcher-approval-settings__error' }, error))
+  }
 
   /** FR-44 三态（与 lib/model-chip.js 同口径）。 */
   function modelChipText(model = {}) {
@@ -1678,6 +1860,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         h('span', { className: 'launcher-statusbar__page' }, status().page),
         h('span', { className: 'launcher-statusbar__mode' }, status().mode),
         h('span', { className: 'launcher-statusbar__running' }, status().running),
+        h(ApprovalChip, { key: 'approval' }),
         renderSlot('shell.bottom', {})),
       h('div', { className: 'launcher-overlay' },
         renderSlot('shell.overlay', {})),
@@ -1867,6 +2050,29 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     try {
       // 面板选中的观测面：ui-sidebar 用 usePanelInfo(info => info.activePanelId === id) 决定高亮。
       disposers.push(ctx.slots.provideRoot({ hooks: { panelInfo } }))
+      // PR-B：设置页四项（与肤色/字号同列）
+      try {
+        disposers.push(ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+          name: 'settings.general.item',
+          id: 'launcher.approvalSettings',
+          order: 30,
+          inject: () => ({}),
+        }, ApprovalSettings)))
+      } catch (error) {
+        console.warn('dsh-client-ui-launcher: 注册审批设置项失败', error)
+      }
+      // PR-B：审批卡（三选）
+      try {
+        disposers.push(ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'launcher.approval',
+          order: 10,
+          inject: () => ({}),
+        }, ApprovalCard)))
+      } catch (error) {
+        console.warn('dsh-client-ui-launcher: 注册审批卡失败', error)
+      }
+      disposers.push(startApprovalPolling())
       // 服务的对外面：本仓插件 inject 'layout' 并调用 selectPanel(null)。
       // 同一个 panelInfo 对象同时喂 provideRoot 与 ctx.layout：两份源会出现"切了面板侧栏不亮"。
       const face = {

@@ -179,6 +179,14 @@ export function createApprovalService(options = {}) {
     expire,
     auditHealth: () => log.health(),
     pendingCount: () => pending.size,
+    // PR-B：把待审批请求暴露给客户端轮询（只读快照，不改判定）
+    pendingSnapshot: () => [...pending.entries()].map(([requestId, item]) => ({
+      requestId,
+      tool: item?.call?.tool,
+      command: item?.record?.command,
+      cwd: item?.record?.cwd,
+      requestedAt: item?.record?.ts,
+    })),
     // 自检可用的内部句柄（不接线、不暴露给 client）。
     policyStore: store,
     auditLog: log,

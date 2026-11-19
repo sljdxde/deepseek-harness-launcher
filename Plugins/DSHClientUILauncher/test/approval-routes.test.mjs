@@ -30,9 +30,9 @@ function harness() {
   return { dir, service, call, routes }
 }
 
-test('四个端点都注册了', () => {
+test('五个端点都注册了', () => {
   const { routes, dir } = harness()
-  assert.deepEqual([...routes.keys()].sort(), ['/dsh-approval/audit', '/dsh-approval/decide', '/dsh-approval/policy'])
+  assert.deepEqual([...routes.keys()].sort(), ['/dsh-approval/audit', '/dsh-approval/decide', '/dsh-approval/pending', '/dsh-approval/policy'])
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -53,6 +53,14 @@ test('GET policy 返回默认文档；POST 非法 patch 走 invalid 而不是 50
 test('auditQuery 只接受合法值（非法 limit/tool/decision 被忽略）', () => {
   assert.deepEqual(auditQuery('/dsh-approval/audit?limit=abc&decision=maybe'), {})
   assert.deepEqual(auditQuery('/dsh-approval/audit?limit=10&decision=ask&tool=shell&from=a&to=b'), { from: 'a', to: 'b', limit: 10, tool: 'shell', decision: 'ask' })
+})
+
+test('GET pending 无待审批时为 0 与空数组', async () => {
+  const { call, dir } = harness()
+  const res = await call('/dsh-approval/pending')
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.body, { pendingCount: 0, requests: [] })
+  rmSync(dir, { recursive: true, force: true })
 })
 
 test('decide 未知 requestId 返回 ok:false 而不是抛错', async () => {
