@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+190c55f"
+  const BUILD_STAMP = "0.2.2-rc.5+270bd27"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -495,7 +495,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         const root = composerRoot()
         if (root === null) return { chars: 0, attachments: 0 }
         const editable = root.querySelector('[contenteditable="true"]')
-        const chars = editable === null ? 0 : [...(editable.innerText ?? '')].length
+        // Lexical 空编辑器保留一个换行：先去首尾空白再数字符，否则清空后仍会显示「输入 1 字」
+        const chars = editable === null ? 0 : [...(editable.innerText ?? '').trim()].length
         const attachments = root.querySelectorAll('[data-attachment-id], [class*="attachmentChip"], [class*="attachment-chip"]').length
         return { chars, attachments }
       } catch {
