@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+e837d92"
+  const BUILD_STAMP = "0.2.2-rc.5+8ebe380"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -494,20 +494,34 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const Component = () => {
       const [summary, setSummary] = React.useState(readDockSummary)
       React.useEffect(() => {
-        const update = () => setSummary(readDockSummary())
+        // 只在数值变化时 setState，避免宿主运行条动画引发无谓重渲染
+        const update = () => {
+          const next = readDockSummary()
+          setSummary((prev) => (prev.chars === next.chars && prev.attachments === next.attachments ? prev : next))
+        }
         document.addEventListener('input', update, true)
+        document.addEventListener('keyup', update, true)
         const observer = new MutationObserver(update)
         observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+        // 兜底轮询：即便 input/observer 都被宿主拦掉，也能在 500ms 内反映
+        const timer = setInterval(update, 500)
         return () => {
           document.removeEventListener('input', update, true)
+          document.removeEventListener('keyup', update, true)
           observer.disconnect()
+          clearInterval(timer)
         }
       }, [])
       const parts = []
       if (summary.chars > 0) parts.push(`输入 ${summary.chars} 字`)
       if (summary.attachments > 0) parts.push(`${summary.attachments} 个附件`)
       if (parts.length === 0) return null
-      return h('span', { className: 'launcher-dock-summary', title: parts.join(' · ') }, parts.join(' · '))
+      return h('span', {
+        className: 'launcher-dock-summary',
+        title: parts.join(' · '),
+        'data-dock-chars': summary.chars,
+        'data-dock-attachments': summary.attachments,
+      }, parts.join(' · '))
     }
 
     try {
