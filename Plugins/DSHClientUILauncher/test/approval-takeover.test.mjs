@@ -32,6 +32,16 @@ test('只读档：写类工具被接管为 rejected 并写审计', async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('readonly + fs.read 返回 null（只接管 deny，读也交原生卡）', async () => {
+  const { dir, service } = harness()
+  const doc = await service.get()
+  await service.set({ runMode: 'readonly' }, doc.version)
+  const outcome = await approvalOutcome(service, { toolName: 'read', agent: { session: { id: 's-read' } } })
+  assert.equal(outcome, null)
+  assert.equal(service.pendingCount(), 0)
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test('危险命令不得被判 allowed-once：exec 默认 ask → 返回 null（交宿主）', async () => {
   const { dir, service } = harness()
   const outcome = await approvalOutcome(service, { toolName: 'bash', agent: { session: { id: 's2' } } })
