@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  ATTACH_LIMIT, AUTO_SENT_LABEL, PERMISSION_HINTS, PERMISSION_LEVELS, SLASH_QUERY_LIMIT, permissionPill, addAttachment, breakdownOf, createQueue, filterSlash, levelOf, meterOf, meterHint, contextPanelTitle, quoteBlockOf, slashQueryOf,
+  ATTACH_LIMIT, AUTO_SENT_LABEL, PERMISSION_HINTS, PERMISSION_LEVELS, SLASH_QUERY_LIMIT, effectivePermission, permissionPill, addAttachment, breakdownOf, createQueue, filterSlash, levelOf, meterOf, meterHint, contextPanelTitle, quoteBlockOf, slashQueryOf,
 } from '../lib/composer.js'
 
 test('/ 只在行首、无空白、无第二个斜杠时触发', () => {
@@ -226,11 +226,13 @@ test('权限范围 pill：跟宿主策略；读不到兜底 workspace-write，�
   assert.notEqual(missing.level, 'danger-full-access')
 })
 
-test('权限范围与审批模式取更严（互不改文案）', () => {
-  assert.equal(permissionPill({ hostPolicy: 'danger-full-access', approvalMode: 'readonly' }).level, 'read')
-  assert.equal(permissionPill({ hostPolicy: 'danger-full-access', approvalMode: 'ask' }).level, 'workspace-write')
-  const capped = permissionPill({ hostPolicy: 'danger-full-access', approvalMode: 'readonly' })
-  assert.equal(capped.cappedByMode, true)
-  assert.equal(capped.hint, PERMISSION_HINTS.read)
+test('审批模式不参与档位：full + ask 仍显示「完全权限」，判定层逐条问', () => {
+  const pill = permissionPill({ hostPolicy: 'danger-full-access' })
+  assert.equal(pill.level, 'danger-full-access')
+  assert.equal(pill.hint, PERMISSION_HINTS['danger-full-access'])
+  assert.equal(effectivePermission({ scope: 'danger-full-access', approvalMode: 'ask' }).decision, 'ask')
+  assert.equal(effectivePermission({ scope: 'danger-full-access', approvalMode: 'full' }).decision, 'allow')
+  assert.equal(effectivePermission({ scope: 'read', approvalMode: 'full' }).decision, 'deny')
+  assert.equal(effectivePermission({ scope: 'workspace-write', approvalMode: 'full', outsideWorkspace: true }).decision, 'deny')
   assert.deepEqual(PERMISSION_LEVELS, ['danger-full-access', 'workspace-write', 'read'])
 })

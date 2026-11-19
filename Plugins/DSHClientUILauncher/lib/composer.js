@@ -321,26 +321,30 @@ export const PERMISSION_HINTS = {
   read: '仅可查看：不改任何文件',
 }
 
-/** 审批模式对应的权限上限：互不改文案，但取更严的那条。 */
-const MODE_CAP = { readonly: 'read', ask: 'workspace-write', 'auto-safe': 'workspace-write', full: 'danger-full-access' }
-
 /**
  * 计算权限范围 pill 的当前档（FR-35）。
- * 默认跟随宿主当前文件策略；读不到或值非法时兜底 `workspace-write`，**绝不用 `danger-full-access` 兜底**。
- * 与审批模式取更严：档位不得宽于模式允许的上限。
- * @param {{ hostPolicy?: string, approvalMode?: string }} [input] - 宿主文件策略与当前审批模式。
- * @returns {{ level: string, hint: string, fallbackUsed: boolean, cappedByMode: boolean }} pill 状态。
+ * **只由宿主文件策略决定**；读不到或值非法时兜底 `workspace-write`，**绝不用 `danger-full-access` 兜底**。
+ * 审批模式不参与档位计算、不改文案——两条轴互不影响（`full` + `ask` 仍显示「完全权限」）。
+ * @param {{ hostPolicy?: string }} [input] - 宿主文件策略。
+ * @returns {{ level: string, hint: string, fallbackUsed: boolean }} pill 状态。
  */
-export function permissionPill({ hostPolicy, approvalMode } = {}) {
+export function permissionPill({ hostPolicy } = {}) {
   const valid = PERMISSION_LEVELS.includes(hostPolicy)
-  const fallbackUsed = !valid
   const level = valid ? hostPolicy : 'workspace-write'
-  const cap = MODE_CAP[approvalMode]
-  let effective = level
-  let cappedByMode = false
-  if (cap !== undefined && PERMISSION_LEVELS.indexOf(cap) > PERMISSION_LEVELS.indexOf(level)) {
-    effective = cap
-    cappedByMode = true
-  }
-  return { level: effective, hint: PERMISSION_HINTS[effective], fallbackUsed, cappedByMode }
+  return { level, hint: PERMISSION_HINTS[level], fallbackUsed: !valid }
+}
+
+/**
+ * 判定层的"有效权限"：范围先判 deny，再让审批模式决定是否需要问（FR-18/FR-35 联动）。
+ * - `read`：写/执行一律 deny；`workspace-write`：出工作区的写入 deny；
+ * - `danger-full-access`：范围允许，但 `ask` 模式下**任何操作都要先问**（逐条问），`full` 才直接放行。
+ * @param {{ scope?: string, approvalMode?: string, outsideWorkspace?: boolean }} [input] - 范围、审批模式、是否出界。
+ * @returns {{ decision: 'deny'|'ask'|'allow', reason: string }} 判定结果。
+ */
+export function effectivePermission({ scope = 'workspace-write', approvalMode = 'ask', outsideWorkspace = false } = {}) {
+  if (scope === 'read') return { decision: 'deny', reason: 'scope-readonly' }
+  if (scope === 'workspace-write' && outsideWorkspace) return { decision: 'deny', reason: 'scope-outside-workspace' }
+  if (approvalMode === 'ask') return { decision: 'ask', reason: 'approval-ask' }
+  if (approvalMode === 'readonly') return { decision: 'deny', reason: 'approval-readonly' }
+  return { decision: 'allow', reason: 'scope-allow' }
 }
