@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+d2334ef"
+  const BUILD_STAMP = "0.2.2-rc.5+a4abd52"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1655,6 +1655,33 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const clampDock = (w) => Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.round(w)))
   // 与 lib/panes.js 的 GRID 一致：1/2/4/6 档 → 行列
   const SPLIT_GRID = { 1: [1, 1], 2: [2, 1], 4: [2, 2], 6: [3, 2] }
+
+  /** 与 lib/layout.js 的 maxSplit/resolveSplit 同口径：每块最小 360×240，放不下就降档。 */
+  function maxSplitFor(width, height) {
+    const w = Number(width)
+    const h = Number(height)
+    if (!Number.isFinite(w) || w <= 0) return 1
+    for (const mode of [6, 4, 2, 1]) {
+      const [columns, rows] = SPLIT_GRID[mode]
+      const perWidth = (w - 12 * (columns - 1)) / columns
+      const perHeight = (h - 12 * (rows - 1)) / rows
+      if (perWidth >= 360 && perHeight >= 240) return mode
+    }
+    return 1
+  }
+
+  function resolveSplit(requested, width, height) {
+    const max = maxSplitFor(width, height)
+    return requested <= max ? requested : max
+  }
+
+  // Esc 层级（与 lib/escape.js 的 ESCAPE_ORDER 同口径）
+  const ESCAPE_ORDER = ['selection', 'find', 'composer', 'palette', 'modal', 'meter']
+  function nextEscapeTarget(open) {
+    const set = new Set(open)
+    for (const layer of ESCAPE_ORDER) if (set.has(layer)) return layer
+    return null
+  }
   const SPLIT_MODES = [1, 2, 4, 6]
   // W5 命令清单**动态枚举**：由接线方（clientRoot 包装层）从宿主命令源取；取不到就是空表，
   // 面板显示「未接入命令源」——不拿硬编码清单充数（05 §6.5 TC-16-3/16-6）。
