@@ -489,5 +489,5 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   // 只 inject slots：ctx.reflect 是上下文自带的属性，不是可注入的服务——
   // 把 reflect 写进 inject 会让插件等一个不存在的服务，连带 ui-sidebar/ui-chat 全 pending
   // （真机实测：`web boot: 3 required entries did not activate … waiting for service: reflect`）。
-  return { inject: ['slots'], apply }
+  return { inject: ['slots', 'shortcuts'], apply }
 } })
