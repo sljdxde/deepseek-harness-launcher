@@ -136,6 +136,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 
   function apply(ctx) {
     ensureStyle()
+    // 本实现的运行时标记：verify 用它 + [data-shell] 双特征判"现在装的是哪一版 layout"，
+    // 不靠容易在两侧都出现的槽标记（实测 [data-slot="sidebar"] 两态都有）。
+    window.__DSH_LAUNCHER_SHELL__ = true
     const panelInfo = createPanelInfo()
     // 右栏轨道宽度是外壳的活，但显隐由 ctx.layout.openRightbar/closeRightbar 记账
     // （ui-sidebar-right 用这两个动作），所以它得是一个能订阅的小观测面。
@@ -197,6 +200,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       console.warn('dsh-client-ui-launcher: 未接管 root 槽', error)
     }
     return () => {
+      window.__DSH_LAUNCHER_SHELL__ = false
       for (const dispose of disposers.reverse()) {
         try { dispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
       }

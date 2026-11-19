@@ -37,6 +37,9 @@ try {
 const browser = await puppeteer.launch({ executablePath: chrome, headless: true, args: ['--disable-dev-shm-usage', '--disable-gpu'] })
 try {
   const page = await browser.newPage()
+  // 模块 URL 的 rev 可能不随包内文件变化（实测：重建 client 后 rev 不变），必须禁缓存，
+  // 否则 verify 会对着上一次加载的旧模块下结论。
+  await page.setCacheEnabled(false)
   const errors = []
   page.on('pageerror', (error) => errors.push(String(error).slice(0, 200)))
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 })
@@ -45,20 +48,23 @@ try {
   // `[data-slot="sidebar"]` 等槽标记；新外壳是 `[data-shell="launcher"]`。
   // 两侧都要两个特征，避免"属性写错导致假阳性"：launcher = 我们的标记在 + 原生特征不在；
   // native = 宿主原生特征在（右栏列或原生顶栏节点）+ 我们的标记不在。
+  // 实测：[data-slot="sidebar"] 在两侧都会出现（framework 给声明的一方打标），所以不能用它判原生。
+  // 判据换成"本实现的运行时标记 + 界面特征"双特征：launcher 有标记与 [data-shell]；
+  // native 没有标记，且有宿主自己的 composer（textarea）与 root 槽挂载点。
   const seen = await page.evaluate(() => ({
-    launcher: document.querySelector('[data-shell="launcher"]') !== null,
-    nativeSidebar: document.querySelector('[data-slot="sidebar"]') !== null,
-    nativeRightbar: document.querySelector('[data-rightbar-col], [data-slot="rightbar"]') !== null,
-    nativeTopbar: document.querySelector('[data-slot="root"]') !== null,
+    launcherMark: window.__DSH_LAUNCHER_SHELL__ === true,
+    launcherShell: document.querySelector('[data-shell="launcher"]') !== null,
+    hostRoot: document.querySelector('[data-slot="root"]') !== null,
+    composer: document.querySelectorAll('textarea').length > 0,
     conflict: document.getElementById('launcher-conflict')?.textContent ?? null,
   }))
-  const nativeSeen = seen.nativeSidebar && (seen.nativeRightbar || seen.nativeTopbar)
+  // native 不靠 composer（新开页面没有会话，composer 可能还没渲染）：标记与外壳都不在 + root 槽已挂载即可。
   const ok = expected === 'launcher'
-    ? seen.launcher && !seen.nativeSidebar && !seen.nativeRightbar
-    : !seen.launcher && nativeSeen
+    ? seen.launcherMark && seen.launcherShell && !seen.conflict
+    : !seen.launcherMark && !seen.launcherShell && seen.hostRoot
   process.stdout.write(`${JSON.stringify({ expected, seen, errors: errors.slice(0, 4) })}\n`)
   if (!ok) {
-    process.stderr.write(`壳层断言失败：期望 ${expected}，实测 launcher=${seen.launcher} native=${seen.native}\n`)
+    process.stderr.write(`壳层断言失败：期望 ${expected}，实测 ${JSON.stringify(seen)}\n`)
     process.exit(1)
   }
   process.stdout.write(`壳层断言通过：${expected}\n`)
