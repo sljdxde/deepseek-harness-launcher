@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+91e6771"
+  const BUILD_STAMP = "0.2.2-rc.5+2709ef5"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -802,6 +802,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * 写 colorScheme / data-ds-theme-source / body[data-ds-theme-dark] / 字体变量。
    * 不做这一步，setTheme 只改 preference，页面不变色。
    */
+  const appliedThemeTokens = []
+
   function applyThemeDom() {
     try {
       const snapshot = CURRENT_CTX?.theme?.getTheme?.()
@@ -810,10 +812,27 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const root = document.documentElement
       root.style.colorScheme = scheme
       root.setAttribute('data-ds-theme-source', snapshot.preference === 'system' ? 'system' : scheme)
+    root.removeAttribute('data-ds-theme-dark')
       const body = document.body
       if (body === null) return
-      if (scheme === 'dark') body.setAttribute('data-ds-theme-dark', '')
-      else body.removeAttribute('data-ds-theme-dark')
+      // 宿主 palette 认这个属性名（DARK_ATTRIBUTE = 'data-ds-dark-theme'）
+      if (scheme === 'dark') body.setAttribute('data-ds-dark-theme', '')
+      else body.removeAttribute('data-ds-dark-theme')
+      // 主题自带 tokens 写成内联变量：先撤上一轮自己写的，别覆盖别人写的
+      for (const name of appliedThemeTokens) body.style.removeProperty(name)
+      appliedThemeTokens.length = 0
+      for (const [name, value] of Object.entries(snapshot.active?.tokens ?? {})) {
+        if (typeof value !== 'string') continue
+        body.style.setProperty(name, value)
+        appliedThemeTokens.push(name)
+      }
+      // meta[name=theme-color] 按 body 计算背景更新
+      try {
+        const meta = document.querySelector('meta[name="theme-color"]')
+        if (meta !== null) meta.setAttribute('content', getComputedStyle(body).backgroundColor)
+      } catch {
+        /* 没有 meta 就跳过 */
+      }
       for (const [role, px] of Object.entries(snapshot.fontSizes ?? {})) {
         if (Number.isFinite(px)) body.style.setProperty(`--dsw-font-size-${role}`, `${px}px`)
       }
@@ -1022,6 +1041,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const collapsed = props.sidebarCollapsed === true
     const runCommand = (cmd) => {
       setPaletteOpen(false)
+      requestAnimationFrame(() => { const pane = document.querySelector('.launcher-pane'); if (pane !== null) pane.scrollTop = paneScrollRef.current })
       setQuery('')
       try {
         const verdict = cmd.command?.resolve?.(MENU_CONTEXT)
@@ -1033,6 +1053,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }
     }
     const onKeyDown = (event) => {
+      // 面板内的按键只在 input 自己的 handler 里处理；这里跳过，避免 Enter/↑↓ 双执行
+      if (event.target !== null && event.target !== undefined && event.target.closest?.('.launcher-palette') !== null) return
       const isPaletteKey = (event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'k'
       const isThemeKey = (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === 'l'
       if (isThemeKey) {
