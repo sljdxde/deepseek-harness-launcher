@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+cb0cf39"
+  const BUILD_STAMP = "0.2.2-rc.5+4986d05"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1255,6 +1255,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     const toggleTheme = () => applyTheme((() => { try { return CURRENT_CTX?.theme?.getTheme?.()?.preference } catch { return undefined } })() === 'dark' ? 'light' : 'dark')
     /** 右栏开关：宿主 sidebarRight/命令 + 外壳轨道，两条入口（rail ▤ / ⌘⇧B）共用同一份状态。 */
+    const toggleRef = React.useRef({ dock: null, theme: null })
     const toggleDock = () => {
       if (dockOpen) {
         // 关闭：宿主在 launcher 里不一定回 closeRightbar，外壳直接把轨道收掉（可视结果必须响应）
@@ -1301,8 +1302,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         window.__DSH_LAUNCHER_FILL__ = fillComposerByDom
       }
     }, [])
+    toggleRef.current.dock = toggleDock
+    toggleRef.current.theme = toggleTheme
     React.useEffect(() => {
-      // composer 是 Lexical，root 上的 keydown 可能被它 stopPropagation：window capture 抢在前面
+      // composer 是 Lexical，root 上的 keydown 可能被它 stopPropagation：window capture 抢在前面。
+      // 通过 ref 调最新的 toggle，避免拿到首次渲染的陈旧 dockOpen。
       const onShortcut = (event) => {
         const withMod = event.metaKey || event.ctrlKey
         if (!withMod || !event.shiftKey) return
@@ -1310,13 +1314,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         if (key === 'b') {
           event.preventDefault()
           event.stopPropagation()
-          toggleDock()
+          toggleRef.current.dock?.()
           return
         }
         if (key === 'l') {
           event.preventDefault()
           event.stopPropagation()
-          toggleTheme()
+          toggleRef.current.theme?.()
         }
       }
       window.addEventListener('keydown', onShortcut, true)
