@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+d3b1abb"
+  const BUILD_STAMP = "0.2.2-rc.5+14f66d7"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -608,164 +608,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     { id: 'allow-always', label: '永久允许' },
     { id: 'deny', label: '拒绝' },
   ]
-  const approvalSnapshot = { pending: [], policy: null, failures: 0, error: null }
-  const approvalListeners = new Set()
-  function approvalEmit() {
-    for (const listener of approvalListeners) {
-      try { listener(approvalSnapshot) } catch { /* 单个订阅者失败不影响其它 */ }
-    }
-  }
-  async function approvalRequest(path, init) {
-    const response = await fetch(`${APPROVAL_BASE}${path}`, {
-      ...init,
-      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
-    })
-    if (response.ok !== true) throw new Error(`HTTP ${response.status}`)
-    return response.json()
-  }
-  /**
-   * 自适应轮询：有 pending 时 500ms、空队列 2s；页面隐藏暂停、可见立刻拉一次；
-   * 失败静默重试（不 toast、不白屏），连续 3 次失败才在入口显示可读错误。
-   */
-  function startApprovalPolling() {
-    let timer = 0
-    let ticks = 0
-    let stopped = false
-    const schedule = () => {
-      if (stopped) return
-      clearTimeout(timer)
-      // 有人等 → 500ms；空队列固定 2s（不做退避：审批卡出现越晚越糟）
-      const delay = approvalSnapshot.pending.length > 0 ? 500 : 2000
-      timer = setTimeout(tick, delay)
-    }
-    const tick = async () => {
-      if (stopped) return
-      if (typeof document !== 'undefined' && document.hidden === true) {
-        schedule()
-        return
-      }
-      if (approvalSnapshot.failures >= 3) {
-        stopped = true
-        return
-      }
-      try {
-        const [pending, policy] = await Promise.all([
-          approvalRequest('/pending'),
-          ticks % 10 === 0 ? approvalRequest('/policy') : Promise.resolve(approvalSnapshot.policy),
-        ])
-        ticks += 1
-        const latest = pending?.latest ?? null
-        approvalSnapshot.pending = latest === null ? [] : [latest]
-        approvalSnapshot.count = Number(pending?.count) || 0
-        approvalSnapshot.policy = policy
-        approvalSnapshot.failures = 0
-        approvalSnapshot.error = null
-        approvalEmit()
-      } catch {
-        approvalSnapshot.failures += 1
-        if (approvalSnapshot.failures >= 3) {
-          stopped = true
-          approvalSnapshot.error = '审批状态获取失败，稍后重试'
-          approvalEmit()
-        }
-      }
-      schedule()
-    }
-    const resume = () => {
-      if (stopped) {
-        stopped = false
-        approvalSnapshot.failures = 0
-        approvalSnapshot.error = null
-        approvalEmit()
-      }
-      clearTimeout(timer)
-      tick()
-    }
-    const onVisibility = () => {
-      if (typeof document !== 'undefined' && document.hidden === false) resume()
-    }
-    tick()
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onVisibility)
-      window.addEventListener('launcher:approval-retry', resume)
-    }
-    return () => {
-      stopped = true
-      clearTimeout(timer)
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', onVisibility)
-        window.removeEventListener('launcher:approval-retry', resume)
-      }
-    }
-  }
-
-  function useApprovalSnapshot() {
-    const [snapshot, setSnapshot] = React.useState(approvalSnapshot)
-    React.useEffect(() => {
-      const listener = (next) => setSnapshot({ ...next })
-      approvalListeners.add(listener)
-      listener(approvalSnapshot)
-      return () => approvalListeners.delete(listener)
-    }, [])
-    return snapshot
-  }
-  /** 待审批入口：只读展示（置灰），不弹独立面板；全名在 title 里。 */
-  function ApprovalChip() {
-    const snapshot = useApprovalSnapshot()
-    const count = Number(snapshot.count ?? snapshot.pending.length) || 0
-    const title = '见 设置 → 审批与权限'
-    if (snapshot.error !== null) {
-      return h('button', {
-        type: 'button',
-        className: 'launcher-approval-chip is-error',
-        title: '点此重试',
-        onClick: () => window.dispatchEvent(new CustomEvent('launcher:approval-retry')),
-      }, snapshot.error)
-    }
-    return h('span', {
-      className: `launcher-approval-chip${count === 0 ? ' is-idle' : ''}`,
-      'data-approval-count': count,
-      title,
-      'aria-disabled': 'true',
-    }, count === 0 ? '待审批 0' : `待审批 ${count}`)
-  }
-  /** 审批卡：三选，作答后立刻刷新（不自己记结果）。 */
-  function ApprovalCard() {
-    const snapshot = useApprovalSnapshot()
-    const [detail, setDetail] = React.useState(null)
-    const summary = snapshot.pending[0]
-    React.useEffect(() => {
-      setDetail(null)
-      if (summary === undefined) return
-      approvalRequest(`/pending/detail?requestId=${encodeURIComponent(summary.requestId)}`)
-        .then((value) => setDetail(value))
-        .catch(() => setDetail(summary))
-    }, [summary?.requestId])
-    const request = detail ?? summary
-    const [busy, setBusy] = React.useState(false)
-    if (request === undefined) return null
-    const answer = async (choice) => {
-      setBusy(true)
-      try {
-        await approvalRequest('/decide', { method: 'POST', body: JSON.stringify({ requestId: request.requestId, choice }) })
-      } catch { /* 失败由轮询错误态呈现 */ }
-      setBusy(false)
-      approvalSnapshot.pending = approvalSnapshot.pending.filter((item) => item.requestId !== request.requestId)
-      approvalEmit()
-    }
-    return h('div', { className: 'launcher-approval-card', role: 'dialog', 'aria-label': '待审批请求' },
-      h('div', { className: 'launcher-approval-card__head' }, `待审批 · ${request.tool ?? 'tool'}`),
-      h('code', { className: 'launcher-approval-card__cmd' }, request.command ?? ''),
-      h('div', { className: 'launcher-approval-card__actions' },
-        APPROVAL_CHOICES.map((choice) => h('button', {
-          key: choice.id,
-          type: 'button',
-          className: 'launcher-approval-card__btn',
-          'data-approval-choice': choice.id,
-          disabled: busy,
-          onClick: () => answer(choice.id),
-        }, choice.label))))
-  }
   /** 设置页四项（4 档 / 6 类 / 白名单 / 危险标注），保存走 Remote 的 set + 版本冲突重读。 */
   function ApprovalSettings() {
     const [doc, setDoc] = React.useState(null)
@@ -781,7 +623,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const save = async (patch) => {
       try {
         const result = await approvalRequest('/policy', { method: 'POST', body: JSON.stringify({ patch, ifVersion: doc.version }) })
-        if (result?.ok === true) { setDoc(result.doc); setDraft(result.doc); setError(null); approvalSnapshot.policy = result.doc; approvalEmit() }
+        if (result?.ok === true) { setDoc(result.doc); setDraft(result.doc); setError(null) }
         else { setError(result?.reason === 'conflict' ? '策略已被别处修改，已重新加载' : String(result?.message ?? '保存失败')) ; approvalRequest('/policy').then((value) => { setDoc(value); setDraft(value) }) }
       } catch { setError('保存失败') }
     }
@@ -1960,7 +1802,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         h('span', { className: 'launcher-statusbar__page' }, status().page),
         h('span', { className: 'launcher-statusbar__mode' }, status().mode),
         h('span', { className: 'launcher-statusbar__running' }, status().running),
-        h(ApprovalChip, { key: 'approval' }),
         renderSlot('shell.bottom', {})),
       h('div', { className: 'launcher-overlay' },
         renderSlot('shell.overlay', {})),
@@ -2161,18 +2002,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       } catch (error) {
         console.warn('dsh-client-ui-launcher: 注册审批设置项失败', error)
       }
-      // PR-B：审批卡（三选）
-      try {
-        disposers.push(ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-          name: 'shell.overlay',
-          id: 'launcher.approval',
-          order: 10,
-          inject: () => ({}),
-        }, ApprovalCard)))
-      } catch (error) {
-        console.warn('dsh-client-ui-launcher: 注册审批卡失败', error)
-      }
-      disposers.push(startApprovalPolling())
       // 服务的对外面：本仓插件 inject 'layout' 并调用 selectPanel(null)。
       // 同一个 panelInfo 对象同时喂 provideRoot 与 ctx.layout：两份源会出现"切了面板侧栏不亮"。
       const face = {

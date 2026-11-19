@@ -29,6 +29,44 @@ async function readBody(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
 }
 
+/** 宿主工具名 → T4 的 6 类工具（只覆盖 allow/deny 接管需要的映射）。 */
+export const TOOL_NAME_TO_CLASS = Object.freeze({
+  bash: 'exec',
+  pwsh: 'exec',
+  read: 'fs.read',
+  glob: 'fs.read',
+  grep: 'fs.read',
+  read_image: 'fs.read',
+  write: 'fs.write',
+  edit: 'fs.write',
+  apply_patch: 'fs.write',
+  web_fetch: 'net',
+  web_search: 'net',
+  browser: 'browser',
+})
+
+/**
+ * 在 approval/request 上回答 allow/deny；ask 交回宿主（next()）。
+ * @param {object} service - createApprovalService 实例。
+ * @param {{ toolName?: string, reason?: string, callId?: string, agent?: object }} request - 宿主请求。
+ * @returns {Promise<'allowed-once'|'rejected'|null>} null 表示不接管（走原生卡）。
+ */
+export async function approvalOutcome(service, request) {
+  const tool = TOOL_NAME_TO_CLASS[String(request?.toolName ?? '')]
+  if (tool === undefined) return null
+  const sessionId = request?.agent?.session?.id ?? ''
+  const cwd = request?.agent?.session?.cwd ?? ''
+  const verdict = await service.evaluate(
+    { tool, command: '', cwd, toolCallId: request?.callId },
+    { sessionId, requestId: request?.callId },
+  )
+  // evaluate() 返回 { requestId, decision: { decision, decidedBy }, record, audit }
+  const choice = verdict?.decision?.decision
+  if (choice === 'allow') return 'allowed-once'
+  if (choice === 'deny') return 'rejected'
+  return null
+}
+
 /** 审计查询参数（from/to/limit/tool/decision），非法值忽略而不是 500。 */
 export function auditQuery(url) {
   const params = new URL(url, 'http://127.0.0.1').searchParams
@@ -147,6 +185,16 @@ export function registerApprovalRoutes(server, service) {
  */
 export function apply(ctx) {
   const service = createApprovalService()
+  // allow/deny 接管：策略真的影响宿主工具审批；ask 交回宿主原生卡（避免双卡）
+  ctx.on('approval/request', async (request, next) => {
+    try {
+      const outcome = await approvalOutcome(service, request)
+      if (outcome === null) return next()
+      return outcome
+    } catch {
+      return next()
+    }
+  })
   ctx.inject(['webServer'], (host) => {
     host.effect(() => {
       const disposers = registerApprovalRoutes(host.webServer, service)
