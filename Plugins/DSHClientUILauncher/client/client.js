@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+fcfda04"
+  const BUILD_STAMP = "0.2.2-rc.5+b7c7772"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1002,7 +1002,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   /** 外壳本体：56 图标栏 + 侧栏列 + 主区 + 右栏轨道 + 底状态条 + 浮层。 */
   function LauncherRoot(props) {
     const renderSlot = props.renderSlot
-    const viewportWidth = typeof window === 'undefined' ? 1440 : window.innerWidth
+    const [viewportWidth, setViewportWidth] = React.useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth))
+    React.useEffect(() => {
+      const onResize = () => setViewportWidth(window.innerWidth)
+      window.addEventListener('resize', onResize)
+      return () => window.removeEventListener('resize', onResize)
+    }, [])
     // 标准 props 是选择器钩子（SnapshotSelectorHook），必须带 selector 调用，
     // 直接 useDockOpen() 会报 `selector is not a function` 并把 root 整个打崩。
     const dockOpenHook = props.useDockOpen === undefined ? false : props.useDockOpen((open) => open)
@@ -1018,7 +1023,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const dockOpen = dockOpenHook || dockOpenEvent || dockSticky
     const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
-    const [dragWidth, setDragWidth] = React.useState(DOCK_WIDTH)
+    const [dragWidth, setDragWidth] = React.useState(() => {
+      try {
+        const saved = Number(window.localStorage.getItem('dsh.launcher.dockWidth'))
+        return Number.isFinite(saved) && saved >= DOCK_MIN && saved <= DOCK_MAX ? Math.round(saved) : DOCK_WIDTH
+      } catch {
+        return DOCK_WIDTH
+      }
+    })
     const [splitMode, setSplitModeRaw] = React.useState(1)
     const [collapsedPanes, setCollapsedPanes] = React.useState(() => new Set())
     const [focusedPane, setFocusedPane] = React.useState(0)
@@ -1189,7 +1201,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       lastPointerRef.current = { time: now, x: event.clientX }
       const startX = event.clientX
       const startWidth = dragWidth
-      const move = (e) => setDragWidth(clampDock(startWidth - (e.clientX - startX)))
+      const move = (e) => {
+        const next = clampDock(startWidth - (e.clientX - startX))
+        setDragWidth(next)
+        try { window.localStorage.setItem('dsh.launcher.dockWidth', String(next)) } catch { /* 忽略 */ }
+      }
       const up = () => {
         window.removeEventListener('pointermove', move)
         window.removeEventListener('pointerup', up)
@@ -1405,7 +1421,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
               'aria-orientation': 'vertical',
               'aria-label': '右栏宽度（拖拽 320–520）',
               onPointerDown: startDrag,
-              onDoubleClick: () => setDragWidth(DOCK_WIDTH),
+              onDoubleClick: () => { setDragWidth(DOCK_WIDTH); try { window.localStorage.setItem('dsh.launcher.dockWidth', String(DOCK_WIDTH)) } catch { /* 忽略 */ } },
             }),
             renderSlot('rightbar', { width: dockWidth, viewportWidth, canShow: dockCanShow }),
           ]
