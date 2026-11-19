@@ -258,6 +258,17 @@ test('V3-1：永久允许键里的 cwd 归一化，~/Pod/./ 与 ~/Pod 同一个�
   assert.deepEqual([dotted.decision, dotted.decidedBy], ['allow', 'permanent'])
 })
 
+test('S3：换行/回车也算 shell 元字符，两行命令不给永久允许', () => {
+  const policy = policyOf()
+  const base = { tool: 'exec', command: 'rm a\nrm b', cwd: `${HOME}/Pod` }
+  assert.deepEqual(canPermanentAllow(base, policy, { home: HOME }), { ok: false, reason: 'shell-metacharacter' })
+  assert.deepEqual(
+    canPermanentAllow({ ...base, command: 'rm a\rrm b' }, policy, { home: HOME }),
+    { ok: false, reason: 'shell-metacharacter' },
+  )
+  assert.equal(canPermanentAllow({ ...base, command: 'rm a' }, policy, { home: HOME }).ok, true, '单行不受影响')
+})
+
 test('V32-1：危险命令不给「始终允许」，关名单也一样', () => {
   const on = policyOf()
   const off = policyOf({ dangerousGuard: { enabled: false, patterns: ['rm -rf'] } })

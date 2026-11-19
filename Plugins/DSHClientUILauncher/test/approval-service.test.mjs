@@ -223,3 +223,16 @@ test('V32-1：危险命令选 allow-always 不落永久允许，当次也不放�
   const again = await service.evaluate({ tool: 'exec', command: 'rm -rf /tmp/x', cwd })
   assert.equal(again.decision.decision, 'ask', '下次仍然要问')
 })
+
+test('S8：作答收尾行 actor=user，超时收尾行 actor=policy', async () => {
+  const { service, cwd } = await sandbox()
+  const answered = await service.evaluate({ tool: 'fs.write', command: 'write a.md', cwd })
+  await service.decide({ requestId: answered.requestId, choice: 'allow-once' })
+  const timedOut = await service.evaluate({ tool: 'fs.write', command: 'write b.md', cwd })
+  await service.expire(timedOut.requestId)
+
+  const records = await service.audit()
+  assert.deepEqual(records.map((record) => record.actor), ['policy', 'user', 'policy', 'policy'])
+  assert.equal(records[1].decidedBy, 'user')
+  assert.equal(records[3].decidedBy, 'timeout')
+})

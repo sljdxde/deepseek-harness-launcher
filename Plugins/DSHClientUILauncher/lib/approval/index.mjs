@@ -83,6 +83,8 @@ export function createApprovalService(options = {}) {
       id: ulid(now().getTime()),
       relatedId: entry.record.id,
       ts: now().toISOString(),
+      // 收尾行是人的操作：actor 记 user，按 actor 取证才拿得到（审查 S8）。
+      actor: 'user',
       decision: choice === 'deny' ? 'deny' : 'allow',
       decidedBy: 'user',
       userChoice: choice,
@@ -103,6 +105,8 @@ export function createApprovalService(options = {}) {
       id: ulid(now().getTime()),
       relatedId: entry.record.id,
       ts: now().toISOString(),
+      // 超时不是任何人做的：actor 保持 policy（§7.3 的 actor 联合类型里没有 timeout）。
+      actor: 'policy',
       decision: 'deny',
       decidedBy: 'timeout',
       userChoice: 'timeout',

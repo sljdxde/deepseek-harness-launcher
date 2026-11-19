@@ -19,8 +19,11 @@ export const TOOL_CLASSES = Object.freeze(['fs.read', 'fs.write', 'exec', 'net',
 /** 三档工具策略。 */
 export const TOOL_POLICIES = Object.freeze(['allow', 'ask', 'deny'])
 
-/** shell 元字符：命中任意一个就不允许写 PermanentAllow（§7.2「始终允许怎么落」a）。 */
-const SHELL_METACHARACTERS = /[|;&><$`*?~()]/
+/**
+ * shell 元字符：命中任意一个就不允许写 PermanentAllow（§7.2「始终允许怎么落」a）。
+ * 换行 / 回车也在内：卡片上 `rm a\nrm b` 看起来是一行，实际是两条命令（审查 S3）。
+ */
+const SHELL_METACHARACTERS = /[|;&><$`*?~()\n\r]/
 
 /** 变量替换的另一种写法（`${...}` 已由 `$` 覆盖，这里兜住 `$VAR` 与反斜杠转义）。 */
 const VARIABLE_SUBSTITUTION = /\$[A-Za-z_{]|\\\$/
@@ -125,9 +128,11 @@ export function matchesDangerousPattern(pattern, command) {
  */
 export function canPermanentAllow(call, policy, options = {}) {
   const home = options.home ?? process.env.HOME ?? '/'
-  const command = normalizeCommand(call?.command)
+  const raw = typeof call?.command === 'string' ? call.command : ''
+  const command = normalizeCommand(raw)
   if (command.length === 0) return { ok: false, reason: 'empty-command' }
-  if (SHELL_METACHARACTERS.test(command) || VARIABLE_SUBSTITUTION.test(command)) {
+  // 元字符要看原文：normalizeCommand 会把换行压成空格，压完就看不见「两行命令」了（S3）。
+  if (SHELL_METACHARACTERS.test(raw) || VARIABLE_SUBSTITUTION.test(raw)) {
     return { ok: false, reason: 'shell-metacharacter' }
   }
   if (command.length > PERMANENT_COMMAND_LIMIT) return { ok: false, reason: 'too-long' }
