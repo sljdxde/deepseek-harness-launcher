@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+d294dba"
+  const BUILD_STAMP = "0.2.2-rc.5+be6284b"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -320,6 +320,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const files = num(breakdown, ['filesTokens', 'files'])
       const tools = num(breakdown, ['toolsTokens', 'tools'])
 
+      const unavailable = pct === null && system === null && chat === null && tools === null
       // 浮层挂 document.body：header 的 mask 会裁掉 position:fixed 的后代（实测）
       React.useEffect(() => {
         if (!open || unavailable) return undefined
@@ -364,7 +365,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         }
       }, [open, unavailable, pct, system, chat, files, tools])
 
-      const unavailable = pct === null && system === null && chat === null && tools === null
       return h('div', { className: 'launcher-ctx launcher-ctxdiag', onKeyDown: (e) => { if (e.key === 'Escape') setOpen(false) } },
         h('button', {
           ref: entryRef,
