@@ -357,7 +357,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             onClick: () => setSplitMode(mode),
           }, String(mode)))),
         h('div', { className: 'launcher-panes' },
-          paneKeys.map((key, index) => h('div', { key, className: 'launcher-pane', 'data-pane': key },
+          paneKeys.map((key, index) => h('div', {
+            key,
+            className: 'launcher-pane',
+            // 第一格反映真实 entryKey（断言用），其余格是分屏占位 key
+            'data-pane': index === 0 ? (activePanelId ?? 'conversation') : key,
+          },
             index === 0
               ? renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' })
               : renderSlot('main', {}, { entryKey: key }))))),
