@@ -1,4 +1,9 @@
-window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) => {
+// #region module-id
+// 本段由 tools/sync-contract.mjs 从 package.json 的 name 生成，勿手改。
+const MODULE_ID = "dsh-client-ui-launcher"
+// #endregion module-id
+
+window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
 
@@ -81,7 +86,9 @@ window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) 
   function LauncherRoot(props) {
     const renderSlot = props.renderSlot
     const viewportWidth = typeof window === 'undefined' ? 1440 : window.innerWidth
-    const dockOpen = props.useDockOpen === undefined ? false : props.useDockOpen()
+    // 标准 props 是选择器钩子（SnapshotSelectorHook），必须带 selector 调用，
+    // 直接 useDockOpen() 会报 `selector is not a function` 并把 root 整个打崩。
+    const dockOpen = props.useDockOpen === undefined ? false : props.useDockOpen((open) => open)
     const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     const dockWidth = dockOpen ? DOCK_WIDTH : 0
     const collapsed = props.sidebarCollapsed === true
@@ -196,5 +203,8 @@ window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) 
     }
   }
 
-  return { inject: ['slots', 'reflect'], apply }
+  // 只 inject slots：ctx.reflect 是上下文自带的属性，不是可注入的服务——
+  // 把 reflect 写进 inject 会让插件等一个不存在的服务，连带 ui-sidebar/ui-chat 全 pending
+  // （真机实测：`web boot: 3 required entries did not activate … waiting for service: reflect`）。
+  return { inject: ['slots'], apply }
 } })

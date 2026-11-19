@@ -13,7 +13,9 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, DOCK_TABS, diffContract, describeDiff } from '../lib/contract.js'
-import { withContractBlock, runSync } from '../tools/sync-contract.mjs'
+import { moduleIdBlock, withContractBlock, withModuleId, runSync } from '../tools/sync-contract.mjs'
+import { buildAlias, HOST_PACKAGE } from '../tools/build-layout-alias.mjs'
+import { mkdtempSync as mkTmp, rmSync as rmTmp } from 'node:fs'
 
 const baseline = JSON.parse(readFileSync(new URL('../contracts/host-baseline.json', import.meta.url), 'utf8'))
 
@@ -90,7 +92,17 @@ test('同步脚本 CLI 自己可用：--check 退出码 0', () => {
 test('同步脚本：漂移时 --check 退出 1、写回后 0、没有标记区退出 3', () => {
   const dir = mkdtempSync(join(tmpdir(), 'launcher-sync-'))
   const target = join(dir, 'client.js')
-  const drifted = 'x\n  // #region children-from-contract\n  const CHILDREN = {}\n  // #endregion children-from-contract\ny\n'
+  const drifted = [
+    'x',
+    '// #region module-id',
+    'const MODULE_ID = "stale"',
+    '// #endregion module-id',
+    '  // #region children-from-contract',
+    '  const CHILDREN = {}',
+    '  // #endregion children-from-contract',
+    'y',
+    '',
+  ].join('\n')
   writeFileSync(target, drifted)
   const lines = []
   const log = (line) => lines.push(line)
@@ -108,4 +120,45 @@ test('服务指纹进入 baseline：layout 六成员/签名、panelInfo 字段�
   assert.deepEqual(baseline.services.panelInfo.fields, ['readonly activePanelId: MainPanelId | null'])
   assert.deepEqual(baseline.services.panelInfo.observable.methods, ['getSnapshot', 'subscribe'])
   assert.deepEqual(baseline.services.provideRoot.hooks, ['panelInfo'], 'provideRoot.hooks 必含 panelInfo')
+})
+
+test('client 的模块 id 由 package.json 的 name 生成（同名替换的前提）', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const source = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
+  assert.ok(source.includes(moduleIdBlock(manifest.name)), 'module-id 段必须与包名一致')
+  assert.equal(withModuleId(source, 'x'), withModuleId(source, 'x'))
+})
+
+test('同名替换构建：包名、版本、client 模块 id 三处一起变成宿主名', () => {
+  const out = mkTmp(join(tmpdir(), 'launcher-alias-'))
+  try {
+    const summary = buildAlias({ out })
+    const manifest = JSON.parse(readFileSync(join(out, 'package.json'), 'utf8'))
+    assert.equal(manifest.name, HOST_PACKAGE)
+    assert.equal(manifest.version, summary.version)
+    const client = readFileSync(join(out, 'client', 'client.js'), 'utf8')
+    assert.ok(client.includes(`const MODULE_ID = ${JSON.stringify(HOST_PACKAGE)}`), 'client 模块 id 要跟着改名')
+    assert.equal(manifest.dsh.client.platform, 'web')
+    assert.equal(manifest.exports['./client'], './client/client.js')
+  } finally {
+    rmTmp(out, { recursive: true, force: true })
+  }
+})
+
+test('两个工具的 CLI 自己可用：build-layout-alias --out 与 sync --check', () => {
+  const out = mkTmp(join(tmpdir(), 'launcher-cli-'))
+  try {
+    const built = spawnSync(process.execPath, [fileURLToPath(new URL('../tools/build-layout-alias.mjs', import.meta.url)), '--out', out], { encoding: 'utf8' })
+    assert.equal(built.status, 0, built.stderr)
+    assert.match(built.stdout, /同名替换包/)
+    const synced = spawnSync(process.execPath, [fileURLToPath(new URL('../tools/sync-contract.mjs', import.meta.url)), '--check'], { encoding: 'utf8' })
+    assert.equal(synced.status, 0, synced.stderr)
+    const missing = spawnSync(process.execPath, [fileURLToPath(new URL('../tools/build-layout-alias.mjs', import.meta.url))], { encoding: 'utf8' })
+    assert.equal(missing.status, 2, '缺 --out 要报用法')
+    const onlyId = join(out, 'only-id.js')
+    writeFileSync(onlyId, '// #region module-id\nconst MODULE_ID = "x"\n// #endregion module-id\n')
+    assert.equal(runSync({ check: true, target: onlyId, log: () => {} }), 3, '缺 children 标记区要退出 3')
+  } finally {
+    rmTmp(out, { recursive: true, force: true })
+  }
 })

@@ -19,6 +19,8 @@ import { MODE_LABELS, statusText } from '../lib/statusbar.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLIENT = join(ROOT, 'client', 'client.js')
+const ID_START = '// #region module-id'
+const ID_END = '// #endregion module-id'
 const START = '  // #region children-from-contract'
 const END = '  // #endregion children-from-contract'
 
@@ -40,6 +42,19 @@ export function contractBlock() {
   ].join('\n')
 }
 
+/** 模块 id 段：与 package.json 的 name 一致（同名替换时两边一起变，见 tools/build-layout-alias.mjs）。 */
+export function moduleIdBlock(name) {
+  return [ID_START, '// 本段由 tools/sync-contract.mjs 从 package.json 的 name 生成，勿手改。', `const MODULE_ID = ${JSON.stringify(name)}`, ID_END].join('\n')
+}
+
+/** 把源码里的 module-id 段换成包名；找不到标记返回 null。 */
+export function withModuleId(source, name) {
+  const start = source.indexOf(ID_START)
+  const end = source.indexOf(ID_END)
+  if (start < 0 || end < 0) return null
+  return `${source.slice(0, start)}${moduleIdBlock(name)}${source.slice(end + ID_END.length)}`
+}
+
 /** 把源码里的标记区换成生成内容；找不到标记返回 null。 */
 export function withContractBlock(source) {
   const start = source.indexOf(START)
@@ -55,7 +70,13 @@ export function withContractBlock(source) {
  */
 export function runSync({ check = false, target = CLIENT, log = () => {} } = {}) {
   const source = readFileSync(target, 'utf8')
-  const next = withContractBlock(source)
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+  const withId = withModuleId(source, manifest.name)
+  if (withId === null) {
+    log('client/client.js 里找不到 module-id 标记区')
+    return 3
+  }
+  const next = withContractBlock(withId)
   if (next === null) {
     log('client/client.js 里找不到 children-from-contract 标记区')
     return 3
