@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+7679b86"
+  const BUILD_STAMP = "0.2.2-rc.5+5c0893c"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1198,15 +1198,16 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       return () => window.removeEventListener('launcher:dock', onDock)
     }, [])
     const dockOpen = dockOpenHook || dockOpenEvent
+    // 视口变化时把宽度夹回合法区间（1200 宽上限 384、320 下限 320）
+    React.useEffect(() => { setDragWidth((width) => clampDock(width, viewportWidth)) }, [viewportWidth])
     const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     // 03 FR-13：宽度按会话记忆（localStorage['dsh.launcher.dockWidth']），刷新后右栏默认收起、重开回该值
     const [dragWidth, setDragWidth] = React.useState(() => {
       try {
         const saved = Number(window.localStorage.getItem('dsh.launcher.dockWidth'))
-        if (!Number.isFinite(saved)) return DOCK_WIDTH
-        const max = Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.round(window.innerWidth - 816)))
-        return saved >= DOCK_MIN && saved <= max ? Math.round(saved) : DOCK_WIDTH
+        if (!Number.isFinite(saved) || saved < DOCK_MIN) return DOCK_WIDTH
+        return clampDock(saved, window.innerWidth)
       } catch {
         return DOCK_WIDTH
       }
@@ -1254,9 +1255,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const toggleTheme = () => applyTheme((() => { try { return CURRENT_CTX?.theme?.getTheme?.()?.preference } catch { return undefined } })() === 'dark' ? 'light' : 'dark')
     /** 右栏开关：宿主 sidebarRight/命令 + 外壳轨道，两条入口（rail ▤ / ⌘⇧B）共用同一份状态。 */
     const toggleRef = React.useRef({ dock: null, theme: null })
+    const dockTimerRef = React.useRef(0)
     const toggleDock = () => {
       // 以模块级 store 为准（React 状态可能滞后一帧，导致"永远只开不关"）
       if (getDockOpen()) {
+        if (dockTimerRef.current !== 0) { clearTimeout(dockTimerRef.current); dockTimerRef.current = 0 }
         // 关闭：宿主在 launcher 里不一定回 closeRightbar，外壳直接把轨道收掉（可视结果必须响应）
         DOCK_CLOSE_INTENT.user = true
         setDockOpen(false)
@@ -1268,11 +1271,15 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       setDockOpen(true)
       toggleRightbarHost()
       // 打开：先给宿主一帧；若宿主没接管（blocked / 无 occupant 等），外壳自己展开轨道
-      setTimeout(() => {
+      dockTimerRef.current = setTimeout(() => {
+        dockTimerRef.current = 0
+        // 期间用户已关掉：不要写回 true，否则表现为「关掉又自己弹回来」
+        if (!getDockOpen()) return
         const width = document.querySelector('.launcher-dock')?.getBoundingClientRect().width ?? 0
         if (width < 10) {
           setDockOpenEvent(true)
           setTimeout(() => {
+            if (!getDockOpen()) return
             const retry = document.querySelector('.launcher-dock')?.getBoundingClientRect().width ?? 0
             if (retry < 10) showLauncherToast('右栏未就绪：先打开一个会话再展开')
           }, 250)
@@ -1410,13 +1417,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }
     }, [])
     const onDiagKeyDown = (event) => {
-      if (event.key === 'Escape') { event.preventDefault(); setDiagOpen(false) }
+      if (event.key === 'Escape') { event.preventDefault(); setDevOpen(false) }
     }
     const [paletteIndex, setPaletteIndex] = React.useState(0)
     const [query, setQuery] = React.useState('')
     const shown = commands.filter((cmd) => query === '' || String(cmd.label).includes(query))
     const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
-    const dockWidth = dockCanShow ? Math.max(DOCK_MIN, dragWidth) : 0
+    const dockWidth = dockCanShow ? clampDock(dragWidth, viewportWidth) : 0
     const mainWidth = Math.max(0, viewportWidth - 56 - (props.sidebarCollapsed === true ? 0 : 280) - dockWidth)
     const effectiveSplit = resolveSplit(splitMode, mainWidth, (typeof window === 'undefined' ? 900 : window.innerHeight) - 26)
     const [cols, rows] = SPLIT_GRID[effectiveSplit] ?? SPLIT_GRID[1]
@@ -1436,14 +1443,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       // 双击复位：两次 pointerdown 间隔 <300ms 且位移 <4px（preventDefault 后不会再收到 dblclick）
       if (now - last.time < 300 && Math.abs(event.clientX - last.x) < 4) {
         lastPointerRef.current = { time: 0, x: 0 }
-        setDragWidth(DOCK_WIDTH)
+        setDragWidth(clampDock(DOCK_WIDTH, viewportWidth))
         return
       }
       lastPointerRef.current = { time: now, x: event.clientX }
       const startX = event.clientX
       const startWidth = dragWidth
       const move = (e) => {
-        const next = clampDock(startWidth - (e.clientX - startX), window.innerWidth)
+        const next = clampDock(startWidth - (e.clientX - startX), viewportWidth)
         setDragWidth(next)
         try { window.localStorage.setItem('dsh.launcher.dockWidth', String(next)) } catch { /* 忽略 */ }
       }
@@ -1484,7 +1491,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }
       if (!paletteOpen) return
       if (event.key === 'Escape') {
-        const target = nextEscapeTarget([paletteOpen ? 'palette' : null, devOpen ? 'meter' : null].filter(Boolean))
+        const target = nextEscapeTarget([paletteOpen ? 'palette' : null, devOpen ? 'debug' : null].filter(Boolean))
         if (target === null) return
         event.preventDefault()
         setPaletteOpen(false)
@@ -1627,7 +1634,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           'aria-orientation': 'vertical',
           'aria-label': '右栏宽度（拖拽 320–520）',
           onPointerDown: startDrag,
-          onDoubleClick: () => { setDragWidth(DOCK_WIDTH); try { window.localStorage.setItem('dsh.launcher.dockWidth', String(DOCK_WIDTH)) } catch { /* 忽略 */ } },
+          onDoubleClick: () => { const next = clampDock(DOCK_WIDTH, viewportWidth); setDragWidth(next); try { window.localStorage.setItem('dsh.launcher.dockWidth', String(next)) } catch { /* 忽略 */ } },
         }),
         h('div', {
           key: 'rightbar-host',
@@ -1716,7 +1723,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   }
   const DOCK_MAX = 520
   const DOCK_HIDE_BELOW = 1020
-  const clampDock = (w) => Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.round(w)))
+  const dockMaxFor = (viewportWidth) => Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.round((Number.isFinite(viewportWidth) ? viewportWidth : 1440) - 816)))
+  const clampDock = (w, viewportWidth) => Math.max(DOCK_MIN, Math.min(dockMaxFor(viewportWidth), Math.round(w)))
   // 与 lib/panes.js 的 GRID 一致：1/2/4/6 档 → 行列
   const SPLIT_GRID = { 1: [1, 1], 2: [2, 1], 4: [2, 2], 6: [3, 2] }
 
@@ -1751,7 +1759,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   }
 
   // Esc 层级（与 lib/escape.js 的 ESCAPE_ORDER 同口径）
-  const ESCAPE_ORDER = ['selection', 'find', 'composer', 'palette', 'modal', 'meter']
+  const ESCAPE_ORDER = ['selection', 'find', 'composer', 'palette', 'modal', 'debug', 'meter']
   function nextEscapeTarget(open) {
     const set = new Set(open)
     for (const layer of ESCAPE_ORDER) if (set.has(layer)) return layer
