@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+cb1c02c"
+  const BUILD_STAMP = "0.2.2-rc.5+1612f2b"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -97,7 +97,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-dock-summary{font-size:12px;opacity:.75}
 .launcher-model-chip{font-size:12px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;opacity:.85}
 .launcher-toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:rgba(20,20,20,.9);color:#fff;font-size:12px;z-index:60;pointer-events:none}
-.launcher-turn-action{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
+.launcher-turn-action{display:inline-flex;align-items:center;gap:4px;height:28px;max-width:100%;white-space:nowrap;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;padding:0 8px;font:inherit;font-size:12px;cursor:pointer}
+.launcher-turn-action__label{white-space:nowrap}
+@media (max-width: 420px){.launcher-turn-action{padding:0 6px;min-width:24px;justify-content:center}.launcher-turn-action__label{display:none}}
 .launcher-turn-highlight{outline:2px solid var(--dsw-alias-accent,#4c8dff);outline-offset:2px;border-radius:6px}
 .launcher-diag__list{margin:0;padding:8px 10px;display:grid;gap:6px;font-size:12px}
 .launcher-diag__list div{display:flex;justify-content:space-between;gap:12px}
@@ -835,9 +837,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
 
     const rows = [
-      { slot: 'conversation.chat.assistant-actions', id: 'launcher.export', order: 20, label: '导出本轮', onClick: downloadExport },
-      { slot: 'conversation.chat.assistant-actions', id: 'launcher.viewInContext', order: 30, label: '在上下文视图中查看此轮', onClick: viewInContext },
-      { slot: 'conversation.chat.assistant-actions', id: 'launcher.branch', order: 40, label: '在新对话中分支', onClick: branchToNewSession },
+      { slot: 'conversation.chat.assistant-actions', id: 'launcher.export', order: 20, label: '导出本轮', icon: '⤓', onClick: downloadExport },
+      { slot: 'conversation.chat.assistant-actions', id: 'launcher.viewInContext', order: 30, label: '在上下文视图中查看此轮', icon: '◎', onClick: viewInContext },
+      { slot: 'conversation.chat.assistant-actions', id: 'launcher.branch', order: 40, label: '在新对话中分支', icon: '⑂', onClick: branchToNewSession },
     ]
 
     for (const row of rows) {
@@ -849,8 +851,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             className: 'launcher-turn-action',
             'data-action': row.id,
             title: row.label,
+            'aria-label': row.label,
             onClick: (event) => row.onClick(readTurnFromNode(event?.currentTarget), event),
-          }, row.label)
+          },
+            h('span', { className: 'launcher-turn-action__icon', 'aria-hidden': 'true' }, row.icon ?? '·'),
+            h('span', { className: 'launcher-turn-action__label' }, row.label))
         }
         if (typeof ctx?.slots?.inject === 'function') {
           disposers.push(ctx.slots.inject(row.slot, () => ctx.slots.register({
