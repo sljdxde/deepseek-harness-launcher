@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+e46781b"
+  const BUILD_STAMP = "0.2.2-rc.5+4b2fd35"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -95,6 +95,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-perm__item.on{background:var(--dsw-alias-bg-2,rgba(127,127,127,.12))}
 @container (max-width: 640px){.launcher-perm__text{display:none}.launcher-perm__pill{padding:0 6px}}
 .launcher-dock-summary{font-size:12px;opacity:.75}
+.launcher-model-chip{font-size:12px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:10px;opacity:.85}
 .launcher-toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:rgba(20,20,20,.9);color:#fff;font-size:12px;z-index:60;pointer-events:none}
 .launcher-turn-action{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
 .launcher-turn-highlight{outline:2px solid var(--dsw-alias-accent,#4c8dff);outline-offset:2px;border-radius:6px}
@@ -480,8 +481,15 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   function registerComposerDock(ctx) {
     const Component = (slotProps) => {
       const queued = Number(slotProps?.queue?.length ?? slotProps?.queued ?? slotProps?.queueCount)
-      if (!Number.isFinite(queued) || queued <= 0) return null
-      return h('span', { className: 'launcher-dock-summary', title: `排队 ${queued} 条` }, `排队 ${queued}`)
+      const draft = typeof slotProps?.draft === 'string' ? slotProps.draft : (typeof slotProps?.input === 'string' ? slotProps.input : null)
+      const chars = draft === null ? null : [...draft].length
+      const files = slotProps?.attachments?.length ?? slotProps?.files?.length ?? null
+      const parts = []
+      if (Number.isFinite(queued) && queued > 0) parts.push(`排队 ${queued}`)
+      if (chars !== null) parts.push(`输入 ${chars} 字`)
+      if (Number.isFinite(files)) parts.push(`${files} 个附件`)
+      if (parts.length === 0) return null
+      return h('span', { className: 'launcher-dock-summary', title: parts.join(' · ') }, parts.join(' · '))
     }
     try {
       if (typeof ctx?.slots?.inject !== 'function') return []
@@ -494,6 +502,42 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       return typeof dispose === 'function' ? [dispose] : []
     } catch (error) {
       console.warn('dsh-client-ui-launcher: 注册 composer.dock 摘要失败', error)
+      return []
+    }
+  }
+
+  /** FR-44 三态（与 lib/model-chip.js 同口径）。 */
+  function modelChipText(model = {}) {
+    const name = typeof model.name === 'string' ? model.name.trim() : ''
+    if (name.length === 0) return null
+    const level = typeof model.reasoningLevel === 'string' ? model.reasoningLevel.trim() : ''
+    if (level.length > 0) return { label: `${name} · ${level}`, state: 'level' }
+    if (model.metadataKnown === true) return { label: `${name} · 无推理等级`, state: 'none' }
+    return { label: name, state: 'unknown' }
+  }
+
+  /** FR-44 模型 chip（只显示不切换）：三态见 lib/model-chip.js；没有模型元数据就不渲染。 */
+  function registerModelChip(ctx) {
+    const Component = (slotProps) => {
+      const text = modelChipText({
+        name: slotProps?.model?.name ?? slotProps?.modelName,
+        reasoningLevel: slotProps?.model?.reasoningLevel ?? slotProps?.reasoningLevel,
+        metadataKnown: slotProps?.model?.metadataKnown === true || slotProps?.metadataKnown === true,
+      })
+      if (text === null) return null
+      return h('span', { className: 'launcher-model-chip', 'data-model-state': text.state, title: text.label }, text.label)
+    }
+    try {
+      if (typeof ctx?.slots?.inject !== 'function') return []
+      const dispose = ctx.slots.inject('conversation.composer.bar', () => ctx.slots.register({
+        name: 'conversation.composer.bar',
+        id: 'launcher.modelChip',
+        order: 20,
+        inject: () => ({}),
+      }, Component))
+      return typeof dispose === 'function' ? [dispose] : []
+    } catch (error) {
+      console.warn('dsh-client-ui-launcher: 注册模型 chip 失败', error)
       return []
     }
   }
@@ -678,7 +722,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         setTimeout(() => anchor.classList.remove('launcher-turn-highlight'), 1600)
         return
       }
-      showLauncherToast('上下文视图暂无该轮锚点，已停留在当前会话')
+      const tab = [...document.querySelectorAll('[role="tab"]')].find((node) => /上下文/.test(node.textContent ?? ''))
+      if (tab !== null) tab.click()
+      showLauncherToast(`第 ${turn?.turnIndex ?? 1} 轮暂无锚点，已停留在当前会话`)
       window.dispatchEvent(new CustomEvent('launcher:turn-action', { detail: { id: 'launcher.viewInContext' } }))
     }
 
@@ -1535,6 +1581,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // FR-39/42/43：会话流动作（真槽，槽在才注册）
     const turnDisposers = registerTurnActions(ctx)
     const permDisposers = registerPermissionPill(ctx)
+    const modelDisposers = registerModelChip(ctx)
     const diagDisposers = registerContextDiagnostics(ctx)
     const dockDisposers = registerComposerDock(ctx)
     // FR-16：我们自己的动作也注册进同一个 catalog（与宿主条目同权）
@@ -1661,6 +1708,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       // 会话动作的 dispose 只释放一次（之前被外层循环重复调用）
       for (const dockDispose of dockDisposers) {
         try { dockDispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
+      }
+      for (const modelDispose of modelDisposers) {
+        try { modelDispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
       }
       for (const diagDispose of diagDisposers) {
         try { diagDispose?.() } catch { /* 卸载期的失败不再向上抛 */ }
