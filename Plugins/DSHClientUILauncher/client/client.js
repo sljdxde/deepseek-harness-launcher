@@ -309,7 +309,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   }
 
   function registerTurnActions(ctx) {
-    if (typeof window === 'undefined' || window.__DSH_LAUNCHER_TURN_ACTIONS__ !== true) return []
     const disposers = []
 
     // 导出：生成 Markdown 并触发下载（不依赖宿主接口）
@@ -350,19 +349,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const rows = [
       { slot: 'conversation.chat.assistant-actions', id: 'launcher.export', order: 20, label: '导出本轮', onClick: downloadExport },
       { slot: 'conversation.chat.assistant-actions', id: 'launcher.viewInContext', order: 30, label: '在上下文视图中查看此轮', onClick: viewInContext },
-      { slot: 'conversation.chat.turnTail', id: 'launcher.usage', order: 40, label: '每轮用量', usage: true },
     ]
 
     for (const row of rows) {
       try {
         const Component = (slotProps) => {
           const turn = slotProps?.turn ?? {}
-          if (row.usage === true) {
-            // 每轮用量：取不到 tokens 就不渲染（不显示空壳）
-            const tokens = slotProps?.usage?.tokens ?? slotProps?.tokens
-            if (!Number.isFinite(tokens)) return null
-            return h('span', { className: 'launcher-turn-action launcher-turn-action--usage' }, `${tokens} tokens`)
-          }
           return h('button', {
             type: 'button',
             className: 'launcher-turn-action',
