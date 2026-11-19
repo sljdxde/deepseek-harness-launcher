@@ -27,8 +27,9 @@ DSH_BIN=<dsh 安装>/lib/bin.js sh scripts/shell-switch.sh launcher
 #               + 重启 dsh web + verify（launcher 态）
 ```
 
-`verify` 两侧各断两个特征：launcher 要求 `[data-shell="launcher"]` 在 **且** `[data-slot="sidebar"]` 不在；
-native 反之。冒烟自检失败时脚本会**自动卸回 native** 并写 `state/ui-shell.log`（`boot-self-check=FAILED fallback=native`），
+`verify` 的判据（按 `verify-shell.mjs` 实际口径，**不用 `[data-slot="sidebar"]`**——它两态都会出现）：
+- launcher：`window.__DSH_LAUNCHER_SHELL__ === true` + `[data-shell="launcher"]` 在 + 无 `#launcher-conflict`
+- native：标记为 false + `[data-shell="launcher"]` 不在 + `[data-slot="root"]` 在冒烟自检失败时脚本会**自动卸回 native** 并写 `state/ui-shell.log`（`boot-self-check=FAILED fallback=native`），
 不会让你停在空白页。
 
 ## 切回 native（一条命令 + 重启 + verify）
@@ -51,6 +52,14 @@ DSH_BIN=<dsh 安装>/lib/bin.js sh scripts/shell-switch.sh native
 
 仍不行：把 `<dsh 安装目录>/node_modules/@deepseek-ai/dsh-client-ui-layout.orig` 复制回
 `@deepseek-ai/dsh-client-ui-layout`（覆盖），重启，硬刷新。
+
+## 窗口内清单（省事故的三条）
+
+1. **切之前先做一次 native 态 verify**（`shell-switch.sh verify native`）：证明 Chrome / URL 工具链是活的，别在切完才发现断。
+2. **切前后各记指纹**：`sha256` 取 `package.json` 与 `pnpm-lock.yaml`（脚本已写进 `/tmp/dsh-shell-<时间戳>/fingerprints.txt`）；
+   回滚后逐个比对，lockfile 必须逐字一致。
+3. **预探 `dsh web restart`**：`dsh web --help | grep restart`；探不到就当场写清手工重启步骤（退出 dsh web → 重新打开 → 硬刷新），
+   别等切完才发现。
 
 ## 探针上跑过的实际输出（`/tmp/standalone-home`，2026-11-19）
 

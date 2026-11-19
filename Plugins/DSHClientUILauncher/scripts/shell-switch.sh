@@ -3,12 +3,16 @@
 #
 # 裁决口径（2026-11-19，Super-agent；技术负责人落脚本）：
 #   外壳 = 谁提供 @deepseek-ai/dsh-client-ui-layout 这个包。
-#   launcher = profile 依赖用 file: 指向本包 + 在 dsh.profile.bundles 里登记本包（缺一客户端半区不进图）
-#   native   = 删掉那条依赖（bundles 里同名条目可留，解析回宿主自带包）
+#   launcher = profile 依赖用 `dependencies["@deepseek-ai/dsh-client-ui-layout"] = file:<本包>` +
+#              在 dsh.profile.bundles 里登记本包（缺一客户端半区不进图）
+#   native   = 删掉那条依赖（bundles 同名条目保留，解析回宿主自带包）
 #   行 id / name / cordis.patch.yml 一个字不动；切换 = 改依赖 + pnpm install + 重启 + verify。
+#   本脚本不含、也不再提 override 与软链——那两条口径已作废（05-§9 R1）。
+#   备份一律写 /tmp/dsh-shell-<时间戳>/（web/ + ui-layout 原包 + 指纹），不落 profiles/ 下、不在 node_modules 里留 .orig。
+#   日志字段：host=<v> pkg=<v> action=<..> verify=<一行 JSON> reason=<失败原因>
 #
 # 用法：
-#   ./shell-switch.sh status            # 只读：依赖/登记/链接/版本锁判定
+#   ./shell-switch.sh status            # 只读：依赖当前值 / bundles 登记 / dsh plugin 视角 / 版本锁判定
 #   ./shell-switch.sh launcher          # 切到新外壳
 #   ./shell-switch.sh native            # 切回原生
 #   ./shell-switch.sh verify            # 断言页面特征（需要 DSH_URL）
@@ -51,6 +55,8 @@ PROFILE=$(resolve_profile)
 PKG_JSON="$PROFILE/package.json"
 LOCK="$PROFILE/pnpm-lock.yaml"
 STATE="$PROFILE/$STATE_DIR_NAME"
+# 备份：/tmp/dsh-shell-<时间戳>/（web 清单 + 宿主 layout 原包 + 指纹），不落在 profiles/ 里
+BACKUP_ROOT=${BACKUP_ROOT:-/tmp/dsh-shell-$(date +%Y%m%d-%H%M%S)}
 BASE_LOCK_HASH_FILE="$STATE/lockfile.before-launcher.sha256"
 
 [ -f "$PKG_JSON" ] || die 4 "缺少 $PKG_JSON"
@@ -140,10 +146,31 @@ check_version_lock() {
   if [ -n "$pv" ] && [ "$pv" != "$hv" ]; then
     die 2 "版本锁：本包 version=$pv ≠ 宿主 version=$hv（拒绝安装，先构建对齐的版本）"
   fi
-  printf '版本锁 OK：宿主=%s 本包=%s\n' "$hv" "${pv:-未读}"
+  HOST_V=$hv; PKG_V=${pv:-未读}
+  printf '版本锁 OK：host=%s pkg=%s baseline=%s\n' "$hv" "${pv:-未读}" "$EXPECTED_HOST_VERSION"
 }
 
 # ---------- 重启钩子 ----------
+# 备份：profile 清单 + 宿主 layout 原包 + 指纹，全部写 /tmp/dsh-shell-<时间戳>/
+backup_now() {
+  mkdir -p "$BACKUP_ROOT"
+  if [ ! -d "$BACKUP_ROOT/web" ]; then
+    mkdir -p "$BACKUP_ROOT/web"
+    cp -p "$PKG_JSON" "$BACKUP_ROOT/web/package.json" 2>/dev/null || true
+    [ -f "$LOCK" ] && cp -p "$LOCK" "$BACKUP_ROOT/web/pnpm-lock.yaml"
+  fi
+  local host_layout="$PROFILE/node_modules/@deepseek-ai/dsh-client-ui-layout"
+  if [ ! -d "$BACKUP_ROOT/ui-layout" ] && [ -d "$host_layout" ] && ! grep -q '__DSH_LAUNCHER_SHELL__' "$host_layout/client/client.js" 2>/dev/null; then
+    cp -R "$host_layout" "$BACKUP_ROOT/ui-layout"
+  fi
+  {
+    printf 'package.json  %s\n' "$(hash_file "$PKG_JSON")"
+    [ -f "$LOCK" ] && printf 'pnpm-lock     %s\n' "$(hash_file "$LOCK")"
+    printf 'backup-root   %s\n' "$BACKUP_ROOT"
+  } > "$BACKUP_ROOT/fingerprints.txt"
+  log "备份：$BACKUP_ROOT（web/ + ui-layout 原包 + fingerprints.txt）"
+}
+
 restart_hook() {
   if [ -n "${DSH_RESTART_CMD:-}" ]; then
     log "→ 重启：$DSH_RESTART_CMD"
@@ -187,6 +214,7 @@ verify_page() { # $1 = launcher|native
 
 # ---------- 动作 ----------
 do_launcher() {
+  backup_now
   [ -n "$PKG_DIR" ] && [ -d "$PKG_DIR" ] || die 4 "找不到本包目录：PKG_DIR=$PKG_DIR"
   check_version_lock
   mkdir -p "$STATE"
@@ -205,6 +233,7 @@ do_launcher() {
 }
 
 do_native() {
+  backup_now
   local backup="$STATE/package.json.before-native"
   mkdir -p "$STATE"
   cp -f "$PKG_JSON" "$backup"
@@ -230,7 +259,6 @@ do_status() {
   printf '本包目录           : %s\n' "${PKG_DIR:-未找到}"
   printf 'dependencies[layout]: %s\n' "$(pkg_field dep)"
   printf 'bundles 登记       : %s\n' "$(pkg_field bundles)"
-  printf 'node_modules 链接  : %s\n' "$( [ -L "$PROFILE/node_modules/@deepseek-ai/dsh-client-ui-layout" ] && readlink "$PROFILE/node_modules/@deepseek-ai/dsh-client-ui-layout" || ([ -d "$PROFILE/node_modules/@deepseek-ai/dsh-client-ui-layout" ] && echo "目录（非链接）" || echo "不存在") )"
   hv=$(host_version)
   printf '宿主版本           : %s（期望 %s）\n' "$hv" "$EXPECTED_HOST_VERSION"
   if [ "$hv" = "$EXPECTED_HOST_VERSION" ]; then printf '版本锁判定         : OK（可切换）\n'; else printf '版本锁判定         : 不匹配（安装会被拒绝，退出码 2）\n'; fi
