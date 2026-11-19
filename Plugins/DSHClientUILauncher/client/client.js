@@ -273,7 +273,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         return null
       }
       // 实测形状：{pressureTokens, projectedTokens, contextWindow}
-      const used = num(pressure, ['pressureTokens', 'used', 'usedTokens', 'tokens', 'surfaceTokens', 'projectedTokens'])
+      // 实测：{pressureTokens, projectedTokens, contextWindow}；占用优先 projectedTokens
+      const used = num(pressure, ['projectedTokens', 'pressureTokens', 'used', 'usedTokens', 'tokens', 'surfaceTokens'])
       const limit = num(pressure, ['contextWindow', 'limit', 'limitTokens', 'windowTokens', 'max'])
       const ratio = num(pressure, ['ratio', 'pct', 'percent', 'pressure'])
       let pct = null
@@ -301,7 +302,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           h('dl', { className: 'launcher-ctx__list' },
             h('div', null, h('dt', null, '系统提示'), h('dd', null, system === null ? '—' : String(system))),
             h('div', null, h('dt', null, '会话消息'), h('dd', null, chat === null ? '—' : String(chat))),
-            h('div', null, h('dt', null, '文件'), h('dd', null, files === null ? '—' : String(files))),
+            files === null ? null : h('div', null, h('dt', null, '文件'), h('dd', null, String(files))),
             h('div', null, h('dt', null, '工具'), h('dd', null, tools === null ? '—' : String(tools)))),
           h('p', { className: 'launcher-ctx__advice' }, advice)) : null)
     }
