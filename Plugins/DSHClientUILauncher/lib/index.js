@@ -9,6 +9,7 @@
  * 判定/审计/存储全部走 T4 实现，这里不改判定逻辑、不在客户端另记一份。
  */
 
+import { decide } from './approval/decision.mjs'
 import { createApprovalService } from './approval/index.mjs'
 
 export const name = 'dsh-client-ui-launcher'
@@ -46,25 +47,30 @@ export const TOOL_NAME_TO_CLASS = Object.freeze({
 })
 
 /**
- * 在 approval/request 上回答 allow/deny；ask 交回宿主（next()）。
+ * 在 approval/request 上**只接管 deny**（R-1/R-2 复审后收窄）：
+ * - 宿主请求里不带 command/paths（实测字段只有 toolName/callId/reason/agent），
+ *   带空 command 去 evaluate() 会绕过「危险命令一律 ask」并给 fs.write 放行；
+ * - 因此先用纯 `decide()` 算一遍：只有 deny 才接管（runMode/tool-policy 与命令无关，安全），
+ *   allow / ask 一律 `next()`（ask 交宿主原生卡，同时不产生 pending、不写「问过没人答」的审计）。
  * @param {object} service - createApprovalService 实例。
- * @param {{ toolName?: string, reason?: string, callId?: string, agent?: object }} request - 宿主请求。
- * @returns {Promise<'allowed-once'|'rejected'|null>} null 表示不接管（走原生卡）。
+ * @param {{ toolName?: string, callId?: string, agent?: object }} request - 宿主请求。
+ * @returns {Promise<'rejected'|null>} `rejected` 或 null（不接管）。
  */
 export async function approvalOutcome(service, request) {
   const tool = TOOL_NAME_TO_CLASS[String(request?.toolName ?? '')]
   if (tool === undefined) return null
-  const sessionId = request?.agent?.session?.id ?? ''
+  const policy = await service.get()
   const cwd = request?.agent?.session?.cwd ?? ''
+  const home = process.env.HOME ?? '/'
+  // 纯函数先判（无副作用）：只有 deny 才能安全接管
+  const pure = decide(policy, { tool, command: '', cwd, paths: [] }, { home })
+  if (pure.decision !== 'deny') return null
+  // deny 才走 evaluate，让 T4 写审计（不会产生 pending）
   const verdict = await service.evaluate(
     { tool, command: '', cwd, toolCallId: request?.callId },
-    { sessionId, requestId: request?.callId },
+    { sessionId: request?.agent?.session?.id ?? '', requestId: request?.callId },
   )
-  // evaluate() 返回 { requestId, decision: { decision, decidedBy }, record, audit }
-  const choice = verdict?.decision?.decision
-  if (choice === 'allow') return 'allowed-once'
-  if (choice === 'deny') return 'rejected'
-  return null
+  return verdict?.decision?.decision === 'deny' ? 'rejected' : null
 }
 
 /** 审计查询参数（from/to/limit/tool/decision），非法值忽略而不是 500。 */
@@ -190,7 +196,7 @@ export function apply(ctx) {
     // 顺序取证：waterfall 按注册序执行；若 api-remotes 的转发先注册，原生卡会先被问，
     // 只有它 pass 才轮到我们。用 DSH_APPROVAL_TRACE=1 时打日志钉死先后。
     const trace = process.env.DSH_APPROVAL_TRACE === '1'
-    if (trace) console.error('[approval-takeover] handler entered', request?.toolName, request?.callId)
+    if (trace) console.error('[approval-takeover] handler entered', request?.toolName, request?.callId, Object.keys(request ?? {}))
     try {
       const outcome = await approvalOutcome(service, request)
       if (trace) console.error('[approval-takeover] outcome', outcome)
