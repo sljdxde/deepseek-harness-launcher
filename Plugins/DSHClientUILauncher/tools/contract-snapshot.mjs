@@ -94,6 +94,28 @@ function renderSlotsOf(source) {
   return [...match[1].matchAll(/'([^']+)'/g)].map((entry) => entry[1])
 }
 
+/**
+ * 抽 `interface X {…}` 的成员签名（原样文本去掉多余空白），用于"参数形态变了"这类 diff。
+ */
+function signaturesOf(block) {
+  if (block === null) return []
+  const out = []
+  for (const raw of block.split('\n')) {
+    const line = raw.trim().replace(/\s+/g, ' ')
+    if (line === '' || line.startsWith('*') || line.startsWith('/*')) continue
+    if (!/^(readonly\s+)?[A-Za-z_$][\w$]*(\s*[(:<?])/.test(line)) continue
+    out.push(line.replace(/[;,]?$/, ''))
+  }
+  return out
+}
+
+/** 从宿主编译产物里读 `provideRoot({ hooks: { … } })` 的 hook 键。 */
+function rootHookKeysOf(clientSource) {
+  const match = /provideRoot\(\{\s*hooks:\s*\{([^}]*)\}/.exec(clientSource)
+  if (match === null) return []
+  return [...match[1].matchAll(/([A-Za-z_$][\w$]*)\s*[:(]/g)].map((entry) => entry[1])
+}
+
 function readOrThrow(path, what) {
   if (!existsSync(path)) {
     process.stderr.write(`找不到 ${what}：${path}\n`)
@@ -113,7 +135,7 @@ function packageVersion(packageDir) {
 }
 
 /** 解析宿主：ui-layout 的 6 子槽 + root 的 renderSlots，ui-sidebar 的席位。 */
-function collect({ layoutFrom, sidebarFrom }) {
+function collect({ layoutFrom, sidebarFrom, slotsFrom }) {
   const layoutSource = readOrThrow(join(layoutFrom, 'lib/types/client/index.d.ts'), 'ui-layout 的客户端类型')
   const frameSource = readOrThrow(join(layoutFrom, 'lib/types/client/AppFrame.d.ts'), 'ui-layout 的 AppFrame 类型')
   const slots = slotsOf(interfaceBlock(layoutSource, 'SlotMap'))
@@ -121,6 +143,7 @@ function collect({ layoutFrom, sidebarFrom }) {
     ? null
     : slotsOf(interfaceBlock(readOrThrow(join(sidebarFrom, 'lib/types/client/contract/slots.d.ts'), 'ui-sidebar 的槽契约'), 'SlotMap'))
   const serviceSource = readOrThrow(join(layoutFrom, 'lib/types/client/service.d.ts'), 'ui-layout 的服务面类型')
+  const layoutClientSource = readOrThrow(join(layoutFrom, 'lib/client.js'), 'ui-layout 的客户端产物')
   return {
     host: {
       layoutPackage: '@deepseek-ai/dsh-client-ui-layout',
@@ -134,6 +157,24 @@ function collect({ layoutFrom, sidebarFrom }) {
     layoutService: {
       face: faceMembersOf(serviceSource),
       standardProps: [...new Set([...frameSource.matchAll(/usePanelInfo/g)].map(() => 'usePanelInfo'))],
+    },
+    // 三组服务指纹（05 回写后的 W1 尾判据）：layout 六成员与参数形态 / panelInfo 字段+observable /
+    // provideRoot.hooks 必含 panelInfo。任何一组变了，外壳的接管方式都要重新看一眼。
+    services: {
+      layout: {
+        members: faceMembersOf(serviceSource),
+        signatures: signaturesOf(interfaceBlock(serviceSource, 'ILayout')),
+      },
+      panelInfo: {
+        fields: signaturesOf(interfaceBlock(serviceSource, 'PanelInfo')),
+        // HostObservable<T> = ObservableSnapshot<T> 的别名行 + 宿主实际使用的方法名（编译产物里
+        // `getSnapshot` / `subscribe` 是 panelInfo 唯二被调用的成员）。别名行变了就红。
+        observable: {
+          alias: (/export type HostObservable<T> = [^;]+;/.exec(readOrThrow(join(slotsFrom, 'lib/types/renderer.d.ts'), 'ui-slots 的 observable 类型')) ?? [''])[0],
+          methods: ['getSnapshot', 'subscribe'],
+        },
+      },
+      provideRoot: { hooks: rootHookKeysOf(layoutClientSource) },
     },
   }
 }
@@ -158,6 +199,29 @@ function diff(baseline, current) {
   const faceBefore = JSON.stringify(baseline.layoutService?.face ?? [])
   const faceAfter = JSON.stringify(current.layoutService?.face ?? [])
   if (faceBefore !== faceAfter) out.push(`layout:face ${faceBefore} → ${faceAfter}`)
+  const beforeServices = baseline.services ?? {}
+  const afterServices = current.services ?? {}
+  for (const group of ['layout', 'panelInfo', 'provideRoot']) {
+    if (afterServices[group] === undefined) continue
+    if (beforeServices[group] === undefined) { out.push(`service:missing ${group}`); continue }
+    const beforeSig = JSON.stringify(beforeServices[group])
+    const afterSig = JSON.stringify(afterServices[group])
+    if (beforeSig === afterSig) continue
+    const beforeMembers = beforeServices[group].members ?? beforeServices[group].fields ?? beforeServices[group].hooks ?? []
+    const afterMembers = afterServices[group].members ?? afterServices[group].fields ?? afterServices[group].hooks ?? []
+    const removed = beforeMembers.filter((name) => !afterMembers.includes(name))
+    const added = afterMembers.filter((name) => !beforeMembers.includes(name))
+    if (removed.length > 0) out.push(`service:missing ${group}: ${removed.join(', ')}`)
+    if (added.length > 0) out.push(`service:shape-changed ${group}: +${added.join(', ')}`)
+    const beforeShapes = JSON.stringify(beforeServices[group].signatures ?? beforeServices[group].observable ?? beforeServices[group].hooks ?? [])
+    const afterShapes = JSON.stringify(afterServices[group].signatures ?? afterServices[group].observable ?? afterServices[group].hooks ?? [])
+    if (beforeShapes !== afterShapes && removed.length === 0 && added.length === 0) {
+      out.push(`service:signature-changed ${group}`)
+    }
+    if (group === 'provideRoot' && JSON.stringify(beforeServices.provideRoot.hooks) !== JSON.stringify(afterServices.provideRoot.hooks)) {
+      out.push(`hook:changed ${JSON.stringify(beforeServices.provideRoot.hooks)} → ${JSON.stringify(afterServices.provideRoot.hooks)}`)
+    }
+  }
   const renderBefore = JSON.stringify(baseline.rootRenderSlots ?? [])
   const renderAfter = JSON.stringify(current.rootRenderSlots ?? [])
   if (renderBefore !== renderAfter) out.push(`root:render-slots ${renderBefore} → ${renderAfter}`)
@@ -171,9 +235,11 @@ if (mode === null) {
 
 const layoutFrom = argValue('--layout-from') ?? join(PACKAGE_ROOT, 'node_modules', '@deepseek-ai', 'dsh-client-ui-layout')
 const sidebarFrom = argValue('--sidebar-from') ?? join(PACKAGE_ROOT, 'node_modules', '@deepseek-ai', 'dsh-client-ui-sidebar')
+const slotsFrom = argValue('--slots-from') ?? join(PACKAGE_ROOT, 'node_modules', '@deepseek-ai', 'dsh-client-ui-slots')
 const current = collect({
   layoutFrom,
   sidebarFrom: existsSync(join(sidebarFrom, 'lib/types/client/contract/slots.d.ts')) ? sidebarFrom : null,
+  slotsFrom,
 })
 
 if (mode === 'write') {

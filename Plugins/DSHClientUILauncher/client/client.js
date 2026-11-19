@@ -121,23 +121,42 @@ window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) 
       // 面板选中的观测面：ui-sidebar 用 usePanelInfo(info => info.activePanelId === id) 决定高亮。
       disposers.push(ctx.slots.provideRoot({ hooks: { panelInfo } }))
       // 服务的对外面：本仓插件 inject 'layout' 并调用 selectPanel(null)。
-      disposers.push(ctx.reflect.provide('layout', {
+      // 同一个 panelInfo 对象同时喂 provideRoot 与 ctx.layout：两份源会出现"切了面板侧栏不亮"。
+      const face = {
         panelInfo,
-        selectPanel: (id) => panelInfo.set(id ?? null),
+        // 只接受已注册的 main key；未注册 throw 且保留原选择；null 永远合法。
+        selectPanel: (id) => {
+          if (id === null || id === undefined) {
+            panelInfo.set(null)
+            return
+          }
+          const registered = ctx.slots.entries('main').some((entry) => entry?.options?.key === id)
+          if (!registered) throw new Error(`launcher: main key 未注册：${String(id)}`)
+          panelInfo.set(id)
+        },
         beginNavigation: () => new AbortController().signal,
+        // 不碰列宽：侧栏的收起/展开与列宽求解是外壳自己的事（W2），布局服务面只暴露动作。
         toggleSidebar: () => {},
-        // track=false 表示全屏覆盖，不占主区轨道；两种都不改变主区宽度以外的排版
+        // 由右栏占据者调用（track=false 表示全屏覆盖，不占主区轨道）
         openRightbar: (track) => setDockOpen(track !== false),
         closeRightbar: () => setDockOpen(false),
-      }))
+      }
+      if (face.panelInfo !== panelInfo) throw new Error('launcher: panelInfo 必须是同一个对象')
+      disposers.push(ctx.reflect.provide('layout', face))
       disposers.push(ctx.slots.register({
         name: 'root',
         children: CHILDREN,
         inject: () => ({ hooks: { dockOpen: dockHook } }),
       }, LauncherRoot))
     } catch (error) {
-      // 两个声明方同时注册 root：不抛白屏，退回原生界面 + 一条提示。
-      showConflict(String(error?.message ?? error).slice(0, 160))
+      // 不带半个服务面接管：服务面任一步失败就整段撤销、不注册 root，退回原生外壳 + 提示条。
+      // 半个服务面会让 plugin-manager / archive-manager 静默消失（10、11c 专查这一条）。
+      for (const dispose of disposers.reverse()) {
+        try { dispose?.() } catch { /* 撤销期的失败不再向上抛 */ }
+      }
+      disposers.length = 0
+      const detail = String(error?.message ?? error).slice(0, 160)
+      showConflict(detail.includes('already') ? detail : `layout 服务未接管，已回原生外壳（${detail}）`)
       console.warn('dsh-client-ui-launcher: 未接管 root 槽', error)
     }
     return () => {

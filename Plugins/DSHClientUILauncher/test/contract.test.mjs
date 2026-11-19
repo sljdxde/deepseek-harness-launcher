@@ -101,3 +101,11 @@ test('同步脚本：漂移时 --check 退出 1、写回后 0、没有标记区�
   assert.equal(runSync({ check: true, target: join(dir, 'plain.js'), log }), 3)
   rmSync(dir, { recursive: true, force: true })
 })
+
+test('服务指纹进入 baseline：layout 六成员/签名、panelInfo 字段与 observable、provideRoot.hooks', () => {
+  assert.deepEqual(baseline.services.layout.members, [...LAYOUT_FACE_MEMBERS])
+  assert.equal(baseline.services.layout.signatures.length, 6, '六成员的参数形态都记了')
+  assert.deepEqual(baseline.services.panelInfo.fields, ['readonly activePanelId: MainPanelId | null'])
+  assert.deepEqual(baseline.services.panelInfo.observable.methods, ['getSnapshot', 'subscribe'])
+  assert.deepEqual(baseline.services.provideRoot.hooks, ['panelInfo'], 'provideRoot.hooks 必含 panelInfo')
+})
