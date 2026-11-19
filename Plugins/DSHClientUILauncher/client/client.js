@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+7935079"
+  const BUILD_STAMP = "0.2.2-rc.5+c6e3720"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -729,10 +729,16 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         editable.focus()
         const selection = window.getSelection()
         const range = document.createRange()
+        // 起手式是「填一个建议」：先全选清空再填，不做追加（09 已记口径）
         range.selectNodeContents(editable)
-        range.collapse(false)
         selection?.removeAllRanges()
         selection?.addRange(range)
+        if (document.execCommand('delete')) {
+          range.selectNodeContents(editable)
+          range.collapse(false)
+          selection?.removeAllRanges()
+          selection?.addRange(range)
+        }
         if (document.execCommand('insertText', false, text)) return true
         editable.textContent = text
         editable.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }))
