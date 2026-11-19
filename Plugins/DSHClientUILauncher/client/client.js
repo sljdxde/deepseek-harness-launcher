@@ -63,6 +63,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-palette__item.off{opacity:.45;cursor:not-allowed}
 .launcher-palette__item.on{background:var(--dsw-alias-bg-2,rgba(127,127,127,.12))}
 .launcher-palette__hint{opacity:.6;font-size:11px}
+[data-code-wrap="off"] pre, [data-code-wrap="off"] pre code{white-space:pre!important;overflow-x:auto}
+[data-code-wrap="on"] pre code{white-space:pre-wrap!important;word-break:break-word}
 .launcher-dock__handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;background:transparent;z-index:2}
 .launcher-dock__handle:hover{background:var(--dsw-alias-border-l2,rgba(127,127,127,.3))}
 .launcher-statusbar{grid-area:status;align-items:center;border-top:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;font-size:11px;gap:10px;padding:0 10px;color:var(--dsw-alias-label-secondary)}
@@ -140,6 +142,27 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     plugins: ['dsh-plugin-manager', 'plugin-manager'],
   }
 
+  /** FR-43 #7：代码块自动换行开关（根属性 + localStorage，不改宿主接口）。 */
+  const CODE_WRAP_KEY = 'dsh.launcher.codeWrap'
+  function codeWrapOn() {
+    try {
+      return window.localStorage.getItem(CODE_WRAP_KEY) === 'off' ? false : true
+    } catch {
+      return true
+    }
+  }
+  function applyCodeWrap(on) {
+    try {
+      document.documentElement.dataset.codeWrap = on ? 'on' : 'off'
+      window.localStorage.setItem(CODE_WRAP_KEY, on ? 'on' : 'off')
+    } catch {
+      /* 无 localStorage 时只影响本次会话 */
+    }
+  }
+  function toggleCodeWrap() {
+    applyCodeWrap(!codeWrapOn())
+  }
+
   function ownCatalogRowsFor(ctx) {
     // 判定放在 resolve() 里现算：注册时 `ctx.slots.entries('main')` 里目标面板可能还没注册
     const currentPage = () => {
@@ -159,7 +182,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (key !== null) ctx.layout?.selectPanel?.(key)
     }
     const resolveWorkbench = () => (onPage() && keyReady() ? { status: 'handled', run: runWorkbench } : { status: 'pass' })
+    const wrapReady = () => onPage()
     return [
+      { id: 'launcher.codeWrap.toggle', label: '切换代码块自动换行', hint: '开/关长代码横向滚动', regions: ['page', 'editable'], aliases: [], resolve: () => (wrapReady() ? { status: 'handled', run: toggleCodeWrap } : { status: 'pass' }) },
       { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], aliases: [], resolve: resolveWorkbench },
     ]
   }
@@ -397,6 +422,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // 只读暴露，不改行为；卸载时清掉。
     window.__DSH_LAUNCHER_CTX__ = ctx
     CURRENT_CTX = ctx
+    applyCodeWrap(codeWrapOn())
     // FR-16：我们自己的动作也注册进同一个 catalog（与宿主条目同权）
     const OWN_ROWS_REGISTERED = Symbol.for('dsh.launcher.catalogRows')
     if (typeof ctx?.shortcuts?.register === 'function') {
