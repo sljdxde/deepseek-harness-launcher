@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+b4e92e4"
+  const BUILD_STAMP = "0.2.2-rc.5+dcd5541"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1251,7 +1251,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           h('div', null, h('dt', null, '右栏宽度'), h('dd', null, `${dockWidth}px${dockCanShow ? '' : '（隐藏）'}`)),
           h('div', null, h('dt', null, '代码块换行'), h('dd', null, wrapOn ? '开' : '关')),
           h('div', null, h('dt', null, '权限范围'), h('dd', null, permissionLabel)))) : null,
-      paletteOpen ? h('div', { className: 'launcher-palette', role: 'dialog', 'aria-modal': 'true', 'aria-label': '命令面板' },
+      paletteOpen ? h('div', { className: 'launcher-palette', 'data-index': paletteIndex, role: 'dialog', 'aria-modal': 'true', 'aria-label': '命令面板' },
         h('input', {
           className: 'launcher-palette__input',
           placeholder: '搜索命令…',
