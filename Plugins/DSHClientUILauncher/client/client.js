@@ -145,8 +145,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const onPage = page === 'conversation' || page === 'plugins'
     const guard = (enabled, run) => ({ resolve: () => (enabled ? { status: 'handled', run } : { status: 'pass' }) })
     return [
-      { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.('plugins')) },
-      { id: 'launcher.settings', label: '打开设置', hint: '设置面板', regions: ['page', 'editable'], ...guard(onPage, () => ctx.layout?.selectPanel?.('settings')) },
+      { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], aliases: [], ...guard(
+        onPage && resolveMainKey(ctx, RAIL_CANDIDATES.plugins) !== null,
+        () => {
+          const key = resolveMainKey(ctx, RAIL_CANDIDATES.plugins)
+          if (key !== null) ctx.layout?.selectPanel?.(key)
+        },
+      ) },
     ]
   }
 
