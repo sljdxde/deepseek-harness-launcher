@@ -236,6 +236,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     const [dragWidth, setDragWidth] = React.useState(DOCK_WIDTH)
     const [splitMode, setSplitMode] = React.useState(1)
+    // 宿主 MainPanel 的口径：面板 key 是 renderSlot 的第三参 `{ entryKey }`，
+    // 当前面板从 usePanelInfo 选择器钩子取（我们自己在 inject 里提供了这个钩子）。
+    const activePanelId = props.usePanelInfo === undefined
+      ? null
+      : props.usePanelInfo((info) => info.activePanelId)
     const ctx = CURRENT_CTX
     const commands = collectCommands(ctx)
     const [paletteOpen, setPaletteOpen] = React.useState(false)
@@ -352,8 +357,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             onClick: () => setSplitMode(mode),
           }, String(mode)))),
         h('div', { className: 'launcher-panes' },
-          paneKeys.map((key) => h('div', { key, className: 'launcher-pane', 'data-pane': key },
-            renderSlot('main', key))))),
+          paneKeys.map((key, index) => h('div', { key, className: 'launcher-pane', 'data-pane': key },
+            index === 0
+              ? renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' })
+              : renderSlot('main', {}, { entryKey: key }))))),
       h('aside', {
         className: 'launcher-dock',
         style: { '--launcher-dock': `${dockWidth}px` },
