@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+d325df9"
+  const BUILD_STAMP = "0.2.2-rc.5+234a8b9"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1193,7 +1193,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       'data-shell': 'launcher',
       // 05 §6.3-7：属性挂外壳根，不挂 documentElement（避免改到宿主自己的代码块）
       'data-code-wrap': wrapOn ? 'on' : 'off',
-      style: { '--launcher-composer-h': `${composerHeight}px` },
+      style: { '--launcher-composer-h': `${composerHeight}px`, '--launcher-dock': `${dockWidth}px` },
       'data-build': BUILD_STAMP,
       onKeyDown: onRootKeyDown,
     },
@@ -1288,7 +1288,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
               : renderSlot('main', {}, { entryKey: key }))))),
       h('aside', {
         className: 'launcher-dock',
-        style: { '--launcher-dock': `${dockWidth}px` },
         'data-dock-width': dockWidth,
       },
         dockWidth > 0
