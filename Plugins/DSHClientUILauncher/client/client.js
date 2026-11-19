@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+8f1efb2"
+  const BUILD_STAMP = "0.2.2-rc.5+4e82ca4"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1383,7 +1383,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
                 // 宿主子树（含 composer）必须照常渲染：卡片不能顶掉输入框
                 h('div', { key: 'host-main', className: 'launcher-pane__host' }, renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' })),
               ]
-              : renderSlot('main', {}, { entryKey: key }))))),
+              : renderSlot('main', {}, { entryKey: paneKeys[index] }))))),
       h('aside', {
         className: 'launcher-dock',
         'data-dock-width': dockWidth,
