@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+d03cf73"
+  const BUILD_STAMP = "0.2.2-rc.5+798560f"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -719,11 +719,14 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         showLauncherToast('分支失败：无法新建会话')
         return
       }
-      // 等新会话的 composer 出现（最多 2.5s），再引用原句
+      // 等「新会话的 composer」出现再填：旧 composer 一直在 DOM 里，
+      // 判据必须是元素身份变了（旧节点被卸载、新节点挂上），而不是「存在即可」。
+      const before = document.querySelector('[contenteditable="true"], textarea')
       const started = Date.now()
       const waitForComposer = () => {
-        const editable = document.querySelector('[contenteditable="true"], textarea')
-        if (editable !== null || Date.now() - started > 2500) {
+        const now = document.querySelector('[contenteditable="true"], textarea')
+        const replaced = now !== null && now !== before
+        if (replaced || Date.now() - started > 2500) {
           fillComposerByDom(quoted)
           showLauncherToast('已新建会话并引用该轮，未复制上下文')
           return
