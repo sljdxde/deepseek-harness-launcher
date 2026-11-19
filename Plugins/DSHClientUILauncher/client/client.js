@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+990dc9c"
+  const BUILD_STAMP = "0.2.2-rc.5+15ffaa0"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -630,13 +630,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   function startApprovalPolling() {
     let timer = 0
     let ticks = 0
-    let idleTicks = 0
     let stopped = false
     const schedule = () => {
       if (stopped) return
       clearTimeout(timer)
-      // 有人等 → 500ms；空队列 → 2s；连续 60 次空（约 2 分钟无 pending）退到 5s，避免开着的标签页打一夜
-      const delay = approvalSnapshot.pending.length > 0 ? 500 : (idleTicks > 60 ? 5000 : 2000)
+      // 有人等 → 500ms；空队列固定 2s（不做退避：审批卡出现越晚越糟）
+      const delay = approvalSnapshot.pending.length > 0 ? 500 : 2000
       timer = setTimeout(tick, delay)
     }
     const tick = async () => {
@@ -657,7 +656,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         ticks += 1
         const latest = pending?.latest ?? null
         approvalSnapshot.pending = latest === null ? [] : [latest]
-        idleTicks = latest === null ? idleTicks + 1 : 0
         approvalSnapshot.count = Number(pending?.count) || 0
         approvalSnapshot.policy = policy
         approvalSnapshot.failures = 0
