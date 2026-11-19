@@ -97,3 +97,16 @@ test('自己注册的行：没有会话/不在页面级时 resolve 返回 pass�
   assert.equal(entries.every((e) => e.disabled === true), true)
   assert.equal(executeCommand(entries[1]), 'pass')
 })
+
+test('resolve 返回对象形态（{status}）：handled 可执行、pass 置灰（宿主 catalog 口径）', () => {
+  const rows = catalogCommands([
+    { id: 'h', label: 'H', regions: ['page'], resolve: () => ({ status: 'handled' }) },
+    { id: 'p', label: 'P', regions: ['page'], resolve: () => ({ status: 'pass' }) },
+  ])
+  assert.equal(rows[0].disabled, false)
+  assert.equal(rows[1].disabled, true)
+  const calls = []
+  assert.equal(executeCommand({ row: { resolve: () => ({ status: 'handled' }), run: () => calls.push(1) } }), 'ran')
+  assert.equal(executeCommand({ row: { resolve: () => ({ status: 'pass' }), run: () => calls.push(2) } }), 'pass')
+  assert.deepEqual(calls, [1])
+})

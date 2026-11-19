@@ -110,6 +110,32 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * @param {object} ctx - 客户端上下文。
    * @returns {object[]} catalog 行。
    */
+  /**
+   * 按候选 key 解析 main 面板真 key（05 写死口径）：`ctx.slots.entries('main')` 里第一个命中的。
+   * 解析不到返回 null —— 调用方置灰，不许 throw。
+   * @param {object} ctx - 客户端上下文。
+   * @param {string[]} candidates - 候选 key。
+   * @returns {string|null} 真 key。
+   */
+  function resolveMainKey(ctx, candidates) {
+    try {
+      const entries = ctx?.slots?.entries?.('main') ?? []
+      const keys = entries.map((entry) => entry?.options?.key).filter((key) => typeof key === 'string')
+      for (const key of candidates) if (keys.includes(key)) return key
+    } catch {
+      /* 解析失败按未解析处理 */
+    }
+    return null
+  }
+
+  const RAIL_CANDIDATES = {
+    conversation: ['conversation'],
+    schedules: ['dsh-schedule', 'schedule', 'schedules'],
+    approvals: ['dsh-approvals', 'approvals'],
+    settings: ['dsh-settings', 'settings'],
+    plugins: ['dsh-plugin-manager', 'plugin-manager', 'plugins'],
+  }
+
   function ownCatalogRowsFor(ctx) {
     const page = window.__DSH_LAUNCHER_PAGE__ ?? 'conversation'
     const onPage = page === 'conversation' || page === 'plugins'
@@ -149,7 +175,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       seen.add(id)
       let disabled = false
       try {
-        disabled = row.resolve?.(ctx) !== 'handled'
+        const verdict = row.resolve?.(ctx)
+        disabled = !(verdict === 'handled' || verdict?.status === 'handled')
       } catch {
         disabled = true
       }
@@ -198,7 +225,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       setPaletteOpen(false)
       setQuery('')
       try {
-        if (cmd.row?.resolve?.(ctx) !== 'handled') return
+        const verdict = cmd.row?.resolve?.(ctx)
+        if (!(verdict === 'handled' || verdict?.status === 'handled')) return
         cmd.row?.run?.(ctx)
       } catch (error) {
         console.warn('dsh-client-ui-launcher: 命令执行失败', error)
@@ -225,17 +253,32 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     return h('div', { className: 'launcher-shell', 'data-shell': 'launcher', onKeyDown },
       h('div', { className: 'launcher-rail', role: 'navigation', 'aria-label': 'launcher rail' },
         renderSlot('shell.leading', {}),
-        RAIL_ENTRIES.map((entry) => h('button', {
+        RAIL_ENTRIES.map((entry) => {
+          const railKey = entry.id === 'conversation'
+            ? 'conversation'
+            : resolveMainKey(ctx, RAIL_CANDIDATES[entry.id] ?? [entry.id])
+          return h('button', {
           key: entry.id,
           type: 'button',
           className: `launcher-rail__entry${props.activeRail === entry.id ? ' on' : ''}`,
           title: entry.label,
           'aria-label': entry.label,
           'aria-pressed': props.activeRail === entry.id,
-          // 图标栏 → main key 的映射未定（插件工作台的真 key 不是 'plugins'），先不猜：
-        // 点击只记录意图，接线等映射口径。
-        onClick: () => { console.info('dsh-client-ui-launcher: 图标栏导航待接线', entry.id) },
-        }, entry.label.slice(0, 1)))),
+          // 05 口径：点击前先 resolveMainKey(候选)；解析不到 → 置灰（aria-disabled + title），不许 throw
+        'aria-disabled': railKey === null,
+        title: railKey === null
+          ? (entry.id === 'approvals' ? '见 设置 → 审批与权限' : `${entry.label}：本版暂无对应面板`)
+          : entry.label,
+        onClick: () => {
+          if (railKey === null) return
+          try {
+            ctx?.layout?.selectPanel?.(entry.id === 'conversation' ? null : railKey)
+          } catch (error) {
+            console.warn('dsh-client-ui-launcher: 导航失败', error)
+          }
+        },
+        }, entry.label.slice(0, 1))
+        })),
       h('aside', { className: 'launcher-sidebar' },
         collapsed ? null : renderSlot('sidebar', { collapsed, width: 280, drawer: false })),
       h('main', {

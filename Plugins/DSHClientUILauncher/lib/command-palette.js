@@ -106,7 +106,9 @@ export function catalogCommands(catalog, context = {}) {
     let disabled = false
     try {
       const verdict = row.resolve?.(context)
-      disabled = verdict !== 'handled'
+      // 宿主返回 {status:'handled'|'pass'} 对象，自有行返回字符串——两种都认
+      const handled = verdict === 'handled' || verdict?.status === 'handled'
+      disabled = !handled
     } catch {
       disabled = true
     }
@@ -125,7 +127,9 @@ export function executeCommand(entry, context = {}) {
   const row = entry?.row
   if (row === null || typeof row !== 'object') return 'failed'
   try {
-    if (row.resolve?.(context) !== 'handled') return 'pass'
+    const verdict = row.resolve?.(context)
+    const handled = verdict === 'handled' || verdict?.status === 'handled'
+    if (!handled) return 'pass'
     row.run?.(context)
     return 'ran'
   } catch {
