@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+9cd6f11"
+  const BUILD_STAMP = "0.2.2-rc.5+79a2596"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -769,17 +769,19 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const item = STARTERS.find((entry) => entry.id === id)
       if (item === undefined) return
       const ctx = CURRENT_CTX
-      let filled = false
-      try {
-        if (typeof ctx?.composer?.fill === 'function') {
-          ctx.composer.fill(item.text)
-          ctx.composer.focus?.()
-          filled = true
+      // DOM 填充优先：ctx.composer.fill 存在但可能是 no-op（实测填不进去），不能当成功
+      let filled = fillComposerByDom(item.text)
+      if (!filled) {
+        try {
+          if (typeof ctx?.composer?.fill === 'function') {
+            ctx.composer.fill(item.text)
+            ctx.composer.focus?.()
+            filled = true
+          }
+        } catch {
+          filled = false
         }
-      } catch {
-        filled = false
       }
-      if (!filled) filled = fillComposerByDom(item.text)
       if (!filled) showLauncherToast('起手式填不进去：没找到输入框')
       window.dispatchEvent(new CustomEvent('launcher:starter', { detail: { id, text: item.text, filled } }))
     }
