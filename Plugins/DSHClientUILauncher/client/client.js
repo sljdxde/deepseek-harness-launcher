@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+25e5a76"
+  const BUILD_STAMP = "0.2.2-rc.5+d06ddcc"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -81,7 +81,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-ctx{position:relative;display:inline-flex}
 .launcher-ctx__entry{height:26px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:13px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
 .launcher-ctx__entry[data-pct^="9"]{border-color:var(--dsw-alias-warning,#d97706)}
-.launcher-ctx__pop{position:absolute;top:calc(100% + 6px);right:0;min-width:200px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:8px;background:var(--dsw-alias-bg-1,#fff);z-index:40}
+.launcher-ctx__pop{min-width:200px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));border-radius:8px;background:var(--dsw-alias-bg-1,#fff);z-index:1000;box-shadow:0 10px 28px rgba(0,0,0,.18)}
 .launcher-ctx__head{font-size:12px;margin-bottom:6px}
 .launcher-ctx__list{margin:0;padding:0;display:grid;gap:4px;font-size:12px}
 .launcher-ctx__list div{display:flex;justify-content:space-between;gap:12px}
@@ -256,6 +256,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const Component = (slotProps) => {
       // hooks 必须无条件、顺序稳定：全部放在组件最顶部（React #310 的根因就是放在了 early return 之后）
       const [open, setOpen] = React.useState(false)
+      const [anchor, setAnchor] = React.useState(null)
+      const entryRef = React.useRef(null)
       React.useEffect(() => {
         if (!open) return undefined
         const onKey = (event) => {
@@ -321,6 +323,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const unavailable = pct === null && system === null && chat === null && tools === null
       return h('div', { className: 'launcher-ctx launcher-ctxdiag', onKeyDown: (e) => { if (e.key === 'Escape') setOpen(false) } },
         h('button', {
+          ref: entryRef,
           type: 'button',
           className: 'launcher-ctx__entry',
           'data-pct': pct === null ? '' : pct,
@@ -329,9 +332,19 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           'aria-disabled': unavailable,
           disabled: unavailable,
           title: unavailable ? '上下文用量不可用' : `上下文占用 ${pct}% · 点开看拆分`,
-          onClick: () => { if (!unavailable) setOpen((v) => !v) },
+          onClick: () => {
+            if (unavailable) return
+            const rect = entryRef.current?.getBoundingClientRect?.()
+            if (rect !== undefined && rect !== null) setAnchor({ top: rect.bottom + 6, left: Math.max(8, rect.left) })
+            setOpen((v) => !v)
+          },
         }, unavailable ? '上下文 —' : `上下文 ${pct}%`),
-        open ? h('div', { className: 'launcher-ctx__pop launcher-ctxdiag__pop', role: 'dialog', 'aria-label': '上下文诊断' },
+        open ? h('div', {
+          className: 'launcher-ctx__pop launcher-ctxdiag__pop',
+          role: 'dialog',
+          'aria-label': '上下文诊断',
+          style: anchor === null ? undefined : { position: 'fixed', top: `${anchor.top}px`, left: `${anchor.left}px`, right: 'auto', zIndex: 1000 },
+        },
           h('header', { className: 'launcher-ctx__head' }, pct === null ? '上下文占用 —' : `上下文占用 ${pct}%`),
           h('dl', { className: 'launcher-ctx__list' },
             h('div', null, h('dt', null, '系统提示'), h('dd', null, system === null ? '—' : String(system))),
