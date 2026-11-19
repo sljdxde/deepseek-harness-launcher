@@ -77,8 +77,24 @@ try {
   } else if (seen.launcherMark || seen.launcherShell) verdict = 'native-but-launcher'
   else if (!seen.hostRoot) verdict = 'native-no-host-root'
   if (crashed.length > 0) verdict = 'slot-entry-crashed'
+  // 有会话时的追加判据（SESSION_URL 开关）：注册成功 ≠ 渲染出来
+  let sessionActions = null
+  if (process.env.SESSION_URL) {
+    try {
+      await page.goto(process.env.SESSION_URL, { waitUntil: 'domcontentloaded', timeout: 60000 })
+      await new Promise((resolve) => setTimeout(resolve, Number(process.env.SESSION_WAIT ?? 12000)))
+      sessionActions = await page.evaluate(() => ({
+        buttons: document.querySelectorAll('.launcher-turn-action').length,
+        actions: [...document.querySelectorAll('[data-action]')].map((n) => n.getAttribute('data-action')),
+      }))
+      if (sessionActions.buttons < 2) verdict = 'session-actions-missing'
+    } catch {
+      sessionActions = { buttons: -1, actions: [] }
+      verdict = 'session-actions-missing'
+    }
+  }
   const ok = verdict === 'ok'
-  process.stdout.write(`${JSON.stringify({ expected, verdict, seen, errors: errors.slice(0, 4) })}\n`)
+  process.stdout.write(`${JSON.stringify({ expected, verdict, seen, sessionActions, errors: errors.slice(0, 4) })}\n`)
   if (!ok) {
     process.stderr.write(`壳层断言失败：[${verdict}] 期望 ${expected}，实测 ${JSON.stringify(seen)}\n`)
     process.exit(1)
