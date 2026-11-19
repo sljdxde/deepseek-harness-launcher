@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+6318204"
+  const BUILD_STAMP = "0.2.2-rc.5+7e111c7"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -403,22 +403,35 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 
     const readTurnFromNode = (node) => {
       const tail = node?.closest?.('[data-chat-flow-kind="turn-tail"]') ?? null
-      const tails = [...document.querySelectorAll('[data-chat-flow-kind="turn-tail"]')]
-      const turnIndex = tail === null ? 1 : Math.max(1, tails.indexOf(tail) + 1)
-      if (tail === null) return { text: '', role: 'assistant', turnIndex }
-      const previous = (kind) => {
-        let cursor = tail.previousElementSibling
-        while (cursor !== null) {
-          if (cursor.getAttribute?.('data-chat-flow-kind') === kind) return cursor
-          cursor = cursor.previousElementSibling
+      if (tail === null) return { text: '', role: 'assistant', turnIndex: 1 }
+      // 轮次：只看「当前会话里」的 turn-tail（不是全文档），否则多会话页面永远算成 1
+      const tailScope = (() => {
+        let scope = tail.parentElement
+        while (scope !== null && scope !== document.body) {
+          if (scope.querySelectorAll('[data-chat-flow-kind="turn-tail"]').length > 1) return scope
+          scope = scope.parentElement
+        }
+        return tail.parentElement ?? document.body
+      })()
+      const tails = [...tailScope.querySelectorAll('[data-chat-flow-kind="turn-tail"]')]
+      const turnIndex = Math.max(1, tails.indexOf(tail) + 1)
+      // 正文：在「同时包含 tail 的祖先」里找 tail 之前最近的 assistant-step / user（不跨消息容器）
+      const nearestBefore = (kind) => {
+        let scope = tail.parentElement
+        while (scope !== null && scope !== document.body) {
+          const found = [...scope.querySelectorAll(`[data-chat-flow-kind="${kind}"]`)]
+            .filter((el) => el.compareDocumentPosition(tail) & Node.DOCUMENT_POSITION_FOLLOWING)
+          if (found.length > 0) return found[found.length - 1]
+          scope = scope.parentElement
         }
         return null
       }
-      const assistant = previous('assistant-step')
+      const assistant = nearestBefore('assistant-step')
       if (assistant !== null) return { text: textWithFences(assistant), role: 'assistant', turnIndex }
-      const user = previous('user')
+      const user = nearestBefore('user')
       return { text: (user?.innerText ?? user?.textContent ?? '').trim(), role: 'user', turnIndex }
     }
+
 
 
     // 导出：生成 Markdown 并触发下载（不依赖宿主接口）
