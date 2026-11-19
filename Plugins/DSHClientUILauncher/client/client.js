@@ -1,6 +1,6 @@
 // #region module-id
 // 本段由 tools/sync-contract.mjs 从 package.json 的 name 生成，勿手改。
-const MODULE_ID = "dsh-client-ui-launcher"
+const MODULE_ID = "@deepseek-ai/dsh-client-ui-layout"
 // #endregion module-id
 
 window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {

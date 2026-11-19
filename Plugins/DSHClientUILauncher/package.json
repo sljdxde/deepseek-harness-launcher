@@ -1,15 +1,15 @@
 {
-  "name": "dsh-client-ui-launcher",
-  "version": "0.2.0",
-  "description": "dsh 新外壳：接管 root 并重新声明 6 个子槽，右栏 / 2-4-6 分屏 / composer 四件 / 插件工作台容器",
+  "name": "@deepseek-ai/dsh-client-ui-layout",
+  "version": "0.2.2-rc.5",
+  "description": "dsh 新外壳（同名 drop-in：以 @deepseek-ai/dsh-client-ui-layout 的名义替换宿主 layout 实现）",
   "private": true,
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
+    "./client": "./client/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json",
-    "./client": "./client/client.js"
+    "./package.json": "./package.json"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
