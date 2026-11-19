@@ -38,3 +38,18 @@ export function exportTurnMarkdown(turn = {}) {
   const text = typeof turn.text === 'string' && turn.text.length > 0 ? turn.text : '（这一轮没有可导出的文本）'
   return `## ${role}\n\n${text}\n`
 }
+
+/**
+ * 组装一次导出：**没有正文就不产出文件**（只给 `messageId` 时不许写占位文件）。
+ * 宿主调用 assistant-actions 槽时只传 `messageId`，正文必须由调用方按 id 取到再传进来。
+ * @param {{ messageId?: string, text?: string, role?: string, turnIndex?: number, stamp?: number }} [turn] - 一轮数据。
+ * @returns {{ fileName: string, body: string }|null} 文件内容；取不到正文时 null。
+ */
+export function buildTurnExport(turn = {}) {
+  const text = typeof turn.text === 'string' ? turn.text.trim() : ''
+  if (text.length === 0) return null
+  const role = turn.role === 'assistant' ? '助手' : '用户'
+  const index = Number.isFinite(turn.turnIndex) && turn.turnIndex > 0 ? Math.trunc(turn.turnIndex) : 1
+  const stamp = Number.isFinite(turn.stamp) ? Math.trunc(turn.stamp) : Date.now()
+  return { fileName: `turn-${index}-${stamp}.md`, body: `## ${role}\n\n${text}\n` }
+}

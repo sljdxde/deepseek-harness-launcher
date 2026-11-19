@@ -356,10 +356,27 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   function registerTurnActions(ctx) {
     const disposers = []
 
+    /** 宿主只传 messageId：按 DOM 里的消息节点取正文/角色/轮次。 */
+    const readTurnByMessageId = (messageId, fallbackNode) => {
+      const nodes = [...document.querySelectorAll('[data-message-id]')]
+      const node = nodes.find((n) => n.getAttribute('data-message-id') === String(messageId))
+        ?? fallbackNode?.closest?.('[data-message-id]')
+        ?? null
+      const text = (node?.innerText ?? node?.textContent ?? '').trim()
+      const index = node === null ? 1 : nodes.indexOf(node) + 1
+      const role = node?.getAttribute('data-role') === 'assistant' || /assistant/.test(node?.className ?? '') ? 'assistant' : 'user'
+      return { messageId, text, turnIndex: index > 0 ? index : 1, role, nodes }
+    }
+
     // 导出：生成 Markdown 并触发下载（不依赖宿主接口）
     const downloadExport = (turn) => {
+      const text = typeof turn?.text === 'string' ? turn.text.trim() : ''
+      if (text.length === 0) {
+        // 取不到正文就不产占位文件（真机空文件事故）
+        showLauncherToast('导出失败：取不到这一轮的正文')
+        return
+      }
       const index = Number.isFinite(turn?.turnIndex) && turn.turnIndex > 0 ? Math.trunc(turn.turnIndex) : 1
-      const text = typeof turn?.text === 'string' && turn.text.length > 0 ? turn.text : '（这一轮没有可导出的文本）'
       const body = `## ${turn?.role === 'assistant' ? '助手' : '用户'}\n\n${text}\n`
       try {
         const blob = new Blob([body], { type: 'text/markdown;charset=utf-8' })
@@ -380,7 +397,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 
     // 上下文查看：有锚点就滚过去高亮；没有就固定文案告知（不静默）
     const viewInContext = (turn) => {
-      const anchor = turn?.anchorId === undefined ? null : document.getElementById(String(turn.anchorId))
+      const node = (turn?.nodes ?? []).find((n) => n.getAttribute('data-message-id') === String(turn?.messageId)) ?? null
+      const anchor = node ?? (turn?.anchorId === undefined ? null : document.getElementById(String(turn.anchorId)))
       if (anchor !== null) {
         anchor.scrollIntoView({ block: 'center', behavior: 'smooth' })
         anchor.classList.add('launcher-turn-highlight')
@@ -399,7 +417,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     for (const row of rows) {
       try {
         const Component = (slotProps) => {
-          const turn = slotProps?.turn ?? {}
+          const turn = readTurnByMessageId(slotProps?.messageId, slotProps?.node)
           return h('button', {
             type: 'button',
             className: 'launcher-turn-action',
