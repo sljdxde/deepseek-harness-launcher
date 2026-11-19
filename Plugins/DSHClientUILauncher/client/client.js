@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+ea53a48"
+  const BUILD_STAMP = "0.2.2-rc.5+00c7232"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -211,6 +211,17 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 
   /** 宿主面板里「自己不带返回」的那些——由外壳补一条回链（插件页自带，不重复）。 */
   const PANELS_NEEDING_BACK = ['dsh-archive-manager']
+
+  /** 回会话页：宿主 selectPanel(null) 不生效时退到 'conversation' 真 key。 */
+  function goConversation(ctx) {
+    try {
+      ctx?.layout?.selectPanel?.(null)
+      if (ctx?.layout?.panelInfo?.getSnapshot?.().activePanelId === null) return true
+    } catch {
+      /* 落到真 key */
+    }
+    return selectPanel('conversation')
+  }
 
   const RAIL_CANDIDATES = {
     conversation: ['conversation'],
@@ -1251,7 +1262,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
                   : null,
                 activePanelId !== null && PANELS_NEEDING_BACK.includes(activePanelId)
                   ? h('div', { key: 'panel-back', className: 'launcher-panel-back' },
-                    h('button', { type: 'button', className: 'launcher-panel-back__btn', onClick: () => selectPanel(null) }, '← 返回会话'))
+                    h('button', { type: 'button', className: 'launcher-panel-back__btn', onClick: () => goConversation(CURRENT_CTX) }, '← 返回会话'))
                   : null,
                 // 宿主子树（含 composer）必须照常渲染：卡片不能顶掉输入框
                 h('div', { key: 'host-main', className: 'launcher-pane__host' }, renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' })),
