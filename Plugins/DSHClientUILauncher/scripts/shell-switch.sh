@@ -176,6 +176,10 @@ set_override() {
   if [ "$mode" = "add" ]; then
     dsh_plugin add "@deepseek-ai/dsh-client-ui-layout@file:$PACKAGE_DIR"
   else
+    # 幂等：依赖已经不在了就不调 dsh plugin remove（否则 pnpm remove 会因"该依赖不存在"报错）
+    if "$NODE" -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.exit(m.dependencies?.["@deepseek-ai/dsh-client-ui-layout"]===undefined?0:1)' "$MANIFEST"; then
+      return 0
+    fi
     dsh_plugin remove "@deepseek-ai/dsh-client-ui-layout"
   fi
 }
@@ -285,6 +289,7 @@ case "${1:-}" in
     write_state native
     log_line "switch=native link=$(link_target)"
     echo "已卸回宿主实现（依赖移除）"
+    compare_snapshot
     restart_web || exit 3
     if [ -n "${DSH_URL:-}" ]; then verify_page native || { log_line "verify=native FAILED"; exit 1; }; fi
     ;;
