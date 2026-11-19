@@ -14,6 +14,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { SUB_SLOTS, LAYOUT_FACE_MEMBERS } from '../lib/contract.js'
+import { RAIL_ENTRIES } from '../lib/rail.js'
+import { MODE_LABELS, statusText } from '../lib/statusbar.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLIENT = join(ROOT, 'client', 'client.js')
@@ -31,6 +33,9 @@ export function contractBlock() {
     children,
     '  }',
     `  const LAYOUT_FACE_MEMBERS = ${JSON.stringify(LAYOUT_FACE_MEMBERS)}`,
+    `  const RAIL_ENTRIES = ${JSON.stringify(RAIL_ENTRIES)}`,
+    `  const MODE_LABELS = ${JSON.stringify(MODE_LABELS)}`,
+    `  const statusText = ${statusText.toString()}`,
     END,
   ].join('\n')
 }

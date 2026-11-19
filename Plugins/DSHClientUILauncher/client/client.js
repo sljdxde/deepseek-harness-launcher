@@ -14,6 +14,20 @@ window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) 
     "shell.leading": { kind: "single", scope: 'root' },
   }
   const LAYOUT_FACE_MEMBERS = ["panelInfo","selectPanel","beginNavigation","toggleSidebar","openRightbar","closeRightbar"]
+  const RAIL_ENTRIES = [{"id":"conversation","label":"会话","icon":"message-circle"},{"id":"plugins","label":"插件","icon":"puzzle"},{"id":"schedules","label":"计划任务","icon":"calendar"},{"id":"approvals","label":"待审批","icon":"shield-check"},{"id":"settings","label":"设置","icon":"settings"}]
+  const MODE_LABELS = {"readonly":"只读","ask":"每次询问","auto-safe":"自动批准安全命令","full":"全自动"}
+  const statusText = function statusText({ page, mode, running = 0, queued = 0 } = {}) {
+  const runs = Math.max(0, Math.round(Number(running) || 0))
+  const waiting = Math.max(0, Math.round(Number(queued) || 0))
+  const parts = []
+  if (runs > 0) parts.push(`${runs} 个任务在跑`)
+  if (waiting > 0) parts.push(`排队 ${waiting}`)
+  return {
+    page: typeof page === 'string' && page.length > 0 ? page : '会话',
+    mode: MODE_LABELS[mode] ?? MODE_LABELS['auto-safe'],
+    running: parts.join(' · '),
+  }
+}
   // #endregion children-from-contract
 
   const CSS = `
@@ -24,6 +38,9 @@ window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) 
   grid-template-areas:"rail sidebar main dock" "status status status status";
   height:100vh;width:100vw;overflow:hidden}
 .launcher-rail{grid-area:rail;align-items:center;border-right:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;flex-direction:column;gap:6px;padding:8px 0;min-height:0}
+.launcher-rail__entry{align-items:center;background:transparent;border:0;border-radius:10px;color:var(--dsw-alias-label-secondary,#666);cursor:pointer;display:flex;flex:none;font:inherit;font-size:13px;height:36px;justify-content:center;width:36px}
+.launcher-rail__entry:hover{background:var(--dsw-alias-button-floating-hover,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary)}
+.launcher-rail__entry.on{background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.18));color:var(--dsw-alias-label-primary)}
 .launcher-sidebar{grid-area:sidebar;border-right:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));min-height:0;overflow:hidden}
 .launcher-main{grid-area:main;container-type:inline-size;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
 .launcher-dock{grid-area:dock;border-left:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));min-height:0;overflow:hidden;display:flex;flex-direction:column}
@@ -65,11 +82,21 @@ window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) 
     const renderSlot = props.renderSlot
     const viewportWidth = typeof window === 'undefined' ? 1440 : window.innerWidth
     const dockOpen = props.useDockOpen === undefined ? false : props.useDockOpen()
+    const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     const dockWidth = dockOpen ? DOCK_WIDTH : 0
     const collapsed = props.sidebarCollapsed === true
     return h('div', { className: 'launcher-shell', 'data-shell': 'launcher' },
       h('div', { className: 'launcher-rail', role: 'navigation', 'aria-label': 'launcher rail' },
-        renderSlot('shell.leading', {})),
+        renderSlot('shell.leading', {}),
+        RAIL_ENTRIES.map((entry) => h('button', {
+          key: entry.id,
+          type: 'button',
+          className: `launcher-rail__entry${props.activeRail === entry.id ? ' on' : ''}`,
+          title: entry.label,
+          'aria-label': entry.label,
+          'aria-pressed': props.activeRail === entry.id,
+          onClick: () => props.onRail?.(entry.id),
+        }, entry.label.slice(0, 1)))),
       h('aside', { className: 'launcher-sidebar' },
         collapsed ? null : renderSlot('sidebar', { collapsed, width: 280, drawer: false })),
       h('main', { className: 'launcher-main' },
@@ -77,6 +104,9 @@ window.__ModuleLoader__.load({ id: 'dsh-client-ui-launcher', factory: (require) 
       h('aside', { className: 'launcher-dock' },
         dockWidth > 0 ? renderSlot('rightbar', { width: dockWidth, viewportWidth, canShow: true }) : null),
       h('footer', { className: 'launcher-statusbar' },
+        h('span', { className: 'launcher-statusbar__page' }, status().page),
+        h('span', { className: 'launcher-statusbar__mode' }, status().mode),
+        h('span', { className: 'launcher-statusbar__running' }, status().running),
         renderSlot('shell.bottom', {})),
       h('div', { className: 'launcher-overlay' },
         renderSlot('shell.overlay', {})),
