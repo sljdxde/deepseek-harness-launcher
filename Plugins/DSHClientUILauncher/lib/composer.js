@@ -310,3 +310,37 @@ export function quoteBlockOf(text) {
   const lines = raw.split('\n')
   return { ok: true, block: lines.map((line) => `> ${line}`.trimEnd()).join('\n'), lines: lines.length }
 }
+
+/** 权限范围三档（FR-35 / 05 §6.3-⑥）：从宽到严。 */
+export const PERMISSION_LEVELS = ['danger-full-access', 'workspace-write', 'read']
+
+/** 指路句（浮层/提示用，逐字对应 05 §6.3-⑥）。 */
+export const PERMISSION_HINTS = {
+  'danger-full-access': '完全权限：可读写工作区外的路径；危险命令仍然会先问',
+  'workspace-write': '工作区内修改：出工作区的写入一律拒绝',
+  read: '仅可查看：不改任何文件',
+}
+
+/** 审批模式对应的权限上限：互不改文案，但取更严的那条。 */
+const MODE_CAP = { readonly: 'read', ask: 'workspace-write', 'auto-safe': 'workspace-write', full: 'danger-full-access' }
+
+/**
+ * 计算权限范围 pill 的当前档（FR-35）。
+ * 默认跟随宿主当前文件策略；读不到或值非法时兜底 `workspace-write`，**绝不用 `danger-full-access` 兜底**。
+ * 与审批模式取更严：档位不得宽于模式允许的上限。
+ * @param {{ hostPolicy?: string, approvalMode?: string }} [input] - 宿主文件策略与当前审批模式。
+ * @returns {{ level: string, hint: string, fallbackUsed: boolean, cappedByMode: boolean }} pill 状态。
+ */
+export function permissionPill({ hostPolicy, approvalMode } = {}) {
+  const valid = PERMISSION_LEVELS.includes(hostPolicy)
+  const fallbackUsed = !valid
+  const level = valid ? hostPolicy : 'workspace-write'
+  const cap = MODE_CAP[approvalMode]
+  let effective = level
+  let cappedByMode = false
+  if (cap !== undefined && PERMISSION_LEVELS.indexOf(cap) > PERMISSION_LEVELS.indexOf(level)) {
+    effective = cap
+    cappedByMode = true
+  }
+  return { level: effective, hint: PERMISSION_HINTS[effective], fallbackUsed, cappedByMode }
+}

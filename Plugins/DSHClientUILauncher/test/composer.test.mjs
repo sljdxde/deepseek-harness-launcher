@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  ATTACH_LIMIT, AUTO_SENT_LABEL, SLASH_QUERY_LIMIT, addAttachment, breakdownOf, createQueue, filterSlash, levelOf, meterOf, meterHint, contextPanelTitle, quoteBlockOf, slashQueryOf,
+  ATTACH_LIMIT, AUTO_SENT_LABEL, PERMISSION_HINTS, PERMISSION_LEVELS, SLASH_QUERY_LIMIT, permissionPill, addAttachment, breakdownOf, createQueue, filterSlash, levelOf, meterOf, meterHint, contextPanelTitle, quoteBlockOf, slashQueryOf,
 } from '../lib/composer.js'
 
 test('/ 只在行首、无空白、无第二个斜杠时触发', () => {
@@ -211,4 +211,26 @@ test('排队消息：正常结束自动出队首并带 auto 标记；中断后�
 
 test('自动发出的标记文案就是定稿那一句（逐字）', () => {
   assert.equal(AUTO_SENT_LABEL, '排队后自动发送')
+})
+
+test('权限范围 pill：跟宿主策略；读不到兜底 workspace-write，绝不兜底 full（FR-35）', () => {
+  assert.equal(permissionPill({ hostPolicy: 'read' }).level, 'read')
+  assert.equal(permissionPill({ hostPolicy: 'danger-full-access' }).level, 'danger-full-access')
+  const missing = permissionPill({})
+  assert.equal(missing.level, 'workspace-write')
+  assert.equal(missing.fallbackUsed, true)
+  const bogus = permissionPill({ hostPolicy: 'nonsense' })
+  assert.equal(bogus.level, 'workspace-write')
+  assert.equal(bogus.fallbackUsed, true)
+  // 绝不用 full 兜底：任何读不到的情形都不等于 full
+  assert.notEqual(missing.level, 'danger-full-access')
+})
+
+test('权限范围与审批模式取更严（互不改文案）', () => {
+  assert.equal(permissionPill({ hostPolicy: 'danger-full-access', approvalMode: 'readonly' }).level, 'read')
+  assert.equal(permissionPill({ hostPolicy: 'danger-full-access', approvalMode: 'ask' }).level, 'workspace-write')
+  const capped = permissionPill({ hostPolicy: 'danger-full-access', approvalMode: 'readonly' })
+  assert.equal(capped.cappedByMode, true)
+  assert.equal(capped.hint, PERMISSION_HINTS.read)
+  assert.deepEqual(PERMISSION_LEVELS, ['danger-full-access', 'workspace-write', 'read'])
 })
