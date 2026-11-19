@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+0579be0"
+  const BUILD_STAMP = "0.2.2-rc.5+f022150"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1255,6 +1255,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const toggleTheme = () => applyTheme((() => { try { return CURRENT_CTX?.theme?.getTheme?.()?.preference } catch { return undefined } })() === 'dark' ? 'light' : 'dark')
     /** 右栏开关：宿主 sidebarRight/命令 + 外壳轨道，两条入口（rail ▤ / ⌘⇧B）共用同一份状态。 */
     const toggleRef = React.useRef({ dock: null, theme: null })
+    const layerRef = React.useRef({ palette: false, dev: false })
     const dockTimerRef = React.useRef(0)
     const toggleDock = () => {
       // 以模块级 store 为准（React 状态可能滞后一帧，导致"永远只开不关"）
@@ -1311,10 +1312,17 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }, [])
     toggleRef.current.dock = toggleDock
     toggleRef.current.theme = toggleTheme
+    layerRef.current.palette = paletteOpen
+    layerRef.current.dev = devOpen
     React.useEffect(() => {
       // composer 是 Lexical，root 上的 keydown 可能被它 stopPropagation：window capture 抢在前面。
       // 通过 ref 调最新的 toggle，避免拿到首次渲染的陈旧 dockOpen。
       const onShortcut = (event) => {
+        if (event.key === 'Escape' && layerRef.current.dev && !layerRef.current.palette) {
+          event.preventDefault()
+          setDevOpen(false)
+          return
+        }
         const withMod = event.metaKey || event.ctrlKey
         if (!withMod || !event.shiftKey) return
         const key = String(event.key).toLowerCase()
