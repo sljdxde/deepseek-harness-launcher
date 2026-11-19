@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+81a3881"
+  const BUILD_STAMP = "0.2.2-rc.5+342c137"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -633,6 +633,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     try {
       if (typeof ctx?.slots?.inject !== 'function') return []
+      // M1：composer.bar 在 rc.5 是 single 槽，注册会打断 required 激活（同模型 chip 的坑）
+      const spec = ctx.slots.spec?.('conversation.composer.bar')
+      if (spec === undefined || spec === null || spec.kind !== 'list') return []
       const dispose = ctx.slots.inject('conversation.composer.bar', () => ctx.slots.register({
         name: 'conversation.composer.bar',
         id: 'launcher.permissionPill',
@@ -987,7 +990,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    */
   function fillComposerByDom(text) {
     try {
-      const editable = document.querySelector('[contenteditable="true"]')
+      const root = document.querySelector('[data-slot="conversation.composer"]')
+        ?? document.querySelector('[contenteditable="true"]')?.closest('[class*="composer"]')
+        ?? null
+      const editable = root?.querySelector('[contenteditable="true"]') ?? null
       if (editable !== null) {
         editable.focus()
         const selection = window.getSelection()
@@ -1007,8 +1013,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           try {
             const data = new DataTransfer()
             data.setData('text/plain', String(text))
-            editable.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
-            return true
+            // defaultPrevented = Lexical 接住了 paste；未被接住则继续走逐行插入（别报假成功）
+            const event = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })
+            editable.dispatchEvent(event)
+            if (event.defaultPrevented) return true
           } catch {
             /* 退逐行插入 */
           }
@@ -1169,7 +1177,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     // 标准 props 是选择器钩子（SnapshotSelectorHook），必须带 selector 调用，
     // 直接 useDockOpen() 会报 `selector is not a function` 并把 root 整个打崩。
     const dockOpenHook = props.useDockOpen === undefined ? false : props.useDockOpen((open) => open)
-    const [dockSticky, setDockSticky] = React.useState(false)
     const [dockOpenEvent, setDockOpenEvent] = React.useState(() => {
       try { return window.__DSH_LAUNCHER_DOCK__ === true } catch { return false }
     })
@@ -1178,14 +1185,16 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       window.addEventListener('launcher:dock', onDock)
       return () => window.removeEventListener('launcher:dock', onDock)
     }, [])
-    const dockOpen = dockOpenHook || dockOpenEvent || dockSticky
+    const dockOpen = dockOpenHook || dockOpenEvent
     const status = () => statusText({ page: props.statusPage, mode: props.statusMode, running: props.statusRunning, queued: props.statusQueued })
     // W3：拖拽把手 + canShow 接线。宽度只改 CSS 变量，不重绘右栏内容。
     // 03 FR-13：宽度按会话记忆（localStorage['dsh.launcher.dockWidth']），刷新后右栏默认收起、重开回该值
     const [dragWidth, setDragWidth] = React.useState(() => {
       try {
         const saved = Number(window.localStorage.getItem('dsh.launcher.dockWidth'))
-        return Number.isFinite(saved) && saved >= DOCK_MIN && saved <= DOCK_MAX ? Math.round(saved) : DOCK_WIDTH
+        if (!Number.isFinite(saved)) return DOCK_WIDTH
+        const max = Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.round(window.innerWidth - 816)))
+        return saved >= DOCK_MIN && saved <= max ? Math.round(saved) : DOCK_WIDTH
       } catch {
         return DOCK_WIDTH
       }
@@ -1234,7 +1243,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     /** 右栏开关：宿主 sidebarRight/命令 + 外壳轨道，两条入口（rail ▤ / ⌘⇧B）共用同一份状态。 */
     const toggleDock = () => {
       const hostOk = toggleRightbarHost()
-      setDockSticky((open) => !open)
       if (!hostOk) {
         setTimeout(() => {
           const width = document.querySelector('.launcher-dock')?.getBoundingClientRect().width ?? 0
@@ -1354,8 +1362,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const [paletteIndex, setPaletteIndex] = React.useState(0)
     const [query, setQuery] = React.useState('')
     const shown = commands.filter((cmd) => query === '' || String(cmd.label).includes(query))
-    const [cols, rows] = SPLIT_GRID[splitMode] ?? SPLIT_GRID[1]
-    const paneKeys = Array.from({ length: splitMode }, (_, i) => (i === 0 ? 'conversation' : `conversation#${i + 1}`))
+    const mainWidth = Math.max(0, viewportWidth - 56 - (collapsed === true ? 0 : 280) - dockWidth)
+    const effectiveSplit = resolveSplit(splitMode, mainWidth, (typeof window === 'undefined' ? 900 : window.innerHeight) - 26)
+    const [cols, rows] = SPLIT_GRID[effectiveSplit] ?? SPLIT_GRID[1]
+    const paneKeys = Array.from({ length: effectiveSplit }, (_, i) => (i === 0 ? 'conversation' : `conversation#${i + 1}`))
     const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
     const dockWidth = dockCanShow ? Math.max(DOCK_MIN, dragWidth) : 0
     const lastPointerRef = React.useRef({ time: 0, x: 0 })
@@ -1373,16 +1383,18 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const startX = event.clientX
       const startWidth = dragWidth
       const move = (e) => {
-        const next = clampDock(startWidth - (e.clientX - startX))
+        const next = clampDock(startWidth - (e.clientX - startX), window.innerWidth)
         setDragWidth(next)
         try { window.localStorage.setItem('dsh.launcher.dockWidth', String(next)) } catch { /* 忽略 */ }
       }
       const up = () => {
         window.removeEventListener('pointermove', move)
         window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', up)
       }
       window.addEventListener('pointermove', move)
       window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', up)
     }
     const collapsed = props.sidebarCollapsed === true
     const runCommand = (cmd) => {
@@ -1425,6 +1437,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }
       if (!paletteOpen) return
       if (event.key === 'Escape') {
+        const target = nextEscapeTarget([paletteOpen ? 'palette' : null, devOpen ? 'meter' : null].filter(Boolean))
+        if (target === null) return
         event.preventDefault()
         setPaletteOpen(false)
         requestAnimationFrame(() => { const pane = document.querySelector('.launcher-pane'); if (pane !== null) pane.scrollTop = paneScrollRef.current })
@@ -1652,7 +1666,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     window.__DSH_LAUNCHER_SHELL__ = true
     // 验证句柄：真机上从 console 调 ctx.layout.selectPanel(null) 等（技术负责人 W1 尾判据第 1 条）。
     // 只读暴露，不改行为；卸载时清掉。
-    window.__DSH_LAUNCHER_CTX__ = ctx
+    // M6：整份 cordis ctx 只在 DEBUG 下暴露，发布版不挂（同 __DSH_LAUNCHER_FILL__）
+    if (typeof window !== 'undefined' && window.__DSH_LAUNCHER_DEBUG__ === true) {
+      window.__DSH_LAUNCHER_CTX__ = ctx
+    }
     CURRENT_CTX = ctx
     // FR-39/42/43：会话流动作（真槽，槽在才注册）
     const turnDisposers = registerTurnActions(ctx)
@@ -1692,16 +1709,16 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         return () => dockListeners.delete(listener)
       },
     }
-    let dockOpenedAt = 0
+    // M2：禁止时间窗。按 05-§6.3.0，只在「本次 open 之后」忽略占位者那一次 close（一次），
+    // 之后的任何 close（含用户主动关）一律生效。
+    let dockCloseGuardArmed = false
     let dockCloseGuardUsed = true
     const setDockOpen = (next) => {
-      // 只忽略「打开后紧接着的那一次 close」（占位者挂载时发的），之后的关闭照常生效，
-      // 避免用户点关闭没反应（800ms 内一律忽略会吃掉用户操作）。
       if (next === true) {
-        dockOpenedAt = Date.now()
+        dockCloseGuardArmed = true
         dockCloseGuardUsed = false
       }
-      if (next === false && !dockCloseGuardUsed && Date.now() - dockOpenedAt < 800) {
+      if (next === false && dockCloseGuardArmed && !dockCloseGuardUsed) {
         dockCloseGuardUsed = true
         return
       }
