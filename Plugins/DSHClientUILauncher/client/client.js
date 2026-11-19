@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+b140662"
+  const BUILD_STAMP = "0.2.2-rc.5+525b543"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -113,7 +113,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-statusbar{grid-area:status;align-items:center;border-top:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));display:flex;font-size:11px;gap:10px;padding:0 10px;color:var(--dsw-alias-label-secondary)}
 .launcher-overlay{position:fixed;inset:0;pointer-events:none;z-index:40}
 .launcher-overlay>*{pointer-events:auto}
-.launcher-pane{position:relative;display:flex;flex-direction:column;min-height:0}
+.launcher-pane{position:relative;display:flex;flex-direction:column;min-height:0;overflow:hidden;contain:paint;isolation:isolate}
 @media (max-width: 860px){
   .launcher-shell{grid-template-columns:var(--launcher-rail) 0 minmax(0,1fr) 0}
   .launcher-sidebar{position:fixed;left:var(--launcher-rail);top:0;bottom:var(--launcher-status);width:280px;z-index:30;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff));border-right:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));box-shadow:0 0 0 100vmax rgba(0,0,0,.001)}
