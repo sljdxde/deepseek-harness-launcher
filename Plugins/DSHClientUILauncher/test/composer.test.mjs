@@ -72,8 +72,9 @@ test('计量：真机口径 round(used/window*100)，85/95 两档阈值', () => 
 })
 
 test('计量环的 title 与 aria-label 共用同一句（定稿文案）', () => {
-  const { text } = meterHint(meterOf({ used: 176000, window: 200000 }).pct)
-  assert.equal(text, '上下文占用 88%，该压缩了 · 点开压到 40%')
+  const { pct, level } = meterOf({ used: 176000, window: 200000 })
+  assert.equal(meterHint(pct), '上下文占用 88%，该压缩了 · 点开压到 40%')
+  assert.equal(level, 'warn', '颜色只由 level 决定，不靠文案')
 })
 
 test('四项拆分之和恒等于显示值', () => {

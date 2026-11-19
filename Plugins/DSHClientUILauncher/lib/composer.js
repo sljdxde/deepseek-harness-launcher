@@ -121,22 +121,22 @@ export function levelOf(pct) {
 }
 
 /**
- * 计量环的提示文案与告警强度（04-A2 · D2，2026-11-19 设计定稿）。
+ * 计量环的提示文案（04-A2 · D2，2026-11-19 设计定稿三句）。
  *
  * `title` 与 `aria-label` 用同一句；数字取实时值；拆分面板顶不加文字。
- * 三档：
+ * 颜色不走这里——琥珀/红由 `levelOf(pct)` 决定（FR-09 的 85/95 两档），文案只负责说话：
  *   `<85%`  `上下文占用 59% · 点开看拆分`
- *   `≥85%`  `上下文占用 88%，该压缩了 · 点开压到 40%`（琥珀）
- *   `≥95%`  `上下文占用 97%，快满了 · 点开压到 40%`（红）
+ *   `≥85%`  `上下文占用 88%，该压缩了 · 点开压到 40%`
+ *   `≥95%`  `上下文占用 97%，快满了 · 点开压到 40%`
  * @param {number} pct - 0–100 的实时百分比。
- * @returns {{ text: string, urgency: 'none'|'warn'|'alert' }} 文案（title 与 aria-label 共用）与告警强度。
+ * @returns {string} 给 title 与 aria-label 的那一句。
  */
 export function meterHint(pct) {
   const value = Number.isFinite(Number(pct)) ? Math.min(100, Math.max(0, Math.round(Number(pct)))) : 0
   const level = levelOf(value)
-  if (level === 'hot') return { text: `上下文占用 ${value}%，快满了 · 点开压到 40%`, urgency: 'alert' }
-  if (level === 'warn') return { text: `上下文占用 ${value}%，该压缩了 · 点开压到 40%`, urgency: 'warn' }
-  return { text: `上下文占用 ${value}% · 点开看拆分`, urgency: 'none' }
+  if (level === 'hot') return `上下文占用 ${value}%，快满了 · 点开压到 40%`
+  if (level === 'warn') return `上下文占用 ${value}%，该压缩了 · 点开压到 40%`
+  return `上下文占用 ${value}% · 点开看拆分`
 }
 
 /**
