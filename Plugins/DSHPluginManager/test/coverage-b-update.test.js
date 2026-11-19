@@ -263,6 +263,33 @@ serialTest('installCandidates：author/repo#subdir 不给 git 地址（只能稀
   });
 });
 
+serialTest('installCandidates：url 的 tree 路径优先于名字里的短标签子目录', () => {
+  // 市场名里的 #dsh 只是展示短标签，真实路径在链接里；按短标签会找不到 package.json
+  //（实测 strukto-ai/mirage#dsh 报「子目录 dsh 没有 package.json」）。
+  const short = installCandidates({
+    name: 'strukto-ai/mirage#dsh',
+    url: 'https://github.com/strukto-ai/mirage/tree/main/typescript/packages/dsh',
+  });
+  assert.deepEqual(short.candidates, ['@strukto-ai/mirage', 'mirage']);
+  assert.equal(short.git, null);
+  assert.deepEqual(short.repoRef, {
+    author: 'strukto-ai', repo: 'mirage', subdir: 'typescript/packages/dsh', full: 'strukto-ai/mirage#typescript/packages/dsh'
+  });
+
+  // 名字里没有 #、url 是 tree 链接：同样按子目录安装
+  const byURL = installCandidates({
+    name: 'vectorize-io/hindsight',
+    url: 'https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents',
+  });
+  assert.equal(byURL.repoRef.subdir, 'hindsight-integrations/coding-agents');
+  assert.equal(byURL.git, null);
+
+  // 整仓链接不误判为子目录
+  const whole = installCandidates({ name: 'a/b', url: 'https://github.com/a/b' });
+  assert.equal(whole.repoRef.subdir, null);
+  assert.equal(whole.git, 'https://github.com/a/b.git');
+});
+
 serialTest('installCandidates：没有斜杠的名字只当裸 npm 名', () => {
   const result = installCandidates({ name: 'PlainName' });
   assert.deepEqual(result.candidates, ['plainname']);

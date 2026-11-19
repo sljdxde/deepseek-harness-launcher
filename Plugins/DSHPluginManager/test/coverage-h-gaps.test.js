@@ -81,7 +81,7 @@ afterEach(() => { execHook = null; });
 
 // 必须在替换 execFile 之后再 import：lib/index.js 顶层就会 promisify(execFile)。
 const lib = await import('../lib/index.js');
-const { applyPluginUpdate, discoverPluginRowIds, installPlugin } = lib;
+const { applyPluginUpdate, discoverPluginRowIds, installPlugin, parseVersionRejection, allowPluginVersion, resetMirrorCache } = lib;
 const { readJsonFile } = await import('../lib/atomic.js');
 
 // ---------------------------------------------------------------------------
@@ -183,6 +183,174 @@ serialTest('installPlugin：npm 探测抛错时不崩，记成 unreachable 后�
     assert.deepEqual(probed, ['plain'], '每个候选都要探一次');
     assert.equal(result.ok, false, '探不通装不上，但不能把异常穿透出去');
     assert.match(result.error, /registry 超时/);
+  });
+});
+
+serialTest('installPlugin：两个 npm 候选并行探测，不串行等满两次超时', async () => {
+  await withTempHome(async home => {
+    await writeProfile(home);
+    let started = 0;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const pending = installPlugin({ name: 'Owner/Repo' }, async () => ({}), {
+      verifyPresent: async () => true,
+      // 探测挂起，直到两条都发出（串行实现里第二条永远不会发出）。
+      npmProbe: async () => {
+        started += 1;
+        await gate;
+        return false;
+      },
+      clone: async () => ({ ok: false, error: 'clone 失败' })
+    });
+    // 轮询等待两条探测都发出（固定 sleep 在并行跑测试时会被机器负载拖慢）。
+    const deadline = Date.now() + 3000;
+    while (started < 2 && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(started, 2, '第二个候选在第一个返回前就已发出');
+    release();
+    const result = await pending;
+    assert.equal(result.ok, false);
+    assert.match(result.error, /clone 失败/);
+  });
+});
+
+serialTest('installPlugin：dsh 版本拒绝时立即上报并给出豁免信息，不再白跑构建', async () => {
+  await withTempHome(async home => {
+    await writeProfile(home);
+    const adds = [];
+    const cloned = [];
+    let prepared = false;
+    const raw = 'dsh: installation rejected: Plugin @a/b@1.2.3 is incompatible with dsh 0.2.2-rc.2: '
+      + 'requirements {"@deepseek-ai/dsh-fs":"0.2.0-rc.2","@deepseek-ai/dsh-shell":"0.2.0-rc.2"}. '
+      + 'Running it may cause crashes or data loss.';
+    const result = await installPlugin({ name: 'a/b' }, async (args) => {
+      adds.push(args);
+      throw new Error('Command failed: dsh.cmd plugin add @a/b\n' + raw);
+    }, {
+      verifyPresent: async () => true,
+      npmProbe: async () => true,
+      clone: async (ref) => { cloned.push(ref); return { ok: true, dest: 'X:/clone', packageName: '@a/b' }; },
+      prepare: async () => { prepared = true; return { ok: true, built: true, missing: [] }; }
+    });
+
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.allowVersion, {
+      name: '@a/b', version: '1.2.3', dshVersion: '0.2.2-rc.2',
+      requirements: '{"@deepseek-ai/dsh-fs":"0.2.0-rc.2","@deepseek-ai/dsh-shell":"0.2.0-rc.2"}'
+    });
+    assert.match(result.error, /接受风险并安装/);
+    assert.match(result.error, /0\.2\.2-rc\.2/, '错误里带当前 dsh 版本');
+    assert.equal(adds.length, 1, '拒绝后不再尝试第二个候选名');
+    assert.equal(cloned.length, 0, '拒绝后不再克隆源码');
+    assert.equal(prepared, false, '拒绝后不再源码构建');
+  });
+});
+
+serialTest('installPlugin：子目录插件源装 npm 发行版被拒时同样立即上报（不白跑构建）', async () => {
+  await withTempHome(async home => {
+    await writeProfile(home);
+    let prepared = false;
+    const raw = 'dsh: installation rejected: Plugin @a/sub@2.0 is incompatible with dsh 9.9.9: '
+      + 'requirements {"@deepseek-ai/dsh-fs":"9.8.0"}. Running it may cause crashes or data loss.';
+    const result = await installPlugin({ name: 'a/b#c', url: 'https://github.com/a/b/tree/main/packages/c' }, async () => {
+      throw new Error('Command failed: dsh.cmd\n' + raw);
+    }, {
+      verifyPresent: async () => true,
+      npmProbe: async () => true,
+      clone: async () => ({ ok: true, dest: 'X:/clone-c', packageName: '@a/sub' }),
+      prepare: async () => { prepared = true; return { ok: true, built: true, missing: [] }; }
+    });
+
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.allowVersion, {
+      name: '@a/sub', version: '2.0', dshVersion: '9.9.9', requirements: '{"@deepseek-ai/dsh-fs":"9.8.0"}'
+    });
+    assert.equal(prepared, false, '拒绝后不再源码构建');
+  });
+});
+
+serialTest('parseVersionRejection：认识 dsh 的钉死拒绝原文，别的错误不误报', () => {
+  const parsed = parseVersionRejection(
+    'dsh: installation rejected: Plugin @struktoai/mirage-dsh@0.0.8 is incompatible with dsh 0.2.2-rc.2: '
+    + 'requirements {"@deepseek-ai/dsh-fs":"0.2.0-rc.2"}. Running it may cause crashes.'
+  );
+  assert.deepEqual(parsed, {
+    name: '@struktoai/mirage-dsh', version: '0.0.8', dshVersion: '0.2.2-rc.2',
+    requirements: '{"@deepseek-ai/dsh-fs":"0.2.0-rc.2"}'
+  });
+  assert.equal(parseVersionRejection('dsh: nothing was installed.'), null, '普通失败不是版本拒绝');
+  assert.equal(parseVersionRejection(''), null);
+  // requirements 缺省也能解析出三元组
+  const bare = parseVersionRejection('Plugin x/y@2.0 is incompatible with dsh 1.2.3.');
+  assert.deepEqual({ ...bare, requirements: null }, { name: 'x/y', version: '2.0', dshVersion: '1.2.3', requirements: null });
+});
+
+serialTest('allowPluginVersion：参数原样透传给 dsh CLI；坏参数与拒绝都如实报错', async () => {
+  await withTempHome(async home => {
+    await writeProfile(home);
+    const seen = [];
+    execHook = call => {
+      seen.push(call);
+      return { stdout: 'exemption granted for @a/b@1.2.3' };
+    };
+    const ok = await allowPluginVersion({ name: '@a/b', version: '1.2.3', dshVersion: '0.2.2-rc.2' });
+    assert.equal(ok.ok, true);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].file.includes('dsh'), true, '走 dsh CLI');
+    // Windows 上必须是 dsh.cmd（execFile 跑无扩展名的 sh 脚本会 ENOENT）；
+    // POSIX 上就是 .bin/dsh 本身。
+    const dshBin = process.platform === 'win32' ? 'dsh.cmd' : 'dsh';
+    assert.ok(seen[0].file.endsWith(dshBin), `dsh CLI 文件名以 ${dshBin} 结尾：${seen[0].file}`);
+    assert.deepEqual(seen[0].args, [
+      'plugin', '--profile', 'web', 'allow-version', '@a/b@1.2.3',
+      '--dsh-version', '0.2.2-rc.2', '--accept-risk'
+    ]);
+
+    // 坏参数直接拒绝，不落子进程
+    seen.length = 0;
+    const bad = await allowPluginVersion({ name: 'a b; rm', version: '1', dshVersion: 'v' });
+    assert.equal(bad.ok, false);
+    assert.match(bad.error, /参数不合法/);
+    assert.equal(seen.length, 0, '坏参数不碰 dsh CLI');
+
+    // dsh 仍拒绝（比如豁免格式不对）→ ok:false 带原文
+    execHook = () => ({ stdout: '', stderr: 'dsh: installation rejected: bad exemption' });
+    const rejected = await allowPluginVersion({ name: '@a/b', version: '1', dshVersion: 'v' });
+    assert.equal(rejected.ok, false);
+    assert.match(rejected.error, /installation rejected/);
+  });
+});
+
+serialTest('pluginCommand：国内加速打开时，dsh CLI 子进程 env 注入两个 registry 变量', async () => {
+  await withTempHome(async home => {
+    await writeProfile(home);
+    const previousPort = process.env.DSH_PORT;
+    process.env.DSH_PORT = '3999';
+    const realFetch = globalThis.fetch;
+    // 镜像插件在线：返回注册表映射 → 期望子进程 env 带上 npm/pnpm 两个前缀。
+    globalThis.fetch = async () => ({
+      ok: true, status: 200,
+      json: async () => ({ enabled: true, table: [{ match: 'https://registry.npmjs.org/', replace: 'https://registry.npmmirror.com/', kind: 'registry' }] }),
+    });
+    const seen = [];
+    execHook = call => { seen.push(call); return { stdout: 'allowed' }; };
+    try {
+      // 前面的用例可能刚把「镜像关闭」缓存进内存（TTL 10s），先清掉再跑。
+      resetMirrorCache();
+      await allowPluginVersion({ name: '@a/b', version: '1.2.3', dshVersion: '0.2.2-rc.2' });
+      const dshCall = seen.find(call => call.file.includes('dsh'));
+      assert.ok(dshCall, 'dsh CLI 被调用');
+      // 这是「安装提速」的核心回归点：pnpm 11 只认 pnpm_config_registry，
+      // 只注入 npm 的那个等于没加速，pnpm install 会直连 npmjs 直到超时。
+      assert.equal(dshCall.options.env.pnpm_config_registry, 'https://registry.npmmirror.com/');
+      assert.equal(dshCall.options.env.npm_config_registry, 'https://registry.npmmirror.com/');
+    } finally {
+      globalThis.fetch = realFetch;
+      if (previousPort === undefined) delete process.env.DSH_PORT;
+      else process.env.DSH_PORT = previousPort;
+      resetMirrorCache();
+    }
   });
 });
 

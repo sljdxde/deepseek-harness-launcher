@@ -1100,12 +1100,16 @@ serialTest('C24 镜像表：状态读取、URL 映射、pnpm 环境变量', asyn
       fetch: async () => ({ ok: true, status: 200, json: async () => ({ enabled: true, table }) }),
     });
     assert.equal(env.npm_config_registry, 'https://registry.npmmirror.com/');
+    // pnpm 11+ 不读 npm_config_*，必须同时给 pnpm_config_registry。
+    assert.equal(env.pnpm_config_registry, 'https://registry.npmmirror.com/');
     const noRegistry = await pnpmEnvironment({
       fetch: async () => ({ ok: true, status: 200, json: async () => ({ enabled: true, table: [{ match: 'a', replace: 'b' }] }) }),
     });
     assert.equal(noRegistry.npm_config_registry, undefined, '表里没有 registry 规则 → 原样返回');
+    assert.equal(noRegistry.pnpm_config_registry, undefined);
     const disabled = await pnpmEnvironment({ fetch: async () => { throw new Error('no plugin'); } });
     assert.equal(disabled.npm_config_registry, undefined);
+    assert.equal(disabled.pnpm_config_registry, undefined);
   });
 });
 
@@ -2041,6 +2045,13 @@ serialTest('C67 分类归并与市场查询：分类/分组/来源/排序各组�
     const official = await queryMarketplace({ source: 'official' });
     assert.equal(official.total, 1);
     assert.equal(official.plugins[0].name, 'b');
+    // 来源筛选是结构性筛选：双榜/推荐位/分类计数/分区都要跟着收窄。
+    // 早前这几项从全量构建，「官方」页上的榜单全是社区插件，官方条目又进不了
+    // 按全量分类切的分区，界面看起来就是「切到官方一个插件都没有」。
+    assert.deepEqual(official.topDownloads.map(p => p.name), ['b']);
+    assert.deepEqual(official.counts.map(c => c.name), ['data']);
+    assert.equal(official.sections.length, 1);
+    assert.deepEqual(official.sections[0].plugins.map(p => p.name), ['b']);
     const community = await queryMarketplace({ source: 'community' });
     assert.equal(community.total, 1);
     const custom = await queryMarketplace({ source: 'my-src' });

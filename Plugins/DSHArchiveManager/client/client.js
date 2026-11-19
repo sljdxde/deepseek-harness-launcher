@@ -78,27 +78,41 @@ window.__ModuleLoader__.load({ id: "dsh-archive-manager", factory: (require) => 
 
   /* 线性 SVG 图标（16 网格 / 1.5 描边 / currentColor）：与插件中心同一套画法，
      不用 emoji（跨平台字形不一致，也和宿主设计语言不搭）。 */
-  // Lucide 线性图标（ISC 许可，24 网格 / 2 描边），与插件管理同一套体系。
+  // Tabler 线性图标（MIT 许可，https://tabler.io/icons）：24 网格 / 2 描边，
+  // 与插件管理同一套体系；每个图标都做了光学归一（内容包围盒统一缩放并居中）。
   const ICON_PATHS = {
-    search: "<path d=\"m21 21-4.34-4.34\" /><circle cx=\"11\" cy=\"11\" r=\"8\" />",
-    archive: "<rect width=\"20\" height=\"5\" x=\"2\" y=\"3\" rx=\"1\" /><path d=\"M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8\" /><path d=\"M10 12h4\" />",
-    restore: "<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /><path d=\"M3 3v5h5\" />",
+    search: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0\"/><path d=\"M21 21l-6 -6\"/></g>",
+    archive: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2\"/><path d=\"M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-10\"/><path d=\"M10 12l4 0\"/></g>",
+    restore: "<g transform=\"translate(-4.187 -4.192) scale(1.3471)\" stroke-width=\"1.485\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5\"/></g>",
   }
+
+
+
+
   function icon(name, size = 14) {
     // 图标名都是本文件里的字面量（archive / search），不设兜底：名字写错
     // 会立刻渲染成空图标，一眼能看出问题。原来的 `|| ICON_PATHS.archive`
     // 永远走不到，却会把拼写错误悄悄变成「显示成 archive 图标」。
     const path = ICON_PATHS[name]
     const nodes = []
-    const tokenRe = /<(path|rect|circle)\b([^>]*)\/?>/g
+    // 图标数据形如 <g transform="…" stroke-width="…">…形状…</g>（光学归一）；属性名转 React camelCase
+    const SVG_ATTR = { 'stroke-width': 'strokeWidth', 'stroke-linecap': 'strokeLinecap', 'stroke-linejoin': 'strokeLinejoin' }
+    const groupRe = /^(?:<g\s([^>]*)>)?([\s\S]*?)(?:<\/g>)?$/
+    const tokenRe = /<(path|rect|circle|line|polyline|polygon|ellipse)\b([^>]*?)\/?>/g
     const attrRe = /([a-zA-Z-]+)="([^"]*)"/g
+    const group = String(path).match(groupRe)
+    const groupAttrs = {}
+    let ga
+    while ((ga = attrRe.exec(group[1]))) groupAttrs[SVG_ATTR[ga[1]] || ga[1]] = ga[2]
     let m
-    while ((m = tokenRe.exec(path))) {
+    const shapes = []
+    while ((m = tokenRe.exec(group[2]))) {
       const attrs = {}
       let a
       while ((a = attrRe.exec(m[2]))) attrs[a[1]] = a[2]
-      nodes.push(h(m[1], { key: nodes.length, ...attrs }))
+      shapes.push(h(m[1], { key: shapes.length, ...attrs }))
     }
+    nodes.push(h('g', { key: 'g', ...groupAttrs }, ...shapes))
     return h('span', { className: 'dsh-archive-ic', 'aria-hidden': true, style: { display: 'inline-flex', flex: 'none' } },
       h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' }, ...nodes))
   }

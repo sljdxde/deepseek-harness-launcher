@@ -568,7 +568,7 @@ test('发布说明读取失败：接口抛错时弹错误而不是空白', async
 // 6. 停用失败回滚：本来就没有该条目 → 删掉乐观写进去的那条
 // ---------------------------------------------------------------------------
 test('停用失败回滚：本来没有该条目时把乐观写进去的条目删掉', async () => {
-  const installed = [{ name: 'dsh-bundled', version: '1.0.0', description: '内置插件', source: 'bundled' }];
+  const installed = [{ name: 'dsh-plain', version: '1.0.0', description: '普通插件' }];
   const calls = [];
   const fetchImpl = (url, options = {}) => {
     calls.push({ url: String(url), options });
@@ -591,7 +591,7 @@ test('停用失败回滚：本来没有该条目时把乐观写进去的条目�
     const labels = findAll(runtime.tree, node => node.type === 'label' && String(node.props.className || '').includes('dsh-pm-switch'));
     return labels[0] ? textOf(labels[0]) : '';
   };
-  assert.equal(switches().length, 1, '内置插件有一个开关');
+  assert.equal(switches().length, 1, '已安装插件有一个开关（内置插件不再出现在这页）');
   assert.equal(switches()[0].props.disabled, true, '读不到停用状态时开关置灰');
   assert.equal(switchLabel(), '状态未知', '读不到状态时如实显示');
 
@@ -607,7 +607,7 @@ test('停用失败回滚：本来没有该条目时把乐观写进去的条目�
   assert.equal(switchLabel(), '状态未知', '失败回滚后回到「状态未知」（条目被删掉），实际：' + switchLabel());
   assert.equal(switches()[0].props.disabled, true, '回滚后开关仍置灰');
   assert.ok(
-    toastTexts(runtime.tree).some(text => /dsh-bundled 失败/.test(text)),
+    toastTexts(runtime.tree).some(text => /dsh-plain 失败/.test(text)),
     '失败要 toast 报错，实际：' + toastTexts(runtime.tree).join(' | '),
   );
 });

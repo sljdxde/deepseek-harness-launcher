@@ -960,7 +960,16 @@ export async function describeDisabledPlugins(options = {}) {
   return { items };
 }
 
-const dshCli = () => join(dshHome(), 'runtime', 'node_modules', '.bin', 'dsh');
+/**
+ * dsh CLI 的可执行路径。Windows 上 npm 的 bin 目录同时有 `dsh`（sh 脚本）、
+ * `dsh.cmd` 与 `dsh.ps1`：execFile 直接跑无扩展名的 `dsh` 会 ENOENT
+ * （CreateProcess 不认 shebang，也不会按 PATHEXT 补扩展名）。必须取 `dsh.cmd`，
+ * run() 才会用 shell 执行它。
+ */
+const dshCli = () => join(
+  dshHome(), 'runtime', 'node_modules', '.bin',
+  process.platform === 'win32' ? 'dsh.cmd' : 'dsh'
+);
 
 /**
  * 命令能否在给定 PATH 上解析出来。
@@ -1052,13 +1061,40 @@ async function pluginCommand(args) {
   await ensurePnpmWorkspace();
   const cli = dshCli();
   const [pathWithPnpm, note] = await ensurePnpmPath();
-  // 国内加速打开时注入 npm_config_registry，pnpm add/view 与安装链路整体走镜像。
+  // 国内加速打开时注入 registry 环境变量（npm/pnpm 两个前缀），安装链路整体走镜像。
   const { stdout, stderr } = await run(cli, ['plugin', '--profile', 'web', ...args], {
     timeout: 240000,
     env: await pnpmEnvironment().then(env => ({ ...env, PATH: pathWithPnpm })),
     cwd: dshHome()
   });
   return { stdout, stderr, note };
+}
+
+/**
+ * 为「版本钉死被 dsh 拒绝」的插件登记**精确版本豁免**（dsh 官方逃生通道，原文：
+ * "grant the exact-version exemption ... then retry the installation"）。豁免落在
+ * profile 的 .plugin-manager 状态里，之后重试安装不再被拒。
+ * 用户必须在界面上显式确认过风险，这里才会被调用。
+ * @param {{name:string,version:string,dshVersion:string}} p
+ * @returns {Promise<{ok:boolean,note?:string,error?:string}>}
+ */
+export async function allowPluginVersion({ name, version, dshVersion }, command = pluginCommand) {
+  for (const [key, value] of Object.entries({ name, version, dshVersion })) {
+    if (!value || !/^[A-Za-z0-9@._\/-]+$/.test(value)) {
+      return { ok: false, error: `参数不合法：${key}` };
+    }
+  }
+  try {
+    const result = (await command(['allow-version', `${name}@${version}`, '--dsh-version', dshVersion, '--accept-risk'])) ?? {};
+    const text = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+    // dsh 失败时输出带 error/rejected 字样；成功时是确认文案。
+    if (/installation rejected|command failed|ERR_/i.test(text)) {
+      return { ok: false, error: text.slice(0, 800) || 'dsh 没有接受这次豁免' };
+    }
+    return { ok: true, note: text.slice(0, 400) || undefined };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
 }
 
 /** 本地 git 命令（dev-linked 插件的就地更新用），统一带交互关闭与超时。 */
@@ -1132,16 +1168,21 @@ export async function ensurePnpmWorkspace() {
 }
 
 /**
- * npm package candidates for a market entry (`author/repo`, or
- * `author/repo#subdir` for a plugin living in a repo subdirectory), then a git
- * URL for whole-repo installs. A `#subdir` spec has no valid npm package name
- * and no whole-repo git URL — it must be installed from the git subdirectory,
- * so we surface it as `repoRef.subdir` for the caller.
+ * npm package candidates for a market entry (`author/repo`, or a plugin living
+ * in a repo subdirectory), then a git URL for whole-repo installs. A subdir
+ * plugin has no valid npm package name and no whole-repo git URL — it must be
+ * installed from the git subdirectory, so we surface it as `repoRef.subdir`.
+ *
+ * 子目录有两个来源，**以 url 为准**：市场条目的 `name` 里 `#` 后面可能只是展示
+ * 用短标签（`strukto-ai/mirage#dsh`），真实路径在 GitHub tree 链接里
+ * （`…/tree/main/typescript/packages/dsh`）。按短标签取子目录会找不到
+ * package.json（实测报「子目录 dsh 没有 package.json」）。
  * @param {{name?:string,url?:string}} entry
  * @returns {{candidates:string[],git:string|null,repoRef:{author:string,repo:string,subdir:string|null,full:string}|null}}
  */
 export function installCandidates(entry) {
   const name = String(entry.name || '').trim();
+  const url = String(entry.url || '').trim();
   // `@scope/name` 本身就是一个 npm 包名，不能再按「作者/仓库」拆：拆出来会拼成
   // `@@scope/name` 这种不存在的包名，还配一个 `github.com/@scope/…` 的假仓库。
   // 官方插件（@deepseek-ai/…）全走这条。
@@ -1149,11 +1190,19 @@ export function installCandidates(entry) {
     return { candidates: [name], git: null, repoRef: null };
   }
   const slash = name.indexOf('/');
-  const author = slash >= 0 ? name.slice(0, slash) : '';
+  let author = slash >= 0 ? name.slice(0, slash) : '';
   const rest = slash >= 0 ? name.slice(slash + 1) : name;
   const hash = rest.indexOf('#');
-  const repo = hash >= 0 ? rest.slice(0, hash) : rest;
-  const subdir = hash >= 0 ? rest.slice(hash + 1) : null;
+  let repo = hash >= 0 ? rest.slice(0, hash) : rest;
+  let subdir = hash >= 0 ? rest.slice(hash + 1) : null;
+  // GitHub tree 链接：https://github.com/<owner>/<repo>/tree/<branch>/<path>
+  // 有它就用链接里的 owner/repo/子目录覆盖名字里的解析结果（名字可能是短标签）。
+  const tree = /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s#]+)\/tree\/[^/\s]+\/(.+?)\/?$/i.exec(url);
+  if (tree) {
+    author = tree[1];
+    repo = tree[2].replace(/\.git$/i, '');
+    subdir = tree[3].replace(/\/+$/, '');
+  }
   const candidates = [];
   if (author && repo) candidates.push(`@${author.toLowerCase()}/${repo.toLowerCase()}`);
   if (repo) candidates.push(repo.toLowerCase());
@@ -1219,6 +1268,32 @@ export function repoMatchesEntry(repository, ref) {
     .replace(/\.git$/, '')
     .replace(/\/+$/, '');
   return normalized === `https://github.com/${String(ref.author).toLowerCase()}/${String(ref.repo).toLowerCase()}`;
+}
+
+/**
+ * 识别 dsh 的「版本钉死拒绝」。dsh 在插件声明的运行时版本与当前不匹配时拒绝安装
+ * 并给出豁免通道，原文形如：
+ *   dsh: installation rejected: Plugin @a/b@1.2.3 is incompatible with dsh 0.2.2-rc.2:
+ *   requirements {"@deepseek-ai/dsh-fs":"0.2.0-rc.2",...}. Running it may cause crashes...
+ * 命中时返回 {name, version, dshVersion, requirements}（requirements 缺省 null）；
+ * 不是这类拒绝返回 null。
+ * @param {string} raw - 命令的 stderr/stdout 原文。
+ */
+export function parseVersionRejection(raw) {
+  const text = String(raw || '');
+  const m = /Plugin\s+(\S+)@(\S+)\s+is incompatible with dsh\s+([^\s:]+)/.exec(text);
+  if (!m) return null;
+  // 句尾标点可能黏在版本号上（"…dsh 1.2.3."）：剥掉再返回。
+  const dshVersion = m[3].replace(/[.,;:]+$/, '');
+  if (!dshVersion) return null;
+  const req = /requirements\s+(\{[^}]*\})/.exec(text);
+  return { name: m[1], version: m[2], dshVersion, requirements: req ? req[1] : null };
+}
+
+/** 把版本拒绝整理成用户能读懂的一句话（细节进确认弹窗，不在 toast 里堆原文）。 */
+function describeVersionRejection(rejection) {
+  const req = rejection.requirements ? `，插件要求 ${rejection.requirements}` : '';
+  return `dsh 拒绝安装 ${rejection.name}@${rejection.version}：与当前 dsh ${rejection.dshVersion} 不兼容${req}。可在插件中心选择「接受风险并安装」（可能不稳定），或等插件发布兼容版本。`;
 }
 
 /** 读 npm 包的 repository 字段（探不到/网络失败返回 null，由调用方保守处理）。 */
@@ -1568,15 +1643,26 @@ async function materializeClonedPlugin(src, options) {
       // 记住 npm 失败的原因：如果源码构建也失败，用户看到的是最终那条错误；
       // 把两条都带上，才能分辨「上游发布坏了」还是「本机网络/镜像问题」。
       npmError = String(error?.message || error);
+      // dsh 明确拒绝（版本钉死等）：源码构建产物带着同样的 requirements 声明，
+      // 注定被拒。直接如实上报并给「接受风险并安装」的通道，不再白跑构建。
+      const rejection = parseVersionRejection(npmError);
+      if (rejection) {
+        return { ok: false, error: describeVersionRejection(rejection), reason: `${rejection.name}@${rejection.version} 与当前 dsh ${rejection.dshVersion} 不兼容`, allowVersion: rejection };
+      }
     }
   }
 
   const prepared = await prepare(src.dest);
   if (!prepared.ok) {
-    const hint = npmError
-      ? `；此前 npm 发行版 ${src.packageName} 也没装上：${npmError.slice(0, 240)}`
+    // monorepo 子包的源码构建注定失败（workspace:* 依赖要整仓的 workspace 根），
+    // 这里把根因翻译出来，别让用户对着一屏 pnpm 报错猜。
+    const workspaceHint = /workspace packages were not loaded|Cannot resolve package from workspace/i.test(prepared.error || '')
+      ? '（这个插件是 monorepo 子包，源码构建需要整个仓库的 workspace，单独克隆子目录装不了；只能等它的 npm 发行版兼容当前 dsh）'
       : '';
-    return { ok: false, error: (prepared.error || '插件源码准备失败') + hint };
+    const hint = npmError
+      ? `；此前 npm 发行版 ${src.packageName} 也没装上：${npmError.slice(0, 800)}`
+      : '';
+    return { ok: false, error: (prepared.error || '插件源码准备失败') + workspaceHint + hint };
   }
   // 构建后重新扫一遍相对 import：构建产物里也可能有落不了地的本地引用。
   const gaps = await findUnresolvableLocalImports(src.dest);
@@ -1607,7 +1693,9 @@ async function materializeClonedPlugin(src, options) {
  * @returns {Promise<{ok:boolean,alreadyInstalled?:boolean,installedAs?:string,packageName?:string,note?:string,error?:string}>}
  */
 async function installSubdirPlugin(ref, installedNames, command = pluginCommand, options = {}) {
-  const src = await cloneToSources(ref, ref.subdir);
+  // clone 可注入（与 installPlugin 的整仓路径同一约定）：单测不发真网络请求。
+  const clone = options.clone ?? cloneToSources;
+  const src = await clone(ref, ref.subdir);
   if (!src.ok) return src;
   const missing = await findUnresolvableLocalImports(src.dest);
   if (missing.length) return { ok: false, error: describeUnresolvableImports(missing) };
@@ -1665,17 +1753,18 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
   // exists, so a missing name never makes pnpm wait on a network failure.
   //
   // 探测失败不能整个安装崩掉：npm 探测只是「优先走 npm」的优化，
-  // 探不通时应当降级到下面的 git 源码路径。所以逐个探测、失败记成
+  // 探不通时应当降级到下面的 git 源码路径。所以单个探测失败记成
   // 'unreachable' 继续，而不是让 Promise.all 直接 reject。
-  const probes = [];
-  for (const name of candidates) {
+  //
+  // 必须**真并行**：两个候选串行时，网络差（每个 8s 超时）光探测就 16s+。
+  const probes = await Promise.all(candidates.map(async (name) => {
     try {
-      probes.push(await npmProbe(name));
+      return await npmProbe(name);
     } catch (error) {
       lastError = String(error?.message || error);
-      probes.push('unreachable');
+      return 'unreachable';
     }
-  }
+  }));
   for (let i = 0; i < candidates.length; i++) {
     if (probes[i] === 'unreachable') { lastError = lastError || `npm registry 暂时不可达，无法确认 ${candidates[i]}（网络恢复后会自动重试 git 源）`; continue; }
     if (!probes[i]) { lastError = `npm 上没有 ${candidates[i]}`; continue; }
@@ -1701,6 +1790,13 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
       return { ok: true, installedAs: candidates[i], packageName: candidates[i], note: accepted.note };
     } catch (error) {
       lastError = String(error?.message || error);
+      // dsh 明确拒绝（版本钉死等）：换候选名、克隆源码、重新构建都过不了同一道
+      // 验收（构建产物带着同样的 requirements 声明）。立即如实上报，别让用户等
+      // 一场注定失败的 5 分钟构建，更别把真正的拒绝埋进 240 字的拼接错误里。
+      const rejection = parseVersionRejection(lastError);
+      if (rejection) {
+        return { ok: false, error: describeVersionRejection(rejection), reason: `${rejection.name}@${rejection.version} 与当前 dsh ${rejection.dshVersion} 不兼容`, allowVersion: rejection };
+      }
     }
   }
   // Git fallback: shallow-clone into a persistent source folder, then either
@@ -3937,8 +4033,13 @@ async function readRemoteJSONMirrored(url, timeoutMs, doFetch, decode = payload 
 }
 
 /**
- * pnpm/npm 子进程环境：国内加速打开时注入 `npm_config_registry`，让 pnpm view/add
- * 与安装链路天然走镜像（pnpm 尊重该环境变量）。镜像关闭或插件不可用时原样返回。
+ * pnpm/npm 子进程环境：国内加速打开时注入 registry，让 pnpm view/add 与安装链路
+ * 天然走镜像。镜像关闭或插件不可用时原样返回。
+ *
+ * **两个前缀都要注入**：npm CLI 读 `npm_config_registry`，而 pnpm 11+ 只认自己的
+ * `pnpm_config_*` 前缀（实测 `npm_config_registry=… pnpm config get registry`
+ * 仍返回 registry.npmjs.org）——只注入 npm 的那个等于没加速，源码构建的
+ * `pnpm install` 会直连 npmjs 直到 5 分钟超时。
  * @param {{fetch?:Function}} deps - 测试注入。
  * @returns {Promise<object>} 环境对象（调用方展开进 child env）。
  */
@@ -3947,7 +4048,7 @@ export async function pnpmEnvironment(deps = {}) {
   if (!table) return process.env;
   const rule = table.find(item => item.kind === 'registry' && item.match === 'https://registry.npmjs.org/');
   if (!rule) return process.env;
-  return { ...process.env, npm_config_registry: rule.replace };
+  return { ...process.env, npm_config_registry: rule.replace, pnpm_config_registry: rule.replace };
 }
 
 // ---- 源配置 CRUD ---------------------------------------------------------
@@ -4383,8 +4484,11 @@ export async function queryMarketplace(params = {}) {
       if (source !== 'official' && source !== 'community' && plugin.source !== source) return false;
     }
     if (!q) return true;
-    return [plugin.name, plugin.repo, plugin.author, plugin.descriptionEn, plugin.descriptionZh]
-      .filter(Boolean).join(' ').toLowerCase().includes(q);
+    /* 模糊匹配：q 按空白拆成多个词（如「终端 导出」），每个词分别命中即可。
+       q 已在上方统一 toLowerCase，字段也 join 成小写串，大小写不敏感。 */
+    const haystack = [plugin.name, plugin.repo, plugin.author, plugin.descriptionEn, plugin.descriptionZh]
+      .filter(Boolean).join(' ').toLowerCase();
+    return q.split(/\s+/).every((term) => haystack.includes(term));
   };
   const filtered = all.filter(match);
   const byStars = (a, b) => (b.stars || 0) - (a.stars || 0);
@@ -4395,13 +4499,16 @@ export async function queryMarketplace(params = {}) {
   const sorted = filtered.slice().sort(sortedCompare);
 
   const counts = new Map();
-  for (const plugin of all) {
+  /* 榜单/推荐位/分类计数的口径：结构性筛选（来源/分类）跟随；纯搜索保持市场全量
+     （搜索结果列表已经展示命中项，榜单是市场整体概况，不该被搜索词清空）。 */
+  const scoped = source !== 'all' || category !== 'all' || group !== 'all' ? filtered : all;
+  for (const plugin of scoped) {
     const id = normalizeCategory(plugin.category);
     counts.set(id, (counts.get(id) || 0) + 1);
   }
 
-  const topDownloads = all.slice().sort(byDownloads).slice(0, 5);
-  const topStars = all.slice().sort(byStars).slice(0, 5);
+  const topDownloads = scoped.slice().sort(byDownloads).slice(0, 5);
+  const topStars = scoped.slice().sort(byStars).slice(0, 5);
 
   // 分类分区：只在不筛选分类、不搜索时算（发现页的首屏）；按数量取前 3 个分类，
   // 每类给当前排序下的前 6 个——一屏两整行，客户端直接按 sections 渲染。
@@ -4419,7 +4526,7 @@ export async function queryMarketplace(params = {}) {
           category: id,
           label: marketCategoryLabel(id),
           count,
-          plugins: all.filter(plugin => plugin && normalizeCategory(plugin.category) === id).sort(sortedCompare).slice(0, MARKET_SECTION_CARDS),
+          plugins: scoped.filter(plugin => plugin && normalizeCategory(plugin.category) === id).sort(sortedCompare).slice(0, MARKET_SECTION_CARDS),
         }))
     : [];
 
@@ -5331,6 +5438,17 @@ export function apply(ctx) {
             const value = await body(req);
             if (!value || (!value.url && !value.name)) { json(res, 400, { error: '缺少插件标识' }); return; }
             json(res, 200, await installPlugin({ url: value.url, name: value.name }));
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 版本钉死被 dsh 拒绝后的官方逃生通道：用户在界面上确认过风险才会走到这里。
+        // 豁免只对「这个插件的这个版本 + 当前 dsh 版本」生效，之后重试安装即可。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/allow-version', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          if (rejectWhileBatchRunning(res)) return;
+          try {
+            const value = await body(req);
+            if (!value?.name || !value?.version || !value?.dshVersion) { json(res, 400, { error: '缺少 name/version/dshVersion' }); return; }
+            json(res, 200, await allowPluginVersion({ name: value.name, version: value.version, dshVersion: value.dshVersion }));
           } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
                 host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/uninstall', handler: async (req, res) => {

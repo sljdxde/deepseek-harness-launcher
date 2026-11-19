@@ -22,7 +22,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-trigger-icon{display:inline-block;flex:0 0 16px;height:16px;position:relative;width:16px}
 .dsh-pm-trigger-icon:before{background:repeating-linear-gradient(0deg,currentColor 0 2px,transparent 2px 4px);border:1.75px solid currentColor;border-radius:4px;content:"";inset:0;position:absolute}
 .dsh-pm-backdrop{background:rgba(15,18,24,.32);inset:0;position:fixed;z-index:2147483000}
-.dsh-pm-page{--pm-accent:#3b82f6;--pm-accent-fg:#ffffff;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.30);color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;font-size:13px;height:min(920px,calc(100vh - 64px));left:50%;max-height:none;max-width:1240px;position:fixed;top:50%;transform:translate(-50%,-50%);width:min(1240px,calc(100vw - 64px));z-index:2147483001}
+.dsh-pm-page{--pm-accent:#4f46e5;--pm-accent-fg:#ffffff;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.30);color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;font-size:13px;height:min(920px,calc(100vh - 64px));left:50%;max-height:none;max-width:1240px;position:fixed;top:50%;transform:translate(-50%,-50%);width:min(1240px,calc(100vw - 64px));z-index:2147483001}
 /* 全屏：铺满窗口（无圆角、无边框）；内容区仍限宽居中，避免大屏上文字行长过长 */
 .dsh-pm-page.dsh-pm-full{inset:0;border:0;border-radius:0;height:100vh;left:0;max-height:none;max-width:none;top:0;transform:none;width:100vw}
 .dsh-pm-header{align-items:center;border-bottom:1px solid var(--dsw-alias-border-l2);display:flex;gap:10px;padding:0 16px;height:52px;flex:none}
@@ -116,7 +116,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-card-top{align-items:center;display:flex;gap:10px;min-width:0}
 /* 统一的图标块体系：每个图标都有 1px 描边 + 同色淡底 + 等比圆角。
    三档尺寸 sm/md/lg 只改大小，边框/圆角规则一致（圆角 = 尺寸 × 0.28）。 */
-.dsh-pm-icon-tile{align-items:center;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);box-sizing:border-box;display:inline-flex;flex:none;justify-content:center}
+.dsh-pm-icon-tile{align-items:center;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);box-sizing:border-box;display:inline-flex;flex:none;justify-content:center}
 .dsh-pm-icon-sm{height:28px;width:28px;border-radius:8px}
 .dsh-pm-icon-md{height:36px;width:36px;border-radius:10px}
 .dsh-pm-icon-lg{height:52px;width:52px;border-radius:15px}
@@ -129,29 +129,30 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-card-meta .dsh-pm-chip{align-items:center;background:var(--dsw-alias-bg-layer-2);border:0;border-radius:5px;color:var(--dsw-alias-label-secondary);display:inline-flex;font-size:10.5px;gap:3px;height:17px;padding:0 6px}
 /* 安装按钮：三态严格等宽（安装 / 安装中… / 已安装），圆角 7px 不胖。
    参考 magpie 榜单：按钮是克制的小圆角描边块，不是全圆角胶囊。 */
-.dsh-pm-install,.dsh-pm-installed-tag{align-items:center;border-radius:7px;box-sizing:border-box;display:inline-flex;flex:none;font:inherit;font-size:11.5px;font-weight:600;gap:5px;height:26px;justify-content:center;line-height:1;white-space:nowrap;width:68px;padding:0}
-.dsh-pm-install{background:transparent;border:1px solid color-mix(in srgb,var(--pm-accent) 55%,var(--dsw-alias-border-l2));color:var(--pm-accent);cursor:pointer;transition:background .14s ease,border-color .14s ease,color .14s ease}
-.dsh-pm-install:hover:not(:disabled){background:color-mix(in srgb,var(--pm-accent) 10%,transparent);border-color:var(--pm-accent)}
-.dsh-pm-install:active:not(:disabled){background:color-mix(in srgb,var(--pm-accent) 18%,transparent)}
+.dsh-pm-install,.dsh-pm-installed-tag{align-items:center;border-radius:13px;box-sizing:border-box;display:inline-flex;flex:none;font:inherit;font-size:12px;font-weight:600;gap:5px;height:26px;justify-content:center;line-height:1;min-width:64px;white-space:nowrap;padding:0}
+.dsh-pm-install{background:var(--pm-accent-soft,#eeedfd);border:0;color:var(--pm-accent);cursor:pointer;transition:background .14s cubic-bezier(.2,.8,.2,1),color .14s cubic-bezier(.2,.8,.2,1)}
+.dsh-pm-install:hover:not(:disabled){background:var(--pm-accent);color:#fff}
+.dsh-pm-install:active:not(:disabled){background:color-mix(in srgb,var(--pm-accent) 88%,#000)}
 .dsh-pm-install:focus-visible{outline:2px solid var(--pm-accent);outline-offset:2px}
 .dsh-pm-install:disabled{opacity:.6;cursor:not-allowed}
-.dsh-pm-install.busy{background:color-mix(in srgb,var(--pm-accent) 8%,transparent);border-color:color-mix(in srgb,var(--pm-accent) 25%,var(--dsw-alias-border-l2));color:var(--dsw-alias-label-secondary);cursor:default}
-.dsh-pm-install .spin{animation:dsh-pm-spin .7s linear infinite;display:inline-block;height:12px;position:relative;width:12px}
-.dsh-pm-install .spin::before,.dsh-pm-install .spin::after{border:1.5px solid currentColor;border-radius:50%;content:"";inset:0;position:absolute}
-.dsh-pm-install .spin::before{opacity:.22}
-.dsh-pm-install .spin::after{animation:none;border-top-color:transparent;border-right-color:transparent}
-.dsh-pm-installed-tag{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-success-primary) 30%,transparent);color:var(--dsw-alias-state-success-primary)}
+.dsh-pm-install.busy{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);cursor:default}
+.dsh-pm-install .dual{display:inline-block;height:12px;position:relative;width:12px}
+.dsh-pm-install .dual::before,.dsh-pm-install .dual::after{border:1.5px solid currentColor;border-radius:50%;box-sizing:border-box;content:"";inset:0;position:absolute}
+.dsh-pm-install .dual::before{opacity:.22}
+.dsh-pm-install .dual::after{animation:dsh-pm-spin .7s linear infinite;border-top-color:transparent;border-right-color:transparent}
+.dsh-pm-installed-tag{background:none;border:0;color:var(--dsw-alias-state-success-primary);min-width:0;padding:0 8px}
 .dsh-pm-cat{color:var(--dsw-alias-label-tertiary);font-size:11px}
-.dsh-pm-drawer{background:var(--dsw-alias-bg-layer-1);border-left:1px solid var(--dsw-alias-border-l2);box-sizing:border-box;display:flex;flex-direction:column;height:100%;max-width:420px;min-width:300px;padding:18px;position:absolute;right:0;top:0;width:40%;z-index:2147483002}
+.dsh-pm-mask{background:rgba(20,22,30,.18);inset:0;position:absolute;z-index:2147483001}
+.dsh-pm-drawer{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 16px 44px rgba(20,22,30,.16),0 2px 8px rgba(20,22,30,.06),0 0 0 .5px rgba(20,22,30,.1);box-sizing:border-box;display:flex;flex-direction:column;height:auto;left:50%;max-height:calc(100% - 24px);overflow:auto;padding:0;position:absolute;top:50%;transform:translate(-50%,-50%);width:360px;z-index:2147483002}
 .dsh-pm-drawer-head{display:flex;gap:10px;align-items:center}
-.dsh-pm-drawer-title{font-size:16px;font-weight:600;line-height:22px}
-.dsh-pm-drawer-close{background:transparent;border:0;border-radius:6px;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:18px;height:28px;line-height:24px;width:28px}
-.dsh-pm-drawer-close:hover{background:var(--dsw-alias-button-ghost-active-fill)}
-.dsh-pm-drawer-meta{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;margin-top:6px}
-.dsh-pm-drawer-desc{color:var(--dsw-alias-label-secondary);font-size:13px;line-height:20px;margin:14px 0}
-.dsh-pm-drawer-stats{display:flex;gap:14px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
-.dsh-pm-drawer-actions{display:flex;gap:8px;margin-top:16px}
-.dsh-pm-drawer-link{color:var(--pm-accent);font-size:12px;line-height:18px;text-decoration:none;display:inline-block;margin-top:12px}
+.dsh-pm-drawer-title{font-size:14.5px;font-weight:650;line-height:1.3}
+.dsh-pm-drawer-close{background:none;border:0;color:var(--dsw-alias-label-tertiary);cursor:pointer;font-size:15px;height:26px;width:26px}
+.dsh-pm-drawer-close:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-pm-drawer-meta{color:var(--dsw-alias-label-tertiary);display:inline;font-size:11.5px;font-weight:400}
+.dsh-pm-drawer-desc{border-top:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5;margin:0;padding:11px 16px}
+.dsh-pm-drawer-stats{border-top:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-tertiary);display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;line-height:18px;margin:0;padding:9px 16px}
+.dsh-pm-drawer-actions{align-items:center;border-top:1px solid var(--dsw-alias-border-l2);display:flex;gap:10px;margin:0;padding:10px 16px 12px}
+.dsh-pm-drawer-link{color:var(--pm-accent);cursor:pointer;display:inline-block;font-size:11.5px;line-height:18px;margin:0 0 0 auto;text-decoration:none}
 .dsh-pm-confirm{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:14px;margin-bottom:10px}
 .dsh-pm-confirm-title{font-size:13px;font-weight:600;line-height:20px}
 .dsh-pm-confirm-copy{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;margin-top:6px}
@@ -241,10 +242,6 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-rank-row .who{flex:1;min-width:0}
 .dsh-pm-rank-row .nm{color:var(--dsw-alias-label-primary);font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-pm-rank-row .sub{color:var(--dsw-alias-label-tertiary);font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* 榜单行的「详情」：低调文字按钮，和 hero 的详情一致；安装按钮在它左边。 */
-.dsh-pm-rank-detail{align-items:center;background:none;border:1px solid transparent;border-radius:7px;box-sizing:border-box;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:11.5px;height:26px;justify-content:center;line-height:1;padding:0;transition:background .14s ease,color .14s ease;width:44px}
-.dsh-pm-rank-detail:hover{background:var(--dsw-alias-button-ghost-active-fill);color:var(--pm-accent)}
-.dsh-pm-rank-detail:focus-visible{outline:2px solid var(--pm-accent);outline-offset:1px}
 /* 分类分区：标题 + 查看全部。 */
 .dsh-pm-sechead{align-items:baseline;display:flex;flex-wrap:wrap;gap:8px;margin-bottom:9px}
 .dsh-pm-sechead h3{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:650;margin:0}
@@ -282,38 +279,50 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
    分类色 = 6 组固定色相 + 品牌蓝；图标块/分类 chip 用 13% 透明底 + 同色字，
    深色主题下透明底自然叠在深底上，文字用 color-mix 往 label-primary 靠一点，
    两套主题都不刺眼。状态色仍走宿主的 success / warn / brand 语义 token。 */
-.dsh-pm-icon-tile.dsh-pm-hue-brand{border-color:color-mix(in srgb,var(--pm-accent) 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-brand,.dsh-pm-card-chip.dsh-pm-hue-brand{background:color-mix(in srgb,var(--pm-accent) 13%,transparent);color:var(--pm-accent)}
-.dsh-pm-icon-tile.dsh-pm-hue-ok{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-ok,.dsh-pm-card-chip.dsh-pm-hue-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 13%,transparent);color:var(--dsw-alias-state-success-primary)}
-.dsh-pm-icon-tile.dsh-pm-hue-warn{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-warn,.dsh-pm-card-chip.dsh-pm-hue-warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);color:var(--dsw-alias-state-warn-primary)}
-.dsh-pm-icon-tile.dsh-pm-hue-violet{border-color:color-mix(in srgb,#7c5cd6 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-violet,.dsh-pm-card-chip.dsh-pm-hue-violet{background:color-mix(in srgb,#7c5cd6 14%,transparent);color:color-mix(in srgb,#7c5cd6 78%,var(--dsw-alias-label-primary))}
-.dsh-pm-icon-tile.dsh-pm-hue-teal{border-color:color-mix(in srgb,#0f8f86 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-teal,.dsh-pm-card-chip.dsh-pm-hue-teal{background:color-mix(in srgb,#0f8f86 14%,transparent);color:color-mix(in srgb,#0f8f86 80%,var(--dsw-alias-label-primary))}
-.dsh-pm-icon-tile.dsh-pm-hue-rose{border-color:color-mix(in srgb,#c2467a 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-rose,.dsh-pm-card-chip.dsh-pm-hue-rose{background:color-mix(in srgb,#c2467a 13%,transparent);color:color-mix(in srgb,#c2467a 80%,var(--dsw-alias-label-primary))}
-.dsh-pm-icon-tile.dsh-pm-hue-cyan{border-color:color-mix(in srgb,#1b7fa8 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-cyan,.dsh-pm-card-chip.dsh-pm-hue-cyan{background:color-mix(in srgb,#1b7fa8 13%,transparent);color:color-mix(in srgb,#1b7fa8 80%,var(--dsw-alias-label-primary))}
-.dsh-pm-icon-tile.dsh-pm-hue-indigo{border-color:color-mix(in srgb,#4f63d2 32%,transparent)}.dsh-pm-icon-tile.dsh-pm-hue-indigo,.dsh-pm-card-chip.dsh-pm-hue-indigo{background:color-mix(in srgb,#4f63d2 13%,transparent);color:color-mix(in srgb,#4f63d2 80%,var(--dsw-alias-label-primary))}
-.dsh-pm-card-chip{align-items:center;border-radius:5px;display:inline-flex;font-size:10.5px;font-weight:600;gap:3px;height:17px;padding:0 6px}
+.dsh-pm-card-chip{align-items:center;color:var(--dsw-alias-label-secondary);border-radius:5px;display:inline-flex;font-size:10.5px;font-weight:600;gap:3px;height:17px;padding:0 6px}
 /* 分类条：原始分类按数量平铺；超过 8 个收进「全部 N 类」，点击在下方换行展开。 */
 /* 分类条：两行结构。第一行 = 分类 chips（可换行）+ 右侧筛选组（来源/排序），
    第二行 = 展开的全部分类。筛选组永远钉在第一行右侧 —— 之前两个 select 是
    catbar 的独立 flex 项，放不下时最后一个会孤零零掉到第二行（用户截图的排版）。 */
+/* 分类选择区（依据 Material / UX Patterns 规范）：
+   分类是 8+ 个互斥选项 → 用 chips 流，容器无底色，选中项是唯一强调；
+   来源/排序是 2–3 个视图切换 → 保留 segmented，但轨道压到几乎不可见。
+   间距全部落在 4px 网格，圆角统一 8px（thumb 6px）。 */
 .dsh-pm-catbar{display:flex;flex-direction:column;gap:8px;padding:0}
-.dsh-pm-catrow{align-items:center;display:flex;gap:10px;min-width:0}
+.dsh-pm-catrow{align-items:flex-start;display:flex;flex-wrap:nowrap;gap:8px;min-width:0}
+.dsh-pm-segs{display:flex;flex:1 1 0;flex-wrap:wrap;gap:2px;min-width:0;row-gap:2px}
+.dsh-pm-segs.xp{row-gap:2px}
+.dsh-pm-seg{align-items:center;background:transparent;border:0;border-radius:8px;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:12px;gap:4px;height:28px;padding:0 8px;transition:background .14s ease,color .14s ease;white-space:nowrap}
+.dsh-pm-seg:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);color:var(--dsw-alias-label-primary)}
+.dsh-pm-seg.on{background:color-mix(in srgb,var(--pm-accent) 12%,transparent);color:var(--pm-accent);font-weight:600}
+.dsh-pm-seg .n{color:var(--dsw-alias-label-tertiary);font-size:10.5px;font-variant-numeric:tabular-nums}
+.dsh-pm-seg.on .n{color:color-mix(in srgb,var(--pm-accent) 72%,transparent)}
+/* 「全部 N 类」：比分类更低存在感，不抢选中态 */
+.dsh-pm-seg.more{color:var(--dsw-alias-label-tertiary)}
+.dsh-pm-seg.more:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,transparent);color:var(--dsw-alias-label-primary)}
+/* 展开态「收起」：accent 淡底，与选中 chip 同族但语义不同（有箭头提示收起） */
+.dsh-pm-seg.xall{background:color-mix(in srgb,var(--pm-accent) 12%,transparent);color:var(--pm-accent);font-weight:600}
+.dsh-pm-seg.xall:hover{background:color-mix(in srgb,var(--pm-accent) 20%,transparent);color:var(--pm-accent)}
+.dsh-pm-filters{align-items:center;display:flex;flex:none;gap:8px;height:28px;margin-left:auto}
+.dsh-pm-segs.mini{background:color-mix(in srgb,var(--dsw-alias-label-primary) 5%,transparent);border-radius:10px;flex:none;gap:1px;padding:2px}
+.dsh-pm-segf{align-items:center;background:transparent;border:0;border-radius:8px;color:var(--dsw-alias-label-tertiary);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:11.5px;height:24px;padding:0 8px;transition:background .14s ease,color .14s ease;white-space:nowrap}
+.dsh-pm-segf:hover{color:var(--dsw-alias-label-primary)}
+.dsh-pm-catbar{display:flex;flex-direction:column;gap:8px;padding:0}
+
 /* 分类 tab：magpie 式纯文字 tab（无描边胶囊），计数用弱化的等宽数字，
    选中态给一层柔和底色 —— 排版基准来自 magpie 插件页（用户指定）。 */
-.dsh-pm-segs{display:flex;flex:1 1 auto;flex-wrap:wrap;gap:2px;min-width:0}
-.dsh-pm-seg{align-items:center;background:transparent;border:0;border-radius:8px;color:var(--dsw-alias-label-secondary);cursor:pointer;display:inline-flex;flex:none;font:inherit;font-size:13px;gap:6px;height:32px;padding:0 10px;transition:background .12s ease,color .12s ease;white-space:nowrap}
-.dsh-pm-filters{align-items:center;display:flex;flex:none;gap:8px;margin-left:auto}
+
+
+.dsh-pm-filters{align-items:center;display:flex;flex:none;gap:8px;margin-left:auto;padding-top:0}
 .dsh-pm-select{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:12px;height:30px;max-width:200px;padding:0 8px}
-.dsh-pm-seg:hover{background:var(--dsw-alias-button-ghost-active-fill);color:var(--dsw-alias-label-primary)}
-.dsh-pm-seg.on{background:var(--dsw-alias-interactive-bg-hover-solid,var(--dsw-alias-button-ghost-active-fill));color:var(--dsw-alias-label-primary);font-weight:600}
-.dsh-pm-seg .n{color:var(--dsw-alias-label-tertiary);font-size:11.5px;font-variant-numeric:tabular-nums}
-.dsh-pm-seg.on .n{color:var(--pm-accent);font-weight:600}
+
+.dsh-pm-segf.on{background:var(--dsw-alias-bg-layer-1);box-shadow:0 1px 2px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.06);color:var(--dsw-alias-label-primary);font-weight:600}
+
+.dsh-pm-seg.on .n,.dsh-pm-segf.on .n{color:var(--pm-accent);font-weight:600}
 .dsh-pm-seg.more{color:var(--dsw-alias-label-tertiary)}
 .dsh-pm-seg.more:hover{color:var(--dsw-alias-label-primary)}
 /* 展开后收起入口：低调文字，不再是胶囊，展开区只展示纯分类 chips */
-.dsh-pm-collapse{background:none;border:0;border-radius:8px;color:var(--dsw-alias-label-tertiary);cursor:pointer;display:inline-flex;font:inherit;font-size:12px;align-items:center;gap:4px;height:30px;padding:0 8px}
-.dsh-pm-collapse:hover{color:var(--pm-accent);background:var(--accent-soft)}
 /* 展开区：独立一行、换行排列（catbar 是纵向 flex，天然独占一行） */
-.dsh-pm-segs-open{padding:0}
 .dsh-pm-select:hover{border-color:var(--dsw-alias-label-tertiary)}
 /* 分区：标题行 + 三列栅格（每区 6 张 = 两整行）+ 分区尾部入口 */
 .dsh-pm-sec2{display:flex;flex-direction:column;gap:12px}
@@ -331,9 +340,11 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-crumbs-back:hover{background:color-mix(in srgb,var(--pm-accent) 10%,transparent)}
 /* 描述找插件：一条虚线检索行 + 结果面板（top5，带理由/下载/星标/版本） */
 /* 搜索条：整条是可点击输入区（点图标/空白都能聚焦），右侧按钮内嵌不贴边 */
-.dsh-pm-ai-bar{align-items:center;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-shadow:0 1px 2px rgba(15,17,21,.04);color:var(--dsw-alias-label-tertiary);cursor:text;display:flex;flex:0 0 auto;gap:11px;height:52px;min-height:52px;padding:0 8px 0 16px;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
-.dsh-pm-ai-bar:hover{border-color:color-mix(in srgb,var(--fg) 18%,var(--dsw-alias-border-l2))}
-.dsh-pm-ai-bar:focus-within{background:var(--dsw-alias-bg-layer-1);border-color:var(--pm-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--pm-accent) 13%,transparent)}
+.dsh-pm-ai-bar{align-items:center;background:var(--dsw-alias-bg-layer-2);border-radius:10px;position:relative;color:var(--dsw-alias-label-tertiary);cursor:text;display:flex;flex:0 0 auto;gap:11px;height:52px;min-height:52px;padding:0 8px 0 16px;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
+.dsh-pm-ai-bar:hover{border-color:transparent}
+.dsh-pm-ai-bar:focus-within{background:var(--dsw-alias-bg-layer-1);box-shadow:0 0 0 3px color-mix(in srgb,var(--pm-accent) 22%,transparent),0 0 16px color-mix(in srgb,var(--pm-accent) 18%,transparent)}
+/* 聚焦输入框后停止流光：切到聚焦态（白底 + accent 光晕），不再有流光 */
+.dsh-pm-ai-bar:focus-within::before{animation:none;opacity:0}
 .dsh-pm-ai-bar .spark{color:var(--pm-accent);flex:none}
 .dsh-pm-ai-badge{background:color-mix(in srgb,var(--pm-accent) 11%,transparent);border-radius:6px;color:var(--pm-accent);flex:none;font-size:10.5px;font-weight:700;height:19px;letter-spacing:.02em;line-height:19px;padding:0 7px}
 .dsh-pm-ai-bar .inp{background:none;border:0;color:var(--dsw-alias-label-primary);cursor:text;flex:1;font:inherit;font-size:14px;min-width:0;outline:none}
@@ -350,12 +361,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-ai-go:focus-visible{outline:2px solid var(--pm-accent);outline-offset:2px}
 .dsh-pm-ai-go:disabled{background:color-mix(in srgb,var(--pm-accent) 12%,var(--dsw-alias-bg-layer-1));box-shadow:none;color:var(--dsw-alias-label-tertiary);cursor:default}
 /* 检索中：按钮内小转圈 */
-.dsh-pm-ai-go .spin{animation:dsh-pm-spin .7s linear infinite;display:inline-block;height:12px;position:relative;width:12px}
-.dsh-pm-ai-go .spin::before,.dsh-pm-ai-go .spin::after{border:1.5px solid currentColor;border-radius:50%;content:"";inset:0;position:absolute}
-.dsh-pm-ai-go .spin::before{opacity:.22}
-.dsh-pm-ai-go .spin::after{animation:none;border-top-color:transparent;border-right-color:transparent}
+.dsh-pm-ai-go .dual{animation:dsh-pm-spin .7s linear infinite;display:inline-block;height:12px;position:relative;width:12px}
+.dsh-pm-ai-go .dual::before,.dsh-pm-ai-go .dual::after{border:1.5px solid currentColor;border-radius:50%;box-sizing:border-box;content:"";inset:0;position:absolute}
+.dsh-pm-ai-go .dual::before{opacity:.22}
+.dsh-pm-ai-go .dual::after{animation:none;border-top-color:transparent;border-right-color:transparent}
 @keyframes dsh-pm-spin{to{transform:rotate(360deg)}}
-.dsh-pm-ai{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;display:flex;flex-direction:column;gap:12px;padding:16px 18px}
+.dsh-pm-ai{background:none;border:0;border-radius:0;box-shadow:none;display:flex;flex-direction:column;gap:12px;padding:0}
 .dsh-pm-ai-head{align-items:baseline;display:flex;flex-wrap:wrap;gap:10px}
 .dsh-pm-ai-head h3{color:var(--dsw-alias-label-primary);font-size:13.5px;font-weight:700;margin:0}
 .dsh-pm-ai-head .meta{color:var(--dsw-alias-label-tertiary);font-size:11.5px}
@@ -420,130 +431,215 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
   .dsh-pm-rail-item{flex:1 0 auto;justify-content:center;width:auto}
   .dsh-pm-rail-item .n{margin-left:3px}
   .dsh-pm-cols{grid-template-columns:1fr}
-}`
-  /* Lucide 线性图标集（ISC 许可，https://lucide.dev）：24 网格 / 2 描边 /
-     currentColor。path 数据由 lucide-static v1.74.0 提取（scripts/patch-lucide-icons.js），
-     键名沿用调用点旧名（chev/back/...），新增更丰富的键供分类与名称规则用。 */
+
+
+}
+/* ── 详情小浮窗：紧凑卡片贴点击处弹出（替代侧边抽屉）── */
+.dsh-pm-drawer{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 16px 44px rgba(0,0,0,.30);height:auto;left:50%;max-height:calc(100% - 24px);overflow:auto;padding:0;top:50%;transform:translate(-50%,-50%);width:360px}
+.dsh-pm-drawer-head{align-items:center;padding:13px 16px 11px}
+.dsh-pm-drawer-desc{border-top:1px solid var(--dsw-alias-border-l2);margin:0;padding:11px 16px}
+.dsh-pm-drawer-stats{border-top:1px solid var(--dsw-alias-border-l2);margin:0;padding:9px 16px}
+.dsh-pm-drawer-actions{align-items:center;border-top:1px solid var(--dsw-alias-border-l2);margin:0;padding:10px 16px 12px}
+.dsh-pm-drawer-link{margin:0 0 0 auto}
+.dsh-pm-mask{background:rgba(0,0,0,.18);inset:0;position:absolute;z-index:2147483001}
+/* ── 已安装：纯绿字（无对勾无底色）── */
+.dsh-pm-installed-tag{background:none;border:0;height:auto;padding:0;width:auto}
+
+/* 可点区域 */
+.dsh-pm-rank-row{cursor:pointer}
+.dsh-pm-hero{cursor:pointer}
+
+/* ── 原型复刻：AI 搜索条常态流光描边（锥形渐变 + 白色彗头，只描边不填充）── */
+@property --aib-ang{syntax:"<angle>";inherits:false;initial-value:0deg}
+@keyframes aib-sweep{to{--aib-ang:360deg}}
+.dsh-pm-ai-bar::before{animation:aib-sweep 3.4s linear infinite;background:linear-gradient(color-mix(in srgb,var(--pm-accent) 38%,transparent),color-mix(in srgb,var(--pm-accent) 38%,transparent)),conic-gradient(from var(--aib-ang,0deg),transparent 0deg,color-mix(in srgb,var(--pm-accent) 65%,transparent) 24deg,var(--pm-accent) 48deg,#fff 58deg,var(--pm-accent) 68deg,color-mix(in srgb,var(--pm-accent) 55%,transparent) 95deg,transparent 135deg,transparent 250deg,color-mix(in srgb,var(--pm-accent) 60%,transparent) 296deg,color-mix(in srgb,var(--pm-accent) 30%,transparent) 330deg,transparent 350deg);border-radius:inherit;content:"";inset:0;-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;padding:2px;pointer-events:none;position:absolute}
+/* ── 原型复刻：卡片效果更明显（内容区灰底衬托 + 静影 + hover 提亮）── */
+.dsh-pm-body{background:var(--dsw-alias-bg-layer-2)}
+.dsh-pm-card{border-radius:12px;box-shadow:0 1px 3px rgba(20,22,30,.06),0 0 0 .5px rgba(20,22,30,.03);gap:8px;padding:12px 12px 11px 13px}
+.dsh-pm-card:hover{box-shadow:0 4px 14px rgba(20,22,30,.12)}
+
+
+/* ── 底部固定搜索栏：不随内容滚动，任何位置都能直接输入 ── */
+.dsh-pm-searchbar{background:var(--dsw-alias-bg-layer-2);border-top:1px solid var(--dsw-alias-border-l2);display:flex;flex:none;justify-content:center;padding:10px 18px}
+.dsh-pm-searchbar .dsh-pm-find{height:34px;width:min(560px,100%)}
+`
+  /* Tabler 线性图标集（MIT 许可，https://tabler.io/icons）：24 网格 / 2 描边 /
+     currentColor。每个图标都做了光学归一（按内容包围盒统一缩放并居中），因此各图标的
+     视觉大小与线宽一致、在图标块里真正居中。path 数据由 @tabler/icons 的 icons/outline
+     提取（scripts/patch-tabler-icons.mjs），键名沿用调用点旧名。 */
   const ICONS = {
-    search: "<path d=\"m21 21-4.34-4.34\" /><circle cx=\"11\" cy=\"11\" r=\"8\" />",
-    refresh: "<path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\" /><path d=\"M21 3v5h-5\" /><path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\" /><path d=\"M8 16H3v5\" />",
-    plus: "<path d=\"M5 12h14\" /><path d=\"M12 5v14\" />",
-    check: "<path d=\"M20 6 9 17l-5-5\" />",
-    shield: "<path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z\" /><path d=\"m9 12 2 2 4-4\" />",
-    x: "<path d=\"M18 6 6 18\" /><path d=\"m6 6 12 12\" />",
-    chev: "<path d=\"m9 18 6-6-6-6\" />",
-    expand: "<path d=\"M15 3h6v6\" /><path d=\"m21 3-7 7\" /><path d=\"m3 21 7-7\" /><path d=\"M9 21H3v-6\" />",
-    collapse: "<path d=\"m14 10 7-7\" /><path d=\"M20 10h-6V4\" /><path d=\"m3 21 7-7\" /><path d=\"M4 14h6v6\" />",
-    back: "<path d=\"m15 18-6-6 6-6\" />",
-    sparkle: "<path d=\"M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z\" /><path d=\"M20 2v4\" /><path d=\"M22 4h-4\" /><circle cx=\"4\" cy=\"20\" r=\"2\" />",
-    download: "<path d=\"M12 15V3\" /><path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" /><path d=\"m7 10 5 5 5-5\" />",
-    star: "<path d=\"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z\" />",
-    cube: "<path d=\"M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z\" /><path d=\"m3.3 7 8.7 5 8.7-5\" /><path d=\"M12 22V12\" />",
-    compass: "<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z\" />",
-    bell: "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /><path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" />",
-    globe: "<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20\" /><path d=\"M2 12h20\" />",
-    chart: "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /><path d=\"M18 17V9\" /><path d=\"M13 17V5\" /><path d=\"M8 17v-3\" />",
-    zap: "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />",
-    hdd: "<path d=\"M10 16h.01\" /><path d=\"M2.212 11.577a2 2 0 0 0-.212.896V18a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5.527a2 2 0 0 0-.212-.896L18.55 5.11A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" /><path d=\"M21.946 12.013H2.054\" /><path d=\"M6 16h.01\" />",
-    layers: "<path d=\"M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z\" /><path d=\"M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12\" /><path d=\"M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17\" />",
-    server: "<rect width=\"20\" height=\"8\" x=\"2\" y=\"2\" rx=\"2\" ry=\"2\" /><rect width=\"20\" height=\"8\" x=\"2\" y=\"14\" rx=\"2\" ry=\"2\" /><line x1=\"6\" x2=\"6.01\" y1=\"6\" y2=\"6\" /><line x1=\"6\" x2=\"6.01\" y1=\"18\" y2=\"18\" />",
-    puzzle: "<path d=\"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z\" />",
-    archive: "<rect width=\"20\" height=\"5\" x=\"2\" y=\"3\" rx=\"1\" /><path d=\"M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8\" /><path d=\"M10 12h4\" />",
-    branch: "<path d=\"M15 6a9 9 0 0 0-9 9V3\" /><circle cx=\"18\" cy=\"6\" r=\"3\" /><circle cx=\"6\" cy=\"18\" r=\"3\" />",
-    message: "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />",
-    palette: "<path d=\"M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z\" /><circle cx=\"13.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\" /><circle cx=\"17.5\" cy=\"10.5\" r=\".5\" fill=\"currentColor\" /><circle cx=\"6.5\" cy=\"12.5\" r=\".5\" fill=\"currentColor\" /><circle cx=\"8.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />",
-    workflow: "<rect width=\"8\" height=\"8\" x=\"3\" y=\"3\" rx=\"2\" /><path d=\"M7 11v4a2 2 0 0 0 2 2h4\" /><rect width=\"8\" height=\"8\" x=\"13\" y=\"13\" rx=\"2\" />",
-    robot: "<path d=\"M12 8V4H8\" /><rect width=\"16\" height=\"12\" x=\"4\" y=\"8\" rx=\"2\" /><path d=\"M2 14h2\" /><path d=\"M20 14h2\" /><path d=\"M15 13v2\" /><path d=\"M9 13v2\" />",
-    gear: "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /><circle cx=\"12\" cy=\"12\" r=\"3\" />",
-    panel: "<rect width=\"7\" height=\"18\" x=\"3\" y=\"3\" rx=\"1\" /><rect width=\"7\" height=\"7\" x=\"14\" y=\"3\" rx=\"1\" /><rect width=\"7\" height=\"7\" x=\"14\" y=\"14\" rx=\"1\" />",
-    terminal: "<path d=\"m7 11 2-2-2-2\" /><path d=\"M11 13h4\" /><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" />",
-    cpu: "<path d=\"M12 20v2\" /><path d=\"M12 2v2\" /><path d=\"M17 20v2\" /><path d=\"M17 2v2\" /><path d=\"M2 12h2\" /><path d=\"M2 17h2\" /><path d=\"M2 7h2\" /><path d=\"M20 12h2\" /><path d=\"M20 17h2\" /><path d=\"M20 7h2\" /><path d=\"M7 20v2\" /><path d=\"M7 2v2\" /><rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"2\" /><rect x=\"8\" y=\"8\" width=\"8\" height=\"8\" rx=\"1\" />",
-    brain: "<path d=\"M12 18V5\" /><path d=\"M15 13a4.17 4.17 0 01-3-4 4.17 4.17 0 01-3 4\" /><path d=\"M17.707 6.294A3 3 0 1012 5a3 3 0 10-5.707 1.294\" /><path d=\"M17.996 5.125a4 4 0 012.526 5.77\" /><path d=\"M18 18a4 4 0 002-7.465\" /><path d=\"M19.967 17.482a4 4 0 11-7.967.517 4 4 0 11-7.967-.517\" /><path d=\"M6 18a4 4 0 01-2-7.465\" /><path d=\"M6.004 5.125a4 4 0 00-2.526 5.77\" />",
-    database: "<ellipse cx=\"12\" cy=\"5\" rx=\"9\" ry=\"3\" /><path d=\"M3 5V19A9 3 0 0 0 21 19V5\" /><path d=\"M3 12A9 3 0 0 0 21 12\" />",
-    code: "<path d=\"m10 9-3 3 3 3\" /><path d=\"m14 15 3-3-3-3\" /><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" />",
-    brackets: "<path d=\"M16 3h3a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-3\" /><path d=\"M8 21H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h3\" />",
-    gauge: "<path d=\"m12 14 4-4\" /><path d=\"M3.34 19a10 10 0 1 1 17.32 0\" />",
-    store: "<path d=\"M15 21v-5a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v5\" /><path d=\"M17.774 10.31a1.12 1.12 0 0 0-1.549 0 2.5 2.5 0 0 1-3.451 0 1.12 1.12 0 0 0-1.548 0 2.5 2.5 0 0 1-3.452 0 1.12 1.12 0 0 0-1.549 0 2.5 2.5 0 0 1-3.77-3.248l2.889-4.184A2 2 0 0 1 7 2h10a2 2 0 0 1 1.653.873l2.895 4.192a2.5 2.5 0 0 1-3.774 3.244\" /><path d=\"M4 10.95V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8.05\" />",
-    plug: "<path d=\"M12 22v-5\" /><path d=\"M15 8V2\" /><path d=\"M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z\" /><path d=\"M9 8V2\" />",
-    network: "<rect x=\"16\" y=\"16\" width=\"6\" height=\"6\" rx=\"1\" /><rect x=\"2\" y=\"16\" width=\"6\" height=\"6\" rx=\"1\" /><rect x=\"9\" y=\"2\" width=\"6\" height=\"6\" rx=\"1\" /><path d=\"M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3\" /><path d=\"M12 12V8\" />",
-    wrench: "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />",
-    book: "<path d=\"M12 5v16\" /><path d=\"M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z\" />",
-    key: "<path d=\"M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z\" /><circle cx=\"16.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />",
-    share: "<circle cx=\"18\" cy=\"5\" r=\"3\" /><circle cx=\"6\" cy=\"12\" r=\"3\" /><circle cx=\"18\" cy=\"19\" r=\"3\" /><line x1=\"8.59\" x2=\"15.42\" y1=\"13.51\" y2=\"17.49\" /><line x1=\"15.41\" x2=\"8.59\" y1=\"6.51\" y2=\"10.49\" />",
-    eye: "<path d=\"M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0\" /><circle cx=\"12\" cy=\"12\" r=\"3\" />",
-    eyeoff: "<path d=\"M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49\" /><path d=\"M14.084 14.158a3 3 0 0 1-4.242-4.242\" /><path d=\"M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143\" /><path d=\"m2 2 20 20\" />",
-    image: "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /><circle cx=\"9\" cy=\"9\" r=\"2\" /><path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />",
-    mic: "<path d=\"M12 19v3\" /><path d=\"M19 10v2a7 7 0 0 1-14 0v-2\" /><rect x=\"9\" y=\"2\" width=\"6\" height=\"13\" rx=\"3\" />",
-    coins: "<path d=\"M13.744 17.736a6 6 0 1 1-7.48-7.48\" /><path d=\"M15 6h1v4\" /><path d=\"m6.134 14.768.866-.5 2 3.464\" /><circle cx=\"16\" cy=\"8\" r=\"6\" />",
-    folder: "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />",
-    pkg: "<path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\" /><path d=\"M12 22V12\" /><polyline points=\"3.29 7 12 12 20.71 7\" /><path d=\"m7.5 4.27 9 5.15\" />",
-    file: "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M10 9H8\" /><path d=\"M16 13H8\" /><path d=\"M16 17H8\" />",
-    activity: "<path d=\"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2\" />",
-    flame: "<path d=\"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4\" />",
-    rocket: "<path d=\"M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5\" /><path d=\"M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09\" /><path d=\"M9 12a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.4 22.4 0 0 1-4 2z\" /><path d=\"M9 12H4s.55-3.03 2-4c1.62-1.08 5 .05 5 .05\" />",
-    bulb: "<path d=\"M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5\" /><path d=\"M9 18h6\" /><path d=\"M10 22h4\" />",
-    cloud: "<path d=\"M12 13v8\" /><path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /><path d=\"m8 17 4-4 4 4\" />",
-    timer: "<line x1=\"10\" x2=\"14\" y1=\"2\" y2=\"2\" /><line x1=\"12\" x2=\"15\" y1=\"14\" y2=\"11\" /><circle cx=\"12\" cy=\"14\" r=\"8\" />",
-    user: "<circle cx=\"12\" cy=\"8\" r=\"5\" /><path d=\"M20 21a8 8 0 0 0-16 0\" />",
-    session: "<path d=\"M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z\" /><path d=\"M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1\" />",
-    audio: "<path d=\"M2 10v3\" /><path d=\"M6 6v11\" /><path d=\"M10 3v18\" /><path d=\"M14 8v7\" /><path d=\"M18 5v13\" /><path d=\"M22 10v3\" />",
-    cable: "<path d=\"M17 19a1 1 0 0 1-1-1v-2a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a1 1 0 0 1-1 1z\" /><path d=\"M17 21v-2\" /><path d=\"M19 14V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V10\" /><path d=\"M21 21v-2\" /><path d=\"M3 5V3\" /><path d=\"M4 10a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a2 2 0 0 1-2 2z\" /><path d=\"M7 5V3\" />",
-    scan: "<path d=\"M3 7V5a2 2 0 0 1 2-2h2\" /><path d=\"M17 3h2a2 2 0 0 1 2 2v2\" /><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\" /><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\" /><circle cx=\"12\" cy=\"12\" r=\"1\" /><path d=\"M18.944 12.33a1 1 0 0 0 0-.66 7.5 7.5 0 0 0-13.888 0 1 1 0 0 0 0 .66 7.5 7.5 0 0 0 13.888 0\" />",
-    voice: "<path d=\"m11 7.601-5.994 8.19a1 1 0 0 0 .1 1.298l.817.818a1 1 0 0 0 1.314.087L15.09 12\" /><path d=\"M16.5 21.174C15.5 20.5 14.372 20 13 20c-2.058 0-3.928 2.356-6 2-2.072-.356-2.775-3.369-1.5-4.5\" /><circle cx=\"16\" cy=\"7\" r=\"5\" />",
-    notes: "<path d=\"M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4\" /><path d=\"M2 6h4\" /><path d=\"M2 10h4\" /><path d=\"M2 14h4\" /><path d=\"M2 18h4\" /><path d=\"M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z\" />",
-    tree: "<path d=\"M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z\" /><path d=\"M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z\" /><path d=\"M3 5a2 2 0 0 0 2 2h3\" /><path d=\"M3 3v13a2 2 0 0 0 2 2h3\" />",
-    commit: "<circle cx=\"12\" cy=\"12\" r=\"3\" /><line x1=\"3\" x2=\"9\" y1=\"12\" y2=\"12\" /><line x1=\"15\" x2=\"21\" y1=\"12\" y2=\"12\" />",
-    route: "<path d=\"M9 5h8.5a1 1 0 010 7h-11a1 1 0 000 7H15\" /><circle cx=\"18\" cy=\"19\" r=\"3\" /><circle cx=\"6\" cy=\"5\" r=\"3\" />",
-    waypoints: "<path d=\"m10.586 5.414-5.172 5.172\" /><path d=\"m18.586 13.414-5.172 5.172\" /><path d=\"M6 12h12\" /><circle cx=\"12\" cy=\"20\" r=\"2\" /><circle cx=\"12\" cy=\"4\" r=\"2\" /><circle cx=\"20\" cy=\"12\" r=\"2\" /><circle cx=\"4\" cy=\"12\" r=\"2\" />",
-    map: "<path d=\"M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z\" /><path d=\"M15 5.764v15\" /><path d=\"M9 3.236v15\" />",
-    paint: "<path d=\"m14.622 17.897-10.68-2.913\" /><path d=\"M18.376 2.622a1 1 0 1 1 3.002 3.002L17.36 9.643a.5.5 0 0 0 0 .707l.944.944a2.41 2.41 0 0 1 0 3.408l-.944.944a.5.5 0 0 1-.707 0L8.354 7.348a.5.5 0 0 1 0-.707l.944-.944a2.41 2.41 0 0 1 3.408 0l.944.944a.5.5 0 0 0 .707 0z\" /><path d=\"M9 8c-1.804 2.71-3.97 3.46-6.583 3.948a.507.507 0 0 0-.302.819l7.32 8.883a1 1 0 0 0 1.185.204C12.735 20.405 16 16.792 16 15\" />",
-    note: "<path d=\"M21 9a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2z\" /><path d=\"M15 3v5a1 1 0 0 0 1 1h5\" />",
-    orbit: "<path d=\"M20.341 6.484A10 10 0 0 1 10.266 21.85\" /><path d=\"M3.659 17.516A10 10 0 0 1 13.74 2.152\" /><circle cx=\"12\" cy=\"12\" r=\"3\" /><circle cx=\"19\" cy=\"5\" r=\"2\" /><circle cx=\"5\" cy=\"19\" r=\"2\" />",
-    blocks: "<path d=\"M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2\" /><rect x=\"14\" y=\"2\" width=\"8\" height=\"8\" rx=\"1\" />",
-    todo: "<path d=\"M13 5h8\" /><path d=\"M13 12h8\" /><path d=\"M13 19h8\" /><path d=\"m3 17 2 2 4-4\" /><rect x=\"3\" y=\"4\" width=\"6\" height=\"6\" rx=\"1\" />",
-    bellring: "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /><path d=\"M22 8c0-2.3-.8-4.3-2-6\" /><path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" /><path d=\"M4 2C2.8 3.7 2 5.7 2 8\" />",
-    table: "<path d=\"M12 3v18\" /><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" /><path d=\"M3 9h18\" /><path d=\"M3 15h18\" />",
-    sliders: "<path d=\"M10 5H3\" /><path d=\"M12 19H3\" /><path d=\"M14 3v4\" /><path d=\"M16 17v4\" /><path d=\"M21 12h-9\" /><path d=\"M21 19h-5\" /><path d=\"M21 5h-7\" /><path d=\"M8 10v4\" /><path d=\"M8 12H3\" />",
-    filter: "<path d=\"M2 5h20\" /><path d=\"M6 12h12\" /><path d=\"M9 19h6\" />",
-    info: "<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"M12 16v-4\" /><path d=\"M12 8h.01\" />",
-    warn: "<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /><path d=\"M12 9v4\" /><path d=\"M12 17h.01\" />",
+    "install": "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M4 20l16 0\"/><path d=\"M12 14l0 -10\"/><path d=\"M12 14l4 -4\"/><path d=\"M12 14l-4 -4\"/></g>",
+    search: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0\"/><path d=\"M21 21l-6 -6\"/></g>",
+    refresh: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4\"/><path d=\"M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4\"/></g>",
+    plus: "<g transform=\"translate(-6.429 -6.429) scale(1.5357)\" stroke-width=\"1.302\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M12 5l0 14\"/><path d=\"M5 12l14 0\"/></g>",
+    check: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0\"/><path d=\"M9 12l2 2l4 -4\"/></g>",
+    shield: "<g transform=\"translate(-2.341 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M11.46 20.846a12 12 0 0 1 -7.96 -14.846a12 12 0 0 0 8.5 -3a12 12 0 0 0 8.5 3a12 12 0 0 1 -.09 7.06\"/><path d=\"M15 19l2 2l4 -4\"/></g>",
+    x: "<g transform=\"translate(-9.500 -9.500) scale(1.7917)\" stroke-width=\"1.116\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M18 6l-12 12\"/><path d=\"M6 6l12 12\"/></g>",
+    chev: "<g transform=\"translate(-9.500 -9.500) scale(1.7917)\" stroke-width=\"1.116\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M9 6l6 6l-6 6\"/></g>",
+    expand: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M16 4l4 0l0 4\"/><path d=\"M14 10l6 -6\"/><path d=\"M8 20l-4 0l0 -4\"/><path d=\"M4 20l6 -6\"/><path d=\"M16 20l4 0l0 -4\"/><path d=\"M14 14l6 6\"/><path d=\"M8 4l-4 0l0 4\"/><path d=\"M4 4l6 6\"/></g>",
+    collapse: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M5 9l4 0l0 -4\"/><path d=\"M3 3l6 6\"/><path d=\"M5 15l4 0l0 4\"/><path d=\"M3 21l6 -6\"/><path d=\"M19 9l-4 0l0 -4\"/><path d=\"M15 9l6 -6\"/><path d=\"M19 15l-4 0l0 4\"/><path d=\"M15 15l6 6\"/></g>",
+    back: "<g transform=\"translate(-9.500 -9.500) scale(1.7917)\" stroke-width=\"1.116\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M15 6l-6 6l6 6\"/></g>",
+    sparkle: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 12h1m8 -9v1m8 8h1m-15.4 -6.4l.7 .7m12.1 -.7l-.7 .7\"/><path d=\"M9 16a5 5 0 1 1 6 0a3.5 3.5 0 0 0 -1 3a2 2 0 0 1 -4 0a3.5 3.5 0 0 0 -1 -3\"/><path d=\"M9.7 17l4.6 0\"/></g>",
+    download: "<g transform=\"translate(-3.176 -3.809) scale(1.2647)\" stroke-width=\"1.581\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2\"/><path d=\"M7 11l5 5l5 -5\"/><path d=\"M12 4l0 12\"/></g>",
+    star: "<g transform=\"translate(-0.911 -0.378) scale(1.0765)\" stroke-width=\"1.858\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873l-6.158 -3.245\"/></g>",
+    cube: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M12 3l8 4.5l0 9l-8 4.5l-8 -4.5l0 -9l8 -4.5\"/><path d=\"M12 12l8 -4.5\"/><path d=\"M12 12l0 9\"/><path d=\"M12 12l-8 -4.5\"/></g>",
+    compass: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M8 16l2 -6l6 -2l-2 6l-6 2\"/><path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0\"/><path d=\"M12 3l0 2\"/><path d=\"M12 19l0 2\"/><path d=\"M3 12l2 0\"/><path d=\"M19 12l2 0\"/></g>",
+    bell: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M10 5a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6\"/><path d=\"M9 17v1a3 3 0 0 0 6 0v-1\"/></g>",
+    globe: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\"/><path d=\"M3.6 9h16.8\"/><path d=\"M3.6 15h16.8\"/><path d=\"M11.5 3a17 17 0 0 0 0 18\"/><path d=\"M12.5 3a17 17 0 0 1 0 18\"/></g>",
+    chart: "<g transform=\"translate(-4.125 -4.797) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M4 19l16 0\"/><path d=\"M4 15l4 -6l4 2l4 -5l4 4\"/></g>",
+    zap: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M13 3l0 7l6 0l-8 11l0 -7l-6 0l8 -11\"/></g>",
+    hdd: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2\"/><path d=\"M10 14a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\"/><path d=\"M14 4l0 4l-6 0l0 -4\"/></g>",
+    layers: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M8 6a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2l0 -8\"/><path d=\"M16 16v2a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2v-8a2 2 0 0 1 2 -2h2\"/></g>",
+    server: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 7a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v2a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3v-2\"/><path d=\"M3 15a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v2a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3l0 -2\"/><path d=\"M7 8l0 .01\"/><path d=\"M7 16l0 .01\"/></g>",
+    puzzle: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1\"/></g>",
+    archive: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2\"/><path d=\"M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-10\"/><path d=\"M10 12l4 0\"/></g>",
+    branch: "<g transform=\"translate(-4.797 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M5 18a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\"/><path d=\"M5 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\"/><path d=\"M15 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\"/><path d=\"M7 8l0 8\"/><path d=\"M9 18h6a2 2 0 0 0 2 -2v-5\"/><path d=\"M14 14l3 -3l3 3\"/></g>",
+    message: "<g transform=\"translate(-2.333 -2.931) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M8 9h8\"/><path d=\"M8 13h6\"/><path d=\"M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12\"/></g>",
+    palette: "<g transform=\"translate(-2.329 -2.332) scale(1.1941)\" stroke-width=\"1.675\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M12 21a9 9 0 0 1 0 -18c4.97 0 9 3.582 9 8c0 1.06 -.474 2.078 -1.318 2.828c-.844 .75 -1.989 1.172 -3.182 1.172h-2.5a2 2 0 0 0 -1 3.75a1.3 1.3 0 0 1 -1 2.25\"/><path d=\"M7.5 10.5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\"/><path d=\"M11.5 7.5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\"/><path d=\"M15.5 10.5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\"/></g>",
+    workflow: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 19a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\"/><path d=\"M19 7a2 2 0 1 0 0 -4a2 2 0 0 0 0 4\"/><path d=\"M11 19h5.5a3.5 3.5 0 0 0 0 -7h-8a3.5 3.5 0 0 1 0 -7h4.5\"/></g>",
+    robot: "<g transform=\"translate(-1.579 -1.013) scale(1.1316)\" stroke-width=\"1.767\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M6 6a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2l0 -4\"/><path d=\"M12 2v2\"/><path d=\"M9 12v9\"/><path d=\"M15 12v9\"/><path d=\"M5 16l4 -2\"/><path d=\"M15 14l4 2\"/><path d=\"M9 18h6\"/><path d=\"M10 8v.01\"/><path d=\"M14 8v.01\"/></g>",
+    gear: "<g transform=\"translate(-1.667 -1.667) scale(1.1389)\" stroke-width=\"1.756\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065\"/><path d=\"M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0\"/></g>",
+    panel: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12\"/><path d=\"M9 4v16\"/><path d=\"M14 10l2 2l-2 2\"/></g>",
+    terminal: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M8 9l3 3l-3 3\"/><path d=\"M13 15l3 0\"/><path d=\"M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12\"/></g>",
+    cpu: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M5 6a1 1 0 0 1 1 -1h12a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-12a1 1 0 0 1 -1 -1l0 -12\"/><path d=\"M9 9h6v6h-6l0 -6\"/><path d=\"M3 10h2\"/><path d=\"M3 14h2\"/><path d=\"M10 3v2\"/><path d=\"M14 3v2\"/><path d=\"M21 10h-2\"/><path d=\"M21 14h-2\"/><path d=\"M14 21v-2\"/><path d=\"M10 21v-2\"/></g>",
+    brain: "<g transform=\"translate(-2.333 -2.332) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M7 5.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666\"/><path d=\"M4.012 7.26a2.005 2.005 0 0 0 -1.012 1.737v10c0 1.1 .9 2 2 2h10c.75 0 1.158 -.385 1.5 -1\"/><path d=\"M11 7h5\"/><path d=\"M11 10h6\"/><path d=\"M11 13h3\"/></g>",
+    database: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M4 6a8 3 0 1 0 16 0a8 3 0 1 0 -16 0\"/><path d=\"M4 6v6a8 3 0 0 0 16 0v-6\"/><path d=\"M4 12v6a8 3 0 0 0 16 0v-6\"/></g>",
+    code: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M7 8l-4 4l4 4\"/><path d=\"M17 8l4 4l-4 4\"/><path d=\"M14 4l-4 16\"/></g>",
+    brackets: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M7 4a2 2 0 0 0 -2 2v3a2 3 0 0 1 -2 3a2 3 0 0 1 2 3v3a2 2 0 0 0 2 2\"/><path d=\"M17 4a2 2 0 0 1 2 2v3a2 3 0 0 0 2 3a2 3 0 0 0 -2 3v3a2 2 0 0 1 -2 2\"/></g>",
+    gauge: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0\"/><path d=\"M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\"/><path d=\"M13.41 10.59l2.59 -2.59\"/><path d=\"M7 12a5 5 0 0 1 5 -5\"/></g>",
+    store: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 21l18 0\"/><path d=\"M3 7v1a3 3 0 0 0 6 0v-1m0 1a3 3 0 0 0 6 0v-1m0 1a3 3 0 0 0 6 0v-1h-18l2 -4h14l2 4\"/><path d=\"M5 21l0 -10.15\"/><path d=\"M19 21l0 -10.15\"/><path d=\"M9 21v-4a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v4\"/></g>",
+    plug: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M9.785 6l8.215 8.215l-2.054 2.054a5.81 5.81 0 1 1 -8.215 -8.215l2.054 -2.054\"/><path d=\"M4 20l3.5 -3.5\"/><path d=\"M15 4l-3.5 3.5\"/><path d=\"M20 9l-3.5 3.5\"/></g>",
+    network: "<g transform=\"translate(-1.579 -2.145) scale(1.1316)\" stroke-width=\"1.767\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M6 9a6 6 0 1 0 12 0a6 6 0 0 0 -12 0\"/><path d=\"M12 3c1.333 .333 2 2.333 2 6s-.667 5.667 -2 6\"/><path d=\"M12 3c-1.333 .333 -2 2.333 -2 6s.667 5.667 2 6\"/><path d=\"M6 9h12\"/><path d=\"M3 20h7\"/><path d=\"M14 20h7\"/><path d=\"M10 20a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\"/><path d=\"M12 15v3\"/></g>",
+    wrench: "<g transform=\"translate(-2.191 -2.191) scale(1.1809)\" stroke-width=\"1.694\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M7 10h3v-3l-3.5 -3.5a6 6 0 0 1 8 8l6 6a2 2 0 0 1 -3 3l-6 -6a6 6 0 0 1 -8 -8l3.5 3.5\"/></g>",
+    book: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M19 4v16h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12\"/><path d=\"M19 16h-12a2 2 0 0 0 -2 2\"/><path d=\"M9 8h6\"/></g>",
+    key: "<g transform=\"translate(-2.333 -2.334) scale(1.1945)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M16.555 3.843l3.602 3.602a2.877 2.877 0 0 1 0 4.069l-2.643 2.643a2.877 2.877 0 0 1 -4.069 0l-.301 -.301l-6.558 6.558a2 2 0 0 1 -1.239 .578l-.175 .008h-1.172a1 1 0 0 1 -.993 -.883l-.007 -.117v-1.172a2 2 0 0 1 .467 -1.284l.119 -.13l.414 -.414h2v-2h2v-2l2.144 -2.144l-.301 -.301a2.877 2.877 0 0 1 0 -4.069l2.643 -2.643a2.877 2.877 0 0 1 4.069 0\"/><path d=\"M15 9h.01\"/></g>",
+    share: "<g transform=\"translate(-2.282 -2.427) scale(1.1920)\" stroke-width=\"1.678\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M13 4v4c-6.575 1.028 -9.02 6.788 -10 12c-.037 .206 5.384 -5.962 10 -6v4l8 -7l-8 -7\"/></g>",
+    eye: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\"/><path d=\"M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6\"/></g>",
+    eyeoff: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M10.585 10.587a2 2 0 0 0 2.829 2.828\"/><path d=\"M16.681 16.673a8.717 8.717 0 0 1 -4.681 1.327c-3.6 0 -6.6 -2 -9 -6c1.272 -2.12 2.712 -3.678 4.32 -4.674m2.86 -1.146a9.055 9.055 0 0 1 1.82 -.18c3.6 0 6.6 2 9 6c-.666 1.11 -1.379 2.067 -2.138 2.87\"/><path d=\"M3 3l18 18\"/></g>",
+    image: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M15 8h.01\"/><path d=\"M3 6a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v12a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3v-12\"/><path d=\"M3 16l5 -5c.928 -.893 2.072 -.893 3 0l5 5\"/><path d=\"M14 14l1 -1c.928 -.893 2.072 -.893 3 0l3 3\"/></g>",
+    mic: "<g transform=\"translate(-1.579 -1.013) scale(1.1316)\" stroke-width=\"1.767\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M9 5a3 3 0 0 1 3 -3a3 3 0 0 1 3 3v5a3 3 0 0 1 -3 3a3 3 0 0 1 -3 -3l0 -5\"/><path d=\"M5 10a7 7 0 0 0 14 0\"/><path d=\"M8 21l8 0\"/><path d=\"M12 17l0 4\"/></g>",
+    coins: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0\"/><path d=\"M14.8 9a2 2 0 0 0 -1.8 -1h-2a2 2 0 1 0 0 4h2a2 2 0 1 1 0 4h-2a2 2 0 0 1 -1.8 -1\"/><path d=\"M12 7v10\"/></g>",
+    folder: "<g transform=\"translate(-2.333 -1.736) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2\"/></g>",
+    pkg: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M12 3l8 4.5l0 9l-8 4.5l-8 -4.5l0 -9l8 -4.5\"/><path d=\"M12 12l8 -4.5\"/><path d=\"M12 12l0 9\"/><path d=\"M12 12l-8 -4.5\"/><path d=\"M16 5.25l-8 4.5\"/></g>",
+    file: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M14 3v4a1 1 0 0 0 1 1h4\"/><path d=\"M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2\"/><path d=\"M9 9l1 0\"/><path d=\"M9 13l6 0\"/><path d=\"M9 17l6 0\"/></g>",
+    activity: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 12h4l3 8l4 -16l3 8h4\"/></g>",
+    flame: "<g transform=\"translate(-1.579 -1.013) scale(1.1316)\" stroke-width=\"1.767\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M12 10.941c2.333 -3.308 .167 -7.823 -1 -8.941c0 3.395 -2.235 5.299 -3.667 6.706c-1.43 1.408 -2.333 3.294 -2.333 5.588c0 3.704 3.134 6.706 7 6.706c3.866 0 7 -3.002 7 -6.706c0 -1.712 -1.232 -4.403 -2.333 -5.588c-2.084 3.353 -3.257 3.353 -4.667 2.235\"/></g>",
+    rocket: "<g transform=\"translate(-4.041 -4.108) scale(1.3395)\" stroke-width=\"1.493\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M4 13a8 8 0 0 1 7 7a6 6 0 0 0 3 -5a9 9 0 0 0 6 -8a3 3 0 0 0 -3 -3a9 9 0 0 0 -8 6a6 6 0 0 0 -5 3\"/><path d=\"M7 14a6 6 0 0 0 -3 6a6 6 0 0 0 6 -3\"/><path d=\"M14 9a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\"/></g>",
+    bulb: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 12h1m8 -9v1m8 8h1m-15.4 -6.4l.7 .7m12.1 -.7l-.7 .7\"/><path d=\"M9 16a5 5 0 1 1 6 0a3.5 3.5 0 0 0 -1 3a2 2 0 0 1 -4 0a3.5 3.5 0 0 0 -1 -3\"/><path d=\"M9.7 17l4.6 0\"/></g>",
+    cloud: "<g transform=\"translate(-0.900 -0.198) scale(1.0750)\" stroke-width=\"1.860\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M6.657 18c-2.572 0 -4.657 -2.007 -4.657 -4.483c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 1.927 -1.551 3.487 -3.465 3.487h-11.878\"/></g>",
+    timer: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M6.5 7h11\"/><path d=\"M6.5 17h11\"/><path d=\"M6 20v-2a6 6 0 1 1 12 0v2a1 1 0 0 1 -1 1h-10a1 1 0 0 1 -1 -1\"/><path d=\"M6 4v2a6 6 0 1 0 12 0v-2a1 1 0 0 0 -1 -1h-10a1 1 0 0 0 -1 1\"/></g>",
+    user: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0\"/><path d=\"M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2\"/></g>",
+    session: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M21 14l-3 -3h-7a1 1 0 0 1 -1 -1v-6a1 1 0 0 1 1 -1h9a1 1 0 0 1 1 1v10\"/><path d=\"M14 15v2a1 1 0 0 1 -1 1h-7l-3 3v-10a1 1 0 0 1 1 -1h2\"/></g>",
+    audio: "<g transform=\"translate(-2.781 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 17a3 3 0 1 0 6 0a3 3 0 0 0 -6 0\"/><path d=\"M13 17a3 3 0 1 0 6 0a3 3 0 0 0 -6 0\"/><path d=\"M9 17v-13h10v13\"/><path d=\"M9 8h10\"/></g>",
+    cable: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M7 12l5 5l-1.5 1.5a3.536 3.536 0 1 1 -5 -5l1.5 -1.5\"/><path d=\"M17 12l-5 -5l1.5 -1.5a3.536 3.536 0 1 1 5 5l-1.5 1.5\"/><path d=\"M3 21l2.5 -2.5\"/><path d=\"M18.5 5.5l2.5 -2.5\"/><path d=\"M10 11l-2 2\"/><path d=\"M13 14l-2 2\"/></g>",
+    scan: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M5 12h14\"/><path d=\"M3 7v-2a2 2 0 0 1 2 -2h2\"/><path d=\"M3 17v2a2 2 0 0 0 2 2h2\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M17 21h2a2 2 0 0 0 2 -2v-2\"/></g>",
+    voice: "<g transform=\"translate(-1.579 -1.013) scale(1.1316)\" stroke-width=\"1.767\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M9 5a3 3 0 0 1 3 -3a3 3 0 0 1 3 3v5a3 3 0 0 1 -3 3a3 3 0 0 1 -3 -3l0 -5\"/><path d=\"M5 10a7 7 0 0 0 14 0\"/><path d=\"M8 21l8 0\"/><path d=\"M12 17l0 4\"/></g>",
+    notes: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M5 5a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2l0 -14\"/><path d=\"M9 7l6 0\"/><path d=\"M9 11l6 0\"/><path d=\"M9 15l4 0\"/></g>",
+    tree: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 17a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v2a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2l0 -2\"/><path d=\"M15 17a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v2a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2l0 -2\"/><path d=\"M9 5a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v2a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2l0 -2\"/><path d=\"M6 15v-1a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v1\"/><path d=\"M12 9l0 3\"/></g>",
+    commit: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M9 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M12 3l0 6\"/><path d=\"M12 15l0 6\"/></g>",
+    route: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 19a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\"/><path d=\"M19 7a2 2 0 1 0 0 -4a2 2 0 0 0 0 4\"/><path d=\"M11 19h5.5a3.5 3.5 0 0 0 0 -7h-8a3.5 3.5 0 0 1 0 -7h4.5\"/></g>",
+    waypoints: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M20 18a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M8 18a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M8 6a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M20 6a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M14 12a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M6 8v8\"/><path d=\"M18 16v-8\"/><path d=\"M8 6h8\"/><path d=\"M16 18h-8\"/><path d=\"M7.5 7.5l3 3\"/><path d=\"M13.5 13.5l3 3\"/><path d=\"M16.5 7.5l-3 3\"/><path d=\"M10.5 13.5l-3 3\"/></g>",
+    map: "<g transform=\"translate(-3.176 -2.544) scale(1.2647)\" stroke-width=\"1.581\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M9 6.371c0 4.418 -2.239 6.629 -5 6.629\"/><path d=\"M4 6.371h7\"/><path d=\"M5 9c0 2.144 2.252 3.908 6 4\"/><path d=\"M12 20l4 -9l4 9\"/><path d=\"M19.1 18h-6.2\"/><path d=\"M6.694 3l.793 .582\"/></g>",
+    paint: "<g transform=\"translate(-4.125 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M5 5a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v2a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2l0 -2\"/><path d=\"M19 6h1a2 2 0 0 1 2 2a5 5 0 0 1 -5 5l-5 0v2\"/><path d=\"M10 16a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -4\"/></g>",
+    note: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M13 20l7 -7\"/><path d=\"M13 20v-6a1 1 0 0 1 1 -1h6v-7a2 2 0 0 0 -2 -2h-12a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7\"/></g>",
+    orbit: "<g transform=\"translate(-0.900 -0.900) scale(1.0750)\" stroke-width=\"1.860\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M10 19a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M18 5a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M10 5a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M6 12a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M18 19a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M14 12a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M22 12a2 2 0 1 0 -4 0a2 2 0 0 0 4 0\"/><path d=\"M6 12h4\"/><path d=\"M14 12h4\"/><path d=\"M15 7l-2 3\"/><path d=\"M9 7l2 3\"/><path d=\"M11 14l-2 3\"/><path d=\"M13 14l2 3\"/></g>",
+    blocks: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 12l3 3l3 -3l-3 -3l-3 3\"/><path d=\"M15 12l3 3l3 -3l-3 -3l-3 3\"/><path d=\"M9 6l3 3l3 -3l-3 -3l-3 3\"/><path d=\"M9 18l3 3l3 -3l-3 -3l-3 3\"/></g>",
+    todo: "<g transform=\"translate(-3.809 -3.809) scale(1.2647)\" stroke-width=\"1.581\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M9.615 20h-2.615a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8\"/><path d=\"M14 19l2 2l4 -4\"/><path d=\"M9 8h4\"/><path d=\"M9 12h2\"/></g>",
+    bellring: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M10 5a2 2 0 0 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6\"/><path d=\"M9 17v1a3 3 0 0 0 6 0v-1\"/><path d=\"M21 6.727a11.05 11.05 0 0 0 -2.794 -3.727\"/><path d=\"M3 6.727a11.05 11.05 0 0 1 2.792 -3.727\"/></g>",
+    table: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14\"/><path d=\"M3 10h18\"/><path d=\"M10 3v18\"/></g>",
+    sliders: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M4 10a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\"/><path d=\"M6 4v4\"/><path d=\"M6 12v8\"/><path d=\"M10 16a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\"/><path d=\"M12 4v10\"/><path d=\"M12 18v2\"/><path d=\"M16 7a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\"/><path d=\"M18 4v1\"/><path d=\"M18 9v11\"/></g>",
+    filter: "<g transform=\"translate(-3.176 -3.809) scale(1.2647)\" stroke-width=\"1.581\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M4 4h16v2.172a2 2 0 0 1 -.586 1.414l-4.414 4.414v7l-6 2v-8.5l-4.48 -4.928a2 2 0 0 1 -.52 -1.345v-2.227\"/></g>",
+    info: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\"/><path d=\"M12 9h.01\"/><path d=\"M11 12h1v4h1\"/></g>",
+    warn: "<g transform=\"translate(-0.901 -0.183) scale(1.0751)\" stroke-width=\"1.860\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M12 9v4\"/><path d=\"M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0\"/><path d=\"M12 16h.01\"/></g>",
+    library: "<g transform=\"translate(-2.333 -2.332) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M7 5.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666\"/><path d=\"M4.012 7.26a2.005 2.005 0 0 0 -1.012 1.737v10c0 1.1 .9 2 2 2h10c.75 0 1.158 -.385 1.5 -1\"/><path d=\"M11 7h5\"/><path d=\"M11 10h6\"/><path d=\"M11 13h3\"/></g>",
+    container: "<g transform=\"translate(-4.115 -4.122) scale(1.3429)\" stroke-width=\"1.489\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M20 4v.01\"/><path d=\"M20 20v.01\"/><path d=\"M20 16v.01\"/><path d=\"M20 12v.01\"/><path d=\"M20 8v.01\"/><path d=\"M8 5a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1v14a1 1 0 0 1 -1 1h-6a1 1 0 0 1 -1 -1l0 -14\"/><path d=\"M4 4v.01\"/><path d=\"M4 20v.01\"/><path d=\"M4 16v.01\"/><path d=\"M4 12v.01\"/><path d=\"M4 8v.01\"/></g>",
+    chartbar: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M3 13a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v6a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -6\"/><path d=\"M15 9a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v10a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -10\"/><path d=\"M9 5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v14a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -14\"/><path d=\"M4 20h14\"/></g>",
+    external: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6\"/><path d=\"M11 13l9 -9\"/><path d=\"M15 4h5v5\"/></g>",
+    sun: "<g transform=\"translate(-2.333 -2.333) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0\"/><path d=\"M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7\"/></g>",
+    moon: "<g transform=\"translate(-1.924 -2.324) scale(1.1944)\" stroke-width=\"1.674\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008\"/></g>",
+    install: "<g transform=\"translate(-4.125 -4.125) scale(1.3438)\" stroke-width=\"1.488\"><path d=\"M0 0h24v24H0z\" fill=\"none\" stroke=\"none\"/><path d=\"M4 20l16 0\"/><path d=\"M12 14l0 -10\"/><path d=\"M12 14l4 -4\"/><path d=\"M12 14l-4 -4\"/></g>",
   }
-  /**
-   * 渲染一个线性 SVG 图标节点。name 是 ICONS 的键（lucide 图标名）；
+
+
+
+
+
+/**
+   * 渲染一个线性 SVG 图标节点。name 是 ICONS 的键（tabler 图标名）；
    * size 是像素边长。aria-hidden 恒真：图标永远伴随可见文字或 aria-label。
    */
   function icon(name, size = 14) {
     const path = ICONS[name] || ICONS.puzzle
     return h('span', { className: 'dsh-pm-ic', 'aria-hidden': true },
       h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
-        // h() 是 createElement：path 内容是本文件写死的 lucide 数据字符串，
+        // h() 是 createElement：path 内容是本文件写死的 tabler 数据字符串，
         // 展开成子节点而不是 innerHTML（避免 React 告警与注入面）：
         ...(function expand() {
-          // 极简形状展开器：lucide 的 path/circle/rect/line/polyline/polygon 转 vnode。
+          /* 极简 SVG 展开器：图标数据形如 <g transform="…" stroke-width="…">…形状…</g>，
+             展开成 vnode 而不是 innerHTML（避免 React 告警与注入面）。
+             属性名转 React 的 camelCase（stroke-width → strokeWidth）。 */
+          const SVG_ATTR = { 'stroke-width': 'strokeWidth', 'stroke-linecap': 'strokeLinecap', 'stroke-linejoin': 'strokeLinejoin' }
           const nodes = []
-          const tokenRe = /<(path|rect|circle|line|polyline|polygon|ellipse)\b([^>]*)\/?>/g
-          let m
+          const groupRe = /^<g\s([^>]*)>([\s\S]*)<\/g>$/
+          const shapeRe = /<(path|rect|circle|line|polyline|polygon|ellipse)\b([^>]*?)\/?>/g
           const attrRe = /([a-zA-Z-]+)="([^"]*)"/g
-          while ((m = tokenRe.exec(path))) {
+          const group = path.match(groupRe)
+          const groupAttrs = {}
+          let ga
+          while ((ga = attrRe.exec(group[1]))) groupAttrs[SVG_ATTR[ga[1]] || ga[1]] = ga[2]
+          let m
+          while ((m = shapeRe.exec(group[2]))) {
             const attrs = {}
             let a
             while ((a = attrRe.exec(m[2]))) attrs[a[1]] = a[2]
             nodes.push(h(m[1], { key: nodes.length, ...attrs }))
           }
-          return nodes
+          return [h('g', { key: 'g', ...groupAttrs }, ...nodes)]
         })()))
   }
 
-  /* 分类 → 图标与展示名（与 magpie 的 kind chip 同思路：图标着色区分类型）。 */
+  /* 分类 → 图标与展示名：图标只有「墨色」一档，不按分类着色。 */
   const CATEGORY_ICONS = {
-    official: 'shield', ui: 'panel', panel: 'panel', theme: 'palette', market: 'store',
-    session: 'session', memory: 'brain', notify: 'bellring', tools: 'wrench', tool: 'wrench',
-    dev: 'code', cli: 'terminal', skill: 'sparkle', search: 'search', workflow: 'workflow',
-    auto: 'zap', mcp: 'plug', agent: 'robot', gateway: 'network', prompt: 'note',
-    data: 'chart', storage: 'database', usage: 'gauge', model: 'cpu', browser: 'globe',
-    docs: 'file', vision: 'eye', git: 'branch', voice: 'audio', image: 'image',
-    identity: 'key', security: 'shield', remote: 'cloud', fun: 'flame', wsl: 'terminal',
-    agi: 'orbit', network: 'network', web: 'globe', plugin: 'puzzle', other: 'puzzle',
+    official: 'shield',
+    ui: 'panel',
+    panel: 'panel',
+    theme: 'palette',
+    market: 'store',
+    session: 'session',
+    memory: 'library',
+    notify: 'bellring',
+    tools: 'wrench',
+    tool: 'wrench',
+    dev: 'code',
+    cli: 'terminal',
+    skill: 'sparkle',
+    search: 'search',
+    workflow: 'workflow',
+    auto: 'zap',
+    mcp: 'plug',
+    agent: 'robot',
+    gateway: 'network',
+    prompt: 'note',
+    data: 'chart',
+    storage: 'database',
+    usage: 'gauge',
+    model: 'cpu',
+    browser: 'globe',
+    docs: 'file',
+    vision: 'eye',
+    git: 'branch',
+    voice: 'voice',
+    image: 'image',
+    identity: 'key',
+    security: 'shield',
+    remote: 'cloud',
+    fun: 'flame',
+    wsl: 'terminal',
+    agi: 'orbit',
+    network: 'network',
+    web: 'globe',
+    plugin: 'puzzle',
+    other: 'puzzle',
   }
   // 分类中文名的**兜底表**：服务端 /marketplace/query 的 counts[].label 是权威来源
   // （见 lib/index.js 的 MARKET_CATEGORY_LABELS），这张表只用于旧响应或卡片上的
@@ -562,34 +658,39 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
      按名称给有辨识度的那个（sidebar→侧栏、terminal→终端、token→仪表盘…），
      没命中再回落分类图标。规则按特异性排序，先命中先用。 */
   const NAME_ICON_RULES = [
-    ['sidebar|panel|deck|dock|popout', 'panel'],
-    ['terminal|tui|tty|shell', 'terminal'],
-    ['token|usage|quota|context|meter', 'gauge'],
-    ['cost|billing|ledger|price|pay|wallet', 'coins'],
-    ['memory|recall|hindsight|viking|misaka', 'brain'],
-    ['theme|skin|appearance|genui|paint', 'palette'],
-    ['image|vision|visual|screenshot|ocr|photo', 'image'],
-    ['git|commit', 'branch'],
-    ['export|markdown|note|doc|file|archive', 'file'],
+    ['sidebar|panel|deck|dock|popout|layout', 'panel'],
+    ['terminal|tui|tty|shell|console', 'terminal'],
+    ['token|usage|quota|context|meter|gauge', 'gauge'],
+    ['cost|billing|ledger|price|pay|wallet|budget', 'coins'],
+    ['memory|recall|hindsight|viking|misaka|notebook', 'library'],
+    ['theme|skin|appearance|genui|paint|palette|color', 'palette'],
+    ['image|vision|visual|screenshot|ocr|photo|camera', 'image'],
+    ['git|commit|branch|merge', 'branch'],
+    ['export|markdown|note|doc|file|archive|report', 'file'],
     ['import|registry|market|store', 'store'],
     ['share', 'share'],
     ['key|auth|identity|sso', 'key'],
-    ['\bmcp\b', 'plug'],
-    ['voice|audio|tts|speech|sing', 'audio'],
-    ['browser|web|http', 'globe'],
-    ['database|\bdbo?\b|sql', 'database'],
-    ['workflow|flow|pipeline|n8n', 'workflow'],
+    ['mcp', 'plug'],
+    ['voice|audio|tts|speech|sing|music', 'audio'],
+    ['browser|web|http|url|crawl|scrap', 'globe'],
+    ['database|dbo?|sql|postgres|mysql|sqlite|redis', 'database'],
+    ['workflow|flow|pipeline|n8n|orchestrat', 'workflow'],
     ['agent|team|crew|kingdom|swarm|multi', 'robot'],
-    ['notify|pet|push|remind', 'bellring'],
-    ['search|serp|find|rag', 'search'],
-    ['code|script|develop', 'code'],
-    ['timer|schedule|cron|remind', 'timer'],
-    ['novel|writer|story|essay', 'notes'],
-    ['vault|password|safe', 'shield'],
-    ['monitor|watch|observ', 'eye'],
-    ['translate|i18n', 'map'],
-    ['cloud|remote|tunnel', 'cloud'],
-    ['proxy|network|route', 'network'],
+    ['notify|pet|push|remind|alert|webhook', 'bellring'],
+    ['search|serp|find|rag|retriev|query', 'search'],
+    ['code|script|develop|compile|build|lint|debug', 'code'],
+    ['timer|schedule|cron|interval', 'timer'],
+    ['novel|writer|story|essay|writing', 'notes'],
+    ['vault|password|secret|encrypt', 'shield'],
+    ['monitor|watch|observ|metric|log|trace', 'eye'],
+    ['translate|i18n|language|locale', 'map'],
+    ['cloud|remote|tunnel|ssh|deploy', 'cloud'],
+    ['proxy|network|route|gateway|dns', 'network'],
+    ['docker|container|k8s|kubernetes|pod|helm', 'container'],
+    ['dashboard|prometheus|grafana', 'chartbar'],
+    ['sql|table|tableau|sheet', 'table'],
+    ['keyboard|shortcut|hotkey|keybind', 'note'],
+    ['timeline|history|journal|log', 'tree'],
   ]
   const pluginIcon = plugin => {
     const text = (String(plugin?.repo || '') + ' ' + String(plugin?.name || '')).toLowerCase()
@@ -598,18 +699,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     }
     return categoryIcon(plugin?.category)
   }
-  /* 分类 → 色相（v3 配色）：品牌蓝 / 青 / 紫 / 琥珀 / 绿 / 玫 / 靛，未命中的中性灰。 */
-  const CATEGORY_HUES = {
-    official: 'indigo', ui: 'brand', panel: 'brand', tools: 'teal', tool: 'teal',
-    session: 'violet', notify: 'ok', workflow: 'warn', auto: 'warn', dev: 'indigo',
-    usage: 'violet', model: 'cyan', memory: 'rose', theme: 'rose', skill: 'teal',
-    browser: 'cyan', storage: 'rose', data: 'ok', search: 'cyan', network: 'cyan',
-    agent: 'violet', other: 'neutral',
-    market: 'brand', mcp: 'teal', prompt: 'violet', web: 'cyan', image: 'rose',
-    voice: 'rose', cli: 'indigo', gateway: 'teal', plugin: 'brand',
-  }
-  const categoryHue = category => 'dsh-pm-hue-' + (CATEGORY_HUES[category] || 'neutral')
-  /** 市场列表首屏与每次「显示更多」的行数（渐进披露，性能关键路径）。 */
+  /* 图标不再按分类染色：整套图标只有「墨色」一档（继承 label-primary），白天近黑、夜晚近白。 */
   const PAGE_SIZE = 60
 
   function ensureStyles() {
@@ -1132,7 +1222,15 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       try { window.localStorage.setItem('dsh-plugin-manager:fullscreen', next ? '1' : '0') } catch { /* 无 localStorage 就不记 */ }
       return next
     })
-    const [detail, setDetail] = React.useState(null)
+    const [detail, setDetailState] = React.useState(null)
+    const [detailPos, setDetailPos] = React.useState(null)
+    const panelRef = React.useRef(null)
+    /* 详情浮窗跟手：打开时把点击点换算成面板内坐标；无坐标（键盘路径）时居中兜底。 */
+    const setDetail = (plugin, e) => {
+      setDetailState(plugin)
+      const pr = (e && panelRef.current && panelRef.current.getBoundingClientRect) ? panelRef.current.getBoundingClientRect() : null
+      setDetailPos(e && Number.isFinite(e.clientX) && pr ? { x: e.clientX - pr.left, y: e.clientY - pr.top } : null)
+    }
     const [busy, setBusyState] = React.useState('')
     // busy 的**同步**镜像：串行泵的 waitWhileDestructive 靠它决定「有没有破坏性
     // 操作在途」。原来只在渲染时同步 busyRef.current = busy —— setBusy('') 之后
@@ -1156,6 +1254,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const [confirmBatch, setConfirmBatch] = React.useState(false)
     // 重启确认框：{ title, copy }。卸载/停用/启用共用一个确认流程。
     const [restartPrompt, setRestartPrompt] = React.useState(null)
+    // 「接受风险并安装」确认块：{ plugin, name, version, dshVersion, requirements }。
+    // 插件把 dsh 运行时版本钉死、dsh 拒绝安装时出现；确认后登记豁免并重试安装。
+    const [riskInstall, setRiskInstall] = React.useState(null)
     // 插件停用状态：bundle -> { rowIds, disabled, canDisable, reason }。
     // 由 GET /dsh-plugin-manager/disabled 提供；接口失败时开关保持禁用（不猜状态）。
     const [disabledPlugins, setDisabledPlugins] = React.useState({})
@@ -1427,12 +1528,45 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       try {
         const r = await fetch('/dsh-plugin-manager/install', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: plugin.url, name: plugin.name }) })
         const v = await r.json()
+        if (v.allowVersion) {
+          // dsh 拒绝安装（插件把 dsh 运行时版本钉死了）：弹「接受风险并安装」的确认块。
+          // toast 只说结论，details 在确认块里，别让一整段 requirements 淹没队列条。
+          setRiskInstall({ plugin, ...v.allowVersion })
+          toast('info', `安装失败：${plugin.repo || plugin.name} — ${v.reason || '与当前 dsh 版本不兼容'}，可选择「接受风险并安装」`)
+          return 'fail'
+        }
         if (v.error) throw Error(v.error)
         if (!v.ok) throw Error(v.error || '安装失败')
         return v.alreadyInstalled ? 'already' : 'ok'
       } catch (e) {
         toast('error', `安装失败：${plugin.repo || plugin.name} — ${String(e.message || e)}`)
         return 'fail'
+      }
+    }
+    // 「接受风险并安装」：先向 dsh 登记精确版本豁免（dsh plugin allow-version），
+    // 成功后原插件重新入队安装。豁免只对「该插件该版本 + 当前 dsh 版本」生效。
+    const riskInstallGo = async () => {
+      if (!riskInstall) return
+      setBusy('risk-install')
+      try {
+        const r = await fetch('/dsh-plugin-manager/allow-version', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: riskInstall.name, version: riskInstall.version, dshVersion: riskInstall.dshVersion }),
+        })
+        const v = await r.json()
+        if (v.error) throw Error(v.error)
+        if (!v.ok) throw Error(v.error || '登记版本豁免失败')
+        const target = riskInstall.plugin
+        setRiskInstall(null)
+        // 先清 busy 再入队：install() 的守卫看到 busyOther=true 会直接丢弃这次安装。
+        setBusy('')
+        toast('info', '已登记版本豁免，继续安装…')
+        install(target)
+        return
+      } catch (e) {
+        toast('error', `登记版本豁免失败：${String(e.message || e)}`)
+      } finally {
+        setBusy('')
       }
     }
     // 安装队列只有一个消费者：pumpMutations（更新与安装共用一把串行锁）。
@@ -1551,7 +1685,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       installQueueRef.current = installQueueRef.current.slice(1)
       setQueueView([...installQueueRef.current])
       setInstallStatus(s2 => { const next = { ...s2 }; delete next[plugin.id]; return next })
-      return { outcome, name: plugin.repo || plugin.name }
+      // full 是市场全名（strukto-ai/mirage#dsh）：装出来的 npm 名可能只有从全名
+      // 归一化后才对得上（@struktoai/mirage-dsh），repo 短名比对不上。
+      return { outcome, name: plugin.repo || plugin.name, full: plugin.name || '' }
     }
     const pumpMutations = async () => {
       if (mutationRunningRef.current) return
@@ -1570,8 +1706,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           }
           while (installQueueRef.current.length > 0) {
             sawInstall = true
-            const { outcome, name } = await runOneInstall(installQueueRef.current[0])
-            if (outcome === 'ok') installedNames.push(name)
+            const { outcome, name, full } = await runOneInstall(installQueueRef.current[0])
+            if (outcome === 'ok') installedNames.push({ name, full })
             else if (outcome === 'already') toast('info', `${name} 已安装过，无需重复安装`)
           }
         }
@@ -1579,18 +1715,28 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           setDetail(null)
           await loadInstalled()
           // 验收回读：接口说 ok 不等于插件真的出现在已安装列表（magpie 的规矩）。
+          // 两边都过 normalizedName：市场名 strukto-ai/mirage#dsh 装出来是
+          // @struktoai/mirage-dsh，裸字符串比对永远「缺席」，误报安装未生效。
           let listing = []
           try {
             const r = await fetch('/dsh-plugin-manager/installed', { cache: 'no-store' })
             listing = (await r.json()).items || []
           } catch { /* 列表读不到就不做缺席判定，保留成功汇总 */ }
-          const present = new Set(listing.map(item => String(item.name).toLowerCase()))
-          const missing = installedNames.filter(name => {
-            const repo = String(name).toLowerCase()
-            return !present.has(repo) && ![...present].some(n => n.endsWith('/' + repo))
-          })
+          const present = new Set(listing.map(item => normalizedName(item.name)))
+          // 一条安装记录有两个名字可比：repo 短名与市场全名。比对口径与
+          // isInstalledPlugin 一致（归一化 + 双向 endsWith），任何一个命中都算在场。
+          const seenInstalled = record => {
+            for (const candidate of [record.name, record.full]) {
+              const normalized = normalizedName(candidate)
+              if (!normalized) continue
+              if (present.has(normalized)) return true
+              if ([...present].some(n => n.endsWith(normalized) || normalized.endsWith(n))) return true
+            }
+            return false
+          }
+          const missing = installedNames.filter(record => !seenInstalled(record))
           if (missing.length > 0) {
-            toast('error', `安装未生效（已安装列表里没有出现）：${missing.join('、')}。请重启 dsh 后重试`)
+            toast('error', `安装未生效（已安装列表里没有出现）：${missing.map(record => record.name).join('、')}。请重启 dsh 后重试`)
           } else {
             toast('success', installedNames.length === 1 ? '已安装，重启 dsh 后生效' : `已安装 ${installedNames.length} 个插件，重启 dsh 后生效`)
           }
@@ -1891,7 +2037,9 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     // 归一化比较：市场条目名 dsh-market/dsh-market，实际 npm 装下来可能是
     // dshmarket（去掉了横杠），直接字符串比会漏 —— 用户装完还看到「安装」就是
     // 这个原因。去掉 / @ - _ 和空白后比较，涵盖 scope、连字符与大小写差异。
-    const normalizedName = value => normalizeText(value).replace(/[\/@\-_\s.]/g, '')
+    // 归一化把 / @ - _ . 空白和 #（子目录短标签，如 strukto-ai/mirage#dsh 的 npm 名
+    // @struktoai/mirage-dsh）都去掉再比，市场名与实际包名的拼写差异就只剩字母本身。
+    const normalizedName = value => normalizeText(value).replace(/[\/@\-_\s.#]/g, '')
     const installedIndex = React.useMemo(
       () => installed.filter(item => !item.broken).map(item => normalizedName(item.name)),
       [installed]
@@ -1914,8 +2062,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
      */
     const installButton = (plugin, { status = null, disabled = false, extraClass = '' } = {}) => {
       if (isInstalledPlugin(plugin)) {
-        return h('span', { className: `dsh-pm-installed-tag ${extraClass}`.trim() },
-          icon('check', 12), '已安装')
+        return h('span', { className: `dsh-pm-installed-tag ${extraClass}`.trim() }, '已安装')
       }
       const busyNow = status === 'queued' || status === 'installing'
       // 固定 68px 宽下的短文案：转圈 + 3 字，不塞省略号（宽度优先）。
@@ -1927,7 +2074,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         'aria-busy': busyNow ? 'true' : undefined,
         onClick: (e) => { e?.stopPropagation(); install(plugin) },
         title: status === 'queued' ? '已加入安装队列' : status === 'installing' ? '正在安装' : undefined,
-      }, busyNow ? h('span', { className: 'spin', 'aria-hidden': true }) : icon('download', 12), label)
+      }, busyNow ? h('span', { className: 'dual', 'aria-hidden': true }) : icon('install', 12), label)
     }
 
     // 市场查询走服务端分页（/marketplace/query）：社区清单 1.1 万条时整包 9.6MB，
@@ -1969,7 +2116,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       ? market.topStars
       : [...marketPlugins].sort((a, b) => (b.stars || 0) - (a.stars || 0)).slice(0, 5)
 
+    /* 已安装页只列用户装的插件：内置插件（bundled）单独在「内置」页，不在这里重复出现。
+       return null 而不是提前 filter：行选择/框选按 installed[] 的原下标工作。 */
     const installedRows = installed.map((item, index) => {
+      if (item.source === 'bundled') return null
       const selectable = !item.broken && item.source !== 'bundled'
       // 停用状态来自服务端（GET /disabled）；读不到时开关置灰，不猜测。
       const disableInfo = disabledPlugins[item.name] || null
@@ -2070,11 +2220,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const cardNode = (plugin) => {
       const isInstalled = isInstalledPlugin(plugin)
       const status = installStatus[plugin.id]
-      const hue = categoryHue(plugin.category)
-      // 卡片竖版（v3）：着色图标块 + 名称/作者 + 安装按钮一行，两行摘要，彩色分类 chip 一行。
-      return h('div', { className: 'dsh-pm-card', key: plugin.id, onClick: () => setDetail(plugin) },
+          // 卡片竖版（v3）：着色图标块 + 名称/作者 + 安装按钮一行，两行摘要，彩色分类 chip 一行。
+      return h('div', { className: 'dsh-pm-card', key: plugin.id, onClick: (e) => setDetail(plugin, e) },
         h('div', { className: 'dsh-pm-card-top' },
-          h('div', { className: `dsh-pm-icon-tile dsh-pm-icon-md ${hue}` }, icon(pluginIcon(plugin), 18)),
+          h('div', { className: 'dsh-pm-icon-tile dsh-pm-icon-md' }, icon(pluginIcon(plugin), 18)),
           h('div', { className: 'dsh-pm-card-who' },
             h('div', { className: 'dsh-pm-card-name' }, plugin.repo || plugin.name),
             h('div', { className: 'dsh-pm-card-by' },
@@ -2084,7 +2233,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           installButton(plugin, { status, disabled: batchRunning })),
         h('p', { className: 'dsh-pm-card-sum' }, descOf(plugin, true) || descOf(plugin) || '暂无描述'),
         h('div', { className: 'dsh-pm-card-meta' },
-          h('span', { className: `dsh-pm-card-chip ${hue}` }, icon(categoryIcon(plugin.category), 10), categoryLabel(plugin.category)),
+          h('span', { className: 'dsh-pm-card-chip' }, icon(categoryIcon(plugin.category), 10), categoryLabel(plugin.category)),
           h('span', null, `★ ${formatNumber(plugin.stars)}`),
           h('span', null, `↓ ${formatNumber(plugin.downloads)}`),
           plugin.version ? h('span', { className: 'dsh-pm-card-ver' }, `v${plugin.version}`) : null))
@@ -2111,21 +2260,23 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
               : h('div', null,
                   h('div', { className: 'dsh-pm-notes-error' }, (notes.data && notes.data.error) || '读取发布说明失败'),
                   notes.data && notes.data.url ? h('a', { className: 'dsh-pm-drawer-link', href: notes.data.url, target: '_blank', rel: 'noreferrer' }, '打开插件仓库 ↗') : null)))) : null
-    const drawer = detail ? h('div', { className: 'dsh-pm-drawer' },
-      h('div', { className: 'dsh-pm-drawer-head' },
-        h('div', { style: { flex: 1, minWidth: 0 } },
-          h('div', { className: 'dsh-pm-drawer-title' }, detail.repo || detail.name),
-          h('div', { className: 'dsh-pm-drawer-meta' }, `${detail.author || detail.name} · ${categoryLabel(detail.category)}`)),
-        h('button', { className: 'dsh-pm-drawer-close', onClick: () => setDetail(null), 'aria-label': '关闭' }, '×')),
-      h('div', { className: 'dsh-pm-drawer-desc' }, descOf(detail, true) || descOf(detail) || '暂无描述'),
-      h('div', { className: 'dsh-pm-drawer-stats' },
-        h('span', null, `★ ${detail.stars || 0}`),
-        h('span', null, `下载 ${detail.downloads || 0}`),
-        detail.addedDate ? h('span', null, `添加于 ${detail.addedDate}`) : null),
-      h('div', { className: 'dsh-pm-drawer-actions' },
-        installButton(detail, { status: installStatus[detail.id], disabled: batchRunning || busyOther })),
-      detail.url ? h('a', { className: 'dsh-pm-drawer-link', href: detail.url, target: '_blank', rel: 'noreferrer' }, '在 GitHub 上查看 ↗') : null)
-      : null
+    /* 详情小浮窗：贴点击处弹出；已安装插件的状态已由列表行表达，浮窗里不再重复按钮。 */
+    const drawer = detail ? [
+      h('div', { className: 'dsh-pm-mask', onClick: () => setDetail(null), 'aria-hidden': true }),
+      h('div', { className: 'dsh-pm-drawer', style: detailPos ? { left: detailPos.x + 'px', top: detailPos.y + 'px' } : null },
+        h('div', { className: 'dsh-pm-drawer-head' },
+          h('div', { style: { flex: 1, minWidth: 0 } },
+            h('div', { className: 'dsh-pm-drawer-title' }, detail.repo || detail.name,
+            h('span', { className: 'dsh-pm-drawer-meta' }, ` · ${detail.author || detail.name} · ${categoryLabel(detail.category)}`))),
+          h('button', { className: 'dsh-pm-drawer-close', onClick: () => setDetail(null), 'aria-label': '关闭' }, '×')),
+        h('div', { className: 'dsh-pm-drawer-desc' }, descOf(detail, true) || descOf(detail) || '暂无描述'),
+        h('div', { className: 'dsh-pm-drawer-stats' },
+          h('span', null, `★ ${detail.stars || 0}`),
+          h('span', null, `下载 ${detail.downloads || 0}`),
+          detail.addedDate ? h('span', null, `添加于 ${detail.addedDate}`) : null),
+        h('div', { className: 'dsh-pm-drawer-actions' },
+          isInstalledPlugin(detail) || installStatus[detail.id] ? null : installButton(detail, { status: installStatus[detail.id], disabled: batchRunning || busyOther }),
+          detail.url ? h('a', { className: 'dsh-pm-drawer-link', href: detail.url, target: '_blank', rel: 'noreferrer' }, '在 GitHub 上查看 ↗') : null))] : null
 
     // 队列状态条：只在有安装任务时出现；完成后随 installTotalRef 清零消失。
     const installingNow = installTotalRef.current - queueView.length + 1
@@ -2147,28 +2298,20 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const rankRow = (plugin, rank) => {
       const isInstalled = isInstalledPlugin(plugin)
       const status = installStatus[plugin.id]
-      return h('div', { className: 'dsh-pm-rank-row', key: plugin.id },
+      return h('div', { className: 'dsh-pm-rank-row', key: plugin.id, onClick: (e) => setDetail(plugin, e) },
         h('span', { className: 'rk', 'aria-hidden': true }, String(rank)),
-        h('div', { className: `dsh-pm-icon-tile dsh-pm-icon-sm ${categoryHue(plugin.category)}` }, icon(pluginIcon(plugin), 16)),
+        h('div', { className: 'dsh-pm-icon-tile dsh-pm-icon-sm' }, icon(pluginIcon(plugin), 16)),
         h('div', { className: 'who' },
           h('div', { className: 'nm' }, plugin.repo || plugin.name),
           h('div', { className: 'sub' }, `${categoryLabel(plugin.category)} · ↓ ${formatNumber(plugin.downloads)}/周 · ★ ${formatNumber(plugin.stars)}`)),
-        installButton(plugin, { status, disabled: batchRunning }),
-        // 详情入口：榜单行此前整行没有任何点击处理，用户点名字没反应。
-        // 用独立按钮（和 hero 的「详情」一致），避免整行点击与「安装」按钮冲突。
-        h('button', {
-          className: 'dsh-pm-rank-detail',
-          onClick: () => setDetail(plugin),
-          title: `查看 ${plugin.repo || plugin.name} 的详情`,
-          'aria-label': `查看 ${plugin.repo || plugin.name} 的详情`,
-        }, '详情'))
+        installButton(plugin, { status, disabled: batchRunning }))
     }
     const rankCard = (title, sub, list, keyPrefix) => h('div', { className: 'dsh-pm-rank', key: keyPrefix },
       h('div', { className: 'dsh-pm-rank-head' }, h('h3', null, title), h('span', { className: 'sub' }, sub)),
       list.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无数据') : list.map((p, i) => rankRow(p, i + 1)))
     const heroCard = hero
-      ? h('div', { className: 'dsh-pm-hero' },
-          h('div', { className: `dsh-pm-icon-tile dsh-pm-icon-lg ${categoryHue(hero.category)}` }, icon(pluginIcon(hero), 30)),
+      ? h('div', { className: 'dsh-pm-hero', onClick: (e) => setDetail(hero, e) },
+          h('div', { className: 'dsh-pm-icon-tile dsh-pm-icon-lg' }, icon(pluginIcon(hero), 30)),
           h('div', { className: 'who' },
             h('div', { className: 'dsh-pm-hero-tag' }, '今日推荐'),
             h('div', { className: 'dsh-pm-hero-name' }, hero.repo || hero.name,
@@ -2181,7 +2324,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
               hero.version ? h('div', { className: 's' }, h('b', null, `v${hero.version}`), h('span', null, '版本')) : null),
             h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center' } },
               installButton(hero, { status: installStatus[hero.id], disabled: batchRunning || busyOther }),
-              h('button', { className: 'dsh-pm-tool', style: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: '15px', padding: '6px 16px' }, onClick: () => setDetail(hero) }, '详情'))))
+              )))
       : null
     // 扁平栅格（分类视图 / 搜索结果）：服务端分页，当前页已全部渲染；还有更多时按钮续页。
     const discoverGrid = marketTotal === 0 ? h('div', { className: 'dsh-pm-empty' }, '暂无插件')
@@ -2275,7 +2418,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       const isInstalled = isInstalledPlugin(item)
       return h('div', { className: 'dsh-pm-ai-row', key: item.id },
         h('span', { className: 'rk', 'aria-hidden': true }, String(index + 1)),
-        h('div', { className: `dsh-pm-icon-tile dsh-pm-icon-sm ${categoryHue(item.category)}` }, icon(pluginIcon(item), 18)),
+        h('div', { className: 'dsh-pm-icon-tile dsh-pm-icon-sm' }, icon(pluginIcon(item), 18)),
         h('div', { className: 'who' },
           h('div', { className: 'nm' }, item.repo || item.name),
           item.reason ? h('div', { className: 'why' }, item.reason) : h('div', { className: 'why' }, item.description || '')),
@@ -2344,7 +2487,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       }),
       h('button', { type: 'submit', className: 'dsh-pm-ai-go', disabled: aiLoading || !aiQuery.trim() },
         aiLoading
-          ? h(React.Fragment, null, h('span', { className: 'spin', 'aria-hidden': true }), '检索中')
+          ? h(React.Fragment, null, h('span', { className: 'dual', 'aria-hidden': true }), '检索中')
           : h(React.Fragment, null, icon('search', 13), '找插件')))
 
     // sticky 手动安装行：npm 包名 / GitHub 仓库 / 本地文件夹（走现有 install 接口）。
@@ -2391,10 +2534,11 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
     const categoryBar = h('div', { className: 'dsh-pm-catbar' },
       h('div', { className: 'dsh-pm-catrow' },
-        h('div', { className: 'dsh-pm-segs' },
-          pinnedCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name)),
-          // 「全部 N 类」只在收起态显示：展开后它自己消失，用户要收起时
-          // 用展开分类行末尾那个低调的文字「收起」（不再是醒目的胶囊按钮）。
+        /* 分类条：收起态显示前 8 个 + 「全部 N 类」；展开态在同一个容器里换行平铺
+           全部分类，末尾「收起」。筛选组永远钉在这一行右侧（原型的 .grow 分隔同效）。 */
+        h('div', { className: 'dsh-pm-segs' + (catExpanded ? ' xp' : '') },
+          (catExpanded ? orderedCategories : pinnedCategories)
+            .map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name)),
           tailCategories.length > 0 && !catExpanded
             ? h('button', {
                 key: 'seg-more',
@@ -2402,28 +2546,38 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
                 onClick: () => setCatExpanded(true),
                 'aria-expanded': 'false',
                 title: `还有 ${tailCategories.length} 个分类，点击展开`,
-              }, `全部 ${orderedCategories.length} 类`, icon('chev', 11))
+              }, `全部 ${orderedCategories.length} 类`)
+            : null,
+          catExpanded
+            ? h('button', {
+                key: 'seg-collapse',
+                className: 'dsh-pm-seg xall',
+                onClick: () => setCatExpanded(false),
+                title: '收起分类',
+              }, '收起')
             : null),
         // 筛选组钉在第一行右侧：分类 chips 在左侧换行，select 永远不孤行。
         h('div', { className: 'dsh-pm-filters' },
-          h('select', { className: 'dsh-pm-select', value: source, onChange: (e) => setSource(e.target.value), title: '按插件来源过滤', 'aria-label': '按来源过滤' },
-            h('option', { value: 'all' }, '来源：全部'),
-            h('option', { value: 'official' }, '来源：官方'),
-            h('option', { value: 'community' }, '来源：社区'),
-            (Array.isArray(sources) ? sources : []).filter(item => !item.builtin).map(item => h('option', { key: item.id, value: item.id }, '来源：' + shortSourceLabel(item.url)))),
-          h('select', { className: 'dsh-pm-select', value: sort, onChange: (e) => setSort(e.target.value), title: '排序', 'aria-label': '排序' },
-            h('option', { value: 'stars' }, '排序：星标'),
-            h('option', { value: 'downloads' }, '排序：下载量'),
-            h('option', { value: 'newest' }, '排序：最新')))),
-      catExpanded ? h('div', { className: 'dsh-pm-segs dsh-pm-segs-open' },
-        tailCategories.map(name => categorySeg(name, groupLabel(name), categoryCounts.get(name) || 0, category === name)),
-        // 收起入口：低调文字，不再是「全部 N 类」胶囊，也不抢占分类视觉。
-        h('button', {
-          key: 'seg-collapse',
-          className: 'dsh-pm-collapse',
-          onClick: () => setCatExpanded(false),
-          'aria-label': '收起分类',
-        }, '收起', icon('back', 11))) : null)
+          h('div', { className: 'dsh-pm-segs mini', role: 'group', 'aria-label': '按来源过滤' },
+            [['all', '全部'], ['official', '官方'], ['community', '社区']]
+              .concat((Array.isArray(sources) ? sources : []).filter(item => !item.builtin).map(item => [item.id, '来源：' + shortSourceLabel(item.url)]))
+              .map(([value, label]) => h('button', {
+                key: 'src-' + value,
+                className: `dsh-pm-segf${source === value ? ' on' : ''}`,
+                onClick: () => setSource(value),
+                title: '按来源过滤：' + label,
+                'aria-label': '来源：' + label,
+              }, label))),
+          h('div', { className: 'dsh-pm-segs mini', role: 'group', 'aria-label': '排序' },
+            [['stars', '星标'], ['downloads', '下载量']]
+              .map(([value, label]) => h('button', {
+                key: 'sort-' + value,
+                className: `dsh-pm-segf${sort === value ? ' on' : ''}`,
+                onClick: () => setSort(value),
+                title: '排序：' + label,
+                'aria-label': '排序：' + label,
+              }, label))))),
+      )
 
     // 分类分区：每区 6 张（三列两整行），分区头/尾各一个「查看全部 N 个」。
     // 服务端分区给的是**原始分类** id（category）：点「查看全部 N 个」后按该分类
@@ -2455,9 +2609,29 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         h('span', { className: 'date' }, `${marketTotal} 个插件`),
         h('span', { style: { flex: 1 } }),
         refreshing ? h('span', { className: 'dsh-pm-footnote' }, '刷新中…') : null,
-        h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13)),
-        h('label', { className: 'dsh-pm-find' }, icon('search', 13),
-          h('input', { placeholder: `在「${groupLabel(category)}」里搜索…`, value: search, onChange: (e) => setSearch(e.target.value), 'aria-label': '在当前分类里搜索' }))),
+        h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13))),
+      categoryBar,
+      discoverGrid,
+      manualRow)
+
+    // 来源视图：来源是结构性筛选，切到「官方/社区/自定义源」后没有「本周推荐」的语境——
+    // 推荐位、双榜、分区会各把同一批筛选结果重复一遍，看起来像页面抽风。
+    // 这里直接给扁平列表（服务端分页），分类条保留，来源按钮点「全部」即可回到发现首屏。
+    const sourceMeta = (Array.isArray(sources) ? sources : []).find(item => item.id === source)
+    const sourceTitle = source === 'official' ? '官方插件'
+      : source === 'community' ? '社区插件'
+      : sourceMeta ? shortSourceLabel(sourceMeta.url) : '筛选结果'
+    const sourceView = h(React.Fragment, null,
+      h('div', { className: 'dsh-pm-crumbs' },
+        h('button', { className: 'dsh-pm-crumbs-back', onClick: () => setSource('all') }, icon('back', 12), '返回发现'),
+        h('span', { className: 'sep' }, '/'),
+        h('span', null, sourceTitle)),
+      h('div', { className: 'dsh-pm-mainhead' },
+        h('h2', null, sourceTitle),
+        h('span', { className: 'date' }, `${marketTotal} 个插件`),
+        h('span', { style: { flex: 1 } }),
+        refreshing ? h('span', { className: 'dsh-pm-footnote' }, '刷新中…') : null,
+        h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13))),
       categoryBar,
       discoverGrid,
       manualRow)
@@ -2468,9 +2642,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         h('h2', null, '本周推荐'), h('span', { className: 'date' }, '每周日更新推荐位'),
         h('span', { style: { flex: 1 } }),
         refreshing ? h('span', { className: 'dsh-pm-footnote' }, '刷新中…') : null,
-        h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13)),
-        h('label', { className: 'dsh-pm-find' }, icon('search', 13),
-          h('input', { placeholder: '搜索插件和作者…', value: search, onChange: (e) => setSearch(e.target.value), 'aria-label': '搜索插件' }))),
+        h('button', { className: 'dsh-pm-tool', disabled: refreshing, onClick: refreshMarket, title: '重新拉取全部插件源的索引' }, icon('refresh', 13))),
       aiSearchBar,
       aiPanel,
       heroCard,
@@ -2492,7 +2664,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           h('div', null, '市场索引还没有下载'),
           h('button', { className: 'dsh-pm-install', style: { marginTop: '8px' }, disabled: refreshing, onClick: refreshMarket }, refreshing ? '同步中…' : '立即同步')),
         manualRow) :
-      h(React.Fragment, null, queueStrip, isCategoryView ? categoryView : discoverAllView))
+      h(React.Fragment, null, queueStrip, isCategoryView ? categoryView : source !== 'all' ? sourceView : discoverAllView))
 
     // ── 内置页：开关列表（无可搜索/联网需求）。 ──
     const builtinItems = installed.filter(item => item.source === 'bundled' && !item.broken)
@@ -2639,18 +2811,20 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
     // ── 方案 B 外壳：顶部工具行（国内加速 + 关闭）+ 左栏四项 + 内容区。 ──
     const builtinCount = installed.filter(item => item.source === 'bundled' && !item.broken).length
+    // 已安装页只列用户插件（内置不重复出现），计数与列表口径一致
+    const userInstalledCount = installed.length - builtinCount
     const updatableCount = updatesAvailableCount(updates)
     const railItems = [
       { id: 'discover', label: '发现', iconName: 'compass' },
       { id: 'builtin', label: '内置', iconName: 'cube', count: builtinCount || null },
-      { id: 'installed', label: '已安装', iconName: 'download', count: installed.length || null },
+      { id: 'installed', label: '已安装', iconName: 'download', count: userInstalledCount || null },
       { id: 'sources', label: '插件源', iconName: 'server', count: Array.isArray(sources) ? sources.length : null },
     ]
     const viewBody = tab === 'installed' ? h(React.Fragment, null,
         updatesBar,
         updateQueueStrip,
         batchStrip,
-        installed.length === 0 ? h('div', { className: 'dsh-pm-empty' }, '还没有已安装的插件，去「发现」看看吧')
+        installed.filter(item => item.source !== 'bundled').length === 0 ? h('div', { className: 'dsh-pm-empty' }, '还没有已安装的插件，去「发现」看看吧')
           : h('div', null,
               h('div', { className: 'dsh-pm-bulkbar' },
                 h('button', { className: 'dsh-pm-tool', onClick: toggleSelectAll }, manageable.length > 0 && selectedNames.length === manageable.length ? '取消全选' : '全选'),
@@ -2666,7 +2840,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 
     return h('div', null,
       h('div', { className: 'dsh-pm-backdrop', onClick: () => { if (closable) { onClose() } } }),
-      h('div', { className: 'dsh-pm-page' + (fullscreen ? ' dsh-pm-full' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-label': '插件管理' },
+      h('div', { className: 'dsh-pm-page' + (fullscreen ? ' dsh-pm-full' : ''), ref: panelRef, role: 'dialog', 'aria-modal': 'true', 'aria-label': '插件管理' },
         h(Toasts, { store: toastStore }),
         h('div', { className: 'dsh-pm-header' },
           h('button', { className: 'dsh-pm-back', onClick: () => { if (closable) onClose() }, 'aria-label': '返回' }, '← 返回'),
@@ -2722,6 +2896,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
               h('div', { className: 'dsh-pm-confirm-actions' },
                 h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setRestartPrompt(null) }, '稍后'),
                 h('button', { className: 'dsh-pm-confirm-primary', onClick: restartNow, disabled: busy === 'restart' }, busy === 'restart' ? '重启中…' : '立即重启'))),
+            riskInstall && h('div', { className: 'dsh-pm-confirm' },
+              h('div', { className: 'dsh-pm-confirm-title' }, `强行安装 ${riskInstall.name}@${riskInstall.version}？`),
+              h('div', { className: 'dsh-pm-confirm-copy' },
+                `这个插件把 dsh 运行时版本钉死在 ${riskInstall.requirements || riskInstall.dshVersion}，与当前 dsh ${riskInstall.dshVersion} 不匹配。`,
+                h('br'), 'dsh 的判断是强行运行可能崩溃或丢数据。确认后会为「这个插件的这个版本 + 当前 dsh 版本」登记一次豁免并重试安装；插件更新后豁免不再适用。'),
+              h('div', { className: 'dsh-pm-confirm-actions' },
+                h('button', { className: 'dsh-pm-confirm-cancel', onClick: () => setRiskInstall(null), disabled: busy === 'risk-install' }, '取消'),
+                h('button', { className: 'dsh-pm-confirm-danger', onClick: riskInstallGo, disabled: busy === 'risk-install' }, busy === 'risk-install' ? '登记豁免中…' : '接受风险并安装'))),
             devLinkedChoice && h('div', { className: 'dsh-pm-confirm' },
               h('div', { className: 'dsh-pm-confirm-title' }, `选择 ${devLinkedChoice.name} 的更新方式`),
               h('div', { className: 'dsh-pm-confirm-copy' },
@@ -2743,6 +2925,13 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
                   title: '在本地目录里 git pull + 装依赖 + 重新构建',
                 }, '更新本地目录'))),
             viewBody)),
+        tab === 'discover' ? h('div', { className: 'dsh-pm-searchbar' },
+          h('label', { className: 'dsh-pm-find' }, icon('search', 13),
+            h('input', {
+              placeholder: category !== 'all' ? `在「${groupLabel(category)}」里搜索…` : '搜索插件和作者…',
+              value: search, onChange: (e) => setSearch(e.target.value),
+              'aria-label': '搜索插件和作者',
+            }))) : null,
         drawer,
         notesModal))
   }

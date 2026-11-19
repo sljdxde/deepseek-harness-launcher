@@ -242,7 +242,7 @@ serialTest('mirrorMapURL：null 表直连、registry 映射、幂等', () => {
   assert.equal(mirrorMapURL('https://registry.npmmirror.com/x', table), 'https://registry.npmmirror.com/x');
 });
 
-serialTest('pnpmEnvironment：关闭时原 env，打开时注入 npm_config_registry', async () => {
+serialTest('pnpmEnvironment：关闭时原 env，打开时同时注入 npm/pnpm 两个前缀的 registry', async () => {
   const previous = process.env.DSH_PORT;
   process.env.DSH_PORT = '3999';
   try {
@@ -251,6 +251,7 @@ serialTest('pnpmEnvironment：关闭时原 env，打开时注入 npm_config_regi
     });
     const off = await pnpmEnvironment({ fetch: async () => { throw new Error('no plugin'); } });
     assert.equal(off.npm_config_registry, undefined);
+    assert.equal(off.pnpm_config_registry, undefined);
 
     const on = await pnpmEnvironment({
       fetch: async () => ({
@@ -259,6 +260,8 @@ serialTest('pnpmEnvironment：关闭时原 env，打开时注入 npm_config_regi
       }),
     });
     assert.equal(on.npm_config_registry, 'https://registry.npmmirror.com/');
+    // pnpm 11+ 只认 pnpm_config_*：只给 npm 的那个前缀时，pnpm install 仍然直连 npmjs。
+    assert.equal(on.pnpm_config_registry, 'https://registry.npmmirror.com/');
   } finally {
     if (previous === undefined) delete process.env.DSH_PORT;
     else process.env.DSH_PORT = previous;

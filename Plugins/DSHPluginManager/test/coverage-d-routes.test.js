@@ -315,6 +315,7 @@ const ROUTES = [
   ['/dsh-plugin-manager/china-mirror', 'GET'],
   ['/dsh-plugin-manager/china-mirror/set', 'POST'],
   ['/dsh-plugin-manager/install', 'POST'],
+  ['/dsh-plugin-manager/allow-version', 'POST'],
   ['/dsh-plugin-manager/uninstall', 'POST'],
   ['/dsh-plugin-manager/update', 'POST'],
   ['/dsh-plugin-manager/updates', 'GET'],
@@ -1301,6 +1302,7 @@ serialTest('读请求体的路由：请求体读失败时回 500 并如实回出
       '/dsh-plugin-manager/sources/set-enabled',
       '/dsh-plugin-manager/china-mirror/set',
       '/dsh-plugin-manager/install',
+      '/dsh-plugin-manager/allow-version',
       '/dsh-plugin-manager/uninstall',
       '/dsh-plugin-manager/update',
       '/dsh-plugin-manager/release-notes',
@@ -1389,6 +1391,27 @@ serialTest('没有请求体的 POST：按空 JSON 处理（缺参数走 400 而�
     await routeOf(routes, '/dsh-plugin-manager/install').handler(makeReq('POST'), res);
     assert.equal(statusOf(res), 400);
     assert.match(jsonOf(res).error, /缺少/);
+
+    // allow-version：缺参数 400；坏参数 400；dsh CLI 不在临时 HOME 里时如实报错。
+    const missing = makeRes();
+    await routeOf(routes, '/dsh-plugin-manager/allow-version')
+      .handler(makeReq('POST', { body: { name: '@a/b' } }), missing);
+    assert.equal(statusOf(missing), 400);
+    assert.match(jsonOf(missing).error, /缺少 name\/version\/dshVersion/);
+
+    const illegal = makeRes();
+    await routeOf(routes, '/dsh-plugin-manager/allow-version')
+      .handler(makeReq('POST', { body: { name: 'a b; rm', version: '1', dshVersion: 'v' } }), illegal);
+    assert.equal(statusOf(illegal), 200);
+    assert.equal(jsonOf(illegal).ok, false);
+    assert.match(jsonOf(illegal).error, /参数不合法/);
+
+    const absent = makeRes();
+    await routeOf(routes, '/dsh-plugin-manager/allow-version')
+      .handler(makeReq('POST', { body: { name: '@a/b', version: '1.2.3', dshVersion: '0.2.2-rc.2' } }), absent);
+    assert.equal(statusOf(absent), 200);
+    assert.equal(jsonOf(absent).ok, false, '临时 HOME 没有 dsh CLI，如实报失败');
+    assert.ok(jsonOf(absent).error);
   });
 });
 
@@ -2104,7 +2127,7 @@ serialTest('searchPluginsByDescriptionStream：上次验证过的模型要先单
 serialTest('apply 的 effect 会返回注销函数，注销时要把所有路由的 disposer 都跑掉', async () => {
   await withTempHome(async () => {
     const { routes, dispose } = boot();
-    assert.equal(routes.length, 26);
+    assert.equal(routes.length, 27);
     assert.equal(typeof dispose, 'function');
     dispose(); // 不抛异常就算过
   });
