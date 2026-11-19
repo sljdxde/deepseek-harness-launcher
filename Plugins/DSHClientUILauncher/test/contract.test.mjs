@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, DOCK_TABS, diffContract, describeDiff } from '../lib/contract.js'
@@ -78,9 +78,11 @@ test('布局服务面：包内成员表与宿主 baseline 的 ILayout 逐条一�
 
 test('client/client.js 的契约块是生成的，手改就会红', () => {
   const source = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
+  const normalize = (text) => text.replace(/const BUILD_STAMP = "[^"]*"/, 'const BUILD_STAMP = "X"')
   const synced = withContractBlock(source)
   assert.notEqual(synced, null, 'client.js 里必须有 children-from-contract 标记区')
-  assert.equal(synced, source, '跑 node tools/sync-contract.mjs 更新，别手改')
+  // BUILD_STAMP 随每次提交变化（stamp 提交天然落后一笔），不参与“手改”判定
+  assert.equal(normalize(synced), normalize(source), '跑 node tools/sync-contract.mjs 更新，别手改')
 })
 
 test('同步脚本 CLI 自己可用：--check 退出码 0', () => {
@@ -211,9 +213,22 @@ test('宿主版本读取：profile 里 dsh 包是坏 JSON 时落到下一档（�
 })
 
 test('页面 data-build：构建标记 = 包版本 + git 短 sha，且 client 里已注入', () => {
+  // stamp 是「上次同步时的 HEAD」：允许 HEAD 与 HEAD^（提交 stamp 本身会让它落后一笔）
   const stamp = buildStampBlock()
+  const acceptable = new Set([stamp])
+  for (const ref of ['HEAD^', 'HEAD~2']) {
+    try {
+      const sha = execFileSync('git', ['-C', fileURLToPath(new URL('..', import.meta.url)), 'rev-parse', '--short', ref], { encoding: 'utf8' }).trim()
+      const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
+      acceptable.add(`${version}+${sha}`)
+    } catch {
+      /* 浅克隆/无父提交就只认当前 */
+    }
+  }
   assert.match(stamp, /^\d+\.\d+\.\d+(-[\w.]+)?\+[\w]+$/)
   const source = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
-  assert.ok(source.includes(`const BUILD_STAMP = ${JSON.stringify(stamp)}`), 'client 的 BUILD_STAMP 必须与生成器一致')
+  const match = source.match(/const BUILD_STAMP = "([^"]*)"/)
+  assert.ok(match !== null, 'client 必须有 BUILD_STAMP')
+  assert.ok(acceptable.has(match[1]), `client 的 BUILD_STAMP 必须是 HEAD/HEAD^/HEAD~2 之一，实际 ${match[1]}`)
   assert.ok(source.includes("'data-build': BUILD_STAMP"), '根元素必须输出 data-build')
 })
