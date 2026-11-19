@@ -9,6 +9,7 @@
  * 浏览器：优先 puppeteer-core + 系统 Chrome（同 dsh-clipchat 的 e2e 口径），没有就退出 3 并给手工步骤。
  */
 import { existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
 
 const [url, expected] = process.argv.slice(2)
 if (url === undefined || (expected !== 'launcher' && expected !== 'native')) {
@@ -28,7 +29,12 @@ if (chrome === undefined) {
 
 let puppeteer = null
 try {
-  puppeteer = (await import(process.env.PUPPETEER_PATH ?? 'puppeteer-core')).default
+  // PUPPETEER_PATH 给目录时 ESM 不能直接 import（ERR_UNSUPPORTED_DIR_IMPORT），走 CJS require
+  if (process.env.PUPPETEER_PATH) {
+    puppeteer = createRequire(import.meta.url)(process.env.PUPPETEER_PATH)
+  } else {
+    puppeteer = (await import('puppeteer-core')).default
+  }
 } catch {
   process.stderr.write('没有 puppeteer-core（npm i -D puppeteer-core）。手工断言见 shell-switch.sh verify 的输出。\n')
   process.exit(3)
