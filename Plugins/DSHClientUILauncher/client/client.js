@@ -245,6 +245,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }
       const pressure = readProjection('contextPressure')
       const breakdown = readProjection('contextBreakdown')
+      if (typeof window !== 'undefined' && window.__DSH_LAUNCHER_DEBUG__ === true) {
+        console.info('launcher:ctx shapes', JSON.stringify({ pressure, breakdown }).slice(0, 240))
+      }
       const num = (value, keys) => {
         if (value === null || value === undefined) return null
         if (typeof value === 'number') return Number.isFinite(value) ? value : null
@@ -396,9 +399,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
 
     // 上下文查看：有锚点就滚过去高亮；没有就固定文案告知（不静默）
-    const viewInContext = (turn) => {
-      const node = (turn?.nodes ?? []).find((n) => n.getAttribute('data-message-id') === String(turn?.messageId)) ?? null
-      const anchor = node ?? (turn?.anchorId === undefined ? null : document.getElementById(String(turn.anchorId)))
+    const viewInContext = (turn, event) => {
+      const anchor = event?.currentTarget?.closest?.('[data-chat-flow-kind="turn-tail"]') ?? null
       if (anchor !== null) {
         anchor.scrollIntoView({ block: 'center', behavior: 'smooth' })
         anchor.classList.add('launcher-turn-highlight')
@@ -417,13 +419,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     for (const row of rows) {
       try {
         const Component = (slotProps) => {
-          const turn = readTurnByMessageId(slotProps?.messageId, slotProps?.node)
+          const turn = readTurnFromNode(slotProps?.anchorNode ?? null)
           return h('button', {
             type: 'button',
             className: 'launcher-turn-action',
             'data-action': row.id,
             title: row.label,
-            onClick: () => row.onClick(turn),
+            onClick: (event) => row.onClick(readTurnFromNode(event?.currentTarget), event),
           }, row.label)
         }
         if (typeof ctx?.slots?.inject === 'function') {
