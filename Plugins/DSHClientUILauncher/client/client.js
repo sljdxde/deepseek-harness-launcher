@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+6788aaf"
+  const BUILD_STAMP = "0.2.2-rc.5+1c07352"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -113,9 +113,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   .launcher-shell{grid-template-columns:var(--launcher-rail) 0 minmax(0,1fr) 0}
   .launcher-sidebar{position:fixed;left:var(--launcher-rail);top:0;bottom:var(--launcher-status);width:280px;z-index:30;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff));border-right:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));box-shadow:0 0 0 100vmax rgba(0,0,0,.001)}
   .launcher-sidebar[data-drawer="closed"]{display:none}
-  .launcher-rail__drawer{display:inline-flex}
+  .launcher-shell .launcher-rail__drawer{display:inline-flex}
   .launcher-main{min-width:0}
 }
+.launcher-theme-chip{margin-left:auto;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;font-size:12px;line-height:1;padding:2px 6px;cursor:pointer}
 .launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
 .launcher-empty{position:absolute;inset:0 0 150px 0;z-index:6;align-items:center;display:flex;justify-content:center;min-height:0;overflow:auto;padding:24px 24px 8px;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff))}
 .launcher-pane__host{display:flex;flex:1;min-height:0;flex-direction:column}
@@ -712,6 +713,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       ...(typeof window !== 'undefined' && window.__DSH_LAUNCHER_DEV_PANEL__ === true
         ? [{ id: 'launcher.devPanel', label: '外壳调试面板', hint: '开发用：面板/分屏/右栏宽度/codeWrap/权限', regions: ['page'], aliases: [], resolve: () => ({ status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:open-dev-panel')) }) }]
         : []),
+      { id: 'launcher.theme.toggle', label: '切换主题', hint: '浅色 / 深色（⌘⇧L）', regions: ['page'], aliases: [], resolve: () => ({ status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:toggle-theme')) }) },
       { id: 'launcher.codeWrap.toggle', label: '切换代码块自动换行', hint: '开/关长代码横向滚动', regions: ['page', 'editable'], aliases: [], resolve: () => (wrapReady() ? { status: 'handled', run: () => window.dispatchEvent(new CustomEvent('launcher:toggle-code-wrap')) } : { status: 'pass' }) },
       { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], aliases: [], resolve: resolveWorkbench },
     ]
@@ -874,6 +876,32 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const [splitMode, setSplitMode] = React.useState(1)
     // ≤860：侧栏转抽屉（默认收起），与 rail 互斥；主区从 rail 后起算
     const [drawerOpen, setDrawerOpen] = React.useState(false)
+    const [themeMode, setThemeMode] = React.useState(() => {
+      try {
+        return document.documentElement.dataset.dsTheme === 'dark' ? 'dark' : 'light'
+      } catch {
+        return 'light'
+      }
+    })
+    const applyTheme = (next) => {
+      setThemeMode(next)
+      try {
+        const ctx = CURRENT_CTX
+        if (typeof ctx?.theme?.setTheme === 'function') {
+          ctx.theme.setTheme(next)
+          return
+        }
+      } catch {
+        /* 落到 DOM 兜底 */
+      }
+      try {
+        document.documentElement.dataset.dsTheme = next
+        document.documentElement.dataset.dsThemeSource = 'user'
+      } catch {
+        /* 忽略 */
+      }
+    }
+    const toggleTheme = () => applyTheme(themeMode === 'dark' ? 'light' : 'dark')
     const narrow = viewportWidth <= 860
     // 宿主 MainPanel 的口径：面板 key 是 renderSlot 的第三参 `{ entryKey }`，
     // 当前面板从 usePanelInfo 选择器钩子取（我们自己在 inject 里提供了这个钩子）。
@@ -918,9 +946,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const flip = () => setWrapOn((on) => { setCodeWrapPref(!on); return !on })
       window.addEventListener('launcher:open-dev-panel', openDev)
       window.addEventListener('launcher:toggle-code-wrap', flip)
+      const onThemeToggle = () => applyTheme(document.documentElement.dataset.dsTheme === 'dark' ? 'light' : 'dark')
+      window.addEventListener('launcher:toggle-theme', onThemeToggle)
       return () => {
         window.removeEventListener('launcher:open-dev-panel', openDev)
         window.removeEventListener('launcher:toggle-code-wrap', flip)
+        window.removeEventListener('launcher:toggle-theme', onThemeToggle)
       }
     }, [])
     const onDiagKeyDown = (event) => {
@@ -960,6 +991,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     const onKeyDown = (event) => {
       const isPaletteKey = (event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'k'
+      const isThemeKey = (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === 'l'
+      if (isThemeKey) {
+        event.preventDefault()
+        toggleTheme()
+        return
+      }
       if (isPaletteKey) {
         event.preventDefault()
         if (!paletteOpen) openerRef.current = document.activeElement
@@ -1050,7 +1087,16 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             className: `launcher-splitbar__mode${splitMode === mode ? ' on' : ''}`,
             'aria-pressed': splitMode === mode,
             onClick: () => setSplitMode(mode),
-          }, String(mode)))),
+          }, String(mode))),
+          h('button', {
+            type: 'button',
+            className: 'launcher-theme-chip',
+            'aria-label': '切换日夜模式',
+            'aria-pressed': themeMode === 'dark',
+            title: themeMode === 'dark' ? '当前：深色，点击切浅色' : '当前：浅色，点击切深色',
+            'data-theme-mode': themeMode,
+            onClick: toggleTheme,
+          }, themeMode === 'dark' ? '🌙' : '☀️')),
         h('div', { className: 'launcher-panes' },
           paneKeys.map((key, index) => h('div', {
             key,
@@ -1292,5 +1338,5 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   // 只 inject slots：ctx.reflect 是上下文自带的属性，不是可注入的服务——
   // 把 reflect 写进 inject 会让插件等一个不存在的服务，连带 ui-sidebar/ui-chat 全 pending
   // （真机实测：`web boot: 3 required entries did not activate … waiting for service: reflect`）。
-  return { inject: ['slots', 'shortcuts'], apply }
+  return { inject: ['slots', 'shortcuts', 'theme'], apply }
 } })
