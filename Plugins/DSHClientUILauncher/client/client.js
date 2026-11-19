@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.5+5ce1b31"
+  const BUILD_STAMP = "0.2.2-rc.5+6f2784c"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -1312,8 +1312,6 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }, [])
     toggleRef.current.dock = toggleDock
     toggleRef.current.theme = toggleTheme
-    layerRef.current.palette = paletteOpen
-    layerRef.current.dev = devOpen
     React.useEffect(() => {
       // composer 是 Lexical，root 上的 keydown 可能被它 stopPropagation：window capture 抢在前面。
       // 通过 ref 调最新的 toggle，避免拿到首次渲染的陈旧 dockOpen。
@@ -1408,6 +1406,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }, [paletteOpen])
     const paneScrollRef = React.useRef(0)
     const [devOpen, setDevOpen] = React.useState(false)
+    layerRef.current.palette = paletteOpen
+    layerRef.current.dev = devOpen
     const [wrapOn, setWrapOn] = React.useState(codeWrapOn)
     // #1 焦点回位：打开面板时记住当时的活动元素，Esc 时优先还给它（选择器只作兜底）
     const openerRef = React.useRef(null)
