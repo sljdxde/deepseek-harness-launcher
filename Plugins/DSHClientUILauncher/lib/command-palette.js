@@ -163,12 +163,25 @@ export const OWN_CATALOG_ROWS = [
  * @returns {object[]} catalog 行。
  */
 export function ownCatalogRows(ctx = {}, actions = {}) {
-  const onPage = ctx.currentPage === undefined || ctx.currentPage === 'conversation' || ctx.currentPage === 'plugins'
-  const hasSession = ctx.hasSession !== false
-  // 与宿主同形态：resolve(ctx) → { status: 'handled', run } | { status: 'pass' }
-  const guard = (enabled, run) => ({ resolve: () => (enabled ? { status: 'handled', run } : { status: 'pass' }) })
+  // 判定必须发生在 resolve() 调用时：注册那一刻 slots 里可能还没有目标 main 面板
+  const liveCtx = () => (typeof ctx === 'function' ? ctx() : ctx)
+  const currentPage = () => {
+    const c = liveCtx()
+    return typeof c.currentPage === 'function' ? c.currentPage() : c.currentPage
+  }
+  const onPage = () => {
+    const page = currentPage()
+    return page === undefined || page === 'conversation' || page === 'plugins'
+  }
+  const keyReady = () => (typeof actions.resolveMainKey === 'function' ? actions.resolveMainKey() !== null : true)
+  const guard = (check, run) => ({
+    resolve: () => (check() ? { status: 'handled', run } : { status: 'pass' }),
+  })
   return [
-    { ...OWN_CATALOG_ROWS[0], ...guard(onPage, () => actions.onOpenWorkbench?.()) },
-
+    {
+      ...OWN_CATALOG_ROWS[0],
+      aliases: [],
+      ...guard(() => onPage() && keyReady(), () => actions.onOpenWorkbench?.()),
+    },
   ]
 }

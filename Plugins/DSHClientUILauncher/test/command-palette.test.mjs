@@ -139,3 +139,21 @@ test('执行：字符串 handled 且 entry 自带 run 时也执行（兼容旧�
   assert.equal(executeCommand(entry), 'ran')
   assert.deepEqual(calls, ['x'])
 })
+
+test('自有行：注册时 key 还不在、调用时才有 → handled（惰性判定）', () => {
+  let ready = false
+  const rows = ownCatalogRows({}, { resolveMainKey: () => (ready ? 'dsh-plugin-manager' : null), onOpenWorkbench: () => {} })
+  assert.equal(catalogCommands(rows)[0].disabled, true, '注册时无 key → 先置灰')
+  ready = true
+  const after = catalogCommands(rows)
+  assert.equal(after[0].disabled, false, '调用时有 key → 可执行')
+  assert.equal(executeCommand(after[0]), 'ran')
+})
+
+test('自有行：页面级判定取实时状态（不是注册时快照）', () => {
+  let page = 'settings'
+  const rows = ownCatalogRows({ currentPage: () => page }, { onOpenWorkbench: () => {} })
+  assert.equal(catalogCommands(rows)[0].disabled, true)
+  page = 'conversation'
+  assert.equal(catalogCommands(rows)[0].disabled, false)
+})

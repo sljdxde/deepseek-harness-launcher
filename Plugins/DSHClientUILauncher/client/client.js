@@ -141,19 +141,29 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   }
 
   function ownCatalogRowsFor(ctx) {
-    const page = window.__DSH_LAUNCHER_PAGE__ ?? 'conversation'
-    const onPage = page === 'conversation' || page === 'plugins'
-    const guard = (enabled, run) => ({ resolve: () => (enabled ? { status: 'handled', run } : { status: 'pass' }) })
+    // 判定放在 resolve() 里现算：注册时 `ctx.slots.entries('main')` 里目标面板可能还没注册
+    const currentPage = () => {
+      try {
+        return ctx?.layout?.panelInfo?.getSnapshot?.().activePanelId ?? 'conversation'
+      } catch {
+        return 'conversation'
+      }
+    }
+    const onPage = () => {
+      const page = currentPage()
+      return page === null || page === undefined || page === 'conversation' || page === 'plugins'
+    }
+    const keyReady = () => resolveMainKey(ctx, RAIL_CANDIDATES.plugins) !== null
+    const runWorkbench = () => {
+      const key = resolveMainKey(ctx, RAIL_CANDIDATES.plugins)
+      if (key !== null) ctx.layout?.selectPanel?.(key)
+    }
+    const resolveWorkbench = () => (onPage() && keyReady() ? { status: 'handled', run: runWorkbench } : { status: 'pass' })
     return [
-      { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], aliases: [], ...guard(
-        onPage && resolveMainKey(ctx, RAIL_CANDIDATES.plugins) !== null,
-        () => {
-          const key = resolveMainKey(ctx, RAIL_CANDIDATES.plugins)
-          if (key !== null) ctx.layout?.selectPanel?.(key)
-        },
-      ) },
+      { id: 'launcher.pluginWorkbench', label: '打开插件工作台', hint: '插件页（plugin:<id>）', regions: ['page', 'editable'], aliases: [], resolve: resolveWorkbench },
     ]
   }
+
 
   function collectCommands(ctx) {
     // 05 §6.5 实测口径：条目源 = ctx.shortcuts.registry.commands（Map）。
