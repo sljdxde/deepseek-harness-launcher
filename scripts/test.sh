@@ -55,6 +55,7 @@ if rg -q 'stopRunningAgents|需要二次确认删除|只能删除已归档' "$RO
   exit 1
 fi
 rg -Fq 'body: JSON.stringify({ sessionIds: confirmIds })' "$ROOT/Plugins/DSHArchiveManager/client/client.js"
+# 审批与权限服务（PR-A）：判定/策略/审计/服务层，安全敏感代码不允许零 CI 覆盖。
 node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/audit.mjs"
 node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/decision.mjs"
 node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/index.mjs"
