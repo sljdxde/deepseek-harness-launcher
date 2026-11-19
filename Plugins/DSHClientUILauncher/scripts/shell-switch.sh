@@ -65,7 +65,7 @@ BASE_LOCK_HASH_FILE="$STATE/lockfile.before-launcher.sha256"
 NODE_BIN=${NODE_BIN:-node}
 command -v "$NODE_BIN" >/dev/null 2>&1 || die 4 "找不到 node"
 
-pkg_field() { # $1: dep | bundles | deps-all
+pkg_field() { # $1: dep | deps-all
   "$NODE_BIN" -e '
     const fs = require("node:fs");
     const p = process.argv[1], what = process.argv[2];
@@ -99,12 +99,8 @@ pkg_write() { # $1: mode(add|remove)  $2: file: spec
     doc.dependencies = doc.dependencies || {};
     if (mode === "add") {
       doc.dependencies[NAME] = spec;
-      doc.dsh = doc.dsh || {}; doc.dsh.profile = doc.dsh.profile || {};
-      const b = doc.dsh.profile.bundles = doc.dsh.profile.bundles || [];
-      if (!b.includes(NAME)) b.push(NAME);
     } else if (mode === "remove") {
       delete doc.dependencies[NAME];
-      // bundles 里的同名字段保留（解析回宿主自带包），按裁决不动
     } else throw new Error("bad mode " + mode);
     fs.writeFileSync(p, JSON.stringify(doc, null, 2) + "\n");
   ' "$PKG_JSON" "$1" "${2:-}"
@@ -303,7 +299,6 @@ do_status() {
   printf 'profile            : %s\n' "$PROFILE"
   printf '本包目录           : %s\n' "${PKG_DIR:-未找到}"
   printf 'dependencies[layout]: %s\n' "$(pkg_field dep)"
-  printf 'bundles 登记       : %s\n' "$(pkg_field bundles)"
   hv=$(host_version)
   printf '宿主版本           : %s（期望 %s）\n' "$hv" "$EXPECTED_HOST_VERSION"
   if [ "$hv" = "$EXPECTED_HOST_VERSION" ]; then printf '版本锁判定         : OK（可切换）\n'; else printf '版本锁判定         : 不匹配（安装会被拒绝，退出码 2）\n'; fi
