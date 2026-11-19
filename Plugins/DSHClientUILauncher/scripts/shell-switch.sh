@@ -76,6 +76,21 @@ pkg_field() { # $1: dep | bundles | deps-all
   ' "$PKG_JSON" "$1"
 }
 
+pkg_write_bundles() { # $1: add|remove —— 只动 dsh.profile.bundles，不碰 dependencies
+  "$NODE_BIN" -e '
+    const fs = require("node:fs");
+    const [p, mode] = process.argv.slice(1);
+    const doc = JSON.parse(fs.readFileSync(p, "utf8"));
+    const NAME = "@deepseek-ai/dsh-client-ui-layout";
+    doc.dsh = doc.dsh || {}; doc.dsh.profile = doc.dsh.profile || {};
+    const b = doc.dsh.profile.bundles = doc.dsh.profile.bundles || [];
+    const next = b.filter((x) => x !== NAME);
+    if (mode === "add") next.push(NAME);
+    doc.dsh.profile.bundles = next;
+    fs.writeFileSync(p, JSON.stringify(doc, null, 2) + "\n");
+  ' "$PKG_JSON" "$1"
+}
+
 pkg_write() { # $1: mode(add|remove)  $2: file: spec
   "$NODE_BIN" -e '
     const fs = require("node:fs");
@@ -126,13 +141,11 @@ host_version() {
 check_version_lock() {
   # 先走包内版本锁工具（包 version ↔ contracts/host-baseline.json 的宿主 ui-layout 版本）
   if [ -f "$PKG_DIR/tools/check-host-version.mjs" ]; then
-    if ! "$NODE_BIN" "$PKG_DIR/tools/check-host-version.mjs" >/dev/null 2>"$PKG_DIR/.version-lock.err"; then
-      code=$?
-      cat "$PKG_DIR/.version-lock.err" >&2 || true
-      rm -f "$PKG_DIR/.version-lock.err"
-      die 2 "版本锁：包版本与宿主基线不一致（check-host-version 退出 $code）"
+    # 三方比对：把本脚本读到的宿主版本传进去（同一数据源，避免工具自己读不到时误判）
+    if ! "$NODE_BIN" "$PKG_DIR/tools/check-host-version.mjs" --profile-dir "$PROFILE" --host-version "$(host_version)" >/dev/null 2>&1; then
+      "$NODE_BIN" "$PKG_DIR/tools/check-host-version.mjs" --profile-dir "$PROFILE" --host-version "$(host_version)" >&2 || true
+      die 2 "版本锁：宿主/基线/本包三方不一致，拒绝安装"
     fi
-    rm -f "$PKG_DIR/.version-lock.err"
   fi
   local hv; hv=$(host_version)
   if [ -z "$hv" ]; then die 2 "版本锁：读不到宿主版本（$PROFILE/node_modules/@deepseek-ai/dsh/package.json 与 dsh --version 都不可用）"; fi
@@ -225,8 +238,18 @@ do_launcher() {
     hash_file "$LOCK" > "$BASE_LOCK_HASH_FILE"
     log "记录 lockfile 基线：$(cat "$BASE_LOCK_HASH_FILE")"
   fi
-  pkg_write add "file:$PKG_DIR"
-  install_with_restore "$backup"
+  if dsh_plugin_available; then
+    log "→ ${DSH_CMD:-dsh} plugin add @deepseek-ai/dsh-client-ui-layout@file:$PKG_DIR"
+    if ! "${DSH_CMD:-dsh}" plugin --profile "$(basename "$PROFILE")" add "@deepseek-ai/dsh-client-ui-layout@file:$PKG_DIR"; then
+      cp -f "$backup" "$PKG_JSON"
+      log "reason=dsh-plugin-add-failed restored=$PKG_JSON"
+      die 4 "dsh plugin add 失败，已还原 package.json"
+    fi
+    pkg_write_bundles add || true
+  else
+    pkg_write add "file:$PKG_DIR"
+    install_with_restore "$backup"
+  fi
   restart_hook
   verify_page launcher
   log "launcher 完成：dependencies + bundles 已登记（patch/行未动）"
@@ -240,8 +263,16 @@ do_native() {
   if [ "$(pkg_field dep)" = "" ]; then
     log "native：dependencies 里已无该包（幂等，继续做 install/verify）"
   fi
-  pkg_write remove
-  install_with_restore "$backup"
+  if dsh_plugin_available; then
+    if "${DSH_CMD:-dsh}" plugin --profile "$(basename "$PROFILE")" remove "@deepseek-ai/dsh-client-ui-layout"; then
+      pkg_write_bundles remove || true
+    else
+      log "reason=dsh-plugin-remove-failed（依赖可能已不存在，继续）"
+    fi
+  else
+    pkg_write remove
+    install_with_restore "$backup"
+  fi
   if [ -f "$BASE_LOCK_HASH_FILE" ] && [ -f "$LOCK" ]; then
     local want got; want=$(cat "$BASE_LOCK_HASH_FILE"); got=$(hash_file "$LOCK")
     if [ "$want" != "$got" ]; then die 4 "lockfile 与切换前不一致：want=$want got=$got（回原生未逐字还原）"; fi

@@ -48,10 +48,13 @@ DSH_BIN=<dsh 安装>/lib/bin.js sh scripts/shell-switch.sh native
 1. `cd "$HOME/.dsh/profiles/web"`，从 `package.json` 的 `dependencies` 里删掉
    `"@deepseek-ai/dsh-client-ui-layout": "file:…"`（这一步等价于 `dsh plugin --profile web remove`）。
 2. 同一个目录跑 `pnpm install`；若 profile 起不来，把第 1 步之前 `cp -a` 的 `web.bak.<时间戳>` 盖回去。
-3. 重启 dsh web，硬刷新页面；用 `[data-slot="sidebar"]` 在不在确认已回原生。
+3. 重启 dsh web，硬刷新页面；用 `verify` 双特征确认已回原生（标记 false + `[data-shell]` 不在 + `[data-slot="root"]` 在）。
 
 仍不行：把 `<dsh 安装目录>/node_modules/@deepseek-ai/dsh-client-ui-layout.orig` 复制回
 `@deepseek-ai/dsh-client-ui-layout`（覆盖），重启，硬刷新。
+
+**实测结论**：`dsh plugin add` 只把包装成"普通依赖"时（warning: installed as a plain dependency），页面照样能切过去——
+**不需要 bundles 登记也能顶替**；bundles 登记留着只为与裁决口径一致，不写它不再是阻断项。
 
 ## 窗口内清单（省事故的三条）
 
