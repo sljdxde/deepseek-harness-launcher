@@ -146,6 +146,7 @@ const {
   acceptInstalledPackage,
   applyPluginUpdate,
   classifyPluginSource,
+  commandInvocation,
   compareInstalledPlugins,
   declaredRowsFromPatchYaml,
   describeDisabledPlugins,
@@ -156,6 +157,7 @@ const {
   invalidatePluginRowCache,
   isCoreBundle,
   isSafeRowId,
+  listInstalledCoreLayers,
   listInstalledPlugins,
   missingPackageEntries,
   normalizeDisabledBundle,
@@ -552,11 +554,26 @@ serialTest('hasCommandOnPath：按平台判定可执行，目录不算命令，�
   }
 });
 
+test('commandInvocation：只有 Windows 的 .cmd/.bat 走 shell 并转义参数，其余原样', () => {
+  // POSIX：原样传给 execFile，不过 shell（否则参数会被 shell 再解释一次）。
+  assert.deepEqual(commandInvocation('pnpm', ['add', 'pkg'], 'darwin'), { args: ['add', 'pkg'], shell: false });
+  // Windows 上非批处理可执行文件同样不过 shell。
+  assert.deepEqual(commandInvocation('node.exe', ['x'], 'win32'), { args: ['x'], shell: false });
+  // 批处理必须过 shell，且元字符要自己转义（node 拼命令行时不转义）。
+  const batch = commandInvocation('C:\\bin\\pnpm.cmd', ['add', 'a&b', 'c|d'], 'win32');
+  assert.equal(batch.shell, true);
+  assert.deepEqual(batch.args, ['add', 'a^&b', 'c^|d']);
+  // 平台未知/空文件也要走非批处理分支，不能因为入参怪就抛。
+  assert.deepEqual(commandInvocation('', [], 'win32'), { args: [], shell: false });
+});
+
 serialTest('ensurePnpmPath：PATH 上有 pnpm 就直接用；没有就用 corepack 生成 shim；两者都没有就如实说', async () => {
   await withTempHome('dsh-pm-pnpm-', async home => {
     const bin = join(home, 'bin-with-pnpm');
     await mkdir(bin, { recursive: true });
-    await writeFile(join(bin, process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'), '');
+    // 必须带可执行位：hasCommandOnPath 在 POSIX 上要求 mode & 0o111，
+    // 默认 0644 的占位文件会被当成「PATH 上没有 pnpm」，用例随机失败。
+    await writeFile(join(bin, process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'), '', { mode: 0o755 });
 
     await withPath(bin, async () => {
       const [path, note] = await ensurePnpmPath();
@@ -566,7 +583,7 @@ serialTest('ensurePnpmPath：PATH 上有 pnpm 就直接用；没有就用 corepa
 
     const bin2 = join(home, 'bin-with-corepack');
     await mkdir(bin2, { recursive: true });
-    await writeFile(join(bin2, process.platform === 'win32' ? 'corepack.cmd' : 'corepack'), '');
+    await writeFile(join(bin2, process.platform === 'win32' ? 'corepack.cmd' : 'corepack'), '', { mode: 0o755 });
     await withPath(bin2, async () => {
       const [path, note] = await ensurePnpmPath();
       assert.match(note, /pnpm shim prepared via corepack/);
@@ -823,6 +840,35 @@ serialTest('listInstalledPlugins：用户插件、内置插件、损坏残留都
     const userIndex = list.findIndex(item => item.name === 'dsh-user');
     const bundledIndex = list.findIndex(item => item.name === 'dsh-archive-manager');
     assert.ok(userIndex < bundledIndex, '用户插件在内置插件前面');
+  });
+});
+
+serialTest('listInstalledCoreLayers：只认已装配的官方 layer，base/web-app 与没装的都不算', async () => {
+  await withTempHome('dsh-pm-core-layers-', async home => {
+    const { web, modules } = await makeProfile(home);
+    await writeFile(join(web, 'package.json'), JSON.stringify({
+      dsh: {
+        profile: {
+          bundles: [
+            '@deepseek-ai/dsh-base',
+            '@deepseek-ai/dsh-experimental-foo',
+            '@deepseek-ai/dsh-experimental-missing',
+            'dsh-user'
+          ]
+        }
+      }
+    }, null, 2));
+    await writePackage(join(modules, '@deepseek-ai', 'dsh-experimental-foo'), {
+      name: '@deepseek-ai/dsh-experimental-foo', version: '1.0.0'
+    });
+    await writePackage(join(modules, 'dsh-user'), { name: 'dsh-user', version: '1.0.0' });
+
+    const layers = await listInstalledCoreLayers();
+    assert.deepEqual(layers, ['@deepseek-ai/dsh-experimental-foo'],
+      '只列真正装配的官方 layer：base 是核心层，missing 没装，普通用户插件不算');
+    // 「已安装」页仍然不列这些层——两份名单各管一件事。
+    const listed = (await listInstalledPlugins()).map(item => item.name);
+    assert.equal(listed.includes('@deepseek-ai/dsh-experimental-foo'), false, '核心层不进「已安装」页');
   });
 });
 

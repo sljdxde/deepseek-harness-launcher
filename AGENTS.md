@@ -90,8 +90,8 @@
 - 提示框与窗口边界：所有 `NSAlert` 必须走统一入口——App 侧 `AlertDesign.run` / `runIfIdle`，
   安装器 `AlertBoundary.run`（两者是同一实现，安装器是独立编译目标链不了 `AlertDesign`）。
   动态长正文（shell 输出、插件清单、远端版本号）必须过 `setBoundedText`，`scripts/test.sh`
-  会直接拒绝任何 `alert.runModal()`。事故复盘、四层护栏与改 UI 前的自检清单见
-  `docs/ui-boundary-audit.md`。
+  会直接拒绝任何 `alert.runModal()`。改弹窗/UI 前先过四层护栏自检（见 `AlertDesign`
+  注释与 `scripts/test.sh` 的守卫）。
 - 代码导航：`Sources/main.swift` 是唯一的 App 主类（约 2500 行），按 `// MARK:` 分区
   （生命周期 / 菜单 / dsh 更新 / 启动器自更新 / 运行环境安装 / 菜单栏角标）。
   定位先 `rg -n '^// MARK' Sources/main.swift`，别从头翻。评审规则见
@@ -112,8 +112,10 @@
   索引 JSON 地址；`index.json` 形如
   `{ version: 1, plugins: [{ name, repo?, url?, category?, description: {en,zh}, stars, downloads, verified }] }`。
   用户源存 `~/.dsh/plugin-manager/sources.json`，每源缓存存 `sources-cache/<id>.json`；
-  聚合顺序 = 官方 npm 查询 → awesome-dsh-plugin（内置默认源）→ 用户启用的自定义源，
-  按 url 去重。刷新是后台任务（`POST /refresh` 回 202，进度读 `/sources/progress`）。
+  聚合顺序 = awesome-dsh-plugin（内置默认源）→ 用户启用的自定义源，按 url 去重。
+  **官方插件来源（npm `@deepseek-ai` scope）已下线**：官方插件是 dsh 运行时自带层，
+  市场里不再显示；旧索引里的 official 条目在聚合读取时过滤，索引版本号已升到 3。
+  刷新是后台任务（`POST /refresh` 回 202，进度读 `/sources/progress`）。
 - 插件分类在服务端归并成 6 组（界面/会话/工具/自动化/数据/其他，见 `MARKET_GROUPS`）：社区清单有 30+ 个英文分类，用户明确不要那么多，分类条/分区/筛选一律按组走，原始 category 只留在条目上。**分类条不许再加「更多分类」展开或下拉**（守卫会拦）。
 - 「描述找插件」是**本地预筛 + 模型挑选**：服务端先按关键词在索引里打分取 ≤40 条候选，再把候选（每条描述截断 100 字、整个 prompt < 12000 字符）交给 `ctx.llm` 挑 top5；模型只回 JSON 编号+理由，不生成插件信息。路由按 free→便宜型号排序，遇到 402/余额不足等硬错误换下一条路由；全失败才降级为关键词结果并标注「关键词降级」。**绝不允许把整份索引灌进模型上下文**（`AI_SEARCH_MAX_CANDIDATES` 等常量就是护栏）。
 - 国内加速是**独立插件** `Plugins/DSHChinaMirror`（Windows 内置，`assets.Plugins` 解出并

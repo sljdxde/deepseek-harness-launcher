@@ -361,6 +361,77 @@ test('安装队列：排队期间显示状态条，装完给一条汇总 toast',
 });
 
 // ---------------------------------------------------------------------------
+// 2b. dsh 官方自带层：装上了但不在「已安装」列表里，不能误报安装未生效
+// ---------------------------------------------------------------------------
+test('安装官方自带层：coreLayer 结果给成功 toast，不报「安装未生效」', async () => {
+  const marketPlugins = [marketEntry()];
+  const fetchImpl = (url) => {
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: 1, allTotal: 1, counts: [], categories: ['ui'],
+        plugins: marketPlugins, sections: [], featured: marketPlugins, topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/install')) {
+      return respond({ ok: true, installedAs: '@deepseek-ai/dsh-experimental-x', packageName: '@deepseek-ai/dsh-experimental-x', coreLayer: true });
+    }
+    return respond({});
+  };
+  const { runtime, plugin } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(plugin.PluginTrigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, '发现');
+  await settle(runtime, 6);
+
+  const installBtn = buttonsByText(runtime.tree, '安装')[0];
+  assert.ok(installBtn, '市场卡片有安装按钮');
+  installBtn.props.onClick();
+  await settle(runtime, 12);
+
+  const toasts = toastTexts(runtime.tree);
+  assert.ok(toasts.some(text => text.includes('官方层')), '说明这是 dsh 官方层，实际：' + toasts.join(' | '));
+  assert.ok(!toasts.some(text => text.includes('安装未生效')), '不把成功安装误报成未生效，实际：' + toasts.join(' | '));
+});
+
+test('coreLayers（dsh 自带层）：卡片标「随 dsh 提供」而不是「已安装」，也不挂安装按钮', async () => {
+  const marketPlugins = [marketEntry()];
+  const fetchImpl = (url) => {
+    if (url.startsWith('/dsh-plugin-manager/installed')) {
+      // 官方自带层不在 items 里，但 coreLayers 说明它已经装了。
+      return respond({ items: [], coreLayers: ['@deepseek-ai/dsh-experimental-alpha'] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: 1, allTotal: 1, counts: [], categories: ['ui'],
+        plugins: marketPlugins, sections: [], featured: marketPlugins, topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, plugin } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(plugin.PluginTrigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, '发现');
+  await settle(runtime, 6);
+
+  // 卡片上不能写「已安装」：那会让人去「已安装」页找，而那里按设计不列 dsh 自带层。
+  const cards = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  assert.equal(cards.length, 1, '发现页有一张市场卡片');
+  assert.ok(textOf(cards[0]).includes('随 dsh 提供'), '卡片标「随 dsh 提供」，实际：' + textOf(cards[0]));
+  assert.equal(textOf(cards[0]).includes('已安装'), false, '卡片不再显示「已安装」');
+  const coreTag = findAll(runtime.tree, node => String(node.props.className || '').includes('dsh-pm-core-tag'))[0];
+  assert.ok(coreTag, '自带层有独立的灰色标记');
+  assert.match(String(coreTag.props.title || ''), /不会出现在「已安装」列表/, 'title 说明为什么不在已安装列表');
+  // 手动安装行的按钮也叫「安装」，所以只断言卡片本身不再挂安装按钮。
+  assert.equal(buttonsByText(runtime.tree, '安装').length, 1, '只剩手动安装行那一个「安装」按钮');
+});
+
+// ---------------------------------------------------------------------------
 // 3. 更新在途时点安装：统一串行泵的安装分支
 // ---------------------------------------------------------------------------
 /**
@@ -465,9 +536,11 @@ test('更新在途时点安装：统一串行泵的验收回读发现插件没�
 });
 
 // ---------------------------------------------------------------------------
-// 4. 卸载在途时点更新：waitWhileDestructive 的让行等待
+// 4. 批量卸载在途时点更新：waitWhileDestructive 的让行等待
+//    （单条卸载已改为入串行泵排队，不再直接占 busy；批量卸载仍是直接操作，
+//     泵要在它写 profile 期间让行。）
 // ---------------------------------------------------------------------------
-test('卸载在途时点更新：串行泵等卸载/清理这类破坏性操作结束再动手', async () => {
+test('批量卸载在途时点更新：串行泵等破坏性操作结束再动手', async () => {
   const installed = [
     { name: 'p1', version: '1.0.0', description: '待卸载' },
     { name: 'dsh-upd', version: '1.0.0', description: '可更新' },
@@ -487,9 +560,9 @@ test('卸载在途时点更新：串行泵等卸载/清理这类破坏性操作�
       });
     }
     if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
-    if (url.startsWith('/dsh-plugin-manager/uninstall')) {
-      // 卸载挂着不放：更新必须等它结束（pnpm 串行红线：卸载与更新不能同时写 profile）。
-      return uninstallGate.then(() => { uninstallFinished = true; return respond({ ok: true, needsRestart: false }); });
+    if (url.startsWith('/dsh-plugin-manager/uninstall-many')) {
+      // 批量卸载挂着不放：更新必须等它结束（pnpm 串行红线：不能同时写 profile）。
+      return uninstallGate.then(() => { uninstallFinished = true; return respond({ ok: true, results: [{ name: 'p1', ok: true }] }); });
     }
     if (url.startsWith('/dsh-plugin-manager/update')) {
       updateSentWhileUninstallRunning = !uninstallFinished;
@@ -503,13 +576,16 @@ test('卸载在途时点更新：串行泵等卸载/清理这类破坏性操作�
   await openPanelOn(runtime, '已安装');
   await settle(runtime, 6);
 
-  // 先卸载（走确认框），卸载请求在途。
-  const uninstallBtn = buttonsByText(runtime.tree, '卸载')[0];
-  assert.ok(uninstallBtn, '已安装列表有卸载按钮');
-  uninstallBtn.props.onClick();
+  // 先批量卸载 p1（走确认框），卸载请求在途。
+  const checkbox = findAll(runtime.tree, node => node.type === 'input' && String(node.props.className).includes('dsh-pm-check'))[0];
+  checkbox.props.onChange({ shiftKey: false });
+  await settle(runtime, 4);
+  const batchBtn = buttonsByText(runtime.tree, '批量卸载 (1)')[0];
+  assert.ok(batchBtn, '选中一行后出现「批量卸载 (1)」');
+  batchBtn.props.onClick();
   await settle(runtime, 4);
   const confirmBtn = buttonsByText(runtime.tree, '确认卸载')[0];
-  assert.ok(confirmBtn, '弹出卸载确认框');
+  assert.ok(confirmBtn, '弹出批量卸载确认框');
   confirmBtn.props.onClick();
   await settle(runtime, 2);
 
@@ -527,10 +603,38 @@ test('卸载在途时点更新：串行泵等卸载/清理这类破坏性操作�
   await waitFor(() => calls.some(call => call.url === '/dsh-plugin-manager/update'), { runtime });
   await settle(runtime, 12);
 
-  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/uninstall')), '发了卸载请求');
+  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/uninstall-many')), '发了批量卸载请求');
   assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/update')), '更新请求最终发出');
   assert.equal(updateSentWhileUninstallRunning, false, '更新请求必须在卸载结束之后才发出（否则就是并发写 profile）');
   assert.ok(uninstallFinished, '卸载已完成');
+});
+
+// ---------------------------------------------------------------------------
+// 4b. 单条卸载失败：走串行泵执行，失败要 toast 报错
+// ---------------------------------------------------------------------------
+test('单条卸载失败：泵里执行卸载，失败如实报错', async () => {
+  const installed = [{ name: 'bad-one', version: '1.0.0', description: '删不掉' }];
+  const fetchImpl = url => {
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: installed });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url === '/dsh-plugin-manager/uninstall') return respond({ error: '删不掉' });
+    return respond({});
+  };
+  const { runtime, plugin } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(plugin.PluginTrigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, '已安装');
+  await settle(runtime, 6);
+
+  buttonsByText(runtime.tree, '卸载')[0].props.onClick();
+  await settle(runtime, 4);
+  buttonsByText(runtime.tree, '确认卸载')[0].props.onClick();
+  await settle(runtime, 20);
+  assert.ok(
+    toastTexts(runtime.tree).some(text => text.includes('卸载失败：删不掉')),
+    '卸载失败要 toast 报错，实际：' + toastTexts(runtime.tree).join(' | '),
+  );
 });
 
 // ---------------------------------------------------------------------------

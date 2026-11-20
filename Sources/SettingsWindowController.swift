@@ -40,8 +40,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     /// 返回 `scrolls == true` 表示内容比预算高、要靠滚动才能看全。这一档以前是
     /// 「窗口 = 内容高度、不可缩放、没有滚动条」：在小屏（老 Intel Mac 接
     /// 1024x768，或系统开了「更大字体」）上窗口比屏幕还高，底部的「保存 / 取消」
-    /// 被顶出屏幕外，而窗口又拖不回来——和提示框撑出屏幕是同一类边界问题
-    /// （复盘见 `docs/ui-boundary-audit.md`）。
+    /// 被顶出屏幕外，而窗口又拖不回来——和提示框撑出屏幕是同一类边界问题。
     /// - Parameters:
     ///   - contentHeight: 内容自然高度（含上下内缩）。
     ///   - visibleHeight: 当前屏幕可视区高度；没有窗口服务器时传 nil（按内容开）。
@@ -579,7 +578,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         } catch {
             // 系统错误串里会带完整 plist 路径，长度不可控；统一入口负责「长正文转可
             // 滚动面板 + 挂 Esc」，避免在小屏上把唯一按钮顶出可见区（NSAlert 本身
-            // 不含任何高度上限，详见 docs/ui-boundary-audit.md）。
+            // 不含任何高度上限）。
             let alert = NSAlert()
             AlertDesign.style(alert, tone: .warning)
             alert.messageText = "开机启动设置失败"

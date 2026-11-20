@@ -6,7 +6,7 @@ import AppKit
 /// 编译目标，只链这一个文件就能拿到同一套护栏；`AlertDesign` 还依赖发布通道
 /// （`DSHReleaseChannel`）等 App 侧类型，拖不进安装器。安装器的失败弹窗会把
 /// `install-from-app.sh` 的原始输出直接塞进正文——和真机事故「提示框占满屏幕、
-/// 软件卡死」是同一条路径（完整复盘见 `docs/ui-boundary-audit.md`）。
+/// 软件卡死」是同一条路径。
 ///
 /// 护栏分三层，缺一不可：
 /// 1. **内容封顶**（`setBoundedText`）：超过 `detailCharacterThreshold` 的正文转成

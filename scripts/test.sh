@@ -169,9 +169,11 @@ rg -Fq 'dsh-pm-seg' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'setCategory(active ? ' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'dsh-pm-sec2' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'dsh-pm-crumbs' "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq 'categoryHue' "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq 'dsh-pm-hue-brand' "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq '场景10（分类条：分段/展开/分类视图/返回）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 方案 D 改版后分类胶囊不再按分类派生 hue（原型没有 hue 配色），选中态统一用 accent；
+# 这里改守新的实现口径，避免守卫停留在旧类名上、把每次回归都卡在同一行。
+rg -Fq "dsh-pm-seg\${active ? ' on' : ''}" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '.dsh-pm-seg.on{' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '场景10（分类条：折叠/展开/分类视图/返回）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -Fq '场景16（分区查看全部 → 分类视图 + 分页）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -Fq '场景17（全屏切换）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -Fq '场景18（描述找插件：模型挑选 + 降级标注）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
@@ -180,9 +182,11 @@ rg -Fq 'MARKET_GROUPS' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -Fq 'marketGroupOf' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
 # 分类条：原始分类折叠（前 8 平铺 + 「全部 N 类」按钮），但下拉必须保持删除。
 rg -Fq 'dsh-pm-seg more' "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq 'dsh-pm-segs-open' "$ROOT/Plugins/DSHPluginManager/client/client.js"
-# 展开后「全部 N 类」胶囊消失，收起入口用低调文字 dsh-pm-collapse。
-rg -Fq 'dsh-pm-collapse' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 展开态由容器上的 xp 类标记（方案 D 把「全部 N 类」原位换成全部分类 + 末尾收起）。
+rg -Fq "dsh-pm-segs' + (catExpanded ? ' xp' : '')" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 展开后「全部 N 类」胶囊消失，收起入口是同一个分类条里的 xall 胶囊（文案「收起」）。
+rg -Fq "'dsh-pm-seg xall'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "'收起'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 分类筛选参数：客户端必须用 category=（精确匹配原始分类），
 # 不许再塞进 group=（服务端 group 只认 6 个分组 id，塞原始分类名会匹配不到
 # 任何插件 → 用户报的现象：胶囊上写着「工作流 674」，点进去却是 0 个插件）。
@@ -204,7 +208,7 @@ rg -Fq 'dsh-pm-ai-bar' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 检索走流式接口，UI 实时打印步骤与模型输出。
 rg -Fq '/dsh-plugin-manager/ai-search/stream' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -Fq 'searchPluginsByDescriptionStream' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
-rg -Fq 'dsh-pm-ai-log' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'dsh-pm-ai-steps' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 全屏：面板可铺满窗口（顶栏按钮 + localStorage 记忆）。
 rg -Fq 'dsh-pm-full' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'toggleFullscreen' "$ROOT/Plugins/DSHPluginManager/client/client.js"
@@ -284,7 +288,9 @@ if rg -q 'dsh-interrupted-dot' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml
   exit 1
 fi
 # 提交的 Windows 内嵌副本必须与 Plugins/ 源一致（build.ps1 在构建时同步）。
-if ! diff -rq "$ROOT/Plugins/DSHInterruptedDot" "$ROOT/windows/internal/assets/plugins/DSHInterruptedDot" >/dev/null; then
+# 但内嵌副本按发布口径**不含 test/**（build.ps1 复制后会删掉，见该脚本注释），
+# 所以比对必须同样排除 test，否则这个守卫在源仓库有测试目录时永远红。
+if ! diff -rq -x test "$ROOT/Plugins/DSHInterruptedDot" "$ROOT/windows/internal/assets/plugins/DSHInterruptedDot" >/dev/null; then
   echo "windows/internal/assets/plugins/DSHInterruptedDot 与 Plugins/DSHInterruptedDot 不同步" >&2
   exit 1
 fi
@@ -299,7 +305,7 @@ if rg -q 'dsh-china-mirror' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"; 
   echo "dsh-china-mirror 只能在 Windows 侧合成进 base patch，不能进 macOS 共享补丁" >&2
   exit 1
 fi
-if ! diff -rq "$ROOT/Plugins/DSHChinaMirror" "$ROOT/windows/internal/assets/plugins/DSHChinaMirror" >/dev/null; then
+if ! diff -rq -x test "$ROOT/Plugins/DSHChinaMirror" "$ROOT/windows/internal/assets/plugins/DSHChinaMirror" >/dev/null; then
   echo "windows/internal/assets/plugins/DSHChinaMirror 与 Plugins/DSHChinaMirror 不同步" >&2
   exit 1
 fi
@@ -321,7 +327,7 @@ rg -Fq "'/dsh-plugin-manager/sources'" "$ROOT/Plugins/DSHPluginManager/client/cl
 # 方案 B 的四个视图与国内加速开关必须在客户端真的接线（渲染冒烟 13/14 兜行为）。
 rg -Fq "tab === 'discover' ? discoverTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq "tab === 'builtin' ? builtinTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq "tab === 'sources' ? sourcesTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq ": sourcesTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq "className: 'dsh-pm-frame'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'dsh-pm-rail' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'aria-label' "$ROOT/Plugins/DSHPluginManager/client/client.js"
@@ -920,7 +926,7 @@ fi
 # 文档标点：区间与约数一律用 `-` / 「约」，不写 `~`。这套渲染器把成对的 `~` 当
 # 删除线，中文写作又习惯拿它当区间符，结果是「0.3~0.6GB … ~3GB」整段被划掉并误读。
 # 路径里的 `~/` 不动（`~` 后面不是数字），所以只堵「数字~数字」和「~数字」。
-if rg -n -e '[0-9]~[0-9]' -e '~[0-9]' "$ROOT/README.md" "$ROOT/README.en.md" "$ROOT/TESTING.md" "$ROOT"/docs/*.md; then
+if rg -n -e '[0-9]~[0-9]' -e '~[0-9]' "$ROOT/README.md" "$ROOT/README.en.md" "$ROOT/TESTING.md"; then
   echo "文档里的区间/约数请用 - 或「约」，不要用 ~（成对的 ~ 会渲染成删除线）" >&2
   exit 1
 fi

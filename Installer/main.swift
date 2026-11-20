@@ -318,7 +318,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
             // 失败原因来自 install-from-app.sh 的原始输出，长度不可控（npm / cp / hdiutil
             // 的报错可能上百行）。护栏必须装在这里：正文超阈值就折进高度封顶的可滚动面板，
             // 否则 NSAlert 会随行数长到比屏幕还高，按钮落到屏幕外、runModal 又关不掉，
-            // 而安装器主窗口连关闭按钮都没有——只能强杀。见 docs/ui-boundary-audit.md。
+            // 而安装器主窗口连关闭按钮都没有——只能强杀。
             AlertBoundary.setBoundedText(
                 message,
                 on: alert,

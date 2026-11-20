@@ -140,7 +140,6 @@ const {
   cleanupBrokenPlugin,
   cleanupPluginSources,
   createSingleFlight,
-  fetchOfficialMarketPlugins,
   fetchTargetPeerDependencies,
   findPeerIncompatibilities,
   findUnresolvableLocalImports,
@@ -646,9 +645,22 @@ serialTest('installPlugin：npm 上有该包时直接 add（npmViewExists 成功
     assert.equal(result.ok, true);
     assert.equal(result.installedAs, '@owner/repo');
     assert.equal(result.packageName, '@owner/repo');
+    // 普通插件不打 coreLayer 标记：界面的「已安装」回读照常做。
+    assert.equal(result.coreLayer, undefined);
     assert.deepEqual(commands, [['add', '@owner/repo']]);
     const views = execLog.filter(call => call.args[0] === 'view').map(call => call.args[1]);
     assert.deepEqual(views.sort(), ['@owner/repo', 'repo']);
+  });
+});
+
+serialTest('installPlugin：官方自带的 @deepseek-ai layer 装好后带 coreLayer 标记（避免误报「安装未生效」）', async () => {
+  await withTempHome(async home => {
+    await writeProfile(home);
+    execHook = pnpmViewResponder({ '@deepseek-ai/dsh-experimental-foo version': '1.0.0' });
+    const result = await installPlugin({ name: '@deepseek-ai/dsh-experimental-foo' }, async () => ({ note: 'installed' }), { verifyPresent: async () => true });
+    assert.equal(result.ok, true);
+    assert.equal(result.installedAs, '@deepseek-ai/dsh-experimental-foo');
+    assert.equal(result.coreLayer, true);
   });
 });
 
@@ -1886,43 +1898,7 @@ function registryFetch(searchObjects, manifests) {
   };
 }
 
-serialTest('fetchOfficialMarketPlugins：只保留声明了 dsh.bundle 的官方包', async () => {
-  await withTempHome(async home => {
-    await writeProfile(home);
-    const fetchImpl = registryFetch(
-      [
-        { package: { name: '@deepseek-ai/dsh-plugin-alpha', date: '2026-01-01' }, downloads: { monthly: 42 } },
-        { package: { name: '@deepseek-ai/dsh-tool-nobundle', date: '2026-01-02' }, downloads: { monthly: 7 } },
-        { package: { name: 'other/dsh-plugin-x', date: '2026-01-03' }, downloads: { monthly: 3 } },
-        { package: {}, downloads: { monthly: 1 } },
-        { package: { name: '@deepseek-ai/dsh-plugin-alpha', date: '2026-01-01' }, downloads: { monthly: 42 } }
-      ],
-      {
-        '@deepseek-ai/dsh-plugin-alpha': { version: '1.2.0', description: 'Alpha 插件', dsh: { bundle: true } },
-        '@deepseek-ai/dsh-tool-nobundle': { version: '9.9.9' }
-      }
-    );
-    const rows = await fetchOfficialMarketPlugins({ fetch: fetchImpl });
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].name, '@deepseek-ai/dsh-plugin-alpha');
-    assert.equal(rows[0].version, '1.2.0');
-    assert.equal(rows[0].category, 'official');
-    assert.equal(rows[0].downloads, 42);
-    assert.equal(rows[0].descriptionEn, 'Alpha 插件');
-  });
-});
-
-serialTest('fetchOfficialMarketPlugins：registry 查询失败时返回空列表（不阻断市场刷新）', async () => {
-  await withTempHome(async home => {
-    await writeProfile(home);
-    const rows = await fetchOfficialMarketPlugins({
-      fetch: async () => { throw new Error('registry down'); }
-    });
-    assert.deepEqual(rows, []);
-  });
-});
-
-serialTest('refreshMarketplace：重建本地索引（社区清单 + 官方来源）', async () => {
+serialTest('refreshMarketplace：只从社区清单重建索引（不再抓官方来源）', async () => {
   await withTempHome(async home => {
     await writeProfile(home);
     execHook = (call) => {
@@ -1947,20 +1923,19 @@ serialTest('refreshMarketplace：重建本地索引（社区清单 + 官方来�
       }
       return { stdout: '', stderr: '' };
     };
-    fetchHook = registryFetch(
-      [{ package: { name: '@deepseek-ai/dsh-plugin-official', date: '2026-03-03' }, downloads: { monthly: 5 } }],
-      { '@deepseek-ai/dsh-plugin-official': { version: '1.0.0', dsh: { bundle: true } } }
-    );
+    // 官方来源已下线：重建过程不该再访问 npm registry。
+    fetchHook = async url => { throw new Error('重建索引不应联网查官方插件：' + url); };
     const summary = await refreshMarketplace();
-    assert.equal(summary.count, 2);
-    assert.equal(summary.official, 1);
-    assert.deepEqual(summary.categories, ['official', 'browser']);
+    assert.equal(summary.count, 1);
+    assert.equal('official' in summary, false, '返回值不再带官方来源计数');
+    assert.deepEqual(summary.categories, ['browser']);
 
     const market = await readMarketplace();
     assert.equal(market.ok, true);
     assert.equal(market.stale, false);
-    assert.equal(market.count, 2);
-    const community = market.plugins.find(item => item.source === 'community');
+    assert.equal(market.count, 1);
+    assert.equal(market.plugins[0].source, 'community', '索引里只剩社区条目');
+    const community = market.plugins[0];
     assert.equal(community.downloads, 12);
     assert.equal(community.stars, 34);
     assert.equal(community.screenshot, 'shot.png');
@@ -2001,9 +1976,9 @@ serialTest('readMarketplace：没有索引、索引过期或版本不对时都�
     await mkdir(marketRoot, { recursive: true });
     const indexFile = join(marketRoot, 'index.json');
     await writeFile(indexFile, JSON.stringify({
-      version: 2,
+      version: 3,
       indexedAt: new Date().toISOString(),
-      categories: ['official'],
+      categories: ['tool'],
       plugins: []
     }), 'utf8');
     const fresh = await readMarketplace();
@@ -2011,7 +1986,7 @@ serialTest('readMarketplace：没有索引、索引过期或版本不对时都�
     assert.equal(fresh.stale, false);
 
     await writeFile(indexFile, JSON.stringify({
-      version: 2,
+      version: 3,
       indexedAt: new Date(Date.now() - 48 * 3600 * 1000).toISOString(),
       categories: [],
       plugins: []
@@ -2027,7 +2002,7 @@ serialTest('readMarketplace：没有索引、索引过期或版本不对时都�
       plugins: []
     }), 'utf8');
     const v1 = await readMarketplace();
-    assert.equal(v1.stale, true, '旧版索引（没有官方来源）要提示刷新');
+    assert.equal(v1.stale, true, '旧版索引要提示刷新');
   });
 });
 
@@ -3447,91 +3422,7 @@ serialTest('updatePlugins：已有批次在跑时拒绝重复受理', async () =
   });
 });
 
-serialTest('fetchOfficialMarketPlugins：搜索结果里没有 objects / 不是插件的包都要挡掉', async () => {
-  await withTempHome(async home => {
-    await writeProfile(home);
-    const rows = await fetchOfficialMarketPlugins({
-      fetch: async (url) => {
-        if (String(url).includes('/-/v1/search')) return { ok: true, status: 200, json: async () => ({}) };
-        return { ok: false, status: 404, json: async () => ({}) };
-      }
-    });
-    assert.deepEqual(rows, []);
-  });
-});
-
-serialTest('fetchOfficialMarketPlugins：名字里既没有 bundle 也没有 plugin 的包不进清单', async () => {
-  await withTempHome(async home => {
-    await writeProfile(home);
-    const rows = await fetchOfficialMarketPlugins({
-      fetch: async (url) => {
-        if (String(url).includes('/-/v1/search')) {
-          return {
-            ok: true, status: 200, json: async () => ({
-              objects: [{ package: { name: '@deepseek-ai/dsh-core' } }]
-            })
-          };
-        }
-        return { ok: true, status: 200, json: async () => ({ version: '1.0.0', dsh: { bundle: true } }) };
-      }
-    });
-    assert.deepEqual(rows, []);
-  });
-});
-
-serialTest('fetchOfficialMarketPlugins：没有下载量/日期/版本号时按空值处理', async () => {
-  await withTempHome(async home => {
-    await writeProfile(home);
-    const rows = await fetchOfficialMarketPlugins({
-      fetch: async (url) => {
-        if (String(url).includes('/-/v1/search')) {
-          return {
-            ok: true, status: 200, json: async () => ({
-              objects: [
-                { package: { name: '@deepseek-ai/dsh-plugin-a' } },
-                { package: { name: '@deepseek-ai/dsh-plugin-b', date: '2026-02-02' } }
-              ]
-            })
-          };
-        }
-        const name = decodeURIComponent(/latest$/.test(String(url)) ? String(url).split('/').slice(-2)[0] : '');
-        if (name === '@deepseek-ai/dsh-plugin-b') {
-          return { ok: true, status: 200, json: async () => ({ version: '2.0.0', dsh: { bundle: true } }) };
-        }
-        return { ok: true, status: 200, json: async () => ({ dsh: { bundle: true } }) };
-      }
-    });
-    assert.equal(rows.length, 2);
-    const alpha = rows.find(item => item.name === '@deepseek-ai/dsh-plugin-a');
-    assert.equal(alpha.downloads, 0);
-    assert.equal(alpha.addedDate, null);
-    assert.equal(alpha.version, null);
-    const beta = rows.find(item => item.name === '@deepseek-ai/dsh-plugin-b');
-    assert.equal(beta.addedDate, '2026-02-02');
-    assert.equal(beta.version, '2.0.0');
-  });
-});
-
-serialTest('fetchOfficialMarketPlugins：读不到 latest 清单的包不进清单', async () => {
-  await withTempHome(async home => {
-    await writeProfile(home);
-    const rows = await fetchOfficialMarketPlugins({
-      fetch: async (url) => {
-        if (String(url).includes('/-/v1/search')) {
-          return {
-            ok: true, status: 200, json: async () => ({
-              objects: [{ package: { name: '@deepseek-ai/dsh-plugin-a', date: '2026-02-02' } }]
-            })
-          };
-        }
-        return { ok: false, status: 404, json: async () => ({}) };
-      }
-    });
-    assert.deepEqual(rows, []);
-  });
-});
-
-serialTest('refreshMarketplace：社区条目的缺省字段要补齐，分类按官方优先排序', async () => {
+serialTest('refreshMarketplace：社区条目的缺省字段要补齐，分类按字母排序', async () => {
   await withTempHome(async home => {
     await writeProfile(home);
     execHook = (call) => {
@@ -3547,7 +3438,7 @@ serialTest('refreshMarketplace：社区条目的缺省字段要补齐，分类�
     };
     fetchHook = registryFetch([], {});
     const summary = await refreshMarketplace();
-    assert.deepEqual(summary.categories, ['official', 'data', 'other']);
+    assert.deepEqual(summary.categories, ['data', 'official', 'other']);
     const market = await readMarketplace();
     const bare = market.plugins.find(item => item.url === 'https://github.com/o/bare');
     assert.equal(bare.name, 'https://github.com/o/bare');

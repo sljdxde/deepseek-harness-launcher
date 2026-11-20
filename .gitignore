@@ -17,3 +17,11 @@ DerivedData/
 
 # 本地编码助手会话状态（plan 等），不随仓库分发
 /.zcode/
+
+# 仓库只收代码 / 单元测试 / README 等说明文档；设计稿、素材与讨论文档留在本机
+/.video_agent/
+/article/
+/wayfinder/
+/docs/
+/ui-rebuild/
+/windows/docs/

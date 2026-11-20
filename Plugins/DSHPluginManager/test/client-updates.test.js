@@ -539,3 +539,38 @@ test('apply 注册 main 页面 + sidebar.panellist 图标（新版 DSH 点击图
   assert.equal(typeof plugin.PluginTrigger, 'function', '渲染冒烟用的入口组件保持导出');
   assert.deepEqual(Array.from(plugin.inject), ['slots', 'locale', 'layout']);
 });
+
+// ---------- 官方来源下线：客户端兜底过滤 ----------
+
+test('stripOfficialMarket：旧服务端返回的 official 条目不会出现在列表/榜单/分区/计数里', async () => {
+  const plugin = await loadPlugin();
+  const out = plugin.stripOfficialMarket({
+    ok: true, total: 3, allTotal: 3,
+    plugins: [{ name: 'a', source: 'community' }, { name: 'off', source: 'official' }],
+    featured: [{ name: 'off', source: 'official' }, { name: 'a', source: 'community' }],
+    topDownloads: [{ name: 'off', source: 'official' }],
+    topStars: [{ name: 'off', source: 'official' }],
+    sections: [
+      { category: 'official', count: 1, plugins: [{ name: 'off', source: 'official' }] },
+      { category: 'ui', count: 1, plugins: [{ name: 'a', source: 'community' }] },
+    ],
+    counts: [{ name: 'official', count: 1 }, { name: 'ui', count: 2 }],
+    categories: ['official', 'ui'],
+  });
+  assert.deepEqual(plain(out.plugins).map(item => item.name), ['a']);
+  assert.deepEqual(plain(out.featured).map(item => item.name), ['a']);
+  assert.deepEqual(plain(out.topDownloads), []);
+  assert.deepEqual(plain(out.topStars), []);
+  assert.deepEqual(plain(out.counts).map(item => item.name), ['ui']);
+  assert.deepEqual(plain(out.categories), ['ui']);
+  assert.equal(out.sections.length, 1, '官方分类的分区整块删掉');
+  assert.equal(out.sections[0].category, 'ui');
+  assert.equal(out.total, 2, '总数里扣掉官方条目');
+  assert.equal(out.allTotal, 2);
+  // 非对象原样返回；缺字段的旧响应也不炸。
+  assert.equal(plugin.stripOfficialMarket(null), null);
+  assert.equal(plugin.stripOfficialMarket(false), false);
+  const bare = plugin.stripOfficialMarket({ plugins: [{ name: 'b' }] });
+  assert.equal(bare.plugins.length, 1);
+  assert.equal('total' in bare, false, '旧响应没有 total 时不要凭空造一个 0（会被当成空市场）');
+});

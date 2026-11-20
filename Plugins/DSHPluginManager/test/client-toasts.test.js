@@ -78,3 +78,21 @@ test('toast 栈上限 3 条：超出时最早的先消失，连续批量操作�
   assert.equal(snapshot.length, 3, '栈里最多 3 条');
   assert.deepEqual(Array.from(snapshot, t => t.text), ['第二条', '第三条', '第四条'], '最早的一条被挤出');
 });
+
+test('焦点暂停：提示条被聚焦时不自动消失，失焦后按原时长重新计时', async () => {
+  const { store, timers } = await loadToastStore();
+  store.push('success', '已安装 foo');
+  const before = timers.length;
+  store.hold();
+  timers[before - 1].fn(); // 到点：暂停中，不消失
+  assert.equal(store.snapshot().length, 1, '暂停期间到点的提示保留');
+  store.resume();
+  assert.equal(timers.length, before + 1, '失焦后重新计时');
+  timers[timers.length - 1].fn();
+  assert.equal(store.snapshot().length, 0, '重新计时到点后消失');
+  // 没有暂停时 resume 是空操作。
+  store.push('info', '第二条');
+  const count = timers.length;
+  store.resume();
+  assert.equal(timers.length, count, '未暂停时 resume 不重复计时');
+});

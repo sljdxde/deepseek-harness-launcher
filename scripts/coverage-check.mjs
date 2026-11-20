@@ -24,6 +24,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const PLATFORM_WIN = process.platform === 'win32';
 const repoRoot = resolve(here, '..');   // scripts/ 的上一级就是仓库根
 const pluginsDir = join(repoRoot, 'Plugins');
 
@@ -110,10 +111,14 @@ for (const name of readdirSync(covDir)) {
   try { parsed = JSON.parse(readFileSync(join(covDir, name), 'utf8')); } catch { continue; }
   const byFile = new Map();
   for (const entry of parsed.result || []) {
-    // V8's url is file:///D:/... (percent-encoded when the path has non-ASCII).
+    // V8 的 url 形如 file:///D:/... 或 file:///Users/...（含非 ASCII 时是百分号编码）。
+    // 只剥 Windows 盘符前的那一个斜杠（file:///D:/x → D:/x）；POSIX 的绝对路径必须
+    // 原样保留 —— 早前无条件剥掉首个 '/'，路径就成了「相对仓库根」的怪路径，
+    // 所有目标文件都对不上，门禁在 macOS 上永远报 not present in coverage data。
     let file;
     try {
-      file = resolve(decodeURIComponent(String(entry.url).replace(/^file:\/\//, '').replace(/^\//, '')));
+      const decoded = decodeURIComponent(String(entry.url).replace(/^file:\/\//, ''));
+      file = resolve(PLATFORM_WIN && /^\/[A-Za-z]:[\\/]/.test(decoded) ? decoded.slice(1) : decoded);
     } catch { continue; }
     let spans = byFile.get(file);
     if (!spans) { spans = []; byFile.set(file, spans); }
@@ -210,7 +215,7 @@ for (const target of TARGETS) {
 
 for (const detail of details) console.log(detail);
 if (process.env.COV_REPORT === '1') {
-  const reportPath = join(repoRoot, 'windows/docs/coverage-report.txt');
+  const reportPath = join(repoRoot, 'dist/coverage-report.txt');
   mkdirSync(dirname(reportPath), { recursive: true });
   writeFileSync(reportPath, details.join('\n') || 'all targets met');
 }

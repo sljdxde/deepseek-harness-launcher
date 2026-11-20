@@ -505,7 +505,7 @@ serialTest('/marketplace/query：参数透传（q/category/group/source/sort/lim
     const plugins = [
       { id: 'ui1', name: 'ui-one', repo: 'o/ui-one', category: 'ui', stars: 1, downloads: 900, source: 'community', descriptionEn: 'panel thing' },
       { id: 'ui2', name: 'ui-two', repo: 'o/ui-two', category: 'ui', stars: 30, downloads: 10, source: 'community' },
-      { id: 'tool1', name: 'tool-one', repo: 'o/tool-one', category: 'tool', stars: 20, downloads: 800, source: 'official' },
+      { id: 'tool1', name: 'tool-one', repo: 'o/tool-one', category: 'tool', stars: 20, downloads: 800, source: 'vendor' },
       { id: 'wf1', name: 'wf-one', repo: 'o/wf-one', category: 'workflow', stars: 5, downloads: 5, source: 'community' },
     ];
     await writeMarketIndex(home, plugins);
@@ -532,10 +532,10 @@ serialTest('/marketplace/query：参数透传（q/category/group/source/sort/lim
     assert.equal(jsonOf(byGroup).total, 1, 'workflow 归 auto 组');
     assert.equal(jsonOf(byGroup).plugins[0].name, 'wf-one');
 
-    const byOfficial = makeRes();
-    await route.handler(makeReq('GET', { url: '/dsh-plugin-manager/marketplace/query?source=official' }), byOfficial);
-    assert.equal(jsonOf(byOfficial).total, 1);
-    assert.equal(jsonOf(byOfficial).plugins[0].name, 'tool-one');
+    const byVendor = makeRes();
+    await route.handler(makeReq('GET', { url: '/dsh-plugin-manager/marketplace/query?source=vendor' }), byVendor);
+    assert.equal(jsonOf(byVendor).total, 1);
+    assert.equal(jsonOf(byVendor).plugins[0].name, 'tool-one');
 
     const byCommunity = makeRes();
     await route.handler(makeReq('GET', { url: '/dsh-plugin-manager/marketplace/query?source=community' }), byCommunity);

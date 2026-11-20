@@ -98,8 +98,16 @@ class Runtime {
         const index = slot.order++;
         const stored = slot.deps[index];
         if (!stored || deps.length !== stored.deps.length || deps.some((d, i) => d !== stored.deps[i])) {
-          slot.deps[index] = { deps, value: true };
-          slot.pending.push(fn);
+          // 和真实 React 一样：依赖变化时先跑上一次 effect 的 cleanup，再跑新 effect。
+          // 不跑 cleanup 的话，每次重渲染都会多注册一个 window 监听器，
+          // 一次 Esc 会命中一串历史闭包（旧闭包里 detail 还是 null → 面板被误关）。
+          const entry = { deps, cleanup: undefined };
+          slot.deps[index] = entry;
+          slot.pending.push(() => {
+            if (stored && typeof stored.cleanup === 'function') stored.cleanup();
+            const cleanup = fn();
+            entry.cleanup = typeof cleanup === 'function' ? cleanup : undefined;
+          });
         }
       },
     };
@@ -175,17 +183,22 @@ const settleQuery = async (runtime) => {
 // ---------- 场景装配 ----------
 function makeDocument() {
   const listeners = new Map();
+  // 按 id 记住挂上去的节点：ensureStyles 第二次调用时能找到自己的 <style>，
+  // 走「同步旧标签内容」的分支（真实 DOM 里也是这个语义）。
+  const nodes = new Map();
+  const append = node => { if (node && node.id) nodes.set(node.id, node); };
   return {
     listeners,
+    nodes,
     addEventListener(type, fn) { listeners.set(type, fn); },
     removeEventListener(type) { listeners.delete(type); },
     dispatch(type, event) { const fn = listeners.get(type); if (fn) fn(event); },
-    head: { appendChild() {} },
+    head: { appendChild: append },
     // 面板本身常驻挂载在 body 上（mountPanel 里 appendChild）；这个假的 document
     // 之前漏了 body，所有场景在 apply() 阶段就崩了。
-    body: { appendChild() {} },
-    getElementById: () => null,
-    createElement: () => ({ set textContent(v) {} }),
+    body: { appendChild: append },
+    getElementById: id => nodes.get(id) || null,
+    createElement: () => ({ id: '', textContent: '' }),
   };
 }
 function boot({ fetchImpl, setTimeoutImpl }) {
@@ -204,14 +217,17 @@ function boot({ fetchImpl, setTimeoutImpl }) {
     if (name === 'react-dom') return { render() {} };
     throw new Error('unexpected require ' + name);
   }); } },
-    addEventListener(type, fn) { windowEvents.set(type, fn); },
-    removeEventListener(type, fn) { if (windowEvents.get(type) === fn) windowEvents.delete(type); },
+    // 同一事件类型会有多个监听器（面板 Esc、发布说明 Esc 各一个）：按 Set 存，
+    // 和真实 DOM 一样全部派发，别用「后注册的覆盖先注册的」。
+    addEventListener(type, fn) { if (!windowEvents.has(type)) windowEvents.set(type, new Set()); windowEvents.get(type).add(fn); },
+    removeEventListener(type, fn) { const set = windowEvents.get(type); if (set) set.delete(fn); },
   };
   vm.runInNewContext(source, {
     window,
     document: documentStub,
     fetch: fetchImpl,
     setTimeout: setTimeoutImpl || setTimeout,
+    clearTimeout,
     setInterval: () => 0,
     clearInterval: () => {},
     // vm 沙箱里没有 Web API 全集：流式检索要 ReadableStream/TextEncoder，
@@ -229,8 +245,7 @@ function boot({ fetchImpl, setTimeoutImpl }) {
   if (typeof plugin.PluginTrigger === 'function') trigger = plugin.PluginTrigger;
   assert.equal(typeof trigger, 'function');
   return { runtime, trigger, document: documentStub, dispatchWindowEvent(event) {
-    const fn = windowEvents.get(event?.type);
-    if (fn) fn(event);
+    for (const fn of windowEvents.get(event?.type) || []) fn(event);
   } };
 }
 
@@ -274,7 +289,7 @@ const entry = (name, over) => ({
     }
     return respond({});
   };
-  const { runtime, trigger } = boot({ fetchImpl });
+  const { runtime, trigger, dispatchWindowEvent, document: doc } = boot({ fetchImpl });
 
   // 1. 侧边栏入口 + 角标
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
@@ -304,6 +319,29 @@ await openInstalledPanel(runtime);
   assert.ok(text.includes('本地来源，无法自动检测'), 'unknown 显示服务端 note');
   assert.ok(text.includes('已安装版本比远端更高'), 'ahead 显示小字');
   assert.equal(findByText(tree, 'button', '全部更新 (1)').props.disabled, false, '有可更新项时「全部更新」可用');
+  // 可更新数量只是提示：挂在左栏「已安装」上的小胶囊，不再单开第五个 nav 按钮。
+  assert.equal(textOf(byClass(tree, 'dsh-pm-rail-badge')[0]), '1 可更新', '左栏「已安装」显示可更新胶囊');
+  assert.equal(findByText(tree, 'button', '1 个可更新'), undefined, '左栏不再多出一个「N 个可更新」按钮');
+  const railInstalled = findAll(tree, node => node.type === 'button' && /^已安装.*1 个可更新$/.test(node.props['aria-label'] || ''))[0];
+  assert.ok(railInstalled, '可更新数量写进「已安装」导航项的无障碍标签');
+  assert.match(railInstalled.props.className, /dsh-pm-rail-item/, '胶囊挂在「已安装」导航项上');
+
+  // 焦点囚禁：Tab 到首/尾时在面板内循环（自定义模态没有原生 dialog 的 inert）。
+  const pageNode = byClass(tree, 'dsh-pm-page')[0];
+  const firstFocusable = { disabled: false, getAttribute: () => null, focus() { doc.activeElement = this } };
+  const lastFocusable = { disabled: false, getAttribute: () => null, focus() { doc.activeElement = this } };
+  applyRef(pageNode, { querySelectorAll: () => [firstFocusable, lastFocusable] });
+  const tabEvent = over => ({ type: 'keydown', key: 'Tab', shiftKey: false, prevented: false, preventDefault() { this.prevented = true }, ...over });
+  doc.activeElement = lastFocusable;
+  const forward = tabEvent({});
+  dispatchWindowEvent(forward);
+  assert.equal(doc.activeElement, firstFocusable, 'Tab 在末尾回到第一个可聚焦元素');
+  assert.ok(forward.prevented, '拦截默认 Tab，焦点不跑出面板');
+  doc.activeElement = firstFocusable;
+  const backward = tabEvent({ shiftKey: true });
+  dispatchWindowEvent(backward);
+  assert.equal(doc.activeElement, lastFocusable, 'Shift+Tab 在开头回到最后一个');
+  assert.ok(backward.prevented);
 
   // 3. 单条更新（经队列泵发起，先等泵跑起来再断言请求体）
   findByText(tree, 'button', '更新').props.onClick();
@@ -328,6 +366,10 @@ await openInstalledPanel(runtime);
   await settle(runtime);
   assert.ok(calls.filter(call => call.url === '/dsh-plugin-manager/updates?refresh=1').length >= 2, '检查更新带 refresh=1');
   assert.ok(findByText(runtime.tree, 'button', '检查更新'), '检测结束后按钮复原');
+  // Esc 关闭面板（没有内层浮层、也没有进行中的任务时）
+  dispatchWindowEvent({ type: 'keydown', key: 'Escape' });
+  await settle(runtime);
+  assert.equal(byClass(runtime.tree, 'dsh-pm-page').length, 0, 'Esc 关闭插件面板');
   console.log('场景1（单条更新 + 检查更新）通过');
 }
 
@@ -482,9 +524,13 @@ await openInstalledPanel(runtime);
 await openInstalledPanel(runtime);
   await settle(runtime);
   let tree = runtime.tree;
-  assert.ok(textOf(tree).includes('已选 0 个'), '工具栏显示已选计数');
-  assert.equal(findByText(tree, 'button', '更新选中 (0)').props.disabled, true, '没选中时「更新选中 (0)」禁用');
-  assert.equal(findByText(tree, 'button', '取消选择').props.disabled, true);
+  // 空选中时选择类动作整组不渲染：不再摆出「更新选中 (0) / 忽略选中 (0) / 取消选择」
+  // 这类点了没反应的按钮，也不算「已选 0 个」。
+  assert.equal(textOf(tree).includes('已选 0 个'), false, '空选中不显示已选计数');
+  assert.equal(findByText(tree, 'button', '更新选中 (0)'), undefined, '空选中不渲染「更新选中」');
+  assert.equal(findByText(tree, 'button', '忽略选中 (0)'), undefined, '空选中不渲染「忽略选中」');
+  assert.equal(findByText(tree, 'button', '取消选择'), undefined, '空选中不渲染「取消选择」');
+  assert.ok(findByText(tree, 'button', '全选'), '选择条保留「全选」');
 
   // 复选框点击切换 + 无障碍标签
   let rows = rowsOf(tree);
@@ -515,7 +561,8 @@ await openInstalledPanel(runtime);
   // 取消选择
   findByText(runtime.tree, 'button', '取消选择').props.onClick();
   await settle(runtime);
-  assert.ok(textOf(runtime.tree).includes('已选 0 个'), '「取消选择」清空选择');
+  assert.equal(findByText(runtime.tree, 'button', '取消选择'), undefined, '「取消选择」清空后整组动作收起');
+  assert.equal(findAll(runtime.tree, node => node.type === 'input' && String(node.props.className).includes('dsh-pm-check') && node.props.checked).length, 0, '「取消选择」清空选择');
 
   // 橡皮筋框选：接上假的 getBoundingClientRect
   tree = runtime.tree;
@@ -606,7 +653,7 @@ await openInstalledPanel(runtime);
   assert.ok(stripText.includes('来源：批量更新'), '外部发起的批次标注兜底来源');
   assert.ok(stripText.includes('dsh-b1'), '状态条显示当前正在更新的插件');
   assert.equal(findByText(runtime.tree, 'button', '全部更新 (2)').props.disabled, true, '批次进行中「全部更新」按钮禁用');
-  assert.equal(findByText(runtime.tree, 'button', '更新选中 (0)').props.disabled, true, '批次进行中「更新选中」禁用');
+  assert.equal(findByText(runtime.tree, 'button', '更新选中 (0)'), undefined, '没选中时不渲染「更新选中」，批次进行中也不多出按钮');
   assert.ok(progressPolls >= 2, '面板会跟随进度轮询 /updates，实际：' + progressPolls);
   assert.ok(delays.includes(2000), '跟随进度用 2 秒间隔');
 
@@ -676,7 +723,7 @@ await openInstalledPanel(runtime);
 await openPanel();
   await settle(runtime);
   assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill').length, 2, '两条都是可更新胶囊');
-  assert.equal(findByText(runtime.tree, 'button', '忽略选中 (0)').props.disabled, true, '没选中时「忽略选中 (0)」禁用');
+  assert.equal(findByText(runtime.tree, 'button', '忽略选中 (0)'), undefined, '没选中时不渲染「忽略选中」');
 
   // 「忽略选中」：勾选两条 → 提交 items（含各自目标版本）→ 角标归零
   const checkboxes = () => findAll(runtime.tree, node => node.type === 'input' && String(node.props.className).includes('dsh-pm-check'));
@@ -819,8 +866,8 @@ await openInstalledPanel(runtime);
         id: `${cat}-${n}`, name: `p-${cat}-${n}`, repo: `owner/p-${cat}-${n}`,
         author: cat, category: cat, descriptionEn: `插件 ${cat}-${n}`,
         stars: 1, downloads: 0, addedDate: '2026-01-01',
-        // 界面类当官方插件、其余当社区插件：场景末尾验证「来源筛选 → 扁平来源视图」。
-        source: cat === 'ui' ? 'official' : 'community',
+        // 全部算社区条目（官方来源已下线）：场景末尾验证「来源筛选 → 扁平来源视图」。
+        source: 'community',
       });
     }
   }
@@ -893,6 +940,13 @@ await openInstalledPanel(runtime);
     if (item) { item.props.onClick(); await settle(runtime, 10); }
   };
   await gotoDiscover();
+  // 关键词筛选框跟着分类条走（方案 A）：和来源/排序同一行，分类 chips 在下一行。
+  const catBarNode = byClass(runtime.tree, 'dsh-pm-catbar')[0];
+  assert.ok(catBarNode, '分类栏存在');
+  assert.ok(findAll(catBarNode, node => node.type === 'label' && String(node.props.className || '').includes('dsh-pm-find-filter'))[0], '关键词筛选框在分类栏里');
+  assert.ok(findAll(catBarNode, node => node.type === 'input' && node.props['aria-label'] === '搜索插件和作者')[0], '分类筛选框可访问');
+  assert.equal(byClass(runtime.tree, 'dsh-pm-searchrow').length, 0, '顶部不再有独立搜索条');
+  assert.equal(byClass(runtime.tree, 'dsh-pm-searchbar').length, 0, '底部搜索条已移除');
 
   const segs = () => findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-seg( |$)/.test(String(node.props.className || '')));
   const segByLabel = label => segs().find(node => textOf(node).startsWith(label));
@@ -907,7 +961,7 @@ await openInstalledPanel(runtime);
   const filters = findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '').includes('dsh-pm-filters'))[0];
   assert.ok(filters, '筛选组存在');
   const filterSegs = findAll(filters, node => node.type === 'button' && /(^| )dsh-pm-segf( |$)/.test(String(node.props.className || '')));
-  assert.ok(filterSegs.length >= 5, '筛选组是来源 + 排序的 segmented 按钮组（不再 select 下拉）');
+  assert.ok(filterSegs.length >= 4, '筛选组是来源（全部/社区）+ 排序的 segmented 按钮组（不再 select 下拉）');
   assert.equal(findAll(runtime.tree, node => String(node.props.className || '') === 'dsh-pm-catbar-sp').length, 0, '旧版占位 spacer 已删');
   const moreBtn = () => segs().find(node => /dsh-pm-seg more/.test(String(node.props.className || '')));
   assert.ok(moreBtn(), '有折叠按钮');
@@ -951,17 +1005,18 @@ await openInstalledPanel(runtime);
   // 6. 来源筛选 → 扁平来源视图：同一批结果不再被推荐位/双榜/分区重复三遍。
   const sourceBtn = label => findAll(runtime.tree, node => node.type === 'button'
     && /(^| )dsh-pm-segf( |$)/.test(String(node.props.className || '')) && textOf(node) === label)[0];
-  sourceBtn('官方').props.onClick();
+  sourceBtn('社区').props.onClick();
   await settleQuery(runtime);
-  const officialCall = marketCalls[marketCalls.length - 1] || '';
-  assert.ok(officialCall.includes('source=official'), '来源筛选走 source= 参数：' + officialCall);
-  assert.equal(cards().length, categoryCounts.ui, '官方来源下列出全部官方插件（界面类 8 个）');
+  const communityCall = marketCalls[marketCalls.length - 1] || '';
+  assert.ok(communityCall.includes('source=community'), '来源筛选走 source= 参数：' + communityCall);
+  const communityTotal = Object.values(categoryCounts).reduce((sum, n) => sum + n, 0);
+  assert.equal(cards().length, communityTotal, '社区来源下列出全部社区插件');
   const heroNodes = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-hero( |$)/.test(String(node.props.className || '')));
   const rankNodes = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-rank( |$)/.test(String(node.props.className || '')));
   assert.equal(heroNodes().length, 0, '来源视图不再显示推荐位');
   assert.equal(rankNodes().length, 0, '来源视图不再显示双榜');
   assert.equal(crumbs().length, 1, '来源视图有面包屑');
-  assert.ok(textOf(crumbs()[0]).includes('官方插件'), '面包屑写「官方插件」');
+  assert.ok(textOf(crumbs()[0]).includes('社区插件'), '面包屑写「社区插件」');
   // 7. 面包屑返回发现 → source=all，首屏结构回来。
   findAll(crumbs()[0], node => node.type === 'button')[0].props.onClick();
   await settleQuery(runtime);
@@ -1647,6 +1702,11 @@ await openInstalledPanel(runtime);
   await settle(runtime, 30);
   assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/uninstall')), '确认后发卸载请求');
   assert.ok(toastTexts().includes('已卸载'), '卸载成功有 toast：' + toastTexts());
+  // 焦点进出提示区：暂停/恢复自动消失的接线（行为由 client-toasts 单测锁住）。
+  const toastWrap = byClass(runtime.tree, 'dsh-pm-toasts')[0];
+  assert.ok(toastWrap, '提示区存在');
+  toastWrap.props.onFocus();
+  toastWrap.props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null });
 
   console.log('场景20（安装验收回读 + 卸载确认）通过');
 }
@@ -2628,4 +2688,71 @@ await openInstalledPanel(runtime);
   assert.ok(tag, '卡片切到「已安装」胶囊');
 
   console.log('场景35（验收回读用 installedAs 实际包名）通过');
+}
+
+/** 场景 36：安装进行中也能卸载别的插件 —— 卸载按钮不锁，动作排到安装之后；
+ *  确认框是居中浮层，不再顶在内容区最上面（用户滚到底部点卸载时看不见）。 */
+{
+  let installed = [{ name: 'dsh-old', version: '1.0.0', description: '旧插件' }];
+  let releaseInstall = null;
+  const installGate = new Promise(resolve => { releaseInstall = resolve });
+  const calls = [];
+  const marketPlugins = [{ id: 'm-new', name: 'o/new', repo: 'o/new', author: 'o', category: 'ui', descriptionEn: 'new', downloads: 1, stars: 1, version: '1.0.0', addedDate: null }];
+  const fetchImpl = (url) => {
+    calls.push(String(url));
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: installed });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url === '/dsh-plugin-manager/install') {
+      return installGate.then(() => {
+        installed = [...installed, { name: 'new-plugin', version: '1.0.0', description: '新插件' }];
+        return respond({ ok: true, installedAs: 'new-plugin' });
+      });
+    }
+    if (url === '/dsh-plugin-manager/uninstall') return respond({ ok: true, needsRestart: true });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: 1, allTotal: 1,
+        counts: [{ name: 'ui', count: 1, label: '界面' }], categories: ['ui'],
+        plugins: marketPlugins, sections: [],
+        featured: [], topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  // 1. 开始安装（请求挂住），随后切到「已安装」页。
+  const installBtn = findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === '安装')[0];
+  installBtn.props.onClick();
+  await settle(runtime, 10);
+  findAll(runtime.tree, node => node.type === 'button' && textOf(node).includes('已安装'))[0].props.onClick();
+  await settle(runtime, 10);
+
+  // 2. 安装还在途：卸载按钮可用，确认框是居中浮层（不在内容区顶部）。
+  const uninstallBtn = () => findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === '卸载')[0];
+  assert.ok(uninstallBtn(), '安装进行中仍有「卸载」按钮');
+  assert.equal(uninstallBtn().props.disabled, false, '安装其他插件时「卸载」不置灰');
+  uninstallBtn().props.onClick();
+  await settle(runtime, 6);
+  assert.equal(byClass(runtime.tree, 'dsh-pm-confirm-overlay').length, 1, '卸载确认是居中浮层');
+  const main = byClass(runtime.tree, 'dsh-pm-main')[0];
+  assert.equal(findAll(main, node => String(node.props.className || '').includes('dsh-pm-confirm')).length, 0, '确认框不再渲染在内容区顶部');
+
+  // 3. 确认后先排队：安装没结束时不发卸载请求（不能并发写同一个 profile）。
+  const confirmBtn = findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === '确认卸载')[0];
+  confirmBtn.props.onClick();
+  await settle(runtime, 10);
+  assert.equal(calls.some(url => url === '/dsh-plugin-manager/uninstall'), false, '安装未结束时卸载请求排队');
+  releaseInstall();
+  await settle(runtime, 40);
+  assert.ok(calls.some(url => url === '/dsh-plugin-manager/uninstall'), '安装结束后队列里的卸载才发出');
+  assert.ok(textOf(runtime.tree).includes('已卸载 dsh-old'), '卸载后弹重启提示（needsRestart）');
+  assert.ok(findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === '立即重启')[0], '重启提示有「立即重启」');
+  console.log('场景36（安装进行中可卸载其他插件 + 居中确认框）通过');
 }

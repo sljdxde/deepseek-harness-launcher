@@ -2025,7 +2025,7 @@ serialTest('C67 分类归并与市场查询：分类/分组/来源/排序各组�
   await withTempHome(async (home) => {
     const plugins = [
       { id: 'a', name: 'a', repo: 'o/a', author: 'o', category: 'ui', source: 'community', stars: 5, downloads: 50, addedDate: '2026-01-01', descriptionEn: 'alpha plugin' },
-      { id: 'b', name: 'b', repo: 'o/b', author: 'o', category: 'data', source: 'official', stars: 9, downloads: 10, addedDate: '2026-05-01', descriptionEn: 'beta plugin' },
+      { id: 'b', name: 'b', repo: 'o/b', author: 'o', category: 'data', source: 'vendor', stars: 9, downloads: 10, addedDate: '2026-05-01', descriptionEn: 'beta plugin' },
       { id: 'c', name: 'c', repo: 'o/c', author: 'o', category: 'workflow', source: 'my-src', stars: 7, downloads: 20, addedDate: '2026-03-01', descriptionEn: 'gamma plugin' },
     ];
     await seedMarket(home, plugins);
@@ -2041,17 +2041,15 @@ serialTest('C67 分类归并与市场查询：分类/分组/来源/排序各组�
     assert.equal(byGroup.total, 1);
     assert.equal(byGroup.plugins[0].name, 'c');
 
-    // 来源筛选
-    const official = await queryMarketplace({ source: 'official' });
-    assert.equal(official.total, 1);
-    assert.equal(official.plugins[0].name, 'b');
+    // 来源筛选（自定义源 id；官方来源已下线，source=official 不再出现在界面里）
+    const vendor = await queryMarketplace({ source: 'vendor' });
+    assert.equal(vendor.total, 1);
+    assert.equal(vendor.plugins[0].name, 'b');
     // 来源筛选是结构性筛选：双榜/推荐位/分类计数/分区都要跟着收窄。
-    // 早前这几项从全量构建，「官方」页上的榜单全是社区插件，官方条目又进不了
-    // 按全量分类切的分区，界面看起来就是「切到官方一个插件都没有」。
-    assert.deepEqual(official.topDownloads.map(p => p.name), ['b']);
-    assert.deepEqual(official.counts.map(c => c.name), ['data']);
-    assert.equal(official.sections.length, 1);
-    assert.deepEqual(official.sections[0].plugins.map(p => p.name), ['b']);
+    assert.deepEqual(vendor.topDownloads.map(p => p.name), ['b']);
+    assert.deepEqual(vendor.counts.map(c => c.name), ['data']);
+    assert.equal(vendor.sections.length, 1);
+    assert.deepEqual(vendor.sections[0].plugins.map(p => p.name), ['b']);
     const community = await queryMarketplace({ source: 'community' });
     assert.equal(community.total, 1);
     const custom = await queryMarketplace({ source: 'my-src' });
