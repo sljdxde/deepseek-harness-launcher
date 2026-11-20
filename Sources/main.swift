@@ -269,6 +269,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var runtimeWatchdogFailures = 0
     /// 正在为「后端没了」重新拉起：防止窗口失败回调与看护节拍同时触发两次重启。
     private var runtimeRecoveryInFlight = false
+    /// 已经为退出停过 dsh：给 `applicationShouldTerminate` 放行，避免二次收尾。
+    private var runtimeStoppedForTermination = false
 
     private var rootURL: URL { URL(fileURLWithPath: FileManager.default.currentDirectoryPath).deletingLastPathComponent().appendingPathComponent("deepseek-harness-launcher") }
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
@@ -383,6 +385,21 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 关掉窗口不等于退出：dsh 要继续在后台跑，菜单栏角标/完成提醒照常工作。
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    /// 任何退出路径都要先把 dsh 收掉，不只是菜单里的「退出」。
+    ///
+    /// dsh 的 stdout/stderr 是启动器持有的管道。App 先退出、读端没了，dsh 下一次写
+    /// 日志（llm 插件每 10 分钟打一轮模型列表）会拿到 EPIPE，以未捕获异常退出
+    /// （exit 1，没有崩溃报告）——2026-11-20 16:50 那次「自动重启」就是这条链。
+    /// 菜单退出走 `quit()` 的既有顺序；这里兜住 Dock「退出」、注销、关机这类系统级结束。
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if runtimeStoppedForTermination { return .terminateNow }
+        // 首次安装进行中：没有托管中的 dsh，别把安装流程拖在退出上。
+        guard dshInstallHandle == nil else { return .terminateNow }
+        runtimeStoppedForTermination = true
+        stopDHL { NSApp.terminate(nil) }
+        return .terminateLater
     }
 
     /// 清掉所有 label 含 `dhl-install` 的 launchd keepalive 任务（外部 launchctl submit
@@ -1627,13 +1644,15 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         appendLogString("用户确认安装更新：\(dmgURL.path)\n")
-        // 只换 App，不动 dsh：更新期间服务不断，新启动器起来后走 findPort 的
-        // .reuse 分支接管同一个实例（窗口 cookie 还是这个进程签发的，打开即用）。
-        // 「先 stopDHL 再退出」做不到：stopDHL 的终止在全局队列异步跑，紧接着
-        // NSApp.terminate 就把进程收了，那把刀根本没落下去（2026-11-20 15:33 的
-        // 更新就是这样留下旧实例的：既没杀掉，也没人管它）。既然结果一定是接管，
-        // 就把接管做成显式设计——拿不到 process 句柄的那条判据现在有 6 次 ≈ 30 秒
-        // 预算，端口没人监听时还会立刻自愈。
+        // 换 App 之前必须先把 dsh 停掉，不能让它活着跨过这次退出。
+        //
+        // dsh 的 stdout/stderr 是启动器持有的管道：启动器一退出读端就关闭，dsh 下一次
+        // 写日志（llm 插件每 10 分钟打一轮模型列表）会拿到 EPIPE，Node 以未捕获异常
+        // 退出（exit 1，没有崩溃报告）。2026-11-20 15:40 与 16:50 两次「自动重启」都是
+        // 这条链：更新退出 → 心跳写到死管道 → dsh 没了 → 看护发现端口没人 → 重启。
+        // 顺带一提，旧实例还一直跑着旧 App 里的内置插件代码，更新后本该换新。
+        // 所以这里等 stopDHL 收完进程再退出，由新启动器重新拉起一个 stdio 与进程
+        // 句柄都是新装的实例。
         let appURL = Bundle.main.bundleURL
         let appDirectory = appURL.deletingLastPathComponent()
         let pid = ProcessInfo.processInfo.processIdentifier
@@ -1671,11 +1690,20 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         task.standardInput = FileHandle.nullDevice
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
-        do {
-            try task.run()
-            NSApp.terminate(nil)
-        } catch {
-            showInfo(title: "启动更新助手失败", message: error.localizedDescription)
+        // 等 dsh 及其进程组真的停掉再交给更新脚本（stopDHL 的 completion 在
+        // terminateProcessGroup 收完进程之后才回调）。此前这里先起脚本、紧接着
+        // NSApp.terminate，终止动作还没跑完进程就没了，dsh 于是变成没有读端的孤儿。
+        stopDHL { [weak self] in
+            guard let self else { return }
+            do {
+                try task.run()
+                self.runtimeStoppedForTermination = true
+                NSApp.terminate(nil)
+            } catch {
+                self.showInfo(title: "启动更新助手失败", message: error.localizedDescription)
+                // 更新没发车：把刚才停掉的 dsh 拉回来，别让用户留在一个没有后端的空壳上。
+                self.start()
+            }
         }
     }
 
@@ -1699,7 +1727,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         harnessWindow?.closeWindow()
-        stopDHL { NSApp.terminate(nil) }
+        stopDHL { [weak self] in
+            // 已经收完 dsh：让 applicationShouldTerminate 直接放行，不再停第二次。
+            self?.runtimeStoppedForTermination = true
+            NSApp.terminate(nil)
+        }
     }
 
     // MARK: - 启动与端口选择
@@ -1716,6 +1748,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 switch choice {
                 case .reuse(let port):
                     self.selectedPort = port
+                    // 接管意味着这个 dsh 不是本进程拉起的：检测它的 stdio 是否还
+                    // 有人读（启动器重启/崩溃留下的孤儿，下一次写日志就会 EPIPE
+                    // 退出）只能靠日志留痕，出问题时先看这一行。
+                    self.appendLogString("接管已存在的 dsh（端口 \(port)），本启动器拿不到它的进程句柄\n")
                     self.setState(.running)
                     self.startHealthMonitors(port: port)
                 case .launch(let port):
