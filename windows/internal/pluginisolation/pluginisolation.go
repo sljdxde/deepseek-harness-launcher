@@ -310,18 +310,36 @@ func StagedBundledBasePatchFile(basePath, extraPath, dir string) (string, error)
 func StageBootPatches(pluginsRoot, home string, deckWanted bool) (base, deck, disabled string, notes []string) {
 	dir := DisabledPatchDir(home)
 	basePath := filepath.Join(pluginsRoot, "DSHArchiveManager", "cordis.patch.yml")
-	// Windows-only plugins (the interrupted-dot marker) are inserted by
-	// composing them into the base patch instead of editing the shared
-	// Plugins/DSHArchiveManager/cordis.patch.yml, which macOS ships as-is.
-	extraBasePath := filepath.Join(pluginsRoot, "DSHInterruptedDot", "cordis.patch.yml")
+	// Windows-only plugins (the interrupted-dot marker and the china-mirror
+	// switch) are inserted by composing them into the base patch instead of
+	// editing the shared Plugins/DSHArchiveManager/cordis.patch.yml, which
+	// macOS ships as-is. Each extra contributes its own `- insert:` block;
+	// a merge failure degrades to the last good patch (shared plugins only).
+	extraBasePaths := []string{
+		filepath.Join(pluginsRoot, "DSHInterruptedDot", "cordis.patch.yml"),
+		filepath.Join(pluginsRoot, "DSHChinaMirror", "cordis.patch.yml"),
+	}
 	if readable(basePath) {
 		base = basePath
-		if readable(extraBasePath) {
-			if staged, err := StagedBundledBasePatchFile(basePath, extraBasePath, dir); err != nil {
-				notes = append(notes, "异常结束状态点插件补丁合并失败，本次不启用（侧栏仍用 DSH 自带状态点）")
-			} else if staged != "" {
-				base = staged
+		staged := basePath
+		mergeFailed := false
+		for _, extraPath := range extraBasePaths {
+			if !readable(extraPath) {
+				continue
 			}
+			next, err := StagedBundledBasePatchFile(staged, extraPath, dir)
+			if err != nil {
+				mergeFailed = true
+				break
+			}
+			if next != "" {
+				staged = next
+			}
+		}
+		if mergeFailed {
+			notes = append(notes, "Windows-only 插件补丁合并失败，本次仅启用共享 base 插件（归档/插件管理/会话通知）")
+		} else if staged != basePath {
+			base = staged
 		}
 	}
 

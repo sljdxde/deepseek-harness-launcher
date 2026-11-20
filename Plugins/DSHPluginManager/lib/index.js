@@ -1,12 +1,40 @@
 import { promises as fs } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { readJsonFile, withFileLock } from './atomic.js';
 import { getOperationQueue, readOperationLog, pruneOperationLogs } from './operations.js';
 
-const run = promisify(execFile);
+// node:child_process 的 CJS exports：单测靠替换它来做假实现，
+// 所以这里用 require 拿「当前」的 execFile，而不是 ESM 具名导入的快照
+// （具名导入在模块加载时就把值拷走了，之后替换不生效）。
+const nodeRequire = createRequire(import.meta.url);
+
+/**
+ * 跑一个外部命令（dsh CLI / pnpm / git）。
+ *
+ * Windows 上 `.cmd`/`.bat` **不能**被 execFile 直接执行（EINVAL）——
+ * 它们是批处理脚本，必须交给 shell。这不是可选优化：Windows 上的 pnpm
+ * 就是 `pnpm.cmd`，不这么处理就 spawn EINVAL，npm 版本探测恒失败。
+ *
+ * 用 shell:true 时 node 把参数原样拼进命令行（**不转义**），所以自己先转义：
+ * cmd 的元字符 & | < > ^ % ! " 都要封住，否则一个带 `&` 的包名就能注入命令。
+ * 转义后仍保持 (file, args) 形态 —— 单测正是按 args 匹配来断言调用点的。
+ */
+const CMD_METACHARS = /[&|<>^!"]/g;
+const escapeForCmd = value => String(value).replace(CMD_METACHARS, ch => `^${ch}`);
+
+const run = (file, args, options = {}) => {
+  const isWindows = process.platform === 'win32';
+  const isBatch = isWindows && /\.(cmd|bat)$/i.test(String(file || ''));
+  // 注意：这里**每次调用**才取 execFile，而不是在模块加载时捕获 ——
+  // 单测靠替换 node:child_process 的 execFile 来做假实现，加载时捕获就替换不掉了。
+  const execFileNow = nodeRequire('node:child_process').execFile;
+  if (!isBatch) return promisify(execFileNow)(file, args, options);
+  const safeArgs = args.map(escapeForCmd);
+  return promisify(execFileNow)(file, safeArgs, { ...options, shell: true });
+};
 
 const dshHome = () => process.env.DSH_HOME || join(homedir(), '.dsh');
 const profilesWebModules = () => join(dshHome(), 'profiles', 'web', 'node_modules');
@@ -16,8 +44,29 @@ const marketIndexFile = () => join(marketRoot(), 'index.json');
 const marketRepoDir = () => join(marketRoot(), 'repo');
 
 const MARKET_REPO_URL = 'https://github.com/awesome-dsh-plugin/awesome-dsh-plugin.git';
+/**
+ * 路径是不是绝对路径（跨平台）。
+ * POSIX：以 '/' 开头。Windows：'C:\…' 盘符，或 '\\server\share' UNC。
+ * node 的 path.isAbsolute 在 Windows 上按 win32 规则判断，但在 POSIX 上
+ * 判断 Windows 路径会返回 false，所以这里自己按平台判，不依赖运行平台。
+ */
+function isAbsolutePath(value) {
+  const text = String(value || '');
+  if (!text) return false;
+  if (process.platform === 'win32') return /^[a-zA-Z]:[\\/]/.test(text) || /^\\\\/.test(text);
+  return text.startsWith('/');
+}
 /** Bundle the launcher ships with; symlink targets contain one of these names. */
-const BUNDLED_MARKERS = ['DSHArchiveManager', 'DSHPluginManager', 'DSHSessionNotify', 'DSHInterruptedDot', 'DSHSidebarDeck'];
+const BUNDLED_MARKERS = ['DSHArchiveManager', 'DSHPluginManager', 'DSHSessionNotify', 'DSHInterruptedDot', 'DSHChinaMirror', 'DSHSidebarDeck'];
+/**
+ * 启动器自己管理的内置插件，**不出现在插件管理里**。
+ *
+ * dsh-sidebar-deck 是实验性的接管型侧栏：开关在启动器设置里（默认关），
+ * 补丁由启动器单独 staging（Windows 侧 internal/pluginisolation）。
+ * 插件管理里再给一个「停用」开关是第二套控制路径，两处会互相打架；
+ * 用户明确：内置页不该出现它。
+ */
+const LAUNCHER_MANAGED_PLUGINS = new Set(['dsh-sidebar-deck']);
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -249,7 +298,20 @@ async function clearPinnedPackage(name) {
   return stripStaleLockEntry(name);
 }
 
-/** 从锁文件 importers 段删除一个顶层依赖的记录（名字行 + specifier/version 行）。 */
+/**
+ * 从锁文件 importers 段删除一个顶层依赖的记录（名字行 + specifier/version 行）。
+ *
+ * 缩进形状（真实 pnpm-lock.yaml）：
+ *   importers:            ← 0 空格
+ *     .:                  ← 2 空格：工程名
+ *       dependencies:     ← 4 空格：依赖分组名
+ *         dsh-workbuddy:  ← 6 空格：包名
+ *           specifier: …  ← 8 空格
+ *
+ * 包名行是 **6 空格**（分组名再深一层）。早前这里匹配的是两空格 ——
+ * 那正好是工程名那一行，于是「删包名」实际删的是工程名，包名行纹丝不动，
+ * 「pnpm 没物化 → 清钉重装」这条自愈路径恒为空操作。
+ */
 export async function stripStaleLockEntry(name) {
   const lockPath = join(profilesWebDir(), 'pnpm-lock.yaml');
   let text;
@@ -263,8 +325,12 @@ export async function stripStaleLockEntry(name) {
     if (/^importers:/.test(line)) { inImporters = true; out.push(line); continue; }
     if (inImporters && /^[^\s#]/.test(line)) { inImporters = false; skipping = false; } // 下一个顶层段
     if (inImporters) {
-      // importers 下的条目键是两空格缩进；specifier/version 等子行缩进更深
-      if (/^ {2}[^ ]/.test(line)) skipping = line.includes(name);
+      // 包名行：6 空格缩进（工程名 2 空格、依赖分组名 4 空格都不算）。
+      // YAML 里带 scope 的包名会加引号（'@scope/name':），比较前要脱掉引号。
+      if (/^ {6}\S/.test(line)) {
+        const key = line.trim().replace(/:$/, '').replace(/^['"]|['"]$/g, '');
+        skipping = key === name;
+      }
       if (skipping) { changed = true; continue; }
     }
     out.push(line);
@@ -368,8 +434,10 @@ export async function listInstalledPlugins() {
     }
   }
 
-  out.sort(compareInstalledPlugins);
-  return out;
+  // 启动器管理的实验插件不在用户可管理的清单里（见 LAUNCHER_MANAGED_PLUGINS）。
+  const visible = out.filter(item => !LAUNCHER_MANAGED_PLUGINS.has(item.name));
+  visible.sort(compareInstalledPlugins);
+  return visible;
 }
 
 /**
@@ -892,18 +960,46 @@ export async function describeDisabledPlugins(options = {}) {
   return { items };
 }
 
-const dshCli = () => join(dshHome(), 'runtime', 'node_modules', '.bin', 'dsh');
+/**
+ * dsh CLI 的可执行路径。Windows 上 npm 的 bin 目录同时有 `dsh`（sh 脚本）、
+ * `dsh.cmd` 与 `dsh.ps1`：execFile 直接跑无扩展名的 `dsh` 会 ENOENT
+ * （CreateProcess 不认 shebang，也不会按 PATHEXT 补扩展名）。必须取 `dsh.cmd`，
+ * run() 才会用 shell 执行它。
+ */
+const dshCli = () => join(
+  dshHome(), 'runtime', 'node_modules', '.bin',
+  process.platform === 'win32' ? 'dsh.cmd' : 'dsh'
+);
 
-/** Is a command resolvable on the given PATH? */
+/**
+ * 命令能否在给定 PATH 上解析出来。
+ *
+ * 跨平台两处坑（Windows 上踩过）：
+ *  1. PATH 分隔符：POSIX 用 ':'，Windows 用 ';'。按 ':' 切分在 Windows 上
+ *     永远切不开 → 整个 PATH 被当成一个目录 → 永远找不到命令。
+ *  2. 可执行位：POSIX 的 mode 带 0o111 执行位；Windows 的 mode 只反映
+ *     只读属性，没有执行位 → 即便文件在，也判不出「可执行」。
+ *     Windows 上改用扩展名判定（.exe/.cmd/.bat/.com 才是能直接执行的）。
+ */
 export async function hasCommandOnPath(name, path) {
   const pathValue = path ?? process.env.PATH ?? '';
-  const directories = pathValue.split(':').filter(Boolean);
+  const separator = process.platform === 'win32' ? ';' : ':';
+  const directories = pathValue.split(separator).filter(Boolean);
+  const isWindows = process.platform === 'win32';
+  // Windows 上命令要带扩展名才可直接执行；裸名要试常见的几个。
+  // 注意：裸名（无扩展名）**不算**可执行——cmd.exe 不认它。
+  const candidates = isWindows
+    ? (/\.(exe|cmd|bat|com)$/i.test(name) ? [name] : [name + '.exe', name + '.cmd', name + '.bat'])
+    : [name];
   for (const directory of directories) {
-    try {
-      const candidate = join(directory, name);
-      const stat = await fs.stat(candidate);
-      if (stat.isFile() && (stat.mode & 0o111)) return candidate;
-    } catch { /* keep looking */ }
+    for (const candidateName of candidates) {
+      try {
+        const candidate = join(directory, candidateName);
+        const stat = await fs.stat(candidate);
+        if (!stat.isFile()) continue;
+        if (isWindows || (stat.mode & 0o111)) return candidate;
+      } catch { /* keep looking */ }
+    }
   }
   return null;
 }
@@ -913,6 +1009,10 @@ export async function hasCommandOnPath(name, path) {
  * PATH. When that happens we prepare a local shim that forwards to the pnpm
  * shipped by node's corepack, and prepend its directory to the PATH we hand to
  * the dsh CLI. Nothing outside ~/.dsh is modified.
+ *
+ * Windows 上 shim 必须是 .cmd（cmd.exe 不认 `#!/bin/sh` 脚本）：
+ * 用同样的名字做 .cmd 才能被 PATH 解析到——这与 hasCommandOnPath 的
+ * 扩展名判定是一套。
  * @returns {Promise<[string, string]>} [child PATH, note]
  */
 export async function ensurePnpmPath() {
@@ -922,24 +1022,79 @@ export async function ensurePnpmPath() {
   if (!corepack) return [process.env.PATH, 'pnpm unavailable: no pnpm and no corepack on PATH'];
   const binDir = join(dshHome(), 'pnpm-bin');
   await fs.mkdir(binDir, { recursive: true });
-  const shim = join(binDir, 'pnpm');
-  const forwarded = `#!/bin/sh\nexec "${process.execPath}" "${corepack}" pnpm "$@"\n`;
+  const isWindows = process.platform === 'win32';
+  const shimName = isWindows ? 'pnpm.cmd' : 'pnpm';
+  const shim = join(binDir, shimName);
+  const forwarded = isWindows
+    ? `@echo off\r\n"${process.execPath}" "${corepack}" pnpm %*\r\n`
+    : `#!/bin/sh\nexec "${process.execPath}" "${corepack}" pnpm "$@"\n`;
   if (await fs.readFile(shim, 'utf8').catch(() => '') !== forwarded) {
     await fs.writeFile(shim, forwarded, { mode: 0o755 });
   }
-  return [`${binDir}:${process.env.PATH}`, `pnpm shim prepared via corepack at ${binDir}`];
+  const separator = isWindows ? ';' : ':';
+  return [`${binDir}${separator}${process.env.PATH}`, `pnpm shim prepared via corepack at ${binDir}`];
+}
+
+/**
+ * 找到可执行的 pnpm，并给出跑它用的 PATH。
+ *
+ * 优先从 PATH 里解析（这是关键：Windows 上 shim 叫 pnpm.cmd，
+ * 且 pnpm 已经在 PATH 上时压根不建 shim —— 早前 6 处调用点都拼死路径
+ * `pnpm-bin/pnpm`，Windows 上必然 ENOENT，npm 探测与装依赖全都不成立）。
+ *
+ * PATH 里找不到时回落到 shim 目录（pnpm-bin/pnpm，或 Windows 的 pnpm.cmd）：
+ * 那是 ensurePnpmPath 在「只有 corepack」时造出来的转发脚本。
+ *
+ * @returns {Promise<{cli:string,path:string}|null>} 找不到返回 null。
+ */
+async function resolvePnpmCli() {
+  const [pathWithPnpm] = await ensurePnpmPath();
+  const onPath = await hasCommandOnPath('pnpm', pathWithPnpm);
+  if (onPath) return { cli: onPath, path: pathWithPnpm };
+  // PATH 里没有就回落 shim 目录里的那个（ensurePnpmPath 在「只有 corepack」
+  // 时造的转发脚本；Windows 上是 pnpm.cmd）。执行失败由调用方兜住。
+  const shim = join(dshHome(), 'pnpm-bin', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm');
+  return { cli: shim, path: pathWithPnpm };
 }
 
 async function pluginCommand(args) {
   await ensurePnpmWorkspace();
   const cli = dshCli();
   const [pathWithPnpm, note] = await ensurePnpmPath();
+  // 国内加速打开时注入 registry 环境变量（npm/pnpm 两个前缀），安装链路整体走镜像。
   const { stdout, stderr } = await run(cli, ['plugin', '--profile', 'web', ...args], {
     timeout: 240000,
-    env: { ...process.env, PATH: pathWithPnpm },
+    env: await pnpmEnvironment().then(env => ({ ...env, PATH: pathWithPnpm })),
     cwd: dshHome()
   });
   return { stdout, stderr, note };
+}
+
+/**
+ * 为「版本钉死被 dsh 拒绝」的插件登记**精确版本豁免**（dsh 官方逃生通道，原文：
+ * "grant the exact-version exemption ... then retry the installation"）。豁免落在
+ * profile 的 .plugin-manager 状态里，之后重试安装不再被拒。
+ * 用户必须在界面上显式确认过风险，这里才会被调用。
+ * @param {{name:string,version:string,dshVersion:string}} p
+ * @returns {Promise<{ok:boolean,note?:string,error?:string}>}
+ */
+export async function allowPluginVersion({ name, version, dshVersion }, command = pluginCommand) {
+  for (const [key, value] of Object.entries({ name, version, dshVersion })) {
+    if (!value || !/^[A-Za-z0-9@._\/-]+$/.test(value)) {
+      return { ok: false, error: `参数不合法：${key}` };
+    }
+  }
+  try {
+    const result = (await command(['allow-version', `${name}@${version}`, '--dsh-version', dshVersion, '--accept-risk'])) ?? {};
+    const text = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+    // dsh 失败时输出带 error/rejected 字样；成功时是确认文案。
+    if (/installation rejected|command failed|ERR_/i.test(text)) {
+      return { ok: false, error: text.slice(0, 800) || 'dsh 没有接受这次豁免' };
+    }
+    return { ok: true, note: text.slice(0, 400) || undefined };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
 }
 
 /** 本地 git 命令（dev-linked 插件的就地更新用），统一带交互关闭与超时。 */
@@ -1013,16 +1168,21 @@ export async function ensurePnpmWorkspace() {
 }
 
 /**
- * npm package candidates for a market entry (`author/repo`, or
- * `author/repo#subdir` for a plugin living in a repo subdirectory), then a git
- * URL for whole-repo installs. A `#subdir` spec has no valid npm package name
- * and no whole-repo git URL — it must be installed from the git subdirectory,
- * so we surface it as `repoRef.subdir` for the caller.
+ * npm package candidates for a market entry (`author/repo`, or a plugin living
+ * in a repo subdirectory), then a git URL for whole-repo installs. A subdir
+ * plugin has no valid npm package name and no whole-repo git URL — it must be
+ * installed from the git subdirectory, so we surface it as `repoRef.subdir`.
+ *
+ * 子目录有两个来源，**以 url 为准**：市场条目的 `name` 里 `#` 后面可能只是展示
+ * 用短标签（`strukto-ai/mirage#dsh`），真实路径在 GitHub tree 链接里
+ * （`…/tree/main/typescript/packages/dsh`）。按短标签取子目录会找不到
+ * package.json（实测报「子目录 dsh 没有 package.json」）。
  * @param {{name?:string,url?:string}} entry
  * @returns {{candidates:string[],git:string|null,repoRef:{author:string,repo:string,subdir:string|null,full:string}|null}}
  */
 export function installCandidates(entry) {
   const name = String(entry.name || '').trim();
+  const url = String(entry.url || '').trim();
   // `@scope/name` 本身就是一个 npm 包名，不能再按「作者/仓库」拆：拆出来会拼成
   // `@@scope/name` 这种不存在的包名，还配一个 `github.com/@scope/…` 的假仓库。
   // 官方插件（@deepseek-ai/…）全走这条。
@@ -1030,11 +1190,19 @@ export function installCandidates(entry) {
     return { candidates: [name], git: null, repoRef: null };
   }
   const slash = name.indexOf('/');
-  const author = slash >= 0 ? name.slice(0, slash) : '';
+  let author = slash >= 0 ? name.slice(0, slash) : '';
   const rest = slash >= 0 ? name.slice(slash + 1) : name;
   const hash = rest.indexOf('#');
-  const repo = hash >= 0 ? rest.slice(0, hash) : rest;
-  const subdir = hash >= 0 ? rest.slice(hash + 1) : null;
+  let repo = hash >= 0 ? rest.slice(0, hash) : rest;
+  let subdir = hash >= 0 ? rest.slice(hash + 1) : null;
+  // GitHub tree 链接：https://github.com/<owner>/<repo>/tree/<branch>/<path>
+  // 有它就用链接里的 owner/repo/子目录覆盖名字里的解析结果（名字可能是短标签）。
+  const tree = /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s#]+)\/tree\/[^/\s]+\/(.+?)\/?$/i.exec(url);
+  if (tree) {
+    author = tree[1];
+    repo = tree[2].replace(/\.git$/i, '');
+    subdir = tree[3].replace(/\/+$/, '');
+  }
   const candidates = [];
   if (author && repo) candidates.push(`@${author.toLowerCase()}/${repo.toLowerCase()}`);
   if (repo) candidates.push(repo.toLowerCase());
@@ -1065,9 +1233,12 @@ async function npmViewExists(name, timeoutMs = 8000) {
   /// 连不上（超时/DNS/拒连）。把「连不上」误报成「包不存在」会误导用户去排查
   /// 一个不存在的包名，真实的网络问题反而被掩盖。
   try {
-    await ensurePnpmPath();
-    const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-    await run(cli, ['view', name, 'version'], { timeout: timeoutMs });
+    const pnpm = await resolvePnpmCli();
+    if (!pnpm) return false;
+    await run(pnpm.cli, ['view', name, 'version'], {
+      timeout: timeoutMs,
+      env: await pnpmEnvironment().then(env => ({ ...env, PATH: pnpm.path })),
+    });
     return true;
   } catch (error) {
     const message = [error?.message, error?.stderr, error?.stdout].filter(Boolean).join(' ');
@@ -1099,12 +1270,41 @@ export function repoMatchesEntry(repository, ref) {
   return normalized === `https://github.com/${String(ref.author).toLowerCase()}/${String(ref.repo).toLowerCase()}`;
 }
 
+/**
+ * 识别 dsh 的「版本钉死拒绝」。dsh 在插件声明的运行时版本与当前不匹配时拒绝安装
+ * 并给出豁免通道，原文形如：
+ *   dsh: installation rejected: Plugin @a/b@1.2.3 is incompatible with dsh 0.2.2-rc.2:
+ *   requirements {"@deepseek-ai/dsh-fs":"0.2.0-rc.2",...}. Running it may cause crashes...
+ * 命中时返回 {name, version, dshVersion, requirements}（requirements 缺省 null）；
+ * 不是这类拒绝返回 null。
+ * @param {string} raw - 命令的 stderr/stdout 原文。
+ */
+export function parseVersionRejection(raw) {
+  const text = String(raw || '');
+  const m = /Plugin\s+(\S+)@(\S+)\s+is incompatible with dsh\s+([^\s:]+)/.exec(text);
+  if (!m) return null;
+  // 句尾标点可能黏在版本号上（"…dsh 1.2.3."）：剥掉再返回。
+  const dshVersion = m[3].replace(/[.,;:]+$/, '');
+  if (!dshVersion) return null;
+  const req = /requirements\s+(\{[^}]*\})/.exec(text);
+  return { name: m[1], version: m[2], dshVersion, requirements: req ? req[1] : null };
+}
+
+/** 把版本拒绝整理成用户能读懂的一句话（细节进确认弹窗，不在 toast 里堆原文）。 */
+function describeVersionRejection(rejection) {
+  const req = rejection.requirements ? `，插件要求 ${rejection.requirements}` : '';
+  return `dsh 拒绝安装 ${rejection.name}@${rejection.version}：与当前 dsh ${rejection.dshVersion} 不兼容${req}。可在插件中心选择「接受风险并安装」（可能不稳定），或等插件发布兼容版本。`;
+}
+
 /** 读 npm 包的 repository 字段（探不到/网络失败返回 null，由调用方保守处理）。 */
 async function npmRepositoryOf(name, timeoutMs = 8000) {
   try {
-    await ensurePnpmPath();
-    const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-    const { stdout } = await run(cli, ['view', name, 'repository', '--json'], { timeout: timeoutMs });
+    const pnpm = await resolvePnpmCli();
+    if (!pnpm) return null;
+    const { stdout } = await run(pnpm.cli, ['view', name, 'repository', '--json'], {
+      timeout: timeoutMs,
+      env: await pnpmEnvironment().then(env => ({ ...env, PATH: pnpm.path })),
+    });
     return JSON.parse(String(stdout).trim() || 'null');
   } catch { return null; }
 }
@@ -1120,7 +1320,7 @@ const LOCAL_IMPORT_RES = [
 const LOCAL_MODULE_EXTENSIONS = ['', '.mjs', '.js', '.cjs', '.mts', '.ts', '.cts'];
 
 /** 不参与 import 校验的目录：不是这个包的运行时代码。 */
-const UNSCANNED_PACKAGE_DIRS = new Set(['node_modules', '.git', 'test', 'tests', '__tests__', 'fixtures', 'coverage']);
+const UNSCANNED_PACKAGE_DIRS = new Set(['node_modules', '.git', 'test', 'tests', '__tests__', 'fixtures', 'coverage', 'scripts', 'examples']);
 
 function localImportSpecifiers(source) {
   const found = new Set();
@@ -1140,7 +1340,8 @@ async function listPackageModuleFiles(dir, out = []) {
       // 仓库的 test/ 引用到仓库里的 fixture 是常态，报出来全是误报。
       if (UNSCANNED_PACKAGE_DIRS.has(entry.name)) continue;
       await listPackageModuleFiles(path, out);
-    } else if (/\.(?:mjs|cjs|js|mts|cts)$/.test(entry.name) && !/\.(?:test|spec)\.(?:mjs|cjs|js|mts|cts)$/.test(entry.name)) {
+    } else if (/\.(?:mjs|cjs|js|mts|cts)$/.test(entry.name)
+      && !/\.(?:test|spec|smoke)\.(?:mjs|cjs|js|mts|cts)$/.test(entry.name)) {
       out.push(path);
     }
   }
@@ -1210,7 +1411,8 @@ function describeUnresolvableImports(missing) {
  * @returns {Promise<{ok:boolean,dest?:string,packageName?:string,error?:string}>}
  */
 async function cloneToSources(ref, subdir) {
-  const repoUrl = `https://github.com/${ref.author}/${ref.repo}.git`;
+  // 国内加速打开时 clone 地址过镜像表；`probeGitHead` 等只读探测走 raw，不在此处。
+  const repoUrl = mirrorMapURL(`https://github.com/${ref.author}/${ref.repo}.git`, await activeMirrorTable());
   const sourcesDir = join(profilesWebModules(), '..', 'plugin-sources');
   const safeName = ((subdir ? subdir.split('/').pop() : ref.repo) || 'plugin').replace(/[^a-zA-Z0-9._-]/g, '-');
   const dest = join(sourcesDir, `${ref.author}-${ref.repo}${subdir ? '-' + safeName : ''}`);
@@ -1331,9 +1533,13 @@ export async function missingPackageEntries(dir, meta) {
 
 /** 在插件源码目录里跑一条 pnpm 命令（装依赖 / 构建），走与安装链路同一个 pnpm shim。 */
 async function runPnpmInSource(dir, args, timeoutMs = 300000) {
-  const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-  const [pathWithPnpm] = await ensurePnpmPath();
-  return run(cli, args, { cwd: dir, timeout: timeoutMs, env: { ...process.env, PATH: pathWithPnpm } });
+  const pnpm = await resolvePnpmCli();
+  if (!pnpm) throw new Error('pnpm 不在 PATH 上，无法在源码目录里跑 pnpm');
+  return run(pnpm.cli, args, {
+    cwd: dir,
+    timeout: timeoutMs,
+    env: await pnpmEnvironment().then(env => ({ ...env, PATH: pnpm.path })),
+  });
 }
 
 /**
@@ -1345,7 +1551,12 @@ async function buildSourcePackage(dir, meta) {
   const script = meta?.scripts?.build ? 'build' : (meta?.scripts?.prepare ? 'prepare' : null);
   if (!script) return { ok: false, error: 'package.json 没有 build/prepare 脚本，无法生成入口文件' };
   try {
-    await runPnpmInSource(dir, ['install']);
+    // --ignore-scripts：pnpm install 默认会跑 prepare 生命周期脚本，
+    // 之后下面又显式跑一次 build —— 同一个构建跑两遍，且第一遍的失败信息
+    // 被称为 install 失败，很难看懂（实测 dsh-market：prepare 的 tsc 报错
+    // 被包成 ERR_PNPM_EXECUTOR_LIFECYCLE_SCRIPT_FAILED）。关掉自动脚本，
+    // 构建只在这里显式跑一次，错误也直接来自 build 本身。
+    await runPnpmInSource(dir, ['install', '--ignore-scripts']);
     await runPnpmInSource(dir, ['run', script]);
     return { ok: true, script };
   } catch (error) {
@@ -1401,14 +1612,25 @@ async function materializeClonedPlugin(src, options) {
   const prepare = options.prepare ?? prepareClonedSource;
   const repositoryOf = options.repositoryOf ?? npmRepositoryOf;
 
-  let published = false;
-  try { published = (await npmProbe(src.packageName)) === true; } catch { published = false; }
+  // 注意：npmProbe 返回 'unreachable'（registry 暂时连不上，国内镜像常用）时
+  // 不能当成「不存在」—— 它会把有 npm 发行版的插件（dsh-market/dshmarket）
+  // 逼去走上游构建坏掉的 git 源码。'unreachable' 当成「可能存在」，直接尝试装；
+  // 装不上会在下面 catch 里回退源码路径，代价只是一次失败的 pnpm add。
+  let npmCandidate = false;
+  try { npmCandidate = (await npmProbe(src.packageName)) !== false; } catch { npmCandidate = false; }
+  let published = npmCandidate;
   // 无 scope 的包名仍可能撞上别人的同名包：按仓库验证一次 identity（scoped 名已绑定作者）。
+  // **只有「明确查到不同的 repository」才否决**：src.packageName 来自 clone 出来的
+  // package.json，本身就是权威身份；国内镜像下 `pnpm view repository` 常常返回 null
+  // （超时/字段缺失），把它当成「对不上」会误否决，逼着走「上游构建坏掉的 git 源码」
+  // 这条路（实测 dsh-market：npm 包 dshmarket 存在且 repository 正确，却被误判）。
   if (published && options.sourceRef && !String(src.packageName).startsWith('@')) {
     try {
-      published = repoMatchesEntry(await repositoryOf(src.packageName), options.sourceRef);
-    } catch { published = false; }
+      const repository = await repositoryOf(src.packageName);
+      if (repository && !repoMatchesEntry(repository, options.sourceRef)) published = false;
+    } catch { /* 查不到 repository 不否决，信任源码 package.json 的 name */ }
   }
+  let npmError = '';
   if (published) {
     try {
       const result = (await command(['add', src.packageName])) ?? {};
@@ -1416,11 +1638,32 @@ async function materializeClonedPlugin(src, options) {
       if (accepted.ok) {
         return { ok: true, installedAs: src.packageName, packageName: src.packageName, note: accepted.note, fromNpm: true };
       }
-    } catch { /* npm 装不上就回退到源码构建这条路 */ }
+      npmError = accepted.error || 'npm 包装上后验收没通过';
+    } catch (error) {
+      // 记住 npm 失败的原因：如果源码构建也失败，用户看到的是最终那条错误；
+      // 把两条都带上，才能分辨「上游发布坏了」还是「本机网络/镜像问题」。
+      npmError = String(error?.message || error);
+      // dsh 明确拒绝（版本钉死等）：源码构建产物带着同样的 requirements 声明，
+      // 注定被拒。直接如实上报并给「接受风险并安装」的通道，不再白跑构建。
+      const rejection = parseVersionRejection(npmError);
+      if (rejection) {
+        return { ok: false, error: describeVersionRejection(rejection), reason: `${rejection.name}@${rejection.version} 与当前 dsh ${rejection.dshVersion} 不兼容`, allowVersion: rejection };
+      }
+    }
   }
 
   const prepared = await prepare(src.dest);
-  if (!prepared.ok) return { ok: false, error: prepared.error };
+  if (!prepared.ok) {
+    // monorepo 子包的源码构建注定失败（workspace:* 依赖要整仓的 workspace 根），
+    // 这里把根因翻译出来，别让用户对着一屏 pnpm 报错猜。
+    const workspaceHint = /workspace packages were not loaded|Cannot resolve package from workspace/i.test(prepared.error || '')
+      ? '（这个插件是 monorepo 子包，源码构建需要整个仓库的 workspace，单独克隆子目录装不了；只能等它的 npm 发行版兼容当前 dsh）'
+      : '';
+    const hint = npmError
+      ? `；此前 npm 发行版 ${src.packageName} 也没装上：${npmError.slice(0, 800)}`
+      : '';
+    return { ok: false, error: (prepared.error || '插件源码准备失败') + workspaceHint + hint };
+  }
   // 构建后重新扫一遍相对 import：构建产物里也可能有落不了地的本地引用。
   const gaps = await findUnresolvableLocalImports(src.dest);
   if (gaps.length) return { ok: false, error: describeUnresolvableImports(gaps) };
@@ -1450,7 +1693,9 @@ async function materializeClonedPlugin(src, options) {
  * @returns {Promise<{ok:boolean,alreadyInstalled?:boolean,installedAs?:string,packageName?:string,note?:string,error?:string}>}
  */
 async function installSubdirPlugin(ref, installedNames, command = pluginCommand, options = {}) {
-  const src = await cloneToSources(ref, ref.subdir);
+  // clone 可注入（与 installPlugin 的整仓路径同一约定）：单测不发真网络请求。
+  const clone = options.clone ?? cloneToSources;
+  const src = await clone(ref, ref.subdir);
   if (!src.ok) return src;
   const missing = await findUnresolvableLocalImports(src.dest);
   if (missing.length) return { ok: false, error: describeUnresolvableImports(missing) };
@@ -1506,14 +1751,33 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
   let lastError = '';
   // Probe candidates in parallel first: only `pnpm add` a name that really
   // exists, so a missing name never makes pnpm wait on a network failure.
-  const probes = await Promise.all(candidates.map(name => npmProbe(name)));
+  //
+  // 探测失败不能整个安装崩掉：npm 探测只是「优先走 npm」的优化，
+  // 探不通时应当降级到下面的 git 源码路径。所以单个探测失败记成
+  // 'unreachable' 继续，而不是让 Promise.all 直接 reject。
+  //
+  // 必须**真并行**：两个候选串行时，网络差（每个 8s 超时）光探测就 16s+。
+  const probes = await Promise.all(candidates.map(async (name) => {
+    try {
+      return await npmProbe(name);
+    } catch (error) {
+      lastError = String(error?.message || error);
+      return 'unreachable';
+    }
+  }));
   for (let i = 0; i < candidates.length; i++) {
-    if (probes[i] === 'unreachable') { lastError = `npm registry 暂时不可达，无法确认 ${candidates[i]}（网络恢复后会自动重试 git 源）`; continue; }
+    if (probes[i] === 'unreachable') { lastError = lastError || `npm registry 暂时不可达，无法确认 ${candidates[i]}（网络恢复后会自动重试 git 源）`; continue; }
     if (!probes[i]) { lastError = `npm 上没有 ${candidates[i]}`; continue; }
     // 无 scope 的候选名容易撞上别人的同名包（实测 dsh-genui 是另一个作者的包）：
     // repository 对不上就跳过，宁可变慢走 git 源码，也不能把插件装成别人的包。
     if (repoRef && !candidates[i].startsWith('@')) {
-      const repository = await repositoryOf(candidates[i]);
+      let repository = null;
+      try {
+        repository = await repositoryOf(candidates[i]);
+      } catch (error) {
+        lastError = String(error?.message || error);
+        continue;
+      }
       if (!repoMatchesEntry(repository, repoRef)) {
         lastError = `npm 上的 ${candidates[i]} 不是 ${repoRef.author}/${repoRef.repo} 发布的（repository 对不上），已跳过以免装错插件`;
         continue;
@@ -1526,6 +1790,13 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
       return { ok: true, installedAs: candidates[i], packageName: candidates[i], note: accepted.note };
     } catch (error) {
       lastError = String(error?.message || error);
+      // dsh 明确拒绝（版本钉死等）：换候选名、克隆源码、重新构建都过不了同一道
+      // 验收（构建产物带着同样的 requirements 声明）。立即如实上报，别让用户等
+      // 一场注定失败的 5 分钟构建，更别把真正的拒绝埋进 240 字的拼接错误里。
+      const rejection = parseVersionRejection(lastError);
+      if (rejection) {
+        return { ok: false, error: describeVersionRejection(rejection), reason: `${rejection.name}@${rejection.version} 与当前 dsh ${rejection.dshVersion} 不兼容`, allowVersion: rejection };
+      }
     }
   }
   // Git fallback: shallow-clone into a persistent source folder, then either
@@ -1533,7 +1804,15 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
   // the npm package name) or build the source and add it as a `file:`
   // dependency. A clone without entry files is refused instead of installed.
   if (repoRef && !repoRef.subdir) {
-    const src = await clone(repoRef, null);
+    // clone 抛错（真 git 失败、磁盘满）也要变成 ok:false，
+    // 不能让异常穿透成 500 —— 界面要拿到「安装失败：原因」。
+    let src = null;
+    try {
+      src = await clone(repoRef, null);
+    } catch (error) {
+      lastError = String(error?.message || error);
+      src = { ok: false, error: lastError };
+    }
     if (src.ok) {
       const materialized = await materializeClonedPlugin(src, {
         command,
@@ -1593,15 +1872,18 @@ export async function cleanupPluginSources(before, names) {
  * 就会觉得「也不知道卸没卸成功」。
  */
 async function verifyUninstalled(name) {
+  // name 必须是字符串：join() 收到非字符串会抛 TypeError，
+  // 整个卸载流程就崩在「验证」这一步（用户看到的是异常，不是「卸载失败」）。
+  const pluginName = String(name ?? '');
   const manifest = await readProfileManifest();
   const fields = [manifest?.dependencies, manifest?.devDependencies, manifest?.optionalDependencies];
-  const stillInManifest = fields.some(group => group && Object.prototype.hasOwnProperty.call(group, name));
-  const packageDir = join(profilesWebModules(), name);
+  const stillInManifest = fields.some(group => group && Object.prototype.hasOwnProperty.call(group, pluginName));
+  const packageDir = join(profilesWebModules(), pluginName);
   const stillOnDisk = await pathExists(packageDir);
   if (stillInManifest || stillOnDisk) {
     const leftovers = [
       stillInManifest ? 'package.json 里仍有依赖记录' : null,
-      stillOnDisk ? `node_modules/${name} 仍在磁盘上` : null
+      stillOnDisk ? `node_modules/${pluginName} 仍在磁盘上` : null
     ].filter(Boolean).join('；');
     return { ok: false, leftovers };
   }
@@ -1852,9 +2134,12 @@ export async function fetchTargetPeerDependencies(source, version, deps = {}) {
   const remote = source?.remote ?? {};
   try {
     if (remote.type === 'npm') {
-      await ensurePnpmPath();
-      const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-      const { stdout } = await run(cli, ['view', `${remote.package ?? source.name}@${version}`, 'peerDependencies', '--json'], { timeout: PROBE_TIMEOUT_MS });
+      const pnpm = await resolvePnpmCli();
+      if (!pnpm) return {};
+      const { stdout } = await run(pnpm.cli, ['view', `${remote.package ?? source.name}@${version}`, 'peerDependencies', '--json'], {
+        timeout: PROBE_TIMEOUT_MS,
+        env: await pnpmEnvironment().then(env => ({ ...env, PATH: pnpm.path })),
+      });
       const parsed = JSON.parse(stdout);
       return parsed && typeof parsed === 'object' ? parsed : {};
     }
@@ -1949,13 +2234,14 @@ async function pullLocalUpdate(source, target) {
   const manifestAfter = await fs.readFile(join(dir, 'package.json'), 'utf8').catch(() => '');
   const depsChanged = manifestBefore !== manifestAfter;
   // package.json 变了：先在 checkout 里装依赖（link 依赖不会自动装子目录的依赖）。
+  const [pathWithPnpm] = await ensurePnpmPath();
+  const childEnv = await pnpmEnvironment().then(env => ({ ...env, PATH: pathWithPnpm }));
   if (depsChanged) {
     await ensurePnpmPath();
-    const [pathWithPnpm] = await ensurePnpmPath();
     const corepack = await hasCommandOnPath('corepack');
     const pnpmArgs = ['pnpm', 'install'];
     await run(process.execPath, [corepack, ...pnpmArgs], {
-      cwd: dir, timeout: 300000, env: { ...process.env, PATH: pathWithPnpm }
+      cwd: dir, timeout: 300000, env: childEnv
     });
   }
   // 构建：很多插件（dsh-genui 等）需要 build 后才生成 dist 与 client 产物。
@@ -1963,10 +2249,9 @@ async function pullLocalUpdate(source, target) {
   const script = meta?.scripts?.build ? 'build' : (meta?.scripts?.prepare ? 'prepare' : null);
   if (script) {
     await ensurePnpmPath();
-    const [pathWithPnpm] = await ensurePnpmPath();
     const corepack = await hasCommandOnPath('corepack');
     await run(process.execPath, [corepack, 'pnpm', 'run', script], {
-      cwd: dir, timeout: 300000, env: { ...process.env, PATH: pathWithPnpm }
+      cwd: dir, timeout: 300000, env: childEnv
     });
   }
   // 验收：版本号与入口文件。
@@ -2007,11 +2292,11 @@ async function pullLocalUpdate(source, target) {
  * 用户的本地 checkout 不动：pnpm add 会把 package.json 里的 link: 规格换成 npm 包。
  */
 async function switchToRelease(source, command) {
-  await ensurePnpmPath();
-  const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-  const [pathWithPnpm] = await ensurePnpmPath();
+  const pnpm = await resolvePnpmCli();
+  if (!pnpm) return { ok: false, error: 'pnpm 不在 PATH 上，无法切换到发行版' };
+  const { cli, path: pathWithPnpm } = pnpm;
   const view = await run(cli, ['view', source.name, 'version', '--json'], {
-    timeout: PROBE_TIMEOUT_MS, env: { ...process.env, PATH: pathWithPnpm }
+    timeout: PROBE_TIMEOUT_MS, env: await pnpmEnvironment().then(env => ({ ...env, PATH: pathWithPnpm }))
   }).catch(() => null);
   const npmVersion = view ? JSON.parse(String(view.stdout).trim() || 'null') : null;
   if (!npmVersion) {
@@ -2165,7 +2450,9 @@ export async function applyPluginUpdate(source, options = {}) {
         const builtGaps = await findUnresolvableLocalImports(clonedDest ?? remote.dir);
         if (builtGaps.length) throw new Error(describeUnresolvableImports(builtGaps));
         stepUpdateProgress(source.name, '正在同步 profile…');
-        await command(['add', `file:${cloned.dest}`]);
+        // 用 clonedDest ?? remote.dir（与上面几处一致）：clone 实现若没给 dest，
+        // 直接拼 cloned.dest 会装成 file:undefined。
+        await command(['add', `file:${clonedDest ?? remote.dir}`]);
       } catch (error) {
         if (hadSource && !(await restoreSourceBackup(backup, remote.dir))) {
           throw new Error(`${String(error?.message || error)}；旧版本没能从 ${backup.split('/').pop()} 放回原位，`
@@ -2313,8 +2600,11 @@ async function finalizeFileSourceUpdate(name, target, dest, command, backup, sou
 
 /** 只保留最近一个 `.bak-*` 备份，避免 plugin-sources 越滚越大。 */
 export async function pruneSourceBackups(dest) {
-  const dir = dest.replace(/\/[^/]+$/, '');
-  const name = dest.split('/').filter(Boolean).pop();
+  // 路径拆分要跨平台：Windows 的分隔符是 '\'，只按 '/' 拆会得到整个路径，
+  // 前缀匹配随之失效（.staged-* 清不掉、备份保留策略失效）。
+  const normalized = String(dest || '').replace(/[\\/]+$/, '');
+  const dir = normalized.replace(/[\\/][^\\/]*$/, '');
+  const name = normalized.split(/[\\/]/).filter(Boolean).pop();
   if (!dir || !name) return [];
   let entries = [];
   try { entries = await fs.readdir(dir); } catch { return []; }
@@ -2455,7 +2745,8 @@ export async function cleanupBrokenPlugin(name) {
 async function refreshMarketRepo() {
   await fs.rm(marketRepoDir(), { recursive: true, force: true });
   await fs.mkdir(marketRoot(), { recursive: true });
-  await run('git', ['clone', '--depth', '1', MARKET_REPO_URL, marketRepoDir()], { timeout: 300000 });
+  // 国内加速打开时 clone 地址过镜像表（ghfast 前缀代理）。
+  await run('git', ['clone', '--depth', '1', mirrorMapURL(MARKET_REPO_URL, await activeMirrorTable()), marketRepoDir()], { timeout: 300000 });
   return marketRepoDir();
 }
 
@@ -2485,7 +2776,8 @@ export async function fetchOfficialMarketPlugins(deps = {}) {
   const doFetch = deps.fetch ?? fetch;
   const found = new Map();
   for (const query of OFFICIAL_MARKET_QUERIES) {
-    const url = `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=${OFFICIAL_MARKET_SEARCH_SIZE}`;
+    // registry 查询走镜像感知通道（国内加速打开时映射到 npmmirror）。
+    const url = mirrorMapURL(`https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=${OFFICIAL_MARKET_SEARCH_SIZE}`, await activeMirrorTable(doFetch === fetch ? {} : { offline: true }));
     const result = await readRemoteJSON(url, PROBE_TIMEOUT_MS, doFetch).catch(() => ({ error: 'registry 搜索失败' }));
     if (result.error) continue;
     for (const object of result.value?.objects ?? []) {
@@ -2503,7 +2795,7 @@ export async function fetchOfficialMarketPlugins(deps = {}) {
     }
   }
   const rows = await mapWithConcurrency([...found.keys()], PROBE_CONCURRENCY, async name => {
-    const url = `https://registry.npmjs.org/${name.replace('/', '%2F')}/latest`;
+    const url = mirrorMapURL(`https://registry.npmjs.org/${name.replace('/', '%2F')}/latest`, await activeMirrorTable(doFetch === fetch ? {} : { offline: true }));
     const result = await readRemoteJSON(url, PROBE_TIMEOUT_MS, doFetch);
     const manifest = result.error ? null : result.value;
     if (!manifest?.dsh?.bundle) return null;
@@ -2752,7 +3044,8 @@ export function classifyPluginSource(input) {
   const fileMatch = spec.match(/^(?:file|link):(.+)$/);
   if (fileMatch) {
     const raw = fileMatch[1];
-    const dir = raw.startsWith('/') ? raw : join(profilesWebDir(), raw);
+    // 绝对路径原样用，相对路径相对 profile 目录（跨平台判绝对，见 isAbsolutePath）。
+    const dir = isAbsolutePath(raw) ? raw : join(profilesWebDir(), raw);
     const marker = input?.marker;
     if (marker?.author && marker?.repo) {
       return {
@@ -2824,7 +3117,9 @@ export function classifyPluginSource(input) {
  * @returns {Array<{author:string,repo:string}>}
  */
 export function sourceCandidates(dir, marketNames) {
-  const base = String(dir ?? '').split('/').filter(Boolean).pop() ?? '';
+  // 取最后一段目录名：路径分隔符要跨平台（Windows 是 '\'），
+  // 只按 '/' 拆在 Windows 上拿不到目录名 → 候选全空 → 误判成 local。
+  const base = String(dir ?? '').split(/[\\/]/).filter(Boolean).pop() ?? '';
   if (!base) return [];
   const parts = base.split('-');
   const matches = [];
@@ -3129,9 +3424,16 @@ async function savePrunedUpdateCache(previous, inventory, cacheFile) {
 /** npm 包的 dist-tags（走 pnpm shim，和安装链路同一个 registry/网络栈）。 */
 export async function probeNpmDistTags(packageName, timeoutMs = PROBE_TIMEOUT_MS) {
   try {
-    await ensurePnpmPath();
-    const cli = join(dshHome(), 'pnpm-bin', 'pnpm');
-    const { stdout } = await run(cli, ['view', packageName, 'dist-tags', '--json'], { timeout: timeoutMs });
+    // pnpm 命令的位置要从 PATH 解析，不能自己拼 pnpm-bin/pnpm：
+    //  - Windows 上 shim 叫 pnpm.cmd（cmd.exe 不认无扩展名的脚本）；
+    //  - pnpm 已经在 PATH 上时压根不建 shim（自己拼路径必然 ENOENT）。
+    // 这样 Windows 与 macOS 的 npm 版本探测都能真的跑起来。
+    const pnpm = await resolvePnpmCli();
+    if (!pnpm) return { error: 'pnpm 不在 PATH 上，无法查询 npm 版本' };
+    const { stdout } = await run(pnpm.cli, ['view', packageName, 'dist-tags', '--json'], {
+      timeout: timeoutMs,
+      env: await pnpmEnvironment().then(env => ({ ...env, PATH: pnpm.path })),
+    });
     const tags = JSON.parse(stdout);
     const latest = typeof tags?.latest === 'string' ? tags.latest : null;
     if (!latest) return { error: 'registry 没有 latest 标签' };
@@ -3209,7 +3511,9 @@ async function fetchRepoJSON(spec, timeoutMs = PROBE_TIMEOUT_MS, deps = {}) {
   if (!author || !repo) return { error: '缺少仓库信息' };
   const path = subdir ? `${String(subdir).replace(/^\/+|\/+$/g, '')}/${file}` : file;
   const doFetch = deps.fetch ?? fetch;
-  const raw = await readRemoteJSON(`https://raw.githubusercontent.com/${author}/${repo}/${commit}/${path}`, timeoutMs, doFetch);
+  // raw 在国内网络限速严重，镜像表打开时把 raw 域映射到国内镜像（api 兜底不动）。
+  const rawURL = mirrorMapURL(`https://raw.githubusercontent.com/${author}/${repo}/${commit}/${path}`, await activeMirrorTable(doFetch === fetch ? {} : { offline: true }));
+  const raw = await readRemoteJSON(rawURL, timeoutMs, doFetch);
   if (!raw.error) return raw;
   const viaAPI = await readRemoteJSON(
     `https://api.github.com/repos/${author}/${repo}/contents/${path}?ref=${commit}`, timeoutMs, doFetch, decodeAPIContent
@@ -3241,10 +3545,16 @@ export async function collectPluginSources() {
   for (const item of installed) {
     if (item.broken || item.source === 'bundled') continue;
     const spec = Object.prototype.hasOwnProperty.call(dependencies, item.name) ? dependencies[item.name] : null;
+    // file:/link: 指向的目录：绝对路径原样用，相对路径相对 profile 目录。
+    // 判「绝对」要跨平台：POSIX 是以 '/' 开头，Windows 是 'C:\'（盘符）或
+    // '\\' 开头（UNC）。只认 '/' 会把 Windows 的绝对路径当成相对路径，
+    // 读不到 .dsh-source.json → 插件被误判成 local 来源。
     const markerDir = typeof spec === 'string' && /^(?:file|link):/.test(spec)
-      ? (spec.replace(/^(?:file|link):/, '').startsWith('/')
-        ? spec.replace(/^(?:file|link):/, '')
-        : join(profilesWebDir(), spec.replace(/^(?:file|link):/, '')))
+      ? (() => {
+          const target = spec.replace(/^(?:file|link):/, '');
+          if (isAbsolutePath(target)) return target;
+          return join(profilesWebDir(), target);
+        })()
       : null;
     let marker = markerDir ? await readJsonQuiet(join(markerDir, SOURCE_MARKER_NAME)) : null;
     if (!marker && markerDir) {
@@ -3491,7 +3801,8 @@ async function readRemoteText(author, repo, ref, path, timeoutMs, doFetch) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const raw = await doFetch(`https://raw.githubusercontent.com/${author}/${repo}/${ref}/${path}`, {
+    const rawURL = mirrorMapURL(`https://raw.githubusercontent.com/${author}/${repo}/${ref}/${path}`, await activeMirrorTable(doFetch === fetch ? {} : { offline: true }));
+    const raw = await doFetch(rawURL, {
       signal: controller.signal, headers: { 'cache-control': 'no-cache' }
     });
     if (raw.ok) return { text: await raw.text() };
@@ -3599,6 +3910,1326 @@ export async function fetchPluginReleaseNotes(name, version, deps = {}) {
   return value;
 }
 
+// ---------------------------------------------------------------------------
+// 插件源（多仓库源）管理
+//
+// 一个「源」= 一个含 index.json 的 Git 仓库，或一个直接给出索引 JSON 的 https
+// 地址。索引格式（version 1）：
+//   {
+//     "version": 1,
+//     "updatedAt": "2026-11-16T00:00:00.000Z",
+//     "plugins": [{
+//       "id": "dsh-tokenledger",
+//       "name": "yumc/dsh-tokenledger",
+//       "repo": "yumc/dsh-tokenledger",
+//       "url": "https://github.com/yumc/dsh-tokenledger",
+//       "category": "data",
+//       "description": { "en": "…", "zh": "…" },
+//       "stars": 540, "downloads": 165000,
+//       "verified": true
+//     }]
+//   }
+//
+// 源清单存 `$DSH_HOME/plugin-manager/sources.json`（用户配置，原子写），每源的
+// 索引缓存存 `$DSH_HOME/plugin-manager/sources-cache/<id>.json`。聚合顺序：
+// 官方 npm 查询 → awesome-dsh-plugin（内置默认源）→ 用户启用的自定义源，
+// 按 mergeMarketPlugins 的 url 去重。刷新是后台任务：受理后立刻返回，逐源
+// 拉取（并发 4，单源失败不拖垮其它源），进度对象挂内存，读 /marketplace 或
+// /sources/progress 可见。国内加速开关（dsh-china-mirror 插件）打开时，
+// 本模块所有出站 URL 先过镜像表。
+// ---------------------------------------------------------------------------
+
+/** 用户源配置文件（与 disabled.json 同目录）。 */
+const SOURCES_FILE = () => join(PLUGIN_MANAGER_DIR(), 'sources.json');
+const SOURCES_CACHE_DIR = () => join(PLUGIN_MANAGER_DIR(), 'sources-cache');
+const SOURCES_STATE_VERSION = 1;
+/** 内置默认社区源：awesome-dsh-plugin 仓库（沿用既有市场清单格式）。 */
+export const DEFAULT_SOURCE_ID = 'awesome-dsh';
+/** 单源拉取超时与并发（与更新检测同一量级）。 */
+const SOURCE_FETCH_TIMEOUT_MS = 20000;
+const SOURCE_FETCH_CONCURRENCY = 4;
+/** 源缓存有效期：过期只影响 stale 标记，不阻止读取（离线仍能看到上次索引）。 */
+const SOURCE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+// ---- 国内加速（dsh-china-mirror 插件）-----------------------------------
+
+/** 内存镜像表缓存：读一次用 10 秒，避免每次网络调用都打一回本地路由。 */
+let mirrorCache = { at: 0, table: null, enabled: false };
+const MIRROR_CACHE_TTL_MS = 10 * 1000;
+
+/**
+ * 读国内加速状态（短缓存）。镜像插件不存在 / 路由 404 / 请求失败都按「关闭」
+ * 处理——加速是加分项，任何故障都不能影响正常路径。
+ * @param {{fetch?:Function}} deps - 测试注入。
+ * @returns {Promise<{enabled:boolean,table:Array|null}>}
+ */
+export async function readMirrorStateCached(deps = {}) {
+  const doFetch = deps.fetch ?? fetch;
+  // 注入了 fetch（单测沙箱）时不走缓存：缓存是给生产路径省网络往返的，
+  // 注入方每次都想要自己那份确定答案（曾经测试间串味：上一个用例缓存的
+  // 「关闭」状态让下一个用例拿不到「开启」）。
+  const injected = typeof deps.fetch === 'function';
+  if (!injected && Date.now() - mirrorCache.at < MIRROR_CACHE_TTL_MS) return mirrorCache;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    const response = await doFetch('http://127.0.0.1:' + (process.env.DSH_PORT || '3080') + '/dsh-china-mirror/state', {
+      signal: controller.signal, headers: { 'cache-control': 'no-cache' }
+    });
+    clearTimeout(timer);
+    if (response.ok) {
+      const state = await response.json();
+      mirrorCache = { at: Date.now(), enabled: state?.enabled === true, table: Array.isArray(state?.table) ? state.table : null };
+      return mirrorCache;
+    }
+  } catch { /* 插件不存在或未启动：按关闭处理 */ }
+  mirrorCache = { at: Date.now(), enabled: false, table: null };
+  return mirrorCache;
+}
+
+/** 测试用：直接重置镜像缓存。 */
+export function resetMirrorCache() {
+  mirrorCache = { at: 0, table: null, enabled: false };
+}
+
+/**
+ * 当前镜像规则表（关闭时返回 null = 直连）。消费方拿到 null 不做任何替换。
+ * @param {{fetch?:Function}} deps - 测试注入。
+ */
+export async function activeMirrorTable(deps = {}) {
+  // 注入 fetch 的调用方是单测沙箱：不许碰网络（否则本机跑着 dsh 且开了国内加速时，
+  // 镜像表会把 raw 域名改写，断言对不上）。生产路径永远用全局 fetch。
+  if (deps.offline) return null;
+  const state = await readMirrorStateCached(deps);
+  return state.enabled && state.table ? state.table : null;
+}
+
+/**
+ * 按镜像表映射 URL（表为 null 时原样返回）。映射是纯前缀替换，与镜像插件导出的
+ * mapURL 同一语义——两个包是独立的编译目标，不互相 require，规则表本身由镜像
+ * 插件下发，天然一致。
+ * @param {string} url
+ * @param {{match:string,replace:string}[]|null} table
+ */
+export function mirrorMapURL(url, table) {
+  const value = url == null ? '' : String(url);
+  if (!value || !table) return value;
+  for (const rule of table) {
+    if (rule.replace && value.startsWith(rule.replace)) return value;
+  }
+  for (const rule of table) {
+    if (rule.match && value.startsWith(rule.match)) return rule.replace + value.slice(rule.match.length);
+  }
+  return value;
+}
+
+/**
+ * 带镜像映射的一次 GET + JSON 解析（readRemoteJSON 的镜像感知版）。
+ * 超时/网络错误转 error 字段，语义与 readRemoteJSON 相同。
+ */
+async function readRemoteJSONMirrored(url, timeoutMs, doFetch, decode = payload => payload) {
+  const table = await activeMirrorTable(doFetch === fetch ? {} : { offline: true });
+  return readRemoteJSON(mirrorMapURL(url, table), timeoutMs, doFetch, decode);
+}
+
+/**
+ * pnpm/npm 子进程环境：国内加速打开时注入 registry，让 pnpm view/add 与安装链路
+ * 天然走镜像。镜像关闭或插件不可用时原样返回。
+ *
+ * **两个前缀都要注入**：npm CLI 读 `npm_config_registry`，而 pnpm 11+ 只认自己的
+ * `pnpm_config_*` 前缀（实测 `npm_config_registry=… pnpm config get registry`
+ * 仍返回 registry.npmjs.org）——只注入 npm 的那个等于没加速，源码构建的
+ * `pnpm install` 会直连 npmjs 直到 5 分钟超时。
+ * @param {{fetch?:Function}} deps - 测试注入。
+ * @returns {Promise<object>} 环境对象（调用方展开进 child env）。
+ */
+export async function pnpmEnvironment(deps = {}) {
+  const table = await activeMirrorTable(deps);
+  if (!table) return process.env;
+  const rule = table.find(item => item.kind === 'registry' && item.match === 'https://registry.npmjs.org/');
+  if (!rule) return process.env;
+  return { ...process.env, npm_config_registry: rule.replace, pnpm_config_registry: rule.replace };
+}
+
+// ---- 源配置 CRUD ---------------------------------------------------------
+
+/**
+ * 读用户源配置。结构：{ version, sources: [{ id, kind, url, enabled, addedAt }] }。
+ * kind: 'index'（https JSON 地址）| 'git'（github:owner/repo，读仓库根 index.json）。
+ * 没有配置文件时返回只含内置默认源的清单（默认源与旧行为完全一致）。
+ * @returns {Promise<{version:number,sources:Array}>}
+ */
+/** 读落盘的源条目（不含现拼的内置源）。读不到返回空数组。 */
+async function readStoredSources() {
+  try {
+    const raw = JSON.parse(await fs.readFile(SOURCES_FILE(), 'utf8'));
+    return Array.isArray(raw?.sources) ? raw.sources.filter(item => item && typeof item.id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function readSourcesConfig() {
+  const builtin = { id: DEFAULT_SOURCE_ID, kind: 'git', url: 'github:awesome-dsh-plugin/awesome-dsh-plugin', enabled: true, builtin: true, addedAt: null };
+  try {
+    const raw = JSON.parse(await fs.readFile(SOURCES_FILE(), 'utf8'));
+    const stored = Array.isArray(raw?.sources) ? raw.sources.filter(item => item && typeof item.id === 'string') : [];
+    // 内置默认源可能被停用（离线场景用户想关掉社区源），这个状态要能持久化：
+    // 落盘时它会带着 builtin:true 标记，读回来时**替换**掉现拼的那份，而不是追加
+    // ——追加会让源列表翻倍（曾经的真 bug：加 2 个源读回来是 5 个）。
+    const override = stored.find(item => item.id === DEFAULT_SOURCE_ID);
+    const rest = stored.filter(item => item.id !== DEFAULT_SOURCE_ID);
+    const head = override ? { ...builtin, enabled: override.enabled !== false } : builtin;
+    return { version: SOURCES_STATE_VERSION, sources: [head, ...rest] };
+  } catch {
+    return { version: SOURCES_STATE_VERSION, sources: [builtin] };
+  }
+}
+
+/**
+ * 原子写源配置（tmp + rename，与 disabled.json 同一纪律）。
+ *
+ * 内置默认源只在被**显式停用**时落盘（只记 enabled，不重复记 builtin 定义），
+ * 其余情况只写用户自定义源。否则读回来时又会拼一个 builtin → 源列表翻倍
+ * （曾经的真 bug：加 2 个源读回来是 5 个）。
+ */
+async function writeSourcesConfig(config) {
+  const path = SOURCES_FILE();
+  const all = Array.isArray(config?.sources) ? config.sources : [];
+  const builtin = all.find(item => item && item.id === DEFAULT_SOURCE_ID);
+  const rest = all.filter(item => item && item.id !== DEFAULT_SOURCE_ID);
+  const sources = builtin && builtin.enabled === false
+    ? [{ id: DEFAULT_SOURCE_ID, enabled: false }, ...rest]
+    : rest;
+  await fs.mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}`;
+  await fs.writeFile(tmp, JSON.stringify({ version: config?.version ?? SOURCES_STATE_VERSION, sources }, null, 2) + '\n', 'utf8');
+  await fs.rename(tmp, path);
+}
+
+/** 源 id 归一：git 源取 owner-repo，index 源取 URL 的稳定哈希。
+ *
+ * 只认 `github:owner/repo` 这种短写；长写（https://… / git@…）一律走 URL 哈希
+ * —— addPluginSource 会先把地址归一成短写再算 id，所以线上路径是一致的。
+ */
+export function normalizeSourceId(kind, url) {
+  if (kind === 'git') {
+    const match = String(url || '').match(/github[:@]([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)/);
+    if (match) return `${match[1]}-${match[2]}`.toLowerCase();
+  }
+  let hash = 0;
+  const text = String(url || '');
+  for (let i = 0; i < text.length; i++) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  return 'src-' + Math.abs(hash).toString(36);
+}
+
+/**
+ * 添加一个源。重复 URL 幂等返回 alreadyAdded。
+ * @param {{kind:'git'|'index', url:string}} entry
+ * @returns {Promise<{ok:boolean,source?:object,alreadyAdded?:boolean,error?:string}>}
+ */
+export async function addPluginSource(entry) {
+  const kind = entry?.kind === 'git' ? 'git' : entry?.kind === 'index' ? 'index' : null;
+  const url = String(entry?.url ?? '').trim();
+  if (!kind) return { ok: false, error: 'kind 必须是 git 或 index' };
+  if (!url) return { ok: false, error: '缺少源地址' };
+  if (kind === 'index' && !/^https?:\/\//i.test(url)) return { ok: false, error: 'index 源必须是 http(s) 地址' };
+  if (kind === 'git' && !/^github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/i.test(url) && !/^https?:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+(\.git)?$/i.test(url)) {
+    return { ok: false, error: 'git 源地址格式：github:owner/repo 或 https://github.com/owner/repo' };
+  }
+  const config = await readSourcesConfig();
+  const normalizedUrl = kind === 'git' ? url.replace(/^https?:\/\/github\.com\//i, 'github:').replace(/\.git$/i, '') : url;
+  const existing = config.sources.find(item => item.url.toLowerCase() === normalizedUrl.toLowerCase());
+  if (existing) return { ok: true, source: existing, alreadyAdded: true };
+  const source = { id: normalizeSourceId(kind, normalizedUrl), kind, url: normalizedUrl, enabled: true, addedAt: new Date().toISOString() };
+  await writeSourcesConfig({ version: SOURCES_STATE_VERSION, sources: [...config.sources.filter(item => item.id !== source.id), source] });
+  return { ok: true, source };
+}
+
+/**
+ * 删除一个用户源（内置默认源拒绝删除）。
+ * 内置默认源被显式停用后，它的覆盖项还在配置里；这里把它删掉等于「恢复默认启用」，
+ * 而不是删掉这个源本身（默认源不可删是产品约定）。
+ */
+export async function removePluginSource(id) {
+  const config = await readSourcesConfig();
+  if (id === DEFAULT_SOURCE_ID) {
+    // 只有当它被显式停用过（落盘了覆盖项）时，这个调用才有意义：恢复默认启用。
+    const stored = await readStoredSources();
+    if (!stored.some(item => item.id === DEFAULT_SOURCE_ID)) return { ok: false, error: '内置默认源不能删除' };
+    await writeSourcesConfig({ version: SOURCES_STATE_VERSION, sources: config.sources.map(item => (item.id === DEFAULT_SOURCE_ID ? { ...item, enabled: true } : item)) });
+    return { ok: true, removed: id, restored: true };
+  }
+  const before = config.sources.length;
+  const next = config.sources.filter(item => item.id !== id);
+  if (next.length === before) return { ok: false, error: '没有这个源' };
+  await writeSourcesConfig({ version: SOURCES_STATE_VERSION, sources: next });
+  await fs.rm(join(SOURCES_CACHE_DIR(), `${id}.json`), { force: true }).catch(() => {});
+  return { ok: true, removed: id };
+}
+/** 启用/停用一个源（默认源同样可以停用——离线场景用户可能想关掉社区源）。 */
+export async function setPluginSourceEnabled(id, enabled) {
+  const config = await readSourcesConfig();
+  const source = config.sources.find(item => item.id === id);
+  if (!source) return { ok: false, error: '没有这个源' };
+  source.enabled = enabled === true;
+  await writeSourcesConfig({ version: SOURCES_STATE_VERSION, sources: config.sources });
+  return { ok: true, source };
+}
+
+// ---- 源索引拉取与缓存 ----------------------------------------------------
+
+/** git 源（github:owner/repo）→ 原始索引 JSON 地址（走 raw，镜像感知）。 */
+function sourceIndexURLs(source) {
+  if (source.kind === 'index') return [source.url];
+  const match = String(source.url).match(/github:([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/i);
+  if (!match) return [];
+  const [, owner, repo] = match;
+  return [
+    `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/index.json`,
+    `https://raw.githubusercontent.com/${owner}/${repo}/main/index.json`,
+    `https://raw.githubusercontent.com/${owner}/${repo}/master/index.json`,
+  ];
+}
+
+/**
+ * 把源索引的一个条目归一成市场插件条目（与 fetchOfficialMarketPlugins 输出同构）。
+ * 非法条目（缺 name）返回 null，不拖垮整源。
+ */
+export function sourceEntryToPlugin(entry, sourceId) {
+  if (!entry || typeof entry !== 'object') return null;
+  const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+  if (!name) return null;
+  const repo = typeof entry.repo === 'string' && entry.repo.trim() ? entry.repo.trim() : name;
+  const description = entry.description && typeof entry.description === 'object' ? entry.description : {};
+  const category = typeof entry.category === 'string' && entry.category.trim() ? entry.category.trim() : 'other';
+  return {
+    id: typeof entry.id === 'string' && entry.id ? `${sourceId}:${entry.id}` : `${sourceId}:${name}`,
+    url: typeof entry.url === 'string' && entry.url ? entry.url : name,
+    name,
+    repo,
+    author: repo.includes('/') ? repo.split('/')[0] : sourceId,
+    category,
+    source: sourceId,
+    descriptionEn: typeof description.en === 'string' ? description.en : '',
+    descriptionZh: typeof description.zh === 'string' ? description.zh : '',
+    downloads: Number(entry.downloads) || 0,
+    stars: Number(entry.stars) || 0,
+    verified: entry.verified === true,
+    screenshot: typeof entry.screenshot === 'string' ? entry.screenshot : null,
+    addedDate: typeof entry.updatedAt === 'string' ? entry.updatedAt : null,
+    version: typeof entry.version === 'string' ? entry.version : null,
+  };
+}
+
+/** 校验一个 index.json 文档的结构；返回 plugins 数组或 null。 */
+export function parseSourceIndex(document) {
+  if (!document || typeof document !== 'object') return null;
+  const plugins = Array.isArray(document.plugins) ? document.plugins : null;
+  if (!plugins) return null;
+  return plugins;
+}
+
+/** 拉一个源的最新索引（联网，镜像感知；全部地址失败返回 { error }）。 */
+export async function fetchSourceIndex(source, deps = {}) {
+  const doFetch = deps.fetch ?? fetch;
+  const urls = sourceIndexURLs(source);
+  if (urls.length === 0) return { error: '无法从源地址推出索引位置' };
+  let lastError = '源没有可用的索引地址';
+  for (const url of urls) {
+    const result = await readRemoteJSONMirrored(url, SOURCE_FETCH_TIMEOUT_MS, doFetch);
+    if (!result.error) {
+      const plugins = parseSourceIndex(result.value);
+      if (plugins) return { plugins, fetchedAt: new Date().toISOString() };
+      lastError = '索引里没有 plugins 数组';
+      continue;
+    }
+    lastError = result.error;
+  }
+  return { error: lastError };
+}
+
+/** 每源缓存路径。 */
+function sourceCacheFile(id) {
+  return join(SOURCES_CACHE_DIR(), `${id}.json`);
+}
+
+/** 读一个源的缓存索引（损坏/缺失返回 null）。 */
+export async function readSourceCache(id) {
+  try {
+    const raw = JSON.parse(await fs.readFile(sourceCacheFile(id), 'utf8'));
+    return Array.isArray(raw?.plugins) ? raw : null;
+  } catch { return null; }
+}
+
+/** 写一个源的缓存索引（原子写；失败不抛——缓存是加分项）。 */
+async function writeSourceCache(id, payload) {
+  try {
+    await fs.mkdir(SOURCES_CACHE_DIR(), { recursive: true });
+    const tmp = `${sourceCacheFile(id)}.tmp-${process.pid}`;
+    await fs.writeFile(tmp, JSON.stringify(payload), 'utf8');
+    await fs.rename(tmp, sourceCacheFile(id));
+  } catch { /* 缓存写失败不影响主流程 */ }
+}
+
+// ---- 聚合与异步刷新 ------------------------------------------------------
+
+/** 刷新进度对象（内存）：/sources/progress 读它；形态与 updateProgress 对齐。 */
+let sourceRefreshProgress = null;
+
+/** 当前的源刷新进度（没有进行中的刷新时是 null）。 */
+export function readSourceRefreshProgress() {
+  return sourceRefreshProgress;
+}
+
+/**
+ * 聚合全部启用源的缓存（不发网络）：官方 npm 查询的缓存走市场主索引，
+ * 这里只聚合 git/index 源。条目带 sourceId 供 UI 区分来源。
+ */
+export async function aggregateCachedSources() {
+  const config = await readSourcesConfig();
+  const aggregated = [];
+  const perSource = [];
+  for (const source of config.sources) {
+    if (source.id === DEFAULT_SOURCE_ID) continue; // 默认源走市场主索引
+    if (source.enabled === false) { perSource.push({ id: source.id, enabled: false, state: 'disabled', count: 0 }); continue; }
+    const cache = await readSourceCache(source.id);
+    if (!cache) { perSource.push({ id: source.id, enabled: true, state: 'empty', count: 0 }); continue; }
+    const stale = Date.now() - Date.parse(cache.fetchedAt ?? 0) > SOURCE_CACHE_MAX_AGE_MS;
+    const plugins = (cache.plugins ?? []).map(entry => sourceEntryToPlugin(entry, source.id)).filter(Boolean);
+    aggregated.push(...plugins);
+    perSource.push({ id: source.id, enabled: true, state: stale ? 'stale' : 'ok', count: plugins.length, fetchedAt: cache.fetchedAt });
+  }
+  return { plugins: aggregated, perSource };
+}
+
+/**
+ * 后台刷新全部启用源：受理后逐源拉取（并发 4），单源失败记录 error 不拖垮其它源；
+ * 默认源（awesome-dsh-plugin）沿用 refreshMarketplace 的仓库重建。进度对象全程可读，
+ * 结束时写 finishedAt。这是「刷新市场」按钮的异步受理路径。
+ *
+ * @param {object} [deps] - { fetch, refreshMarketplace }：测试注入点。
+ *   默认源要 clone 整个仓库，单测里必须替换掉，否则测试会发真实网络请求并挂住。
+ * @returns {Promise<{sources:number,plugins:number,errors:string[]}>} 刷新汇总。
+ */
+export async function refreshPluginSources(deps = {}) {
+  const config = await readSourcesConfig();
+  const enabled = config.sources.filter(item => item.enabled !== false);
+  const refreshMarketplace = deps.refreshMarketplace ?? refreshMarketplaceOnce;
+  sourceRefreshProgress = {
+    active: true,
+    total: enabled.length,
+    done: 0,
+    current: null,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    results: [],
+  };
+  const errors = [];
+  let pluginCount = 0;
+  try {
+    await mapWithConcurrency(enabled, SOURCE_FETCH_CONCURRENCY, async source => {
+      sourceRefreshProgress.current = source.id;
+      if (source.id === DEFAULT_SOURCE_ID) {
+        // 内置默认源：主索引重建（clone awesome-dsh-plugin），沿用旧逻辑。
+        try {
+          const summary = await refreshMarketplace();
+          sourceRefreshProgress.results.push({ id: source.id, ok: true, count: summary.count });
+          pluginCount += summary.count;
+        } catch (error) {
+          errors.push(`${source.id}: ${String(error?.message || error)}`);
+          sourceRefreshProgress.results.push({ id: source.id, ok: false, error: String(error?.message || error) });
+        }
+        sourceRefreshProgress.done += 1;
+        return;
+      }
+      const result = await fetchSourceIndex(source, deps).catch(error => ({ error: String(error?.message || error) }));
+      if (result.error) {
+        errors.push(`${source.id}: ${result.error}`);
+        sourceRefreshProgress.results.push({ id: source.id, ok: false, error: result.error });
+      } else {
+        await writeSourceCache(source.id, { fetchedAt: result.fetchedAt, plugins: result.plugins });
+        const plugins = result.plugins.map(entry => sourceEntryToPlugin(entry, source.id)).filter(Boolean);
+        sourceRefreshProgress.results.push({ id: source.id, ok: true, count: plugins.length });
+        pluginCount += plugins.length;
+      }
+      sourceRefreshProgress.done += 1;
+    });
+  } finally {
+    sourceRefreshProgress.active = false;
+    sourceRefreshProgress.current = null;
+    sourceRefreshProgress.finishedAt = new Date().toISOString();
+    invalidateMarketIndexCache();
+  }
+  return { sources: enabled.length, plugins: pluginCount, errors };
+}
+
+/** 市场索引的内存缓存：11k 插件时整包 9.6MB，每次请求都重新解析磁盘 JSON
+ *  会明显卡面板；3 秒 TTL 足够覆盖一次打开面板的多个请求，刷新结束时主动失效。
+ *  缓存**按 DSH_HOME 分键**：换了 home（多 profile / 单测临时目录）必须重新读，
+ *  否则会拿到上一个 home 的索引（曾经导致单测串味、分类计数对不上）。 */
+let marketIndexCache = { at: 0, value: null, home: null };
+function invalidateMarketIndexCache() {
+  marketIndexCache = { at: 0, value: null, home: null };
+}
+
+async function marketplaceIndexCached() {
+  const home = dshHome();
+  if (marketIndexCache.value && marketIndexCache.home === home && Date.now() - marketIndexCache.at < 3000) {
+    return marketIndexCache.value;
+  }
+  const value = await readMarketplaceAggregated();
+  marketIndexCache = { at: Date.now(), value, home };
+  return value;
+}
+
+const MARKET_PAGE_SIZE = 60;
+const MARKET_PAGE_MAX = 200;
+/** 发现页首屏的分区数量与每区卡片数（3 列 × 2 整行）。 */
+const MARKET_SECTION_CATEGORIES = 3;
+const MARKET_SECTION_CARDS = 6;
+
+/**
+ * 分类归并（v3.1）：社区清单有 30+ 个英文分类，用户明确「不需要这么多分类」。
+ * 服务端把原始 category 折成 6 个中文组，分类条/分区/筛选全部按组走；
+ * 原始分类仍保留在每条插件上（详情页用）。
+ */
+export const MARKET_GROUPS = [
+  { id: 'ui', label: '界面', categories: ['ui', 'panel', 'theme', 'market'] },
+  { id: 'session', label: '会话', categories: ['session', 'memory', 'notify'] },
+  { id: 'tools', label: '工具', categories: ['tools', 'tool', 'dev', 'cli', 'skill', 'search'] },
+  { id: 'auto', label: '自动化', categories: ['workflow', 'auto', 'mcp', 'agent', 'gateway', 'prompt'] },
+  { id: 'data', label: '数据', categories: ['data', 'storage', 'usage', 'model'] },
+  { id: 'other', label: '其他', categories: [] },
+];
+const GROUP_BY_CATEGORY = new Map();
+for (const group of MARKET_GROUPS) for (const category of group.categories) GROUP_BY_CATEGORY.set(category, group.id);
+
+/**
+ * 规范化分类：社区清单是 PR 提交的，个别条目把模板注释写进了 category
+ * （如 "tools # see the category list below / 见下方分类列表 2"、"official 9"）。
+ * 这类不是真分类，只接受「纯英文短词」，其余一律归 other——分类条不会出现脏胶囊。
+ */
+export function normalizeCategory(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  return /^[a-z][a-z0-9_-]{0,19}$/.test(raw) ? raw : 'other';
+}
+
+/** 原始分类 → 组 id（未命中的归 other）。 */
+export function marketGroupOf(category) {
+  return GROUP_BY_CATEGORY.get(normalizeCategory(category)) || 'other';
+}
+
+/** 组 id → 展示名。 */
+export function marketGroupLabel(id) {
+  return (MARKET_GROUPS.find(group => group.id === id) || {}).label || '其他';
+}
+
+/**
+ * 原始分类 → 中文名（分类条胶囊与分区标题用）。
+ *
+ * 客户端原来只有一份同名表放在 client.js 里，两边各写一份必然会漂移
+ * （曾经「分区标题」就对不上：服务端拿 group id 去查组名，原始分类
+ * 只能落到「其他」）。名字统一由服务端产出，客户端只消费。
+ */
+const MARKET_CATEGORY_LABELS = {
+  official: '官方', ui: '界面', panel: '界面', theme: '主题', market: '市场',
+  session: '会话', memory: '记忆', notify: '通知',
+  tools: '工具', tool: '工具', dev: '开发', cli: '命令行', skill: '技能', search: '搜索',
+  workflow: '工作流', auto: '自动化', mcp: 'MCP', agent: '智能体', gateway: '网关', prompt: '提示词',
+  data: '数据', storage: '存储', usage: '用量', model: '模型',
+  browser: '浏览器', docs: '文档', vision: '视觉', git: 'Git', voice: '语音',
+  identity: '身份', security: '安全', remote: '远程', fun: '娱乐', wsl: 'WSL', agi: 'AGI',
+  image: '图像', web: '网页', plugin: '插件', other: '其他',
+};
+
+/** 原始分类 → 中文名（未知分类回落到分类 id 本身，不显示英文之外的东西）。 */
+export function marketCategoryLabel(id) {
+  const key = normalizeCategory(id);
+  return MARKET_CATEGORY_LABELS[key] || key;
+}
+
+/**
+ * 分页 + 搜索/分类/排序的市场查询（面板的发现页走这里）。
+ *
+ * 背景：社区清单 1.1 万个插件时 `/marketplace` 整包 9.6MB，webview 每次打开面板
+ * 都要下载并解析一遍，表现为长时间「加载中…」。改为服务端筛选与分页：
+ * 客户端只拿当前页（默认 60 条）＋ 分类计数 ＋ 两张榜，搜索/切分类/换排序都重新
+ * 查一次（服务端有 3 秒索引缓存，代价很小）。
+ *
+ * 兼容：返回体仍带 `plugins`（当前页）与 `categories`（原样分类名数组），
+ * 旧客户端不传参数时等价于「第一页、全部、按星标」——字段名保持一致。
+ * @param {{q?:string,category?:string,sort?:string,limit?:number,offset?:number}} params
+ */
+export async function queryMarketplace(params = {}) {
+  const index = await marketplaceIndexCached();
+  const all = Array.isArray(index.plugins) ? index.plugins : [];
+  const q = String(params.q || '').trim().toLowerCase();
+  const category = typeof params.category === 'string' && params.category ? params.category : 'all';
+  // 分类条按「组」筛选（ui/session/tools/auto/data/other），原始 category 仍可单独用。
+  const group = typeof params.group === 'string' && params.group ? params.group : 'all';
+  const source = typeof params.source === 'string' && params.source ? params.source : 'all';
+  const sort = params.sort === 'downloads' ? 'downloads' : params.sort === 'newest' ? 'newest' : 'stars';
+  const limit = Math.min(Math.max(Number(params.limit) || MARKET_PAGE_SIZE, 1), MARKET_PAGE_MAX);
+  const offset = Math.max(Number(params.offset) || 0, 0);
+
+  const match = (plugin) => {
+    if (!plugin) return false;
+    if (category !== 'all' && normalizeCategory(plugin.category) !== category) return false;
+    if (group !== 'all' && marketGroupOf(plugin.category) !== group) return false;
+    // 来源筛选：official（npm 官方）| community（awesome-dsh 默认源）| 自定义源 id。
+    if (source !== 'all') {
+      if (source === 'official' && plugin.source !== 'official') return false;
+      if (source === 'community' && plugin.source !== 'community') return false;
+      if (source !== 'official' && source !== 'community' && plugin.source !== source) return false;
+    }
+    if (!q) return true;
+    /* 模糊匹配：q 按空白拆成多个词（如「终端 导出」），每个词分别命中即可。
+       q 已在上方统一 toLowerCase，字段也 join 成小写串，大小写不敏感。 */
+    const haystack = [plugin.name, plugin.repo, plugin.author, plugin.descriptionEn, plugin.descriptionZh]
+      .filter(Boolean).join(' ').toLowerCase();
+    return q.split(/\s+/).every((term) => haystack.includes(term));
+  };
+  const filtered = all.filter(match);
+  const byStars = (a, b) => (b.stars || 0) - (a.stars || 0);
+  const byDownloads = (a, b) => (b.downloads || 0) - (a.downloads || 0);
+  const sortedCompare = sort === 'downloads' ? byDownloads
+    : sort === 'newest' ? (a, b) => String(b.addedDate || '').localeCompare(String(a.addedDate || ''))
+    : byStars;
+  const sorted = filtered.slice().sort(sortedCompare);
+
+  const counts = new Map();
+  /* 榜单/推荐位/分类计数的口径：结构性筛选（来源/分类）跟随；纯搜索保持市场全量
+     （搜索结果列表已经展示命中项，榜单是市场整体概况，不该被搜索词清空）。 */
+  const scoped = source !== 'all' || category !== 'all' || group !== 'all' ? filtered : all;
+  for (const plugin of scoped) {
+    const id = normalizeCategory(plugin.category);
+    counts.set(id, (counts.get(id) || 0) + 1);
+  }
+
+  const topDownloads = scoped.slice().sort(byDownloads).slice(0, 5);
+  const topStars = scoped.slice().sort(byStars).slice(0, 5);
+
+  // 分类分区：只在不筛选分类、不搜索时算（发现页的首屏）；按数量取前 3 个分类，
+  // 每类给当前排序下的前 6 个——一屏两整行，客户端直接按 sections 渲染。
+  //
+  // 这里的 id 是**原始分类**（不是分组 id）：分区头「查看全部 N 个」点进去后
+  // 客户端按 category= 精确筛选该分类，N 必须等于点进去看到的数量。
+  // 早前这里放的是分组 id，客户端却又按 group= 传原始分类名，
+  // 两边口径错位 → 「工作流」这类只存在于原始分类里的条目点进去是 0 个。
+  const sections = category === 'all' && group === 'all' && !q
+    ? [...counts]
+        .filter(([id]) => id && id !== 'other')
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, MARKET_SECTION_CATEGORIES)
+        .map(([id, count]) => ({
+          category: id,
+          label: marketCategoryLabel(id),
+          count,
+          plugins: scoped.filter(plugin => plugin && normalizeCategory(plugin.category) === id).sort(sortedCompare).slice(0, MARKET_SECTION_CARDS),
+        }))
+    : [];
+
+  return {
+    ok: index.ok !== false,
+    stale: Boolean(index.stale),
+    indexedAt: index.indexedAt ?? null,
+    total: filtered.length,
+    allTotal: all.length,
+    counts: [...counts].map(([id, count]) => ({ name: id, count, label: marketCategoryLabel(id) })).sort((a, b) => b.count - a.count),
+    categories: Array.isArray(index.categories) ? index.categories : [],
+    plugins: sorted.slice(offset, offset + limit),
+    sections,
+    featured: topDownloads.slice(0, 5),
+    topDownloads,
+    topStars,
+    sources: Array.isArray(index.sources) ? index.sources : [],
+    sourceRefresh: index.sourceRefresh ?? null,
+  };
+}
+
+/**
+ * 市场读接口（聚合版）：官方 + 默认源走市场主索引，自定义源走各自缓存，
+ * mergeMarketPlugins 去重合并。兼容旧响应字段（plugins/categories/count/stale）。
+ */
+export async function readMarketplaceAggregated() {
+  const base = await readMarketplace();
+  const extra = await aggregateCachedSources();
+  const plugins = mergeMarketPlugins(base.plugins ?? [], extra.plugins);
+  const categories = sortMarketCategories([
+    ...(base.categories ?? []),
+    ...new Set(extra.plugins.map(item => item.category)),
+  ]);
+  const stale = Boolean(base.stale) || extra.perSource.some(item => item.state === 'stale');
+  return {
+    ...base,
+    ok: base.ok !== false,
+    count: plugins.length,
+    categories,
+    plugins,
+    stale,
+    sources: extra.perSource,
+    sourceRefresh: sourceRefreshProgress,
+  };
+}
+
+
+// ---------------------------------------------------------------------------
+// 描述找插件（模型检索）
+//
+// 用户用自然语言描述想要的插件 → 服务端先在本地索引里做关键词预筛（最多 40 条
+// 候选），再把**这 40 条**交给模型挑 top5。上下文注入严格受控：
+//   * 候选上限 40 条，每条描述截断 100 字，单条一行（约 120 字）；
+//   * 用户描述上限 500 字；
+//   * 整个 prompt 超过 12000 字符直接拒绝，不把索引灌进模型；
+//   * 模型只输出 JSON（编号 + 一句话理由），不生成插件信息本身。
+// 没有模型 / 模型失败时降级为关键词排序 top5，并如实标注 fallback。
+// ---------------------------------------------------------------------------
+
+const AI_SEARCH_MAX_CANDIDATES = 60;
+const AI_SEARCH_MAX_DESC = 100;
+const AI_SEARCH_MAX_QUERY = 500;
+const AI_SEARCH_MAX_PROMPT = 12000;
+const AI_SEARCH_LIMIT = 5;
+// 记忆里已验证的模型先单独试，但最多等这么久；超时就把其它模型也并发起来。
+// 实测同一个模型在 22 秒和 60 秒之间浮动，死等会白耗 40 秒。
+const AI_SEARCH_HEDGE_MS = 20000;
+
+/** 等 ms 毫秒（用于给直连模型设对冲窗口）。 */
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * 把一个 token 拆成匹配用的变体：CJK 长 token 额外给出一组重叠双字
+ * （侧边栏管理 → 侧边/边栏/管理），因为中文没有空格，整词匹配会漏掉
+ * 「描述里只有『侧边栏』」的插件；英文/数字 token 原样保留。
+ */
+export function keywordVariants(token) {
+  const value = String(token || '');
+  if (value.length < 2) return [];
+  const variants = [value];
+  if (/\p{Script=Han}/u.test(value) && value.length >= 3) {
+    for (let i = 0; i + 2 <= value.length; i++) variants.push(value.slice(i, i + 2));
+  }
+  return variants;
+}
+
+/** 关键词预筛：名称/仓库命中权重高，描述与分类次之；只保留有命中的条目。 */
+export function rankPluginsByKeywords(plugins, query) {
+  const text = String(query || '').trim().toLowerCase();
+  if (!text) return [];
+  const tokens = text.split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 2);
+  if (tokens.length === 0) return [];
+
+  /**
+   * 每个 token 的匹配组：整词 + CJK 双字变体。
+   * 评分按「token 级最佳命中」算，而不是把所有变体命中数累加——累加会让
+   * 「侧边栏管理」这种四字查询里没命中「管理」的相关插件（描述只写
+   * 「侧边栏完整工作台」的 DSH-better-sidebar 就是）被未命中变体稀释掉分。
+   * 同时是 OR 语义：命中任意一个 token 就进候选，只是排名靠后。
+   */
+  const groups = tokens.map(token => ({
+    token,
+    variants: keywordVariants(token),
+    weight: token.length >= 3 ? 1.4 : 1,
+  }));
+
+  const scored = [];
+  for (const plugin of Array.isArray(plugins) ? plugins : []) {
+    if (!plugin) continue;
+    const nameRepo = `${String(plugin.repo || '').toLowerCase()} ${String(plugin.name || '').toLowerCase()}`;
+    const description = `${plugin.descriptionEn || ''} ${plugin.descriptionZh || ''}`.toLowerCase();
+    const category = String(plugin.category || '').toLowerCase();
+
+    let score = 0;
+    let matchedTokens = 0;
+    for (const group of groups) {
+      let best = 0;
+      for (const variant of group.variants) {
+        const factor = variant === group.token ? 1 : 0.55;
+        if (nameRepo.includes(variant)) best = Math.max(best, 5 * factor);
+        else if (description.includes(variant)) best = Math.max(best, 3 * factor);
+        else if (category.includes(variant)) best = Math.max(best, 1.5 * factor);
+      }
+      if (best > 0) {
+        matchedTokens += 1;
+        score += best * group.weight;
+      }
+    }
+    if (matchedTokens > 0) {
+      score *= 1 + (matchedTokens - 1) * 0.5;
+      scored.push({ plugin, score, matchedTokens });
+    }
+  }
+  scored.sort((a, b) => b.matchedTokens - a.matchedTokens
+    || b.score - a.score
+    || (b.plugin.stars || 0) - (a.plugin.stars || 0)
+    || (b.plugin.downloads || 0) - (a.plugin.downloads || 0));
+  return scored.map(item => item.plugin);
+}
+
+/** 候选 → prompt（每行一条，描述截断，总长度受控）。 */
+export function buildPluginSearchPrompt(query, candidates) {
+  const rows = candidates.map((plugin, index) => {
+    const description = String(plugin.descriptionZh || plugin.descriptionEn || '').replace(/\s+/g, ' ').slice(0, AI_SEARCH_MAX_DESC);
+    const downloads = Number(plugin.downloads) || 0;
+    const stars = Number(plugin.stars) || 0;
+    return `[${index + 1}] ${plugin.repo || plugin.name} | 分类：${plugin.category || 'other'} | ${description || '（无描述）'} | 周下载 ${downloads}，星标 ${stars}`;
+  });
+  // listwise rerank 提示词，结构对齐 LlamaIndex LLMRerank 的
+  // DEFAULT_CHOICE_SELECT_PROMPT（业界最常用的 listwise 精排模板）：
+  //   编号列表 → 相关性定义 → 「没有相关就给 0」的退出口 → 逐行打分格式 → 示例。
+  // 与通用 RAG rerank 的差异只有两点：① 打 0-10 分而不是只挑 5 个，
+  // 让模型必须先判断再排序；② 附一句 20 字理由，UI 直接展示给用户。
+  const prompt = [
+    '你是一个插件检索精排器。下面给出用户需求和一批候选插件（已按粗排顺序编号），',
+    '请逐个判断每个插件与用户需求的相关程度，然后按相关度从高到低给出最相关的前 5 个。',
+    '',
+    '相关性定义（重要）：',
+    '- 用户需求常是「想达到的效果」，插件描述常是「提供的能力」，两者措辞不同但语义相同也算相关。',
+    '  例：「侧边栏管理」与「侧栏面板管理」「sidebar manager」「侧边栏会话置顶/折叠」都是同一件事。',
+    '- 一个插件只要覆盖需求的一部分，就属于相关（分数 4-7）；完全覆盖则高分（8-10）。',
+    '- 插件名/分类出现相关词可加分，但不要只凭名字判断。',
+    '- 下载量与星标只作参考，不相关的高下载插件不能入选。',
+    '- 完全无关的插件给 0 分，不要为了凑数而给分。',
+    '',
+    '候选插件（每行格式：[编号] 名称 | 分类 | 描述 | 周下载，星标）：',
+    ...rows,
+    '',
+    `用户需求：${String(query).slice(0, AI_SEARCH_MAX_QUERY)}`,
+    '',
+    '请按下面的格式逐行输出（每个候选一行，按相关度降序；只输出相关度大于 0 的行）：',
+    'answer_num: <编号>, answer_relevance: <0-10 的数字>, why: <20 字以内的中文理由>',
+    '',
+    '示例：',
+    '用户需求：把会话导出成 markdown',
+    '候选：[1] a/b | 分类：session | 会话回放时间线 | 周下载 100，星标 5',
+    '候选：[2] c/d | 分类：session | 导出会话为 Markdown 与 HTML | 周下载 80，星标 3',
+    '输出：',
+    'answer_num: 2, answer_relevance: 9, why: 直接导出会话为 Markdown 和 HTML，完全匹配',
+    '',
+    '现在开始输出，不要任何解释或标题：',
+  ].join('\n');
+  return prompt;
+}
+
+/**
+ * 从模型输出里取出 picks。容错：```json 围栏、前后废话、`picks` 是数字数组、
+ * 键名写成 index/n/num、以及模型直接报名称而不是编号（按候选名/仓库名反查）。
+ * @param {string} text - 模型输出。
+ * @param {number} candidateCount - 候选条数（编号 1..n）。
+ * @param {{name?:string,repo?:string}[]} [candidates] - 供名称反查。
+ */
+/**
+ * 解析模型的精排输出。同时支持两种格式（模型两种都可能给）：
+ *   1) listwise 行格式（LlamaIndex LLMRerank 风格）：
+ *        answer_num: 3, answer_relevance: 9, why: 直接导出会话
+ *   2) JSON：{"picks":[{"i":3,"why":"…"}]} / 数字数组 / 名称指名
+ * 统一按相关度降序、去重、越界丢弃，最多 5 条。
+ * @param {string} text - 模型原始输出。
+ * @param {number} candidateCount - 候选条数（编号 1..n）。
+ * @param {{name?:string,repo?:string}[]} [candidates] - 供名称反查。
+ */
+export function parseSearchPicks(text, candidateCount, candidates = []) {
+  const raw = String(text || '');
+  const nameIndex = new Map();
+  for (let i = 0; i < candidates.length; i++) {
+    const plugin = candidates[i] || {};
+    for (const key of [plugin.name, plugin.repo]) {
+      if (typeof key === 'string' && key) nameIndex.set(key.toLowerCase(), i + 1);
+    }
+  }
+  const normalizeIndex = (value) => {
+    if (typeof value === 'number') return value;
+    const trimmed = String(value ?? '').trim();
+    if (/^\d+$/.test(trimmed)) return Number(trimmed);
+    const byName = nameIndex.get(trimmed.toLowerCase());
+    return byName === undefined ? null : byName;
+  };
+  const collect = [];
+  const push = (index, score, why) => {
+    const n = normalizeIndex(index);
+    if (!Number.isInteger(n) || n < 1 || n > candidateCount) return;
+    collect.push({ index: n - 1, score: Number.isFinite(score) ? score : 1, why: String(why || '').trim().slice(0, 120) });
+  };
+
+  // 1) 行格式：answer_num: 3, answer_relevance: 9, why: …
+  const lineRe = /answer_num\s*[:：]\s*(\d+)\s*[,，]?\s*answer_relevance\s*[:：]\s*([\d.]+)(?:\s*[,，]?\s*why\s*[:：]\s*(.+))?/gi;
+  let m;
+  while ((m = lineRe.exec(raw))) push(m[1], Number(m[2]), m[3]);
+  // 宽松兜底：只有 answer_num 没有 relevance 的行
+  if (collect.length === 0) {
+    const looseRe = /answer_num\s*[:：]\s*(\d+)(?:[^\n]*?why\s*[:：]\s*([^\n]+))?/gi;
+    while ((m = looseRe.exec(raw))) push(m[1], 1, m[2]);
+  }
+
+  // 2) JSON 格式：{"picks":[…]} 或裸数组 [1,2]（模型有时直接给编号数组）。
+  if (collect.length === 0) {
+    // 裸数组没有 '{'，早前只用 indexOf('{') 找边界 → 数组分支永远进不去，
+    // 下面 typeof pick === 'number' 那条路成了死代码。这里按两种形状各试一次。
+    const attempts = [];
+    const begin = raw.indexOf('{');
+    const finish = raw.lastIndexOf('}');
+    if (begin >= 0 && finish > begin) attempts.push(raw.slice(begin, finish + 1));
+    const arrayBegin = raw.indexOf('[');
+    const arrayFinish = raw.lastIndexOf(']');
+    if (arrayBegin >= 0 && arrayFinish > arrayBegin) attempts.push(raw.slice(arrayBegin, arrayFinish + 1));
+    for (const text of attempts) {
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch { parsed = null; }
+      const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.picks) ? parsed.picks : [];
+      for (const pick of list) {
+        if (typeof pick === 'number' || typeof pick === 'string') { push(pick, 1, ''); continue; }
+        if (!pick || typeof pick !== 'object') continue;
+        const index = pick.i ?? pick.index ?? pick.n ?? pick.num ?? pick.id ?? pick.name ?? pick.repo;
+        push(index, Number(pick.score ?? pick.relevance ?? 1), pick.why ?? pick.reason ?? '');
+      }
+      if (collect.length > 0) break;
+    }
+  }
+
+  if (collect.length === 0) return [];
+  // 按相关度降序，同分保持模型给的先后顺序；同一插件只留最高分那条。
+  collect.sort((a, b) => b.score - a.score || a.index - b.index);
+  const seen = new Set();
+  const out = [];
+  for (const item of collect) {
+    if (seen.has(item.index)) continue;
+    seen.add(item.index);
+    out.push({ index: item.index, why: item.why, score: item.score });
+    if (out.length >= AI_SEARCH_LIMIT) break;
+  }
+  return out;
+}
+
+/**
+ * 候选路由（有序）：`free` 型号优先，其次便宜型号（flash/mini/lite…），最后其余。
+ * 之所以要多条：用户机器上可能既有免费路由又有余额不足的付费路由（实测 402
+ * ACCOUNT_QUOTA），必须能换一条再试，而不是直接降级。
+ */
+/**
+ * 上次检索成功的模型：存 $DSH_HOME/plugin-manager/search-route.json。
+ * 检索一次要并发试几个模型（余额不足/限频/超时），记住成功的那个能让
+ * 第二次检索直接用它，不必再从第一条开始试——这是「第二次不该重头测」。
+ */
+const SEARCH_ROUTE_FILE = () => join(PLUGIN_MANAGER_DIR(), 'search-route.json');
+
+/**
+ * 读「已验证可用」的检索模型，按耗时升序（快的在前）。
+ * 记录里带 ms（该模型上次成功耗时），所以第二次检索可以先用最快的那个，
+ * 而不是碰巧先成功的那个——实测本机 autoclaw-cn 要 41-46 秒，
+ * workbuddy-ai 只要 19 秒，不记耗时会一直用慢的。
+ * @returns {Promise<{provider:string,model:string,ms:number}[]>}
+ */
+export async function readPreferredSearchRoutes() {
+  try {
+    const raw = JSON.parse(await fs.readFile(SEARCH_ROUTE_FILE(), 'utf8'));
+    const list = Array.isArray(raw?.routes) ? raw.routes : [];
+    const normalized = list
+      .filter(item => item && typeof item.provider === 'string' && typeof item.model === 'string')
+      .map(item => ({ provider: item.provider, model: item.model, ms: Number(item.ms) || Number.MAX_SAFE_INTEGER }));
+    // 兼容 v1 单条格式（{ provider, model, at }）：没有耗时，按最慢排，
+    // 这样升级后第一次检索还能直接命中，不至于又从头竞速一遍。
+    if (normalized.length === 0 && raw && typeof raw.provider === 'string' && typeof raw.model === 'string') {
+      normalized.push({ provider: raw.provider, model: raw.model, ms: Number.MAX_SAFE_INTEGER });
+    }
+    return normalized.sort((a, b) => a.ms - b.ms);
+  } catch { return []; }
+}
+
+/** 兼容旧接口：返回最快的那条。 */
+export async function readPreferredSearchRoute() {
+  const list = await readPreferredSearchRoutes();
+  return list.length > 0 ? list[0] : null;
+}
+
+/**
+ * 记录一次成功：把 (provider, model) 的耗时写进列表，最多保留 6 条。
+ * 同一模型保留**最快的一次**——耗时是模型/网络抖动的，记最后一次会让
+ * 一次 60 秒的抖动把 22 秒的模型挤到后面（实测确实发生过）。
+ * 原子写；失败不影响检索。
+ * @param {{provider:string,model:string}} route
+ * @param {number} [ms] - 本次成功耗时（毫秒）。
+ */
+export async function writePreferredSearchRoute(route, ms) {
+  if (!route || !route.provider || !route.model) return false;
+  try {
+    const existing = await readPreferredSearchRoutes();
+    const duration = Number(ms) > 0 ? Number(ms) : Number.MAX_SAFE_INTEGER;
+    const previous = existing.find(item => item.provider === route.provider && item.model === route.model);
+    const best = previous ? Math.min(previous.ms, duration) : duration;
+    const next = existing
+      .filter(item => !(item.provider === route.provider && item.model === route.model));
+    next.push({ provider: route.provider, model: route.model, ms: best });
+    next.sort((a, b) => a.ms - b.ms);
+    const path = SEARCH_ROUTE_FILE();
+    await fs.mkdir(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp-${process.pid}`;
+    await fs.writeFile(tmp, JSON.stringify({ version: 2, routes: next.slice(0, 6), at: new Date().toISOString() }, null, 2) + '\n', 'utf8');
+    await fs.rename(tmp, path);
+    return true;
+  } catch { return false; }
+}
+
+export async function resolveSearchRoutes(llm, max = 6) {
+  const providers = typeof llm?.listProviders === 'function' ? llm.listProviders() : [];
+  const routes = [];
+  for (const provider of providers || []) {
+    const models = await Promise.resolve(llm.listModels(provider.id)).catch(() => []);
+    for (const model of Array.isArray(models) ? models : []) {
+      const modalities = model.inputModalities;
+      if (Array.isArray(modalities) && !modalities.includes('text')) continue;
+      routes.push({ provider: provider.id, model: model.id, name: model.name || '' });
+    }
+  }
+  /**
+   * 排序目标：先挑**最快**的模型，而不是「名字带 free」的。
+   * 实测 group/* 这类路由组模型是推理模型，思考要 20-40 秒（44-52 秒才出结果），
+   * 而具体的 flash 型号（loomy/GLM-5.3-Flash、autoclaw-cn/zai_glm-5.3-flash）
+   * 几秒就能出。因此：具体 flash 型号 > 其他具体型号 > 路由组（group/* / auto/*）。
+   */
+  const rank = (route) => {
+    const id = String(route.model || '').toLowerCase();
+    const isGroup = /^(group|auto)\//.test(id);
+    const isFlash = /flash|mini|lite|small|haiku|turbo/.test(id);
+    if (!isGroup && isFlash) return 0;   // 具体快模型，首选
+    if (!isGroup) return 1;              // 其他具体模型
+    if (isFlash) return 2;               // 路由组但名字是 flash
+    return 3;                            // 其余路由组
+  };
+  const ordered = routes
+    .map((route, index) => ({ route, index }))
+    .sort((a, b) => rank(a.route) - rank(b.route) || a.index - b.index)
+    .map(item => item.route);
+  // 已验证可用的模型按「上次成功耗时」升序排到最前：第二次检索直接用最快的，
+  // 不必再从头试错。未验证过的模型按 rank 排在后面。
+  const preferred = await readPreferredSearchRoutes();
+  if (preferred.length > 0) {
+    const known = [];
+    for (const item of preferred) {
+      const hit = ordered.findIndex(route => route.provider === item.provider && route.model === item.model);
+      if (hit >= 0) known.push(...ordered.splice(hit, 1));
+    }
+    ordered.unshift(...known);
+  }
+  return ordered.slice(0, max);
+}
+
+/** 单路由调用：返回 { text } 或 { error }（含终态 error finish 的原因）。 */
+async function streamSearchCompletion(llm, route, prompt, signal, onChunk) {
+  // 推理型模型（如 group/free）会把 maxTokens 全花在思考上，正文 0 字符。
+  // 但**不能对所有模型硬写 reasoningEffort**——不支持该参数的模型会直接报错
+  // （实测 4 个路由里 3 个报 "does not support reasoning effort low"）。
+  // 用 configure 回调读模型元数据，只在它真的声明了 efforts 时才选最低档。
+  const call = await llm.prepareCall(
+    { provider: route.provider, model: route.model, maxTokens: 3000 },
+    signal,
+    (controls, model) => {
+      const efforts = model && model.reasoning && Array.isArray(model.reasoning.efforts)
+        ? model.reasoning.efforts
+        : [];
+      const lowest = efforts.length > 0 && efforts[0] && efforts[0].id ? efforts[0].id : undefined;
+      return lowest === undefined
+        ? { ...controls, maxTokens: 3000 }
+        : { ...controls, reasoningEffort: lowest, maxTokens: 3000 };
+    },
+  );
+  let text = '';
+  let finish = null;
+  for await (const chunk of call.stream({
+    ...call.config,
+    messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+    system: '你是插件检索排序器，按指定行格式输出，不要输出任何解释文字。',
+    maxTokens: 3000,
+    signal,
+  })) {
+    if (!chunk || typeof chunk.type !== 'string') continue;
+    if (chunk.type === 'finish') finish = chunk;
+    if (chunk.type === 'text-delta' && typeof chunk.text === 'string') {
+      text += chunk.text;
+      if (typeof onChunk === 'function') onChunk(chunk.text, text);
+    }
+    if (text.length > 4000) break;
+  }
+  if (finish && finish.reason && finish.reason.kind === 'error') {
+    const failure = finish.reason.failure || {};
+    return { error: String(failure.message || '模型调用失败'), finish };
+  }
+  // 0 字符且 finish 是 max-tokens：推理把额度吃光了（推理模型常见）。
+  // 交给调用方换下一条路由，而不是当成「模型认为没有相关插件」。
+  if (text.length === 0) {
+    const kind = finish && finish.reason && finish.reason.kind ? finish.reason.kind : 'empty';
+    return { error: `模型没有返回正文（finish=${kind}）`, finish, empty: true };
+  }
+  return { text, finish };
+}
+
+/** 把候选映射成接口返回的条目。 */
+function searchItems(candidates, picks, fallback) {
+  const chosen = fallback
+    ? candidates.slice(0, AI_SEARCH_LIMIT).map((plugin, index) => ({ index, why: '' }))
+    : picks;
+  return chosen.map(pick => {
+    const plugin = candidates[pick.index];
+    if (!plugin) return null;
+    return {
+      id: plugin.id,
+      name: plugin.name,
+      repo: plugin.repo,
+      url: plugin.url,
+      category: plugin.category,
+      group: marketGroupOf(plugin.category),
+      description: plugin.descriptionZh || plugin.descriptionEn || '',
+      downloads: Number(plugin.downloads) || 0,
+      stars: Number(plugin.stars) || 0,
+      version: plugin.version || null,
+      reason: pick.why || '',
+    };
+  }).filter(Boolean);
+}
+
+/**
+ * 描述找插件。llm 为宿主 ctx.llm（没有就纯关键词降级）。
+ * @param {{query:string, llm?:object, timeoutMs?:number, deps?:object}} options
+ */
+export async function searchPluginsByDescription(options = {}) {
+  const query = String(options.query || '').trim();
+  if (!query) return { ok: false, error: '请描述你想要的插件' };
+  if (query.length > AI_SEARCH_MAX_QUERY) return { ok: false, error: `描述太长（上限 ${AI_SEARCH_MAX_QUERY} 字）` };
+  const index = await marketplaceIndexCached();
+  const all = Array.isArray(index.plugins) ? index.plugins : [];
+  const keywordHits = rankPluginsByKeywords(all, query);
+  const ranked = (keywordHits.length > 0 ? keywordHits : all.slice().sort((a, b) => (b.stars || 0) - (a.stars || 0)))
+    .slice(0, AI_SEARCH_MAX_CANDIDATES);
+  if (ranked.length === 0) {
+    return { ok: true, items: [], candidates: 0, fallback: true, note: '插件库为空，先同步插件源试试' };
+  }
+  const prompt = buildPluginSearchPrompt(query, ranked);
+  if (prompt.length > AI_SEARCH_MAX_PROMPT) {
+    return { ok: false, error: '候选上下文超出上限，请把描述写得更具体一点' };
+  }
+  const llm = options.llm;
+  if (!llm) {
+    return { ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true, note: '未找到可用模型，按关键词匹配给出结果' };
+  }
+  const routes = await resolveSearchRoutes(llm).catch(() => []);
+  if (routes.length === 0) {
+    return { ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true, note: '没有已配置的模型，按关键词匹配给出结果' };
+  }
+  let lastError = '';
+  let debugInfo = options.debug ? { routes } : {};
+  for (const [ri, route] of routes.entries()) {
+    const controller = new AbortController();
+    // 分级超时：前面的快模型 25 秒不出正文就换下一个（它们通常 3-8 秒出结果）；
+    // 最后一条路由用长超时兜底（推理模型首个正文 token 可能要 20-40 秒）。
+    const isLast = ri === routes.length - 1;
+    const budget = isLast ? (Number(options.timeoutMs) || 75000) : Math.min(25000, Number(options.timeoutMs) || 25000);
+    const timer = setTimeout(() => controller.abort(), budget);
+    try {
+      const outcome = await streamSearchCompletion(llm, route, prompt, controller.signal);
+      if (outcome.error) {
+        // 硬错误（余额不足 / 路由不可用）：换下一条路由，别把它当成「没有相关插件」。
+        lastError = outcome.error;
+        if (options.debug) debugInfo = { ...debugInfo, lastRouteError: { route, error: outcome.error } };
+        continue;
+      }
+      const picks = parseSearchPicks(outcome.text, ranked.length, ranked);
+      if (options.debug) debugInfo = { ...debugInfo, rawText: outcome.text.slice(0, 800), rawLength: outcome.text.length, picks };
+      if (picks.length === 0) {
+        return { ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true, note: '模型没有挑出相关插件，按关键词匹配给出结果', ...debugInfo };
+      }
+      return { ok: true, items: searchItems(ranked, picks, false), candidates: ranked.length, promptChars: prompt.length, model: route, fallback: false, ...debugInfo };
+    } catch (error) {
+      lastError = String(error?.message || error);
+      if (options.debug) debugInfo = { ...debugInfo, lastRouteError: { route, error: lastError } };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return {
+    ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true,
+    note: `模型检索失败（${lastError || '所有路由都不可用'}），按关键词匹配给出结果`, ...debugInfo,
+  };
+}
+
+/**
+ * 流式版描述检索：把每个阶段通过 onEvent(step, data) 推给调用方。
+ *
+ * 流程（与用户要求一致）：拼接提示词 → 调系统配置的模型判断 → 模型给 top5；
+ * 模型未配置 / 不可用 / 超时 / 输出解析失败时，走本地关键词匹配兜底。
+ * 每一步都发事件，UI 可以实时打印「正在做什么 + 模型关键输出」。
+ *
+ * @param {{query:string, llm?:object, timeoutMs?:number, onEvent?:Function}} options
+ */
+export async function searchPluginsByDescriptionStream(options = {}) {
+  const emit = (step, data = {}) => {
+    if (typeof options.onEvent === 'function') options.onEvent(step, data);
+  };
+  const query = String(options.query || '').trim();
+  if (!query) return { ok: false, error: '请描述你想要的插件' };
+  if (query.length > AI_SEARCH_MAX_QUERY) return { ok: false, error: `描述太长（上限 ${AI_SEARCH_MAX_QUERY} 字）` };
+
+  emit('start', { query });
+  const index = await marketplaceIndexCached();
+  const all = Array.isArray(index.plugins) ? index.plugins : [];
+  emit('index', { total: all.length });
+
+  // 关键词预筛：把候选范围压到 <=40 条，控制注入模型的上下文。
+  // 关键词一条都没命中时，不能让模型面对空候选——退化成「最热门的 40 个」，
+  // 由模型来判断（用户描述和插件措辞不同时，关键词匹配经常全落空）。
+  const keywordHits = rankPluginsByKeywords(all, query);
+  const ranked = (keywordHits.length > 0 ? keywordHits : all.slice().sort((a, b) => (b.stars || 0) - (a.stars || 0)))
+    .slice(0, AI_SEARCH_MAX_CANDIDATES);
+  emit('candidates', {
+    count: ranked.length,
+    names: ranked.slice(0, 6).map(plugin => plugin.repo || plugin.name),
+    truncated: keywordHits.length > AI_SEARCH_MAX_CANDIDATES,
+    keywordHits: keywordHits.length,
+  });
+  if (ranked.length === 0) {
+    const result = { ok: true, items: [], candidates: 0, fallback: true, note: '插件库为空，先同步插件源试试' };
+    emit('done', result);
+    return result;
+  }
+
+  const prompt = buildPluginSearchPrompt(query, ranked);
+  emit('prompt', { chars: prompt.length, limit: AI_SEARCH_MAX_PROMPT, preview: prompt.slice(0, 160) });
+  if (prompt.length > AI_SEARCH_MAX_PROMPT) {
+    const result = { ok: false, error: '候选上下文超出上限，请把描述写得更具体一点' };
+    emit('done', result);
+    return result;
+  }
+
+  const llm = options.llm;
+  const routes = llm ? await resolveSearchRoutes(llm).catch(() => []) : [];
+  if (routes.length === 0) {
+    emit('fallback', { reason: llm ? '没有已配置的模型' : '没有模型服务' });
+    const result = { ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true, note: '没有已配置的模型，按关键词匹配给出结果' };
+    emit('done', result);
+    return result;
+  }
+  emit('routes', { count: routes.length, models: routes.map(route => `${route.provider}/${route.model}`) });
+
+  /**
+   * 并发竞速：把前几条路由同时发出，谁先给出可用结果就用谁。
+   *
+   * 实测本机 6 个路由里 5 个因环境原因失败（余额不足 / 429 限频 / 空回复 /
+   * 推理超时），串行重试累计 104 秒。并发后总耗时 ≈ 最慢的那个成功路由，
+   * 而不是所有失败路由之和。
+   * 逐条失败仍会 emit 事件（UI 能看见），只是不再阻塞等待。
+   */
+  const RACE_WIDTH = Math.min(3, routes.length);
+  let settled = false;
+  let lastError = '';
+
+  const attempt = async (route, ri) => {
+    emit('model-try', { index: ri + 1, total: routes.length, model: `${route.provider}/${route.model}` });
+    const attemptStarted = Date.now();
+    const controller = new AbortController();
+    // 推理型路由（group/*、GLM）首个正文 token 可能要 20-40 秒；快模型 25 秒足够。
+    const isReasoning = /glm|group\/|auto\/|qwen3/i.test(String(route.model || ''));
+    const budget = isReasoning ? 60000 : 25000;
+    const timer = setTimeout(() => controller.abort(), budget);
+    try {
+      let firstChunk = true;
+      const outcome = await streamSearchCompletion(llm, route, prompt, controller.signal, (delta, full) => {
+        if (firstChunk) { emit('model-first-token', { model: `${route.provider}/${route.model}` }); firstChunk = false; }
+        emit('model-delta', { text: delta, length: full.length });
+      });
+      if (outcome.error) {
+        emit('model-error', { model: `${route.provider}/${route.model}`, error: outcome.error });
+        return null;
+      }
+      emit('model-output', {
+        chars: outcome.text.length,
+        raw: outcome.text.slice(0, 300),
+        finish: outcome.finish && outcome.finish.reason ? outcome.finish.reason.kind : null,
+      });
+      const picks = parseSearchPicks(outcome.text, ranked.length, ranked);
+      emit('parsed', { picks: picks.map(pick => ({ name: ranked[pick.index] && (ranked[pick.index].repo || ranked[pick.index].name), why: pick.why })) });
+      if (picks.length === 0) return null;
+      return { route, picks, ms: Date.now() - attemptStarted };
+    } catch (error) {
+      emit('model-error', { model: `${route.provider}/${route.model}`, error: String(error?.message || error) });
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // 有「上次成功的模型」时先单独试它：命中就立刻返回，省掉其它模型的调用。
+  // 但不能死等——实测同一个模型在 22 秒和 60 秒之间浮动，死等会白耗 40 秒。
+  // 所以给它一个 AI_SEARCH_HEDGE_MS 的对冲窗口：窗口内返回就用它，
+  // 超时就把其它模型并发起来，谁先给出可用结果用谁。
+  let winner = null;
+  const running = new Set();
+  const queue = [];
+  const spawn = entry => {
+    const task = attempt(entry.route, entry.index)
+      .then(result => {
+        if (result && !settled) { settled = true; winner = result; }
+      })
+      .catch(() => {})
+      .finally(() => {
+        running.delete(task);
+        if (!settled) fillSlots();
+      });
+    running.add(task);
+  };
+  const fillSlots = () => {
+    while (!settled && running.size < RACE_WIDTH) {
+      const next = queue.shift();
+      if (!next) break;
+      spawn(next);
+    }
+  };
+
+  const preferred = await readPreferredSearchRoutes();
+  const direct = preferred
+    .map(item => ({ item, index: routes.findIndex(route => route.provider === item.provider && route.model === item.model) }))
+    .find(entry => entry.index >= 0);
+  for (const [index, route] of routes.entries()) {
+    if (direct && index === direct.index) continue;
+    queue.push({ route, index });
+  }
+
+  if (direct) {
+    emit('preferred-hit', { model: `${direct.item.provider}/${direct.item.model}`, ms: direct.item.ms });
+    spawn({ route: routes[direct.index], index: direct.index });
+    await Promise.race([Promise.race([...running]), sleep(AI_SEARCH_HEDGE_MS)]);
+    if (!settled && running.size > 0) {
+      emit('preferred-miss', {
+        model: 'slow',
+        note: `已验证模型 ${Math.round(AI_SEARCH_HEDGE_MS / 1000)} 秒还没返回，同时并发其它模型`,
+      });
+    }
+  }
+
+  // 前 RACE_WIDTH 条并发，其余留给后续补位（某条失败后立刻补上下一条）。
+  fillSlots();
+  while (running.size > 0 && !settled) {
+    await Promise.race([...running]);
+  }
+
+  if (winner) {
+    // 记住这个模型 + 本次耗时：下次检索按耗时升序优先用最快的已验证模型，
+    // 而不是碰巧先成功的那个（本机 autoclaw-cn 要 41-46 秒，workbuddy-ai 只要 19 秒）。
+    await writePreferredSearchRoute(winner.route, winner.ms);
+    emit('preferred', { model: `${winner.route.provider}/${winner.route.model}`, ms: winner.ms });
+    const result = { ok: true, items: searchItems(ranked, winner.picks, false), candidates: ranked.length, promptChars: prompt.length, model: winner.route, fallback: false };
+    emit('done', result);
+    return result;
+  }
+  lastError = '所有模型都不可用';
+
+  emit('fallback', { reason: lastError || '所有路由都不可用' });
+  const result = {
+    ok: true, items: searchItems(ranked, [], true), candidates: ranked.length, promptChars: prompt.length, fallback: true,
+    note: `模型检索失败（${lastError || '所有路由都不可用'}），按关键词匹配给出结果`,
+  };
+  emit('done', result);
+  return result;
+}
+
 function json(response, status, value) {
   response.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(value));
@@ -3637,7 +5268,14 @@ export function ignoreEntriesFromBody(value) {
 }
 
 export const name = 'dsh-plugin-manager';
+
+/** 宿主模型服务：可选注入（未配置任何 provider 时保持 null，检索降级为关键词）。 */
+let hostLlm = null;
+
 export function apply(ctx) {
+  ctx.inject(['llm'], host => {
+    hostLlm = host.llm || null;
+  });
   ctx.inject(['webServer'], host => {
     host.effect(() => {
       const disposers = [
@@ -3668,11 +5306,130 @@ export function apply(ctx) {
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/marketplace', handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
-          try { json(res, 200, await readMarketplace()); } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+          // 聚合版：官方 + 默认源（主索引）+ 用户自定义源（各自缓存）合并去重。
+          try { json(res, 200, await readMarketplaceAggregated()); } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 分页查询：q / category / sort / limit / offset。发现页走这里（11k 插件时
+        // 整包 9.6MB 不可接受）；不带参数时等价于第一页。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/marketplace/query', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          try {
+            const url = new URL(req.url || '/', 'http://127.0.0.1');
+            json(res, 200, await queryMarketplace({
+              q: url.searchParams.get('q') || '',
+              category: url.searchParams.get('category') || 'all',
+              group: url.searchParams.get('group') || 'all',
+              source: url.searchParams.get('source') || 'all',
+              sort: url.searchParams.get('sort') || 'stars',
+              limit: url.searchParams.get('limit'),
+              offset: url.searchParams.get('offset'),
+            }));
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/refresh', handler: async (req, res) => {
           if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
-          try { json(res, 200, await refreshMarketplace()); } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+          // 异步受理：刷新可能几分钟（逐源拉取），先回 202，进度走 /sources/progress；
+          // 已有刷新在跑时幂等返回（不重复起）。
+          if (readSourceRefreshProgress()?.active) { json(res, 202, { ok: true, alreadyRunning: true }); return; }
+          json(res, 202, { ok: true, accepted: true });
+          void refreshPluginSources().catch(() => {});
+        }}),
+        // 源刷新进度（形态与 /updates 的 progress 对齐）：轮询到 active=false 即结束。
+        // 描述找插件：本地关键词预筛 ≤40 条候选 → 模型挑 top5（无模型时关键词降级）。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/ai-search', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            const result = await searchPluginsByDescription({ query: value?.query, llm: hostLlm, debug: value?.debug === true });
+            json(res, result.ok ? 200 : 400, result);
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 流式版：NDJSON（每行一个事件），UI 实时打印检索步骤与模型输出。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/ai-search/stream', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            res.writeHead(200, {
+              'cache-control': 'no-cache, no-transform',
+              'content-type': 'application/x-ndjson; charset=utf-8',
+              'x-accel-buffering': 'no',
+            });
+            const send = (step, data) => {
+              try { res.write(JSON.stringify({ step, data, at: Date.now() }) + '\n'); } catch { /* 客户端断开 */ }
+            };
+            await searchPluginsByDescriptionStream({ query: value?.query, llm: hostLlm, timeoutMs: Number(value?.timeoutMs) || 75000, onEvent: send });
+            res.end();
+          } catch (error) {
+            try { res.write(JSON.stringify({ step: 'error', data: { error: String(error?.message || error) } }) + '\n'); res.end(); } catch { /* 已断开 */ }
+          }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources/progress', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          json(res, 200, { progress: readSourceRefreshProgress() });
+        }}),
+        // 源清单：含内置默认源与用户自定义源（带每源缓存状态）。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          try {
+            const config = await readSourcesConfig();
+            const extra = await aggregateCachedSources();
+            const states = new Map(extra.perSource.map(item => [item.id, item]));
+            json(res, 200, {
+              ok: true,
+              sources: config.sources.map(source => ({ ...source, cache: states.get(source.id) ?? null })),
+            });
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources/add', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            const result = await addPluginSource({ kind: value?.kind, url: value?.url });
+            json(res, result.ok ? 200 : 400, result);
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources/remove', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            if (!value?.id) { json(res, 400, { error: '缺少源 id' }); return; }
+            const result = await removePluginSource(value.id);
+            json(res, result.ok ? 200 : 400, result);
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/sources/set-enabled', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            if (!value?.id || typeof value?.enabled !== 'boolean') { json(res, 400, { error: '缺少源 id 或 enabled' }); return; }
+            const result = await setPluginSourceEnabled(value.id, value.enabled);
+            json(res, result.ok ? 200 : 400, result);
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 国内加速开关透传：读镜像插件的状态（失败按关闭）；写开关转发给镜像插件。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/china-mirror', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          try {
+            resetMirrorCache();
+            const state = await readMirrorStateCached();
+            json(res, 200, { ok: true, enabled: state.enabled, table: state.table, pluginPresent: state.table !== null });
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/china-mirror/set', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          try {
+            const value = await body(req);
+            if (typeof value?.enabled !== 'boolean') { json(res, 400, { error: '缺少 enabled 布尔值' }); return; }
+            const result = await fetch('http://127.0.0.1:' + (process.env.DSH_PORT || '3080') + '/dsh-china-mirror/enabled', {
+              method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: value.enabled })
+            }).then(r => r.json()).catch(() => null);
+            if (!result || result.error) {
+              json(res, 502, { error: result?.error || '镜像插件不可用（未安装或未启动）' });
+              return;
+            }
+            resetMirrorCache();
+            json(res, 200, { ok: true, enabled: result.enabled === true, table: result.table ?? null });
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/install', handler: async (req, res) => {
           if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
@@ -3681,6 +5438,17 @@ export function apply(ctx) {
             const value = await body(req);
             if (!value || (!value.url && !value.name)) { json(res, 400, { error: '缺少插件标识' }); return; }
             json(res, 200, await installPlugin({ url: value.url, name: value.name }));
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 版本钉死被 dsh 拒绝后的官方逃生通道：用户在界面上确认过风险才会走到这里。
+        // 豁免只对「这个插件的这个版本 + 当前 dsh 版本」生效，之后重试安装即可。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/allow-version', handler: async (req, res) => {
+          if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+          if (rejectWhileBatchRunning(res)) return;
+          try {
+            const value = await body(req);
+            if (!value?.name || !value?.version || !value?.dshVersion) { json(res, 400, { error: '缺少 name/version/dshVersion' }); return; }
+            json(res, 200, await allowPluginVersion({ name: value.name, version: value.version, dshVersion: value.dshVersion }));
           } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
                 host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/uninstall', handler: async (req, res) => {

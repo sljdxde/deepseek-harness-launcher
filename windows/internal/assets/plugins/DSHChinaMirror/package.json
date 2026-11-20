@@ -1,0 +1,15 @@
+{
+  "name": "dsh-china-mirror",
+  "version": "0.1.0",
+  "description": "国内网络加速（内置）：把插件管理器的 npm registry、GitHub raw/API 与 git clone 地址映射到国内镜像，开关即时生效",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" }
+  }
+}

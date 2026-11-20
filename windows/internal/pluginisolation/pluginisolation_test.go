@@ -484,7 +484,53 @@ func TestStageBootPatchesFallsBackWhenExtraPatchCannotStage(t *testing.T) {
 	if base != basePath {
 		t.Errorf("write failure must fall back to the shared base: %q", base)
 	}
-	if !strings.Contains(strings.Join(notes, "\n"), "异常结束状态点插件补丁合并失败") {
+	if !strings.Contains(strings.Join(notes, "\n"), "Windows-only 插件补丁合并失败") {
 		t.Errorf("missing fallback note: %v", notes)
+	}
+}
+
+func TestStageBootPatchesComposesChinaMirror(t *testing.T) {
+	plugins, home := t.TempDir(), t.TempDir()
+	basePath := filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml")
+	write(t, basePath, "- insert:\n    - id: dsh-archive-manager\n")
+	write(t, filepath.Join(plugins, "DSHInterruptedDot", "cordis.patch.yml"), "- insert:\n    - id: dsh-interrupted-dot\n")
+	write(t, filepath.Join(plugins, "DSHChinaMirror", "cordis.patch.yml"), "- insert:\n    - id: dsh-china-mirror\n")
+
+	base, _, _, _ := StageBootPatches(plugins, home, false)
+	if base == basePath {
+		t.Fatalf("china-mirror present but base was not composed: %q", base)
+	}
+	data, err := os.ReadFile(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{"dsh-archive-manager", "dsh-interrupted-dot", "dsh-china-mirror"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("composed base missing %q: %q", want, text)
+		}
+	}
+}
+
+func TestStageBootPatchesSkipsChinaMirrorWhenResourceMissing(t *testing.T) {
+	plugins, home := t.TempDir(), t.TempDir()
+	basePath := filepath.Join(plugins, "DSHArchiveManager", "cordis.patch.yml")
+	write(t, basePath, "- insert:\n    - id: dsh-archive-manager\n")
+	write(t, filepath.Join(plugins, "DSHInterruptedDot", "cordis.patch.yml"), "- insert:\n    - id: dsh-interrupted-dot\n")
+	// DSHChinaMirror 资源缺失：静默跳过，合成产物仍含 interrupted-dot。
+
+	base, _, _, notes := StageBootPatches(plugins, home, false)
+	data, err := os.ReadFile(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "dsh-interrupted-dot") || strings.Contains(text, "dsh-china-mirror") {
+		t.Errorf("missing-resource degradation wrong: %q", text)
+	}
+	for _, note := range notes {
+		if strings.Contains(note, "ChinaMirror") || strings.Contains(note, "china-mirror") {
+			t.Errorf("absent optional resource must be silent, got note: %v", notes)
+		}
 	}
 }

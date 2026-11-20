@@ -40,6 +40,9 @@ node --test "$ROOT/Plugins/DSHArchiveManager/test/running-session-ids.test.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/legacy-session-headers.test.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/workspace-auto-archive.test.js"
 node --test "$ROOT/Plugins/DSHArchiveManager/test/health-route.test.js"
+# 归档管理服务端全分支场景 + 客户端面板渲染（假 fetch / 极简 React，不发真实请求）。
+node --test "$ROOT/Plugins/DSHArchiveManager/test/archive-manager.test.js"
+node --test "$ROOT/Plugins/DSHArchiveManager/test/client-render.test.js"
 rg -q 'patchWorkspaceDeleteForAutoArchive' "$ROOT/Plugins/DSHArchiveManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/lib/index.js"
 node --check "$ROOT/Plugins/DSHSessionNotify/client/client.js"
@@ -87,6 +90,22 @@ node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-source-imports.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-mutation-safety.test.js"
 # 插件 peer 区间语义，以及「兼容性门禁已移除」的回归保护。
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-peer-compat.test.js"
+# 多插件源（sources.json / index.json / 聚合去重 / 异步刷新进度）+ 国内加速映射。
+node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+# 覆盖率补测：下面几个文件把 lib/index.js、lib/atomic.js、lib/operations.js
+# 与 client/client.js 的分支走到 100%（门禁见脚本末尾）。
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-a-install.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-b-update.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-c-market.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-d-routes.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-e-atomic.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-f-operations.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-g-client.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/coverage-h-gaps.test.js"
+node --test "$ROOT/Plugins/DSHPluginManager/test/client-pure.test.js"
+# 国内加速独立插件：镜像规则表、URL 映射、开关状态路由（临时 DSH_HOME）。
+node --check "$ROOT/Plugins/DSHChinaMirror/lib/index.js"
+node --test "$ROOT/Plugins/DSHChinaMirror/test/host.test.js"
 if rg -q 'npx |git clone|github.com' "$ROOT/Plugins/DSHPluginManager/lib/index.js" >/dev/null && ! rg -q 'installCandidates|git\+' "$ROOT/Plugins/DSHPluginManager/lib/index.js"; then
   echo "plugin manager must expose npm-first / git-fallback install candidates" >&2
   exit 1
@@ -155,11 +174,58 @@ rg -Fq "const rail = wide === false" "$ROOT/Plugins/DSHPluginManager/client/clie
 rg -Fq "rail ? 'dsh-pm-trigger dsh-pm-trigger-rail' : 'dsh-pm-trigger'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq '!rail && h' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq "wide === false ? 'dsh-archive-trigger dsh-archive-trigger-rail' : 'dsh-archive-trigger'" "$ROOT/Plugins/DSHArchiveManager/client/client.js"
-# 市场分类筛选必须留退出口：下拉里的「全部分类」与 chip 的「再点一次取消筛选」，
-# 否则从「更多分类」里选中分类后就再也回不到全部（渲染冒烟场景 10 断言行为）。
-rg -Fq "h('option', { value: 'all' }, '全部分类')" "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq "setCategory(category === cat ? 'all' : cat)" "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq "全部分类" "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 分类条（v3）：带数量的分段胶囊 + 「更多分类」原位展开 + 分类视图（查看全部）。
+# 旧的「更多分类…」下拉已删除，不许回来（用户明确嫌丑）。
+if rg -Fq "h('option', { value: 'all' }, '全部分类')" "$ROOT/Plugins/DSHPluginManager/client/client.js"; then
+  echo "分类筛选不许退回下拉（v3 用分段胶囊 + 原位展开）" >&2
+  exit 1
+fi
+rg -Fq 'dsh-pm-seg' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'setCategory(active ? ' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'dsh-pm-sec2' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'dsh-pm-crumbs' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'categoryHue' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'dsh-pm-hue-brand' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '场景10（分类条：分段/展开/分类视图/返回）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+rg -Fq '场景16（分区查看全部 → 分类视图 + 分页）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+rg -Fq '场景17（全屏切换）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+rg -Fq '场景18（描述找插件：模型挑选 + 降级标注）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 分类条已归并成 6 组（用户明确不要那么多分类，也不要横向展开）。
+rg -Fq 'MARKET_GROUPS' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'marketGroupOf' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+# 分类条：原始分类折叠（前 8 平铺 + 「全部 N 类」按钮），但下拉必须保持删除。
+rg -Fq 'dsh-pm-seg more' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'dsh-pm-segs-open' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 展开后「全部 N 类」胶囊消失，收起入口用低调文字 dsh-pm-collapse。
+rg -Fq 'dsh-pm-collapse' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 分类筛选参数：客户端必须用 category=（精确匹配原始分类），
+# 不许再塞进 group=（服务端 group 只认 6 个分组 id，塞原始分类名会匹配不到
+# 任何插件 → 用户报的现象：胶囊上写着「工作流 674」，点进去却是 0 个插件）。
+if rg -Fq "['group', overrides" "$ROOT/Plugins/DSHPluginManager/client/client.js"; then
+  echo "分类筛选不许用 group= 参数（那是服务端内部的分组 id）" >&2
+  exit 1
+fi
+rg -Fq "['category', overrides.category ?? category]" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '分类筛选走 category= 参数' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 冒烟里的假服务端必须忠实复刻真实服务端语义（category= 精确分类），
+# 否则它会替实现把「原始分类塞进 group=」这类错位掩盖成绿的。
+rg -Fq "query.get('category')" "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+rg -Fq 'keywordVariants' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+# 描述找插件：本地预筛 + 模型挑选，上下文上限必须有守卫。
+rg -Fq "'/dsh-plugin-manager/ai-search'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'AI_SEARCH_MAX_CANDIDATES' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'buildPluginSearchPrompt' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+rg -Fq 'dsh-pm-ai-bar' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 检索走流式接口，UI 实时打印步骤与模型输出。
+rg -Fq '/dsh-plugin-manager/ai-search/stream' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'searchPluginsByDescriptionStream' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'dsh-pm-ai-log' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 全屏：面板可铺满窗口（顶栏按钮 + localStorage 记忆）。
+rg -Fq 'dsh-pm-full' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'toggleFullscreen' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 发现页结构（v3）：本周推荐整行 → 双榜两列 → 分类条 → 分区（每区 6 张）。
+rg -Fq 'dsh-pm-cols2' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'MARKET_SECTION_CARDS' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 # 市场刷新必须是**后台任务**：不得占用 busy（占 busy 会连关闭按钮一起锁住——用户
 # 实测「刷新时点关闭关不上」），并且在途请求要单飞，避免关掉再开/多标签页并发
 # 重建市场仓库（服务端会先 rm 再 clone，并发必然互相踩）。
@@ -237,6 +303,59 @@ if ! diff -rq "$ROOT/Plugins/DSHInterruptedDot" "$ROOT/windows/internal/assets/p
   echo "windows/internal/assets/plugins/DSHInterruptedDot 与 Plugins/DSHInterruptedDot 不同步" >&2
   exit 1
 fi
+# 国内加速独立插件（dsh-china-mirror）：资源列表 / 构建同步 / base patch 合成 /
+# bundled 识别 / 与 Plugins/ 源一致，一条都不能少。
+rg -Fq 'DSHChinaMirror' "$ROOT/windows/build.ps1" "$ROOT/windows/internal/assets/assets.go"
+rg -Fq "'DSHChinaMirror'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'DSHChinaMirror' "$ROOT/windows/internal/pluginisolation/pluginisolation.go"
+rg -Fq 'dsh-china-mirror' "$ROOT/Plugins/DSHChinaMirror/cordis.patch.yml"
+# 它是 Windows-only：写进共享 base patch 会让没有该包的 macOS 启动失败。
+if rg -q 'dsh-china-mirror' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"; then
+  echo "dsh-china-mirror 只能在 Windows 侧合成进 base patch，不能进 macOS 共享补丁" >&2
+  exit 1
+fi
+if ! diff -rq "$ROOT/Plugins/DSHChinaMirror" "$ROOT/windows/internal/assets/plugins/DSHChinaMirror" >/dev/null; then
+  echo "windows/internal/assets/plugins/DSHChinaMirror 与 Plugins/DSHChinaMirror 不同步" >&2
+  exit 1
+fi
+# 插件管理器与镜像插件的耦合只允许「状态文件 + 规则表」这一条协议：
+# 管理器读 /dsh-china-mirror/state 并用 table 做前缀替换，镜像插件不 import 管理器。
+rg -Fq "'/dsh-china-mirror/state'" "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHChinaMirror/lib/index.js"
+rg -Fq 'mirrorURLTable' "$ROOT/Plugins/DSHChinaMirror/lib/index.js"
+rg -Fq 'mirrorMapURL' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'npm_config_registry' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+# 多源聚合：sources.json 落盘、index.json 解析、聚合读接口、异步刷新受理（202）。
+rg -Fq 'sources.json' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'parseSourceIndex' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+rg -Fq 'readMarketplaceAggregated' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/sources/add'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/sources/remove'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/sources/set-enabled'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/sources/progress'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq "'/dsh-plugin-manager/sources'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 方案 B 的四个视图与国内加速开关必须在客户端真的接线（渲染冒烟 13/14 兜行为）。
+rg -Fq "tab === 'discover' ? discoverTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "tab === 'builtin' ? builtinTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "tab === 'sources' ? sourcesTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "className: 'dsh-pm-frame'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'dsh-pm-rail' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'aria-label' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "'国内加速'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "'/dsh-plugin-manager/china-mirror'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '场景13（发现页：推荐位/双榜/分类/手动安装行）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+rg -Fq '场景14（插件源页 + 国内加速开关）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 源刷新是 202 异步受理：客户端必须轮询 /sources/progress 再重载，不得按同步响应读 count。
+rg -Fq '场景15（源刷新 202 + 进度轮询 + 真实计数）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+rg -Fq 'waitForSourceRefresh' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 市场查询必须走服务端分页（11k 插件时整包 9.6MB 不可接受）。
+rg -Fq "'/dsh-plugin-manager/marketplace/query'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
+rg -Fq 'queryMarketplace' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
+rg -Fq 'marketQueryURL' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 发现页的推荐位/双榜/分类/手动安装行一个都不能少（用户明确要求的结构）。
+rg -Fq '今日推荐' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '下载最多' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '星标最多' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '手动安装插件' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 页面存活心跳：标签页全关后 keep-alive 连接仍在，必须靠注入客户端的
 # presence（轮询心跳 + pagehide bye）判断是否需要新开页面。
 rg -q '/dsh-session-notify/presence' "$ROOT/Plugins/DSHSessionNotify/lib/index.js" "$ROOT/Plugins/DSHSessionNotify/client/client.js" "$ROOT/Sources/main.swift"
@@ -963,5 +1082,13 @@ else
   "$ROOT/scripts/build-dmg.sh" >/dev/null
   test -s "$ROOT/dist/Deepseek Harness Launcher.dmg"
   hdiutil verify "$ROOT/dist/Deepseek Harness Launcher.dmg" >/dev/null
+fi
+# 覆盖率门禁：插件的每个源文件都要 100% 行覆盖。
+# 放在打包之前 —— 它是逻辑门禁，不该被 macOS 打包步骤挡住（Windows CI 上跳过打包
+# 时也要能跑）。判定由 coverage-check.mjs 自己解 V8 原始覆盖数据得出
+# （不用 node 的报告表格：它跨进程聚合时会掩盖「某个进程没跑到」的分支，
+#  给出假绿灯 —— 详见那个脚本里的说明）。
+if [[ "${DHL_SKIP_COVERAGE:-0}" != "1" ]]; then
+  node "$ROOT/scripts/coverage-check.mjs"
 fi
 echo "Deepseek Harness Launcher regression checks passed"

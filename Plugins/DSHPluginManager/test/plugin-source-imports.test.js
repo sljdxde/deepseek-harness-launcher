@@ -106,6 +106,21 @@ test('测试文件与 node_modules 里的缺失不拦更新（dsh 启动不加�
   });
 });
 
+test('scripts/ 与 *.smoke.* 里的缺失不拦更新（开发脚本 dsh 启动不加载）', async () => {
+  await withFixture({
+    'index.mjs': `import { a } from './a.mjs';\nexport const all = a;\n`,
+    'a.mjs': 'export const a = 1\n',
+    // dsh-market 就是这样：scripts/restart-smoke.mjs 引 ../lib/restart.js（不存在），
+    // 但那是开发用的测试脚本，不该让整个插件被判成残缺。
+    'scripts/restart-smoke.mjs': `import { r } from '../lib/restart.js';\nvoid r;\n`,
+    'scripts/build.mjs': `import { gone } from './missing.mjs';\nvoid gone;\n`,
+    'legacy.smoke.mjs': `import { gone } from './gone.mjs';\nvoid gone;\n`,
+    'examples/demo.mjs': `import { gone } from './gone.mjs';\nvoid gone;\n`
+  }, async root => {
+    assert.deepEqual(await findUnresolvableLocalImports(root), []);
+  });
+});
+
 test('目录不存在或为空时返回空列表（不把更新误判成失败）', async () => {
   assert.deepEqual(await findUnresolvableLocalImports(join(tmpdir(), 'dsh-pm-no-such-dir')), []);
   await withFixture({ 'package.json': '{}' }, async root => {

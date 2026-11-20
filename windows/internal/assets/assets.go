@@ -37,6 +37,7 @@ var Plugins = []Plugin{
 	{"dsh-plugin-manager", "DSHPluginManager"},
 	{"dsh-session-notify", "DSHSessionNotify"},
 	{"dsh-interrupted-dot", "DSHInterruptedDot"},
+	{"dsh-china-mirror", "DSHChinaMirror"},
 	{"dsh-sidebar-deck", "DSHSidebarDeck"},
 }
 

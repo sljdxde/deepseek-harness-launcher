@@ -24,6 +24,9 @@ const RENAME_RETRY_MAX_MS = 200;
 const RENAME_RETRY_LIMIT = 8;
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  // signal 若在调用**之前**就 aborted，'abort' 事件不会补发 —— 只挂监听器的话
+  // 会白等满整个延时才 resolve。入口先判一次，已取消就立即拒绝。
+  if (signal?.aborted) { reject(new Error('aborted')); return; }
   const timer = setTimeout(resolve, ms);
   if (signal) {
     signal.addEventListener('abort', () => {

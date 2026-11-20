@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>插件中心 · 方案 B 优化版（引入色彩 + 分类分区）</title>
+<style>
+/* ── 主题：固定浅色，落地时映射 dsh 的 --dsw-alias-*；分类色是固定的 6 组色相，
+   浅色取 8% 底 + 原色字，深色落地时按 dsh 的 dark 值换算 ── */
+:root{
+  --bg:#f9fafb; --stage:#e9edf3;
+  --card:#ffffff; --card2:#f5f7fa; --pill:#eef1f5; --pill-hover:#e4e9f0;
+  --line:#e2e6ee; --line2:#edf0f5;
+  --fg:#0f1115; --fg2:#3d434d; --muted:#7b818a; --faint:#a2a7b0;
+  --brand:#3b82f6; --brand-fg:#ffffff; --brand-soft:#eaf2ff; --brand-line:#cfe1ff;
+  --ok:#12915f; --ok-soft:#e6f6ee;
+  --warn:#c47b12; --warn-soft:#fdf1de;
+  --violet:#7c5cd6; --violet-soft:#f1ecfe;
+  --teal:#0f8f86; --teal-soft:#e3f6f4;
+  --rose:#c2467a; --rose-soft:#fdeaf2;
+  --cyan:#1b7fa8; --cyan-soft:#e6f4fa;
+  --indigo:#4f63d2; --indigo-soft:#ecf0fe;
+  --danger:#dc322f; --danger-soft:#fdecec;
+  --thumb-shadow:0 1px 2px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.06);
+  --hover-shadow:0 6px 18px rgba(20,22,30,.09);
+  --ease:cubic-bezier(.25,.1,.25,1);
+}
+*{box-sizing:border-box}
+body{margin:0;font:13px/1.55 "Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--fg)}
+.top{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:14px;padding:13px 26px;background:var(--card);border-bottom:1px solid var(--line)}
+.top h1{font-size:16px;margin:0;font-weight:600}
+.top .ver{font-size:11px;padding:2px 8px;border-radius:20px;background:var(--brand-soft);color:var(--brand);border:1px solid var(--brand-line);font-weight:500}
+.top .sp{flex:1}
+.top .hint{font-size:12px;color:var(--muted)}
+.wrap{padding:22px 26px 70px;max-width:1240px;margin:0 auto}
+.sect-title{font-size:15px;font-weight:650;margin:34px 0 2px}
+.sect-sub{color:var(--muted);font-size:12.5px;margin:2px 0 14px;max-width:960px}
+.stage{background:var(--stage);border:1px solid var(--line);border-radius:14px;padding:22px;display:flex;flex-direction:column;align-items:center;gap:12px}
+.cap{color:var(--muted);font-size:11.5px;text-align:center}
+
+/* ── 页面画布 ── */
+.page{width:min(1120px,100%);background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--hover-shadow);overflow:hidden;display:flex}
+.rail{flex:none;width:152px;border-right:1px solid var(--line2);background:var(--card2);padding:14px 9px;display:flex;flex-direction:column;gap:2px}
+.rail .rt{font-size:10.5px;font-weight:600;letter-spacing:.05em;color:var(--faint);padding:6px 10px 4px}
+.rail .ri{display:flex;align-items:center;gap:9px;height:34px;padding:0 10px;border-radius:8px;border:0;background:none;font:inherit;font-size:12.5px;color:var(--muted);cursor:pointer;width:100%;text-align:left}
+.rail .ri:hover{background:var(--pill);color:var(--fg)}
+.rail .ri.on{background:var(--card);color:var(--fg);font-weight:600;box-shadow:var(--thumb-shadow)}
+.rail .ri .n{margin-left:auto;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+.rail .ri.upd{color:var(--brand)}
+.rail .grow{flex:1}
+.main{flex:1;min-width:0;padding:16px 20px 20px;display:flex;flex-direction:column;gap:14px}
+
+/* 顶部：标题 + 日期 + 搜索 */
+.head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.head h2{margin:0;font-size:17px;font-weight:700;letter-spacing:-.01em}
+.head .date{font-size:12px;color:var(--muted)}
+.head .sp{flex:1}
+.iconbtn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;flex:none;border:0;border-radius:8px;background:var(--pill);color:var(--muted);cursor:pointer}
+.iconbtn:hover{background:var(--pill-hover);color:var(--fg)}
+.find{display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;width:min(240px,44%);border-radius:8px;background:var(--pill);color:var(--muted)}
+.find:focus-within{background:var(--card);box-shadow:inset 0 0 0 1px var(--brand),0 0 0 3px color-mix(in srgb,var(--brand) 16%,transparent)}
+.find input{flex:1;min-width:0;border:0;outline:none;background:none;color:var(--fg);font:inherit;font-size:12.5px}
+.find input::placeholder{color:var(--faint)}
+
+/* ── 今日推荐（整行） ── */
+.hero{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:14px;padding:18px 20px;
+  background:radial-gradient(120% 150% at 100% 0%,color-mix(in srgb,var(--brand) 12%,transparent),transparent 58%),
+             radial-gradient(90% 120% at 0% 100%,color-mix(in srgb,var(--violet) 8%,transparent),transparent 60%),
+             var(--card)}
+.hero .tag{font-size:11.5px;font-weight:700;color:var(--brand);letter-spacing:.02em}
+.hero .hrow{display:flex;align-items:center;gap:14px;margin-top:8px}
+.tile{flex:none;display:grid;place-items:center;border-radius:12px}
+.tile.l52{width:52px;height:52px;border-radius:14px}
+.tile.l36{width:36px;height:36px;border-radius:10px}
+.tile.l28{width:28px;height:28px;border-radius:8px}
+.tile.h-brand{background:var(--brand-soft);color:var(--brand)}
+.tile.h-ok{background:var(--ok-soft);color:var(--ok)}
+.tile.h-warn{background:var(--warn-soft);color:var(--warn)}
+.tile.h-violet{background:var(--violet-soft);color:var(--violet)}
+.tile.h-teal{background:var(--teal-soft);color:var(--teal)}
+.tile.h-rose{background:var(--rose-soft);color:var(--rose)}
+.tile.h-cyan{background:var(--cyan-soft);color:var(--cyan)}
+.tile.h-indigo{background:var(--indigo-soft);color:var(--indigo)}
+.hero .who{flex:1;min-width:0}
+.hero .name{display:flex;align-items:center;gap:8px;font-size:18px;font-weight:700;letter-spacing:-.01em;flex-wrap:wrap}
+.hero .verified{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;color:var(--ok)}
+.hero .desc{margin:8px 0 0;font-size:13px;line-height:1.6;color:var(--fg2);max-width:760px}
+.hero .stats{display:flex;gap:30px;margin-top:14px}
+.hero .stats .s b{display:block;font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.hero .stats .s span{font-size:11px;color:var(--muted)}
+.hero .acts{display:flex;gap:8px;margin-top:14px;align-items:center}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;height:30px;padding:0 16px;border:0;border-radius:15px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--brand);color:var(--brand-fg)}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn.ghost{background:var(--pill);color:var(--fg2)}
+.btn.ghost:hover{background:var(--pill-hover);color:var(--fg)}
+.btn.install{background:var(--brand-soft);color:var(--brand);height:26px;padding:0 12px;border-radius:13px;font-size:12px}
+.btn.install:hover{background:var(--brand);color:var(--brand-fg)}
+.btn.sm{height:26px;padding:0 12px;border-radius:13px;font-size:12px}
+.installed{display:inline-flex;align-items:center;gap:4px;color:var(--ok);font-size:12px;font-weight:600;white-space:nowrap}
+
+/* ── 两列榜单 ── */
+.cols2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.rank{border:1px solid var(--line);border-radius:14px;background:var(--card);overflow:hidden}
+.rank .rhead{display:flex;align-items:baseline;gap:8px;padding:12px 16px 10px}
+.rank .rhead h3{margin:0;font-size:13.5px;font-weight:700}
+.rank .rhead .sub{font-size:11px;color:var(--muted)}
+.rrow{display:flex;align-items:center;gap:10px;min-height:52px;padding:8px 16px}
+.rrow + .rrow{border-top:1px solid var(--line2)}
+.rrow:hover{background:var(--card2)}
+.rrow .rk{flex:none;width:18px;text-align:center;font-size:12.5px;font-weight:800;color:var(--faint);font-variant-numeric:tabular-nums}
+.rrow:nth-child(-n+3) .rk{color:var(--warn)}
+.rrow .who{flex:1;min-width:0}
+.rrow .nm{font-size:12.5px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rrow .sub{font-size:11px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rrow .sub .dot{color:var(--faint);margin:0 4px}
+
+/* ── 分类条（替代原来的下拉） ── */
+.catbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:2px}
+.segs{display:inline-flex;flex-wrap:wrap;gap:6px}
+.seg{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 13px;border:1px solid var(--line);border-radius:15px;background:var(--card);color:var(--fg2);font:inherit;font-size:12.5px;cursor:pointer}
+.seg:hover{border-color:var(--faint);color:var(--fg)}
+.seg.on{background:var(--brand);border-color:var(--brand);color:var(--brand-fg);font-weight:600}
+.seg .n{font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+.seg.on .n{color:color-mix(in srgb,var(--brand-fg) 75%,transparent)}
+.seg.more{color:var(--brand);border-style:dashed;border-color:var(--brand-line);background:var(--brand-soft)}
+.catbar .sp{flex:1}
+.select{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg2);font:inherit;font-size:12px}
+.select:hover{border-color:var(--faint)}
+
+/* ── 分类分区 ── */
+.sec{display:flex;flex-direction:column;gap:10px}
+.sechead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:0 2px}
+.sechead h3{margin:0;font-size:13.5px;font-weight:700}
+.sechead .n{font-size:11.5px;color:var(--muted)}
+.sechead .viewall{margin-left:auto;display:inline-flex;align-items:center;gap:3px;font-size:12px;font-weight:600;color:var(--brand);cursor:pointer}
+.sechead .viewall:hover{text-decoration:underline}
+/* 分区卡片：按可用宽度自适应——面板 1040px 时 3 列（卡片 ~270px，标题放得下），
+   更宽的窗口自然排到 4 列 */
+.grid4{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:860px){.grid4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* 分区尾部：还有更多时给一条安静的「查看全部」入口（与分区头重复一次，滚到底不用回滚） */
+.morelink{display:flex;justify-content:center;padding:2px 0 4px}
+.morelink button{background:none;border:0;border-radius:8px;color:var(--brand);cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;padding:6px 14px}
+.morelink button:hover{background:var(--brand-soft)}
+/* 分类视图（点「查看全部」后）：面包屑返回 + 分类标题 + 全量栅格 + 分页 */
+.crumbs{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.crumbs .back{display:inline-flex;align-items:center;gap:4px;border:0;background:none;color:var(--brand);cursor:pointer;font:inherit;font-size:12px;font-weight:600;padding:2px 4px;border-radius:6px}
+.crumbs .back:hover{background:var(--brand-soft)}
+.crumbs .sep{color:var(--faint)}
+.pager{display:flex;align-items:center;justify-content:center;gap:10px;padding:6px 0 2px}
+.pager .more{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 18px;border:1px solid var(--line);border-radius:16px;background:var(--card);color:var(--fg2);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.pager .more:hover{border-color:var(--brand);color:var(--brand)}
+.pager .meta{font-size:11.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.pcard{display:flex;flex-direction:column;gap:8px;min-width:0;padding:12px 13px 11px;border-radius:12px;border:1px solid var(--line);background:var(--card);cursor:pointer;transition:border-color .16s var(--ease),box-shadow .16s var(--ease)}
+.pcard:hover{border-color:color-mix(in srgb,var(--fg) 16%,var(--line));box-shadow:var(--hover-shadow)}
+.pcard .top1{display:flex;align-items:center;gap:9px;min-width:0}
+.pcard .who{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.pcard .nm{font-size:12.5px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcard .by{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcard .by .verified{display:inline-flex;align-items:center;gap:3px;color:var(--ok);font-weight:600;flex:none}
+.pcard .sum{margin:0;font-size:12px;line-height:1.45;color:var(--fg2);min-height:2.9em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pcard .meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;min-height:18px}
+.pcard .meta .m{display:inline-flex;align-items:center;gap:3px}
+.pcard .meta .ver{font-family:ui-monospace,Consolas,monospace;font-size:10.5px}
+.chip{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 7px;border-radius:6px;font-size:10.5px;font-weight:600}
+.chip.c-brand{background:var(--brand-soft);color:var(--brand)}
+.chip.c-ok{background:var(--ok-soft);color:var(--ok)}
+.chip.c-warn{background:var(--warn-soft);color:var(--warn)}
+.chip.c-violet{background:var(--violet-soft);color:var(--violet)}
+.chip.c-teal{background:var(--teal-soft);color:var(--teal)}
+.chip.c-rose{background:var(--rose-soft);color:var(--rose)}
+.chip.c-cyan{background:var(--cyan-soft);color:var(--cyan)}
+.chip.c-indigo{background:var(--indigo-soft);color:var(--indigo)}
+
+/* ── 底部手动安装 ── */
+.manual{position:sticky;bottom:0;z-index:2;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;flex-wrap:wrap;margin-top:4px}
+.manual::before{content:"";position:absolute;z-index:-1;top:-12px;bottom:-14px;left:-20px;right:-20px;background:var(--card)}
+.manual::after{content:"";position:absolute;inset:-1px;pointer-events:none;border-radius:inherit;border:1px dashed var(--line)}
+.manual .lb{font-size:12px;color:var(--muted);flex:none}
+.manual .inp{flex:1;min-width:200px;height:28px;padding:0 10px;border-radius:7px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-family:ui-monospace,Consolas,monospace;font-size:12px;outline:none}
+.manual .inp:focus{border-color:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 16%,transparent)}
+.manual .browse{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border-radius:7px;border:1px solid var(--line);background:var(--card);color:var(--muted);cursor:pointer}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>插件中心 · 方案 B 优化版</h1>
+  <span class="ver">v3 · 引入色彩 / 分类分区 / 每类「查看全部」</span>
+  <span class="sp"></span>
+  <span class="hint">原型固定浅色 · 落地主题跟随 dsh</span>
+</header>
+
+<main class="wrap">
+  <p class="sect-sub" style="margin-top:0">
+    相比 v2 的变化：① 引入色彩（分类着色的图标块、绿色「已安装」、品牌色安装按钮、前三名琥珀色名次）；
+    ② 布局改为「本周推荐整行 → 下载最多/星标最多两列 → 分类条 → 分类分区」；
+    ③ 去掉「更多分类…」下拉，改为分类条 + 每个分类一个分区、分区头右侧「查看全部」；
+    ④ 每个分区默认展示 **6 张**（3 列 × 2 整行，空间用满、不留半行空位；不足 6 个的展示全部），分区头与分区尾部各给一个「查看全部 N 个」入口。
+  </p>
+
+  <h2 class="sect-title">发现页（优化后）</h2>
+  <p class="sect-sub">分类条只平铺数量最多的 6 个分类，其余收进「更多分类」（点击后在原位展开成 chip 换行，不再用下拉）。</p>
+
+  <div class="stage">
+    <div class="page">
+      <aside class="rail">
+        <div class="rt">插件中心</div>
+        <button class="ri on"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M10.8 5.2 9.2 9.2 5.2 10.8 6.8 6.8Z"/></svg>发现</button>
+        <button class="ri"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.8 13.8 4.8v6.4L8 14.2 2.2 11.2V4.8Z"/><path d="M2.2 4.8 8 7.8l5.8-3M8 7.8v6.4"/></svg>内置<span class="n">6</span></button>
+        <button class="ri"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.5v7.5M8 10l2.8-2.8M8 10 5.2 7.2"/><path d="M2.5 13.5h11"/></svg>已安装<span class="n">7</span></button>
+        <button class="ri"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="4.5" rx="1.2"/><rect x="2.5" y="9" width="11" height="4.5" rx="1.2"/><path d="M5 4.75h.01M5 11.25h.01M10 4.75h1.5M10 11.25h1.5"/></svg>插件源<span class="n">1</span></button>
+        <div class="grow"></div>
+        <button class="ri upd"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.5v7.5M8 10l2.8-2.8M8 10 5.2 7.2"/><path d="M2.5 13.5h11"/></svg>2 个可更新</button>
+      </aside>
+
+      <div class="main">
+        <div class="head">
+          <h2>本周推荐</h2><span class="date">11月16日 · 每周日更新推荐位</span>
+          <span class="sp"></span>
+          <button class="iconbtn" title="重新同步插件源"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg></button>
+          <label class="find"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><path d="m10.2 10.2 3.8 3.8"/></svg><input placeholder="搜索插件和作者…"></label>
+        </div>
+
+        <!-- 今日推荐：整行 -->
+        <div class="hero">
+          <div class="tag">今日推荐</div>
+          <div class="hrow">
+            <span class="tile l52 h-brand"><svg width="26" height="26" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3"/></svg></span>
+            <div class="who">
+              <div class="name">dsh-market
+                <span class="verified"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 1.5 13.5 3.5v4c0 3.6-2.3 6-5.5 7-3.2-1-5.5-3.4-5.5-7v-4Z"/><path d="m5.8 7.7 1.6 1.6 2.8-3"/></svg>dsh 社区</span>
+              </div>
+              <p class="desc">在 DeepSeek Harness 设置页内浏览、搜索并安装社区插件：支持分类筛选、一键更新与停用，以及主题切换与配置备份。</p>
+            </div>
+            <div class="acts" style="margin:0">
+              <button class="btn primary"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 2.5v7.5M8 10l2.8-2.8M8 10 5.2 7.2"/><path d="M2.5 13.5h11"/></svg>安装</button>
+              <button class="btn ghost">详情</button>
+            </div>
+          </div>
+          <div class="stats">
+            <div class="s"><b>82.5k</b><span>上周下载</span></div>
+            <div class="s"><b>1.1k</b><span>在用</span></div>
+            <div class="s"><b>界面</b><span>类型</span></div>
+            <div class="s"><b>v0.2.36</b><span>版本</span></div>
+          </div>
+        </div>
+
+        <!-- 两列榜单 -->
+        <div class="cols2">
+          <div class="rank">
+            <div class="rhead"><h3>下载最多</h3><span class="sub">npm 上周</span></div>
+            <div class="rrow"><span class="rk">1</span><span class="tile l28 h-brand"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M5.5 6h5M5.5 8.5h5"/></svg></span><div class="who"><div class="nm">dsh-market</div><div class="sub">界面<span class="dot">·</span>↓ 82.5k/周<span class="dot">·</span>★ 1.1k</div></div><span class="installed">✓ 已安装</span></div>
+            <div class="rrow"><span class="rk">2</span><span class="tile l28 h-teal"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2.2 2.4 2.2 9.6 0 12-2.2-2.4-2.2-9.6 0-12Z"/></svg></span><div class="who"><div class="nm">modlens</div><div class="sub">工具<span class="dot">·</span>↓ 63.8k/周<span class="dot">·</span>★ 3.2k</div></div><span class="installed">✓ 已安装</span></div>
+            <div class="rrow"><span class="rk">3</span><span class="tile l28 h-violet"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 3h11v7.5h-6L4.5 13.5v-3h-2Z"/></svg></span><div class="who"><div class="nm">DSH-better-sidebar</div><div class="sub">界面<span class="dot">·</span>↓ 39.7k/周<span class="dot">·</span>★ 2.2k</div></div><button class="btn install">安装</button></div>
+            <div class="rrow"><span class="rk">4</span><span class="tile l28 h-warn"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.2 1.8 4 9h3.6L6.8 14.2 12 7H8.4Z"/></svg></span><div class="who"><div class="nm">dsh-vision-router</div><div class="sub">模型<span class="dot">·</span>↓ 21.7k/周<span class="dot">·</span>★ 775</div></div><button class="btn install">安装</button></div>
+            <div class="rrow"><span class="rk">5</span><span class="tile l28 h-cyan"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.8 13.8 4.8v6.4L8 14.2 2.2 11.2V4.8Z"/><path d="M2.2 4.8 8 7.8l5.8-3"/></svg></span><div class="who"><div class="nm">dsh-vision-toolkit</div><div class="sub">工具<span class="dot">·</span>↓ 17.2k/周<span class="dot">·</span>★ 714</div></div><button class="btn install">安装</button></div>
+          </div>
+
+          <div class="rank">
+            <div class="rhead"><h3>星标最多</h3><span class="sub">GitHub 上</span></div>
+            <div class="rrow"><span class="rk">1</span><span class="tile l28 h-indigo"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.2 13.8 5 8 7.8 2.2 5Z"/><path d="m2.2 8 5.8 2.8L13.8 8"/></svg></span><div class="who"><div class="nm">OpenViking#examples</div><div class="sub">记忆<span class="dot">·</span>★ 29.6k<span class="dot">·</span>↓ 0/周</div></div><button class="btn install">安装</button></div>
+            <div class="rrow"><span class="rk">2</span><span class="tile l28 h-rose"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 13.5V9.5M8 13.5V4M13 13.5V6.5"/></svg></span><div class="who"><div class="nm">hindsight#coding-agents</div><div class="sub">记忆<span class="dot">·</span>★ 20.2k<span class="dot">·</span>↓ 9.6k/周</div></div><button class="btn install">安装</button></div>
+            <div class="rrow"><span class="rk">3</span><span class="tile l28 h-teal"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="3" rx=".8"/><path d="M3.2 6v6.5A1.5 1.5 0 0 0 4.7 14h6.6a1.5 1.5 0 0 0 1.5-1.5V6"/></svg></span><div class="who"><div class="nm">archify#integrations</div><div class="sub">工作流<span class="dot">·</span>★ 14.3k<span class="dot">·</span>↓ 3.0k/周</div></div><button class="btn install">安装</button></div>
+            <div class="rrow"><span class="rk">4</span><span class="tile l28 h-warn"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2.5v6a2 2 0 0 0 2 2h8"/><rect x="9" y="8.5" width="4.5" height="4.5" rx="1"/></svg></span><div class="who"><div class="nm">ouroboros#integrations</div><div class="sub">工作流<span class="dot">·</span>★ 5.6k<span class="dot">·</span>↓ 0/周</div></div><button class="btn install">安装</button></div>
+            <div class="rrow"><span class="rk">5</span><span class="tile l28 h-cyan"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M10.8 5.2 9.2 9.2 5.2 10.8 6.8 6.8Z"/></svg></span><div class="who"><div class="nm">mirage#dsh</div><div class="sub">开发<span class="dot">·</span>★ 3.5k<span class="dot">·</span>↓ 1.3k/周</div></div><button class="btn install">安装</button></div>
+          </div>
+        </div>
+
+        <!-- 分类条：带数量的分段 + 更多分类（原位展开，不是下拉） -->
+        <div class="catbar">
+          <div class="segs">
+            <button class="seg on">全部<span class="n">547</span></button>
+            <button class="seg">界面<span class="n">120</span></button>
+            <button class="seg">工具<span class="n">98</span></button>
+            <button class="seg">会话<span class="n">80</span></button>
+            <button class="seg">工作流<span class="n">60</span></button>
+            <button class="seg">数据<span class="n">45</span></button>
+            <button class="seg more">更多分类<span class="n">+27</span></button>
+          </div>
+          <span class="sp"></span>
+          <button class="select">来源：全部 <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></button>
+          <button class="select">排序：最热 <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></button>
+        </div>
+
+        <!-- 分类分区 1：界面 -->
+        <div class="sec">
+          <div class="sechead">
+            <h3>界面</h3><span class="n">120 个插件</span>
+            <span class="viewall">查看全部 120 个<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></span>
+          </div>
+          <div class="grid4">
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-brand"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M5.5 6h5M5.5 8.5h5"/></svg></span>
+                <div class="who"><div class="nm">dsh-market</div><div class="by"><span class="verified"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 1.5 13.5 3.5v4c0 3.6-2.3 6-5.5 7-3.2-1-5.5-3.4-5.5-7v-4Z"/><path d="m5.8 7.7 1.6 1.6 2.8-3"/></svg>dsh 社区</span></div></div>
+                <span class="installed" style="font-size:11.5px">✓ 已安装</span>
+              </div>
+              <p class="sum">在设置页内浏览、搜索并安装社区插件：分类筛选、一键更新与停用，主题切换与配置备份。</p>
+              <div class="meta"><span class="chip c-brand">界面</span><span class="m">★ 1.1k</span><span class="m">↓ 82.5k/周</span><span class="ver">v0.2.36</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-violet"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 3h11v7.5h-6L4.5 13.5v-3h-2Z"/></svg></span>
+                <div class="who"><div class="nm">DSH-better-sidebar</div><div class="by">yuanzhi</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">侧栏重排：会话按工作区分组、支持置顶与折叠，入口密度可调。</p>
+              <div class="meta"><span class="chip c-violet">界面</span><span class="m">★ 2.2k</span><span class="m">↓ 39.7k/周</span><span class="ver">v1.4.2</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-indigo"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.2 13.8 5 8 7.8 2.2 5Z"/><path d="m2.2 8 5.8 2.8L13.8 8"/></svg></span>
+                <div class="who"><div class="nm">DSH Sidebar Deck</div><div class="by"><span class="verified"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m3.5 8.5 3 3 6-7"/></svg>dsh 官方</span></div></div>
+                <span class="installed" style="font-size:11.5px">✓ 已安装</span>
+              </div>
+              <p class="sum">侧栏面板合集：待办清单、代码片段库与工作区速记，面板可单独开关。</p>
+              <div class="meta"><span class="chip c-indigo">界面</span><span class="m">★ 860</span><span class="m">↓ 61k/周</span><span class="ver">v0.3.2</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-cyan"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.8 13.8 4.8v6.4L8 14.2 2.2 11.2V4.8Z"/><path d="M2.2 4.8 8 7.8l5.8-3"/></svg></span>
+                <div class="who"><div class="nm">dsh-vision-toolkit</div><div class="by">lumen</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">图片/视频预览工具集：会话内直接看截图、录屏与生成的图表，支持缩放对比。</p>
+              <div class="meta"><span class="chip c-cyan">界面</span><span class="m">★ 714</span><span class="m">↓ 17.2k/周</span><span class="ver">v0.9.1</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-rose"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="6" cy="6" r="1"/><circle cx="10" cy="6" r="1"/><path d="M8 14c0-2 1.5-2.5 3-2.5"/></svg></span>
+                <div class="who"><div class="nm">dsh-theme-lab</div><div class="by">yumc</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">主题实验室：一键换配色与字体，导出/导入主题包，跟随系统深浅色切换。</p>
+              <div class="meta"><span class="chip c-rose">主题</span><span class="m">★ 480</span><span class="m">↓ 12k/周</span><span class="ver">v0.8.2</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-teal"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2.5v6a2 2 0 0 0 2 2h8"/><rect x="9" y="8.5" width="4.5" height="4.5" rx="1"/><circle cx="3" cy="11" r="1.5"/></svg></span>
+                <div class="who"><div class="nm">sidebar-quick-actions</div><div class="by">aohf</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">侧栏快捷动作：把常用指令固定到顶部，支持分组、别名与快捷键。</p>
+              <div class="meta"><span class="chip c-teal">界面</span><span class="m">★ 320</span><span class="m">↓ 9.8k/周</span><span class="ver">v1.0.3</span></div>
+            </div>
+          </div>
+          <div class="morelink"><button>查看全部 120 个界面插件<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="display:inline-block;vertical-align:-2px;margin-left:3px"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></button></div>
+        </div>
+
+        <!-- 分类分区 2：工具 -->
+        <div class="sec">
+          <div class="sechead">
+            <h3>工具</h3><span class="n">98 个插件</span>
+            <span class="viewall">查看全部<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></span>
+          </div>
+          <div class="grid4">
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-teal"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2.2 2.4 2.2 9.6 0 12-2.2-2.4-2.2-9.6 0-12Z"/></svg></span>
+                <div class="who"><div class="nm">modlens</div><div class="by">liustack</div></div>
+                <span class="installed" style="font-size:11.5px">✓ 已安装</span>
+              </div>
+              <p class="sum">为纯文本模型架起视觉桥梁：粘贴图片，输出结构化 JSON 证据（OCR、版面、图表）。</p>
+              <div class="meta"><span class="chip c-teal">工具</span><span class="m">★ 3.2k</span><span class="m">↓ 63.8k/周</span><span class="ver">v2.1.0</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-warn"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.2 1.8 4 9h3.6L6.8 14.2 12 7H8.4Z"/></svg></span>
+                <div class="who"><div class="nm">dsh-vision-router</div><div class="by">vision-lab</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">按任务把图片请求路由到最合适的视觉模型，省额度、失败自动换模型重试。</p>
+              <div class="meta"><span class="chip c-warn">工具</span><span class="m">★ 775</span><span class="m">↓ 21.7k/周</span><span class="ver">v0.6.3</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-cyan"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M10.8 5.2 9.2 9.2 5.2 10.8 6.8 6.8Z"/></svg></span>
+                <div class="who"><div class="nm">mirage#dsh</div><div class="by">strukto-ai</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">把文件系统与 bash 提供者换成 mirage 虚拟工作区：工具调用与 shell 命令作用于镜像。</p>
+              <div class="meta"><span class="chip c-cyan">开发</span><span class="m">★ 3.5k</span><span class="m">↓ 1.3k/周</span><span class="ver">v0.4.0</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-rose"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 13.5V9.5M8 13.5V4M13 13.5V6.5"/></svg></span>
+                <div class="who"><div class="nm">git-snapshot</div><div class="by">millan</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">会话结束自动对工作区打 git 快照，侧栏一键回看与回滚。</p>
+              <div class="meta"><span class="chip c-rose">存储</span><span class="m">★ 630</span><span class="m">↓ 48k/周</span><span class="ver">v2.0.1</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-ok"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.2a4 4 0 0 0-4 4v2.6L2.6 11h10.8L12 8.8V6.2a4 4 0 0 0-4-4Z"/><path d="m6.2 13.2a1.9 1.9 0 0 0 3.6 0"/></svg></span>
+                <div class="who"><div class="nm">quota-watcher</div><div class="by">aohf</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">盯着供应商配额，快用完时在侧栏与系统通知里提醒，附重置时间与预估可用轮次。</p>
+              <div class="meta"><span class="chip c-ok">工具</span><span class="m">★ 390</span><span class="m">↓ 14k/周</span><span class="ver">v0.4.0</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-rose"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="3" rx=".8"/><path d="M3.2 6v6.5A1.5 1.5 0 0 0 4.7 14h6.6a1.5 1.5 0 0 0 1.5-1.5V6"/><path d="M6.5 8.5h3"/></svg></span>
+                <div class="who"><div class="nm">clip-stash</div><div class="by">millan</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">代码片段库：随手存一段命令/配置，侧栏一键插回输入框，支持变量占位。</p>
+              <div class="meta"><span class="chip c-rose">存储</span><span class="m">★ 260</span><span class="m">↓ 7.6k/周</span><span class="ver">v1.2.1</span></div>
+            </div>
+          </div>
+          <div class="morelink"><button>查看全部 98 个工具插件<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="display:inline-block;vertical-align:-2px;margin-left:3px"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></button></div>
+        </div>
+
+        <!-- 分类分区 3：会话 -->
+        <div class="sec">
+          <div class="sechead">
+            <h3>会话</h3><span class="n">80 个插件</span>
+            <span class="viewall">查看全部<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></span>
+          </div>
+          <div class="grid4">
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-ok"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.2a4 4 0 0 0-4 4v2.6L2.6 11h10.8L12 8.8V6.2a4 4 0 0 0-4-4Z"/><path d="m6.2 13.2a1.9 1.9 0 0 0 3.6 0"/></svg></span>
+                <div class="who"><div class="nm">DSH Session Notify</div><div class="by"><span class="verified"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m3.5 8.5 3 3 6-7"/></svg>dsh 官方</span></div></div>
+                <span class="installed" style="font-size:11.5px">✓ 已安装</span>
+              </div>
+              <p class="sum">会话完成时弹出系统通知并写菜单栏角标：标题优先显示会话名，异常结束染红完成点。</p>
+              <div class="meta"><span class="chip c-ok">会话</span><span class="m">★ 124</span><span class="m">↓ 9.2k/周</span><span class="ver">v0.2.2</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-brand"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 3h11v7.5h-6L4.5 13.5v-3h-2Z"/></svg></span>
+                <div class="who"><div class="nm">dsh-archive-pro</div><div class="by">dsh-community</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">归档会话按工作区分组，还原/删除带后代树预览，支持定时清理。</p>
+              <div class="meta"><span class="chip c-brand">会话</span><span class="m">★ 54</span><span class="m">↓ 23k/周</span><span class="ver">v1.2.0</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-violet"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2.5h4v2.2a1.3 1.3 0 1 0 2.6 0V2.5H13.5v4h-2.2a1.3 1.3 0 1 0 0 2.6h2.2v4.4h-4v-2.2a1.3 1.3 0 1 0-2.6 0v2.2H2.5V9h2.2a1.3 1.3 0 1 0 0-2.6H2.5V2.5H6Z"/></svg></span>
+                <div class="who"><div class="nm">dsh-tokenledger</div><div class="by">yumc</div></div>
+                <span class="installed" style="font-size:11.5px">✓ 已安装</span>
+              </div>
+              <p class="sum">按会话统计 token 花费，侧栏里看当日与本周曲线，支持导出 CSV。</p>
+              <div class="meta"><span class="chip c-violet">用量</span><span class="m">★ 540</span><span class="m">↓ 165k/周</span><span class="ver">v1.1.0</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-warn"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg></span>
+                <div class="who"><div class="nm">session-replay</div><div class="by">aohf</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">把一次会话回放成时间线：每轮工具调用、文件改动与耗时一目了然。</p>
+              <div class="meta"><span class="chip c-warn">会话</span><span class="m">★ 210</span><span class="m">↓ 8.4k/周</span><span class="ver">v0.5.0</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-cyan"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2.5v6a2 2 0 0 0 2 2h8"/><rect x="9" y="8.5" width="4.5" height="4.5" rx="1"/><circle cx="3" cy="11" r="1.5"/></svg></span>
+                <div class="who"><div class="nm">session-flow</div><div class="by">dsh-community</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">把一次会话画成流程图：每轮工具调用、文件改动与耗时串起来看。</p>
+              <div class="meta"><span class="chip c-cyan">会话</span><span class="m">★ 180</span><span class="m">↓ 6.2k/周</span><span class="ver">v0.3.4</span></div>
+            </div>
+            <div class="pcard">
+              <div class="top1">
+                <span class="tile l36 h-indigo"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.5v7.5M8 10l2.8-2.8M8 10 5.2 7.2"/><path d="M2.5 13.5h11"/></svg></span>
+                <div class="who"><div class="nm">dsh-session-export</div><div class="by">tt-a1i</div></div>
+                <button class="btn install">安装</button>
+              </div>
+              <p class="sum">把会话导出成 Markdown / HTML：保留代码块与工具输出，可直接分享或归档。</p>
+              <div class="meta"><span class="chip c-indigo">会话</span><span class="m">★ 140</span><span class="m">↓ 5.1k/周</span><span class="ver">v0.2.0</span></div>
+            </div>
+          </div>
+          <div class="morelink"><button>查看全部 80 个会话插件<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="display:inline-block;vertical-align:-2px;margin-left:3px"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></button></div>
+        </div>
+
+        <!-- 全部分类的出口：分区只展示前几个，剩下的从这里进 -->
+        <div class="morelink" style="padding:6px 0 0">
+          <button>浏览全部 27 个分类 · 547 个插件<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="display:inline-block;vertical-align:-2px;margin-left:3px"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></button>
+        </div>
+
+        <form class="manual">
+          <span class="lb">已有想装的？</span>
+          <input class="inp" placeholder="npm 包名、GitHub 仓库（github:owner/repo）或本地文件夹">
+          <button type="button" class="browse" title="选择本地文件夹"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.8 4A1.5 1.5 0 0 1 3.3 2.5h3l1.4 1.8h5a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H3.3a1.5 1.5 0 0 1-1.5-1.5Z"/></svg></button>
+          <button type="submit" class="btn primary">安装</button>
+        </form>
+      </div>
+    </div>
+    <div class="cap">发现页：本周推荐整行 → 双榜两列 → 分类条（带数量）→ 分类分区（每区 6 卡 = 两整行 + 查看全部）→ 全部分类出口 → sticky 手动安装</div>
+  </div>
+
+  <h2 class="sect-title">分类条展开态</h2>
+  <p class="sect-sub">点「更多分类」在原位展开成换行 chip（不用下拉），再点收起；当前分类高亮为品牌色。</p>
+  <div class="stage">
+    <div class="page" style="display:block;padding:18px 20px">
+      <div class="catbar">
+        <div class="segs">
+          <button class="seg on">全部<span class="n">547</span></button>
+          <button class="seg">界面<span class="n">120</span></button>
+          <button class="seg">工具<span class="n">98</span></button>
+          <button class="seg">会话<span class="n">80</span></button>
+          <button class="seg">工作流<span class="n">60</span></button>
+          <button class="seg">数据<span class="n">45</span></button>
+          <button class="seg more">收起分类<span class="n">−</span></button>
+          <button class="seg">模型<span class="n">32</span></button>
+          <button class="seg">记忆<span class="n">28</span></button>
+          <button class="seg">主题<span class="n">21</span></button>
+          <button class="seg">技能<span class="n">18</span></button>
+          <button class="seg">通知<span class="n">14</span></button>
+          <button class="seg">浏览器<span class="n">12</span></button>
+          <button class="seg">存储<span class="n">9</span></button>
+          <button class="seg">开发<span class="n">8</span></button>
+          <button class="seg">其他<span class="n">5</span></button>
+        </div>
+      </div>
+    </div>
+    <div class="cap">展开后全部 27 个分类平铺换行，分类名带数量，选中态用品牌色填充</div>
+  </div>
+
+  <h2 class="sect-title">点击「查看全部」后：分类视图</h2>
+  <p class="sect-sub">
+    点分区头/分区尾的「查看全部 N 个」→ 同一页内切到该分类的完整列表（不是弹窗、不是新页面）：
+    顶部面包屑「← 返回发现 / 界面」，分类条保留并把该分类点亮，下面是全量卡片栅格 +
+    「显示更多」分页；再点「全部」或面包屑的「返回发现」就回到发现页。
+  </p>
+  <div class="stage">
+    <div class="page">
+      <aside class="rail">
+        <div class="rt">插件中心</div>
+        <button class="ri on"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M10.8 5.2 9.2 9.2 5.2 10.8 6.8 6.8Z"/></svg>发现</button>
+        <button class="ri"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.8 13.8 4.8v6.4L8 14.2 2.2 11.2V4.8Z"/><path d="M2.2 4.8 8 7.8l5.8-3M8 7.8v6.4"/></svg>内置<span class="n">6</span></button>
+        <button class="ri"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.5v7.5M8 10l2.8-2.8M8 10 5.2 7.2"/><path d="M2.5 13.5h11"/></svg>已安装<span class="n">7</span></button>
+        <button class="ri"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="4.5" rx="1.2"/><rect x="2.5" y="9" width="11" height="4.5" rx="1.2"/><path d="M5 4.75h.01M5 11.25h.01M10 4.75h1.5M10 11.25h1.5"/></svg>插件源<span class="n">1</span></button>
+        <div class="grow"></div>
+        <button class="ri upd"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.5v7.5M8 10l2.8-2.8M8 10 5.2 7.2"/><path d="M2.5 13.5h11"/></svg>2 个可更新</button>
+      </aside>
+
+      <div class="main">
+        <div class="crumbs">
+          <button class="back"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M10 3.5 5.5 8 10 12.5"/></svg>返回发现</button>
+          <span class="sep">/</span>
+          <span>界面</span>
+        </div>
+
+        <div class="head">
+          <h2>界面</h2>
+          <span class="date">120 个插件 · 已安装 2 个</span>
+          <span class="sp"></span>
+          <button class="iconbtn" title="重新同步插件源"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg></button>
+          <label class="find"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><path d="m10.2 10.2 3.8 3.8"/></svg><input placeholder="在「界面」里搜索…"></label>
+        </div>
+
+        <div class="catbar">
+          <div class="segs">
+            <button class="seg">全部<span class="n">547</span></button>
+            <button class="seg on">界面<span class="n">120</span></button>
+            <button class="seg">工具<span class="n">98</span></button>
+            <button class="seg">会话<span class="n">80</span></button>
+            <button class="seg">工作流<span class="n">60</span></button>
+            <button class="seg">数据<span class="n">45</span></button>
+            <button class="seg more">更多分类<span class="n">+27</span></button>
+          </div>
+          <span class="sp"></span>
+          <button class="select">来源：全部 <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></button>
+          <button class="select">排序：最热 <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></button>
+        </div>
+
+        <div class="grid4">
+          <div class="pcard">
+            <div class="top1">
+              <span class="tile l36 h-brand"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M5.5 6h5M5.5 8.5h5"/></svg></span>
+              <div class="who"><div class="nm">dsh-market</div><div class="by"><span class="verified"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 1.5 13.5 3.5v4c0 3.6-2.3 6-5.5 7-3.2-1-5.5-3.4-5.5-7v-4Z"/><path d="m5.8 7.7 1.6 1.6 2.8-3"/></svg>dsh 社区</span></div></div>
+              <span class="installed" style="font-size:11.5px">✓ 已安装</span>
+            </div>
+            <p class="sum">在设置页内浏览、搜索并安装社区插件：分类筛选、一键更新与停用，主题切换与配置备份。</p>
+            <div class="meta"><span class="chip c-brand">界面</span><span class="m">★ 1.1k</span><span class="m">↓ 82.5k/周</span><span class="ver">v0.2.36</span></div>
+          </div>
+          <div class="pcard">
+            <div class="top1">
+              <span class="tile l36 h-violet"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 3h11v7.5h-6L4.5 13.5v-3h-2Z"/></svg></span>
+              <div class="who"><div class="nm">DSH-better-sidebar</div><div class="by">yuanzhi</div></div>
+              <button class="btn install">安装</button>
+            </div>
+            <p class="sum">侧栏重排：会话按工作区分组、支持置顶与折叠，入口密度可调。</p>
+            <div class="meta"><span class="chip c-violet">界面</span><span class="m">★ 2.2k</span><span class="m">↓ 39.7k/周</span><span class="ver">v1.4.2</span></div>
+          </div>
+          <div class="pcard">
+            <div class="top1">
+              <span class="tile l36 h-indigo"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.2 13.8 5 8 7.8 2.2 5Z"/><path d="m2.2 8 5.8 2.8L13.8 8"/></svg></span>
+              <div class="who"><div class="nm">DSH Sidebar Deck</div><div class="by"><span class="verified"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m3.5 8.5 3 3 6-7"/></svg>dsh 官方</span></div></div>
+              <span class="installed" style="font-size:11.5px">✓ 已安装</span>
+            </div>
+            <p class="sum">侧栏面板合集：待办清单、代码片段库与工作区速记，面板可单独开关。</p>
+            <div class="meta"><span class="chip c-indigo">界面</span><span class="m">★ 860</span><span class="m">↓ 61k/周</span><span class="ver">v0.3.2</span></div>
+          </div>
+          <div class="pcard">
+            <div class="top1">
+              <span class="tile l36 h-cyan"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.8 13.8 4.8v6.4L8 14.2 2.2 11.2V4.8Z"/><path d="M2.2 4.8 8 7.8l5.8-3"/></svg></span>
+              <div class="who"><div class="nm">dsh-vision-toolkit</div><div class="by">lumen</div></div>
+              <button class="btn install">安装</button>
+            </div>
+            <p class="sum">图片/视频预览工具集：会话内直接看截图、录屏与生成的图表，支持缩放对比。</p>
+            <div class="meta"><span class="chip c-cyan">界面</span><span class="m">★ 714</span><span class="m">↓ 17.2k/周</span><span class="ver">v0.9.1</span></div>
+          </div>
+          <div class="pcard">
+            <div class="top1">
+              <span class="tile l36 h-rose"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="6" cy="6" r="1"/><circle cx="10" cy="6" r="1"/><path d="M8 14c0-2 1.5-2.5 3-2.5"/></svg></span>
+              <div class="who"><div class="nm">dsh-theme-lab</div><div class="by">yumc</div></div>
+              <button class="btn install">安装</button>
+            </div>
+            <p class="sum">主题实验室：一键换配色与字体，导出/导入主题包，跟随系统深浅色切换。</p>
+            <div class="meta"><span class="chip c-rose">主题</span><span class="m">★ 480</span><span class="m">↓ 12k/周</span><span class="ver">v0.8.2</span></div>
+          </div>
+          <div class="pcard">
+            <div class="top1">
+              <span class="tile l36 h-teal"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2.5v6a2 2 0 0 0 2 2h8"/><rect x="9" y="8.5" width="4.5" height="4.5" rx="1"/><circle cx="3" cy="11" r="1.5"/></svg></span>
+              <div class="who"><div class="nm">sidebar-quick-actions</div><div class="by">aohf</div></div>
+              <button class="btn install">安装</button>
+            </div>
+            <p class="sum">侧栏快捷动作：把常用指令固定到顶部，支持分组、别名与快捷键。</p>
+            <div class="meta"><span class="chip c-teal">界面</span><span class="m">★ 320</span><span class="m">↓ 9.8k/周</span><span class="ver">v1.0.3</span></div>
+          </div>
+          <div class="pcard">
+            <div class="top1">
+              <span class="tile l36 h-brand"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M5.5 6h5"/></svg></span>
+              <div class="who"><div class="nm">dsh-command-palette</div><div class="by">dsh-community</div></div>
+              <button class="btn install">安装</button>
+            </div>
+            <p class="sum">全局命令面板：Ctrl+K 唤起，搜索插件命令、会话与设置项。</p>
+            <div class="meta"><span class="chip c-brand">界面</span><span class="m">★ 290</span><span class="m">↓ 8.1k/周</span><span class="ver">v0.6.0</span></div>
+          </div>
+          <div class="pcard">
+            <div class="top1">
+              <span class="tile l36 h-warn"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.2 13.8 5 8 7.8 2.2 5Z"/><path d="m2.2 8 5.8 2.8L13.8 8"/><path d="m2.2 10.5 5.8 2.8 5.8-2.8"/></svg></span>
+              <div class="who"><div class="nm">dock-layout</div><div class="by">millan</div></div>
+              <button class="btn install">安装</button>
+            </div>
+            <p class="sum">把侧栏面板改成底部 Dock：横向排列、拖拽排序，窄窗口更省地方。</p>
+            <div class="meta"><span class="chip c-warn">界面</span><span class="m">★ 210</span><span class="m">↓ 6.4k/周</span><span class="ver">v0.4.1</span></div>
+          </div>
+          <div class="pcard">
+            <div class="top1">
+              <span class="tile l36 h-ok"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 3h11v7.5h-6L4.5 13.5v-3h-2Z"/><path d="M5.5 6h5"/></svg></span>
+              <div class="who"><div class="nm">session-badge</div><div class="by">aohf</div></div>
+              <button class="btn install">安装</button>
+            </div>
+            <p class="sum">会话徽标：给会话加颜色标签与图标，长列表里一眼找到目标。</p>
+            <div class="meta"><span class="chip c-ok">界面</span><span class="m">★ 160</span><span class="m">↓ 4.9k/周</span><span class="ver">v0.3.0</span></div>
+          </div>
+        </div>
+
+        <div class="pager">
+          <button class="more">显示更多<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m4 6 4 4 4-4"/></svg></button>
+          <span class="meta">已显示 9 / 120</span>
+        </div>
+
+        <form class="manual">
+          <span class="lb">已有想装的？</span>
+          <input class="inp" placeholder="npm 包名、GitHub 仓库（github:owner/repo）或本地文件夹">
+          <button type="button" class="browse" title="选择本地文件夹"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.8 4A1.5 1.5 0 0 1 3.3 2.5h3l1.4 1.8h5a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H3.3a1.5 1.5 0 0 1-1.5-1.5Z"/></svg></button>
+          <button type="submit" class="btn primary">安装</button>
+        </form>
+      </div>
+    </div>
+    <div class="cap">分类视图：面包屑返回 + 该分类全量栅格（3 列）+「显示更多」分页（每页 9/30/60 可调）；分类条保留，切别的分类直接换列表</div>
+  </div>
+
+  <h2 class="sect-title">色彩规范</h2>
+  <div class="stage" style="align-items:stretch">
+    <div style="display:flex;gap:14px;flex-wrap:wrap">
+      <div class="pcard" style="width:250px">
+        <div class="top1"><span class="tile l36 h-brand"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/></svg></span><div class="who"><div class="nm">分类色：界面</div><div class="by">品牌蓝 #3b82f6</div></div></div>
+        <p class="sum">图标块 = 8% 色底 + 原色图标；分类 chip 同色系。六组色相覆盖 33 个分类，未命中的归「其他」用中性灰。</p>
+      </div>
+      <div class="pcard" style="width:250px">
+        <div class="top1"><span class="tile l36 h-ok"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m3.5 8.5 3 3 6-7"/></svg></span><div class="who"><div class="nm">状态色：已安装</div><div class="by">成功绿 #12915f</div></div></div>
+        <p class="sum">「✓ 已安装」与「官方/社区」认证统一绿色，避免和品牌蓝抢注意力。</p>
+      </div>
+      <div class="pcard" style="width:250px">
+        <div class="top1"><span class="tile l36 h-warn"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.2 1.8 4 9h3.6L6.8 14.2 12 7H8.4Z"/></svg></span><div class="who"><div class="nm">强调色：名次</div><div class="by">琥珀 #c47b12</div></div></div>
+        <p class="sum">榜单前三名的数字用琥珀，其余灰色；可更新数量沿用琥珀胶囊。</p>
+      </div>
+      <div class="pcard" style="width:250px">
+        <div class="top1"><span class="tile l36 h-violet"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2.5h4v2.2a1.3 1.3 0 1 0 2.6 0V2.5H13.5v4h-2.2a1.3 1.3 0 1 0 0 2.6h2.2v4.4h-4v-2.2a1.3 1.3 0 1 0-2.6 0v2.2H2.5V9h2.2a1.3 1.3 0 1 0 0-2.6H2.5V2.5H6Z"/></svg></span><div class="who"><div class="nm">分类色：会话</div><div class="by">紫 #7c5cd6</div></div></div>
+        <p class="sum">其余：工具=青、工作流=琥珀、数据=绿、开发=靛、记忆=玫、模型=青。落地全部映射 dsh 语义 token。</p>
+      </div>
+    </div>
+  </div>
+</main>
+</body>
+</html>

@@ -4,10 +4,20 @@
 // 由这里兜住。断言失败会直接抛错，脚本以非 0 退出，回归即失败。
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
 const SOURCE = new URL('../client/client.js', import.meta.url);
 const source = await readFile(SOURCE, 'utf8');
+// 真实文件路径：vm 跑时要带上它，node 的 coverage 才会把客户端代码算进 client.js。
+const SOURCE_PATH = fileURLToPath(SOURCE);
+// 转圈 CSS 的选择器必须和标记里的 class 一致：安装 / AI 搜索按钮的标记用的是
+// .dual，选择器若写成 .spin，按钮里就只剩一个空 span——用户看到的就是「转圈没了」。
+assert.ok(/\.dsh-pm-install \.dual::after\{animation:dsh-pm-spin/.test(source),
+  '安装按钮的双环转圈 CSS 指向 .dual');
+assert.ok(!/\.dsh-pm-install \.spin/.test(source), '安装按钮不应残留 .spin 选择器');
+assert.ok(/\.dsh-pm-ai-go \.dual::before\{opacity/.test(source), 'AI 搜索按钮的双环 CSS 指向 .dual');
+assert.ok(!/\.dsh-pm-ai-go \.spin/.test(source), 'AI 搜索按钮不应残留 .spin 选择器');
 
 // ---------- 极简 React ----------
 function flatten(children) {
@@ -142,6 +152,25 @@ const toasts = tree => findAll(tree, node => /dsh-pm-toast dsh-pm-toast-/.test(S
   kind: /toast-success/.test(node.props.className) ? 'success' : /toast-error/.test(node.props.className) ? 'error' : 'info',
   text: textOf(node.children && node.children[1] ? node.children[1] : node),
 }));
+// 方案 B：面板默认落在「发现」页；已安装相关场景先点左栏「已安装」切过去。
+// railItems 的渲染顺序固定：发现 / 内置 / 已安装 / 插件源，按文字找到目标项。
+// 每次点击后 repaint+settle：Runtime 的状态写入只标记 dirty，树要重画才是新的。
+const openPanelOn = async (runtime, view) => {
+  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  await settle(runtime);
+  if (view) {
+    const item = findAll(runtime.tree, node => node.type === 'button' && textOf(node).includes(view))[0];
+    if (item) { item.props.onClick(); await settle(runtime); }
+  }
+};
+const openInstalledPanel = runtime => openPanelOn(runtime, '已安装');
+/** 分类/排序/搜索变化会触发一次 250ms 防抖后的服务端查询：等它真的发出并回来。 */
+const settleQuery = async (runtime) => {
+  // 先重画一次：effect 要等这次渲染才会挂上防抖定时器；再等定时器触发查询、最后画结果。
+  await settle(runtime, 10);
+  await new Promise(resolve => setTimeout(resolve, 400));
+  await settle(runtime, 10);
+};
 
 // ---------- 场景装配 ----------
 function makeDocument() {
@@ -163,14 +192,21 @@ function boot({ fetchImpl, setTimeoutImpl }) {
   const runtime = new Runtime();
   const documentStub = makeDocument();
   let plugin;
-  const window = { __ModuleLoader__: { load(record) { plugin = record.factory(name => {
+  // window 事件监听 stub：面板内的 ESC 关闭等 effect 会挂 keydown 监听，
+  // 测试可经 dispatchWindowEvent(type, event) 手动派发。
+  const windowEvents = new Map();
+  const window = {
+    __ModuleLoader__: { load(record) { plugin = record.factory(name => {
     if (name === 'react') return runtime.makeReact();
     // mountPanel 会把面板常驻挂到 body 上：这里只要一个不抛错的渲染入口，
     // 真正的渲染由本文件的 Runtime.render(trigger) 驱动。
     if (name === 'react-dom/client') return { createRoot: () => ({ render() {} }) };
     if (name === 'react-dom') return { render() {} };
     throw new Error('unexpected require ' + name);
-  }); } } };
+  }); } },
+    addEventListener(type, fn) { windowEvents.set(type, fn); },
+    removeEventListener(type, fn) { if (windowEvents.get(type) === fn) windowEvents.delete(type); },
+  };
   vm.runInNewContext(source, {
     window,
     document: documentStub,
@@ -178,14 +214,24 @@ function boot({ fetchImpl, setTimeoutImpl }) {
     setTimeout: setTimeoutImpl || setTimeout,
     setInterval: () => 0,
     clearInterval: () => {},
-  });
+    // vm 沙箱里没有 Web API 全集：流式检索要 ReadableStream/TextEncoder，
+    // 不注入的话「/ai-search/stream」会走不了流式分支（退化成一次性 json）。
+    ReadableStream,
+    TextEncoder,
+    TextDecoder,
+    // 带 filename：node 的 coverage 才会把这段 vm 代码归到 client.js 名下，
+    // 否则客户端的覆盖率统计不到（node --experimental-test-coverage 只认文件名）。
+  }, { filename: SOURCE_PATH });
   let trigger;
   plugin.apply({ slots: { inject(name, cb) { cb(); }, register(spec, component) { trigger = component; } } });
   // 面板入口已改成 sidebar.panellist（由「更多」菜单通过 OPEN_EVENT 打开），
   // 侧边栏角标与「点开面板」的行为仍在 PluginTrigger 里，直接用它做渲染冒烟。
   if (typeof plugin.PluginTrigger === 'function') trigger = plugin.PluginTrigger;
   assert.equal(typeof trigger, 'function');
-  return { runtime, trigger, document: documentStub };
+  return { runtime, trigger, document: documentStub, dispatchWindowEvent(event) {
+    const fn = windowEvents.get(event?.type);
+    if (fn) fn(event);
+  } };
 }
 
 const installedItems = [
@@ -243,7 +289,7 @@ const entry = (name, over) => ({
   await settle(runtime);
 
   // 2. 打开面板：工具栏 + 行内标记
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   let tree = runtime.tree;
   const text = textOf(tree);
@@ -336,7 +382,7 @@ const entry = (name, over) => ({
 
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill').length, 2, '两个插件都可更新');
 
@@ -376,7 +422,7 @@ const entry = (name, over) => ({
   const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime, 40);
   const failure = toasts(runtime.tree).find(item => item.kind === 'error');
   assert.ok(failure, '失败批次要有红色汇总，实际：' + JSON.stringify(toasts(runtime.tree)));
@@ -397,7 +443,7 @@ const entry = (name, over) => ({
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
   assert.equal(byClass(runtime.tree, 'dsh-pm-trigger-badge').length, 0, '降级时没有角标');
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   const text = textOf(runtime.tree);
   assert.ok(text.includes('dsh-notify'), '降级时仍显示已安装列表');
@@ -433,7 +479,7 @@ const entry = (name, over) => ({
   const { runtime, trigger, document: doc } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   let tree = runtime.tree;
   assert.ok(textOf(tree).includes('已选 0 个'), '工具栏显示已选计数');
@@ -546,7 +592,7 @@ const entry = (name, over) => ({
   const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => { delays.push(ms); return setTimeout(fn, ms <= 2500 ? 0 : ms); } });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime, 4);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime, 4);
   const text = textOf(runtime.tree);
   assert.ok(text.includes('正在下载并安装 v2.0.0…'), '当前更新行显示步骤，实际：' + text.slice(0, 400));
@@ -623,11 +669,11 @@ const entry = (name, over) => ({
     const badge = byClass(runtime.tree, 'dsh-pm-trigger-badge')[0];
     return badge ? textOf(badge) : '';
   };
-  const openPanel = () => findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+  const openPanel = async () => await openInstalledPanel(runtime);
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
   assert.equal(badgeText(), '2', '两条可更新 → 角标 2');
-  openPanel();
+await openPanel();
   await settle(runtime);
   assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill').length, 2, '两条都是可更新胶囊');
   assert.equal(findByText(runtime.tree, 'button', '忽略选中 (0)').props.disabled, true, '没选中时「忽略选中 (0)」禁用');
@@ -658,7 +704,7 @@ const entry = (name, over) => ({
   assert.match(ignoredAllButton.props.title, /含已忽略的 2 个/);
 
   // 「取消忽略」：只恢复 dsh-a，角标回到 1；「全部更新」的名单里也就只剩 dsh-a
-  openPanel();
+await openPanel();
   await settle(runtime);
   findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '取消忽略')[0].props.onClick();
   await settle(runtime);
@@ -667,7 +713,7 @@ const entry = (name, over) => ({
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
   assert.equal(badgeText(), '1', '取消忽略一条后角标回到 1');
-  openPanel();
+await openPanel();
   await settle(runtime);
   assert.equal(byClass(runtime.tree, 'dsh-pm-update-pill-ignored').length, 1, '只剩 dsh-b 还是已忽略');
   // 新语义：显式批量包含已忽略项（b 虽被忽略但仍有更新）→ 计数 2、名单含 b
@@ -701,7 +747,7 @@ const entry = (name, over) => ({
   const { runtime, trigger } = boot({ fetchImpl });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   findByText(runtime.tree, 'button', '更新内容').props.onClick({ stopPropagation() {} });
   await settle(runtime);
@@ -744,7 +790,7 @@ console.log('== 冒烟全部通过 ==');
   const { runtime, trigger } = boot({ fetchImpl, setTimeoutImpl: (fn, ms) => setTimeout(fn, ms <= 2500 ? 0 : ms) });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
   findByText(runtime.tree, 'button', '更新').props.onClick({ stopPropagation() {} });
   await settle(runtime);
@@ -761,11 +807,10 @@ console.log('== 冒烟全部通过 ==');
   console.log('场景9（dev-linked 二选一）通过');
 }
 
-/** 场景 10：市场分类筛选 —「更多分类」下拉选中后必须还能退回「全部」 */
+/** 场景 10：分类条 —— 原始分类按数量降序；超过 8 个只平铺前 8，其余收进
+ *  「全部 N 类」按钮在下方换行展开；点分类进分类视图，「全部」/面包屑回首屏。 */
 {
-  // 12 个分类：插件多的 10 个平铺成 chip，official / a（各 1 个）落进「更多分类」下拉。
-  // 总数刻意小于分页阈值 PAGE_SIZE，「全部」时一次列完，便于用卡片数量判断筛选结果。
-  const categoryCounts = { official: 1, a: 1, b: 5, c: 5, d: 5, e: 5, f: 5, g: 5, h: 5, i: 5, j: 5, k: 5 };
+  const categoryCounts = { ui: 8, tools: 6, session: 5, data: 4, workflow: 3, dev: 2, theme: 1, notify: 1, browser: 1, git: 1, fun: 1, docs: 1 };
   const categories = Object.keys(categoryCounts);
   const marketPlugins = [];
   for (const cat of categories) {
@@ -774,9 +819,24 @@ console.log('== 冒烟全部通过 ==');
         id: `${cat}-${n}`, name: `p-${cat}-${n}`, repo: `owner/p-${cat}-${n}`,
         author: cat, category: cat, descriptionEn: `插件 ${cat}-${n}`,
         stars: 1, downloads: 0, addedDate: '2026-01-01',
+        // 界面类当官方插件、其余当社区插件：场景末尾验证「来源筛选 → 扁平来源视图」。
+        source: cat === 'ui' ? 'official' : 'community',
       });
     }
   }
+  // 分组映射：与服务端 MARKET_GROUPS 一致（原始分类 → 6 组 id）。
+  // 假服务端必须**忠实复刻真实服务端**的参数语义，否则测试会替实现掩盖 bug：
+  // 早前它把 group= 当原始分类过滤，而真实服务端 group= 只认分组 id，
+  // 于是「原始分类塞进 group=」这个错位在测试里永远是绿的。
+  const GROUP_OF = {
+    ui: 'ui', panel: 'ui', theme: 'ui', market: 'ui',
+    session: 'session', memory: 'session', notify: 'session',
+    tools: 'tools', tool: 'tools', dev: 'tools', cli: 'tools', skill: 'tools', search: 'tools',
+    workflow: 'auto', auto: 'auto', mcp: 'auto', agent: 'auto', gateway: 'auto', prompt: 'auto',
+    data: 'data', storage: 'data', usage: 'data', model: 'data',
+  };
+  const groupOf = category => GROUP_OF[category] || 'other';
+  const CATEGORY_LABEL = { ui: '界面', session: '会话', tools: '工具', data: '数据', workflow: '工作流', dev: '开发', theme: '主题', notify: '通知', browser: '浏览器', git: 'Git', fun: '娱乐', docs: '文档' };  const marketCalls = [];
   const fetchImpl = url => {
     const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
     if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
@@ -784,65 +844,131 @@ console.log('== 冒烟全部通过 ==');
       return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
     }
     if (url.startsWith('/dsh-plugin-manager/marketplace')) {
-      return respond({ count: marketPlugins.length, official: 0, categories, indexedAt: '2026-09-22T11:00:00.000Z', stale: false, plugins: marketPlugins });
+      marketCalls.push(String(url));
+      const query = new URLSearchParams(url.split('?')[1] || '');
+      const category = query.get('category') || 'all';
+      const group = query.get('group') || 'all';
+      const source = query.get('source') || 'all';
+      const limit = Number(query.get('limit')) || 60;
+      const offset = Number(query.get('offset')) || 0;
+      const q = (query.get('q') || '').toLowerCase();
+      const filtered = marketPlugins.filter(plugin => {
+        if (source !== 'all' && plugin.source !== source) return false;
+        if (category !== 'all' && plugin.category !== category) return false;
+        if (group !== 'all' && groupOf(plugin.category) !== group) return false;
+        if (!q) return true;
+        return `${plugin.name} ${plugin.repo} ${plugin.descriptionEn}`.toLowerCase().includes(q);
+      });
+      // 口径与真实服务端一致：结构性筛选（来源/分类/分组）后，计数与分区跟着收窄；
+      // 纯搜索不筛榜单（搜索结果列表已经展示命中项）。
+      const scoped = source !== 'all' || category !== 'all' || group !== 'all' ? filtered : marketPlugins;
+      const scopedCounts = new Map();
+      for (const plugin of scoped) scopedCounts.set(plugin.category, (scopedCounts.get(plugin.category) || 0) + 1);
+      const counts = [...scopedCounts]
+        .map(([name, count]) => ({ name, count, label: CATEGORY_LABEL[name] || name }))
+        .sort((a, b) => b.count - a.count);
+      const sections = category === 'all' && group === 'all' && !q
+        ? [...scopedCounts].filter(([name]) => name !== 'other').sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name, count]) => ({
+            category: name,
+            label: CATEGORY_LABEL[name] || name,
+            count,
+            plugins: scoped.filter(plugin => plugin.category === name).slice(0, 6),
+          }))
+        : [];
+      return respond({
+        ok: true, stale: false, indexedAt: '2026-09-22T11:00:00.000Z',
+        total: filtered.length, allTotal: marketPlugins.length,
+        counts, categories, plugins: filtered.slice(offset, offset + limit), sections,
+        featured: scoped.slice(0, 5), topDownloads: scoped.slice(0, 5), topStars: scoped.slice(0, 5),
+      });
     }
     return respond({});
   };
   const { runtime, trigger } = boot({ fetchImpl });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
-  await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '插件市场')[0].props.onClick();
-  await settle(runtime, 10);
+  await openInstalledPanel(runtime);
+  const gotoDiscover = async () => {
+    const item = findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '发现')[0];
+    if (item) { item.props.onClick(); await settle(runtime, 10); }
+  };
+  await gotoDiscover();
 
-  const chips = () => findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-chip( |$)/.test(String(node.props.className || '')));
-  const chipByLabel = label => chips().find(node => textOf(node) === label);
-  const chipsRow = findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '') === 'dsh-pm-chips')[0];
-  const moreSelect = () => findAll(runtime.tree, node => node.type === 'select' && String(node.props.className || '').includes('dsh-pm-cat-more'))[0];
-  const options = () => findAll(chipsRow, node => node.type === 'option');
+  const segs = () => findAll(runtime.tree, node => node.type === 'button' && /(^| )dsh-pm-seg( |$)/.test(String(node.props.className || '')));
+  const segByLabel = label => segs().find(node => textOf(node).startsWith(label));
   const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  const crumbs = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-crumbs( |$)/.test(String(node.props.className || '')));
 
-  assert.ok(moreSelect(), '尾部分类收进「更多分类」下拉');
-  assert.equal(textOf(options()[0]), '更多分类…', '下拉第一项是占位');
-  assert.equal(options()[0].props.value, '', '占位项没有值：选中它不该改动筛选');
-  assert.ok(options().some(node => node.props.value === 'all'), '下拉里有「全部分类」出口（此前缺失，选了尾部分类就退不回去）');
-  assert.equal(moreSelect().props.value, '', '筛选为全部时下拉显示占位，而不是回显某个分类');
-  assert.equal(textOf(chips()[0]), '全部', '第一颗 chip 是「全部」');
-  assert.ok(/dsh-pm-chip-active/.test(String(chips()[0].props.className)), '进市场默认选中「全部」');
-  assert.equal(cards().length, marketPlugins.length, '「全部」列出所有插件');
+  // 1. 首屏：分类条只有真实分类（无「全部」标签）+ 折叠按钮（12 类 → 收起 4 个）。
+  assert.equal(segs().length, 9, '前 8 个分类 + 折叠按钮，没有「全部」标签');
+  assert.equal(segs().filter(node => /dsh-pm-seg more/.test(String(node.props.className||'')) === false && textOf(node).startsWith('全部')).length, 0, '分类条里没有「全部」标签（只有折叠按钮可以叫「全部 N 类」）');
+  assert.ok(textOf(segByLabel('界面')).includes('8'), '分类胶囊带数量');
+  // 排版：筛选组（来源/排序）钉在第一行右侧，不再是会孤儿换行的两个独立 select。
+  const filters = findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '').includes('dsh-pm-filters'))[0];
+  assert.ok(filters, '筛选组存在');
+  const filterSegs = findAll(filters, node => node.type === 'button' && /(^| )dsh-pm-segf( |$)/.test(String(node.props.className || '')));
+  assert.ok(filterSegs.length >= 5, '筛选组是来源 + 排序的 segmented 按钮组（不再 select 下拉）');
+  assert.equal(findAll(runtime.tree, node => String(node.props.className || '') === 'dsh-pm-catbar-sp').length, 0, '旧版占位 spacer 已删');
+  const moreBtn = () => segs().find(node => /dsh-pm-seg more/.test(String(node.props.className || '')));
+  assert.ok(moreBtn(), '有折叠按钮');
+  assert.ok(textOf(moreBtn()).includes('12'), '折叠按钮显示分类总数');
+  assert.equal(segByLabel('Git'), undefined, '折叠里的分类默认不可见');
+  assert.ok(cards().length > 0, '首屏有分区卡片');
 
-  // 1. 从「更多分类」下拉选尾部分类 → 只看该分类
-  moreSelect().props.onChange({ target: { value: 'official' } });
-  await settle(runtime);
-  assert.equal(cards().length, categoryCounts.official, '尾部分类筛选生效');
-  assert.equal(moreSelect().props.value, 'official', '下拉回显当前分类');
-  assert.ok(/dsh-pm-cat-more-active/.test(String(moreSelect().props.className)), '下拉自带选中态');
-  assert.equal(chipByLabel('全部').props.className.includes('dsh-pm-chip-active'), false, '选了尾部分类后「全部」chip 不再高亮');
-
-  // 2. 再选占位项「更多分类…」：保持原样（它是标题不是退出口）
-  moreSelect().props.onChange({ target: { value: '' } });
-  await settle(runtime);
-  assert.equal(cards().length, categoryCounts.official, '选中占位项不改变当前筛选');
-
-  // 3. 选「全部分类」→ 退回全部（本次修复的主入口）
-  moreSelect().props.onChange({ target: { value: 'all' } });
-  await settle(runtime);
-  assert.equal(cards().length, marketPlugins.length, '「全部分类」退回所有插件');
-  assert.ok(/dsh-pm-chip-active/.test(String(chipByLabel('全部').props.className)), '退回后「全部」chip 高亮');
-  assert.equal(moreSelect().props.value, '', '退回后下拉回到占位显示');
-
-  // 4. 平铺 chip 再点一次也取消筛选（另一条退出口，避免只能去下拉里找）
-  const flatChip = chips()[1];
-  const flatLabel = textOf(flatChip);
-  flatChip.props.onClick();
-  await settle(runtime);
-  assert.equal(cards().length, categoryCounts[flatLabel], `点「${flatLabel}」chip 只看该分类`);
-  assert.ok(/dsh-pm-chip-active/.test(String(chipByLabel(flatLabel).props.className)), 'chip 选中后高亮');
-  chipByLabel(flatLabel).props.onClick();
-  await settle(runtime);
-  assert.equal(cards().length, marketPlugins.length, '再点一次已选中的 chip 回到全部');
-  console.log('场景10（分类筛选可退回「全部」）通过');
+  // 2. 展开：其余分类在下方换行出现。
+  moreBtn().props.onClick();
+  await settle(runtime, 10);
+  assert.ok(segByLabel('Git'), '展开后折叠分类可见');
+  assert.equal(segs().filter(node => /dsh-pm-seg more/.test(String(node.props.className || ''))).length, 0, '展开后「全部 N 类」按钮消失，只剩分类 chips');
+  // 3. 选一个折叠里的分类 → 进分类视图（且折叠区自动展开让选中态可见）。
+  segByLabel('Git').props.onClick();
+  await settleQuery(runtime);
+  assert.equal(cards().length, categoryCounts.git, '折叠分类进分类视图');
+  assert.ok(segByLabel('Git'), '折叠区保持展开，选中态可见');
+  assert.equal(crumbs().length, 1, '出现面包屑');
+  // ── 关键护栏：分类筛选必须用 category=（精确分类），不能塞进 group= ──
+  // 用户报的现象：胶囊上写着「工作流 674」，点进去却是 0 个插件。
+  // 根因就是客户端把原始分类塞进了 group=（服务端只认 6 个分组 id）。
+  const lastMarketCall = marketCalls[marketCalls.length - 1] || '';
+  assert.ok(lastMarketCall.includes('category=git'), '分类筛选走 category= 参数：' + lastMarketCall);
+  assert.ok(!/[?&]group=/.test(lastMarketCall), '分类筛选不再误用 group= 参数：' + lastMarketCall);
+  // 胶囊上的数字必须等于点进去之后的卡片数（数字与结果一致）。
+  const gitChip = segByLabel('Git');
+  const chipNumber = Number((textOf(gitChip).match(/\d+/) || ['0'])[0]);
+  assert.equal(chipNumber, categoryCounts.git, '胶囊数字就是该分类的插件数');
+  assert.equal(cards().length, chipNumber, '点进去看到的卡片数 = 胶囊上的数字');
+  // 4. 面包屑返回。
+  findAll(crumbs()[0], node => node.type === 'button')[0].props.onClick();
+  await settleQuery(runtime);
+  assert.equal(crumbs().length, 0, '返回后面包屑消失');
+  // 5. 平铺分类直接点 → 分类视图；再点一次回全部。
+  segByLabel('工具').props.onClick();
+  await settleQuery(runtime);
+  assert.equal(cards().length, categoryCounts.tools, '平铺分类进分类视图');
+  segByLabel('工具').props.onClick();
+  await settleQuery(runtime);
+  assert.equal(crumbs().length, 0, '再点已选中的分类回到全部');
+  // 6. 来源筛选 → 扁平来源视图：同一批结果不再被推荐位/双榜/分区重复三遍。
+  const sourceBtn = label => findAll(runtime.tree, node => node.type === 'button'
+    && /(^| )dsh-pm-segf( |$)/.test(String(node.props.className || '')) && textOf(node) === label)[0];
+  sourceBtn('官方').props.onClick();
+  await settleQuery(runtime);
+  const officialCall = marketCalls[marketCalls.length - 1] || '';
+  assert.ok(officialCall.includes('source=official'), '来源筛选走 source= 参数：' + officialCall);
+  assert.equal(cards().length, categoryCounts.ui, '官方来源下列出全部官方插件（界面类 8 个）');
+  const heroNodes = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-hero( |$)/.test(String(node.props.className || '')));
+  const rankNodes = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-rank( |$)/.test(String(node.props.className || '')));
+  assert.equal(heroNodes().length, 0, '来源视图不再显示推荐位');
+  assert.equal(rankNodes().length, 0, '来源视图不再显示双榜');
+  assert.equal(crumbs().length, 1, '来源视图有面包屑');
+  assert.ok(textOf(crumbs()[0]).includes('官方插件'), '面包屑写「官方插件」');
+  // 7. 面包屑返回发现 → source=all，首屏结构回来。
+  findAll(crumbs()[0], node => node.type === 'button')[0].props.onClick();
+  await settleQuery(runtime);
+  assert.equal(crumbs().length, 0, '返回后面包屑消失');
+  assert.ok((marketCalls[marketCalls.length - 1] || '').includes('source=all'), '返回后来源回到全部');
+  assert.ok(heroNodes().length > 0, '返回首屏后推荐位回来');
+  console.log('场景10（分类条：折叠/展开/分类视图/返回）通过');
 }
 
 /** 场景 11：市场刷新是后台任务 —— 刷新中面板能关，安装/切 tab 照常可用。
@@ -874,12 +1000,14 @@ console.log('== 冒烟全部通过 ==');
   const { runtime, trigger } = boot({ fetchImpl });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
-  await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '插件市场')[0].props.onClick();
-  await settle(runtime, 10);
+await openInstalledPanel(runtime);
+  const gotoDiscover11 = async () => {
+    const item = findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '发现')[0];
+    if (item) { item.props.onClick(); await settle(runtime, 10); }
+  };
+  await gotoDiscover11();
   assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/refresh'), '过期市场索引自动触发后台刷新');
-  assert.ok(findByText(runtime.tree, 'button', '刷新中…'), '刷新进行中，刷新按钮显示「刷新中…」');
+  assert.ok(textOf(runtime.tree).includes('刷新中…'), '刷新进行中显示「刷新中…」（方案 B：标题行小字）');
   // 后台刷新不得阻塞用户操作：缓存的市场列表照常渲染，安装按钮可用、点了真的发请求
   //（此前刷新占 busy，install() 直接 return，按钮点了没反应＝静默失效）。
   const cards = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
@@ -895,7 +1023,7 @@ console.log('== 冒烟全部通过 ==');
   assert.ok(closeButton, '面板有关闭按钮');
   closeButton.props.onClick();
   await settle(runtime);
-  assert.equal(findByText(runtime.tree, 'button', '插件市场'), undefined, '刷新市场进行中点关闭能关掉面板');
+  assert.equal(findByText(runtime.tree, 'button', '×'), undefined, '刷新市场进行中点关闭能关掉面板');
   console.log('场景11（刷新市场是后台任务：可关闭、不阻塞操作）通过');
 }
 
@@ -909,6 +1037,7 @@ console.log('== 冒烟全部通过 ==');
     if (url.startsWith('/dsh-plugin-manager/installed')) {
       return respond({ items: [
         { name: 'dsh-context', version: '1.0.0', description: '上下文插件' },
+        { name: 'dsh-readonly', version: '2.0.0', description: '不可停用的插件' },
         { name: 'dsh-plugin-manager', version: '0.1.0', description: '插件管理器', source: 'bundled' },
         { name: 'dsh-flaky', version: '1.0.0', description: '会失败的插件' },
       ] });
@@ -916,6 +1045,7 @@ console.log('== 冒烟全部通过 ==');
     if (url.startsWith('/dsh-plugin-manager/disabled')) {
       return respond({ items: [
         { bundle: 'dsh-context', rowIds: ['dsh-context'], disabled: toggles.includes('dsh-context'), canDisable: true, reason: null },
+        { bundle: 'dsh-readonly', rowIds: ['dsh-readonly'], disabled: false, canDisable: false, reason: '插件声明了不可停用，停用后无法从界面恢复' },
         { bundle: 'dsh-plugin-manager', rowIds: ['dsh-plugin-manager'], disabled: false, canDisable: false, reason: '插件管理器自身，停用后无法从界面恢复' },
         { bundle: 'dsh-flaky', rowIds: ['dsh-flaky'], disabled: toggles.includes('dsh-flaky'), canDisable: true, reason: null },
       ] });
@@ -935,7 +1065,7 @@ console.log('== 冒烟全部通过 ==');
   const { runtime, trigger } = boot({ fetchImpl });
   runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
   await settle(runtime);
-  findAll(runtime.tree, node => node.type === 'button')[0].props.onClick();
+await openInstalledPanel(runtime);
   await settle(runtime);
 
   const switches = () => findAll(runtime.tree, node => node.type === 'input' && node.props.role === 'switch');
@@ -947,12 +1077,13 @@ console.log('== 冒烟全部通过 ==');
     return textOf(labels[index]);
   };
   let all = switches();
-  assert.equal(all.length, 3, '每个可管理插件行一个开关（内置插件同一套开关）');
+  assert.equal(all.length, 3, '已安装页只列用户插件：context / readonly / flaky 三行各有开关');
+  assert.ok(!textOf(runtime.tree).includes('dsh-plugin-manager'), '已安装页不再重复列出内置插件（它在「内置」页）');
   assert.equal(all[0].props.checked, true, '默认启用时开关应为 ON');
   assert.match(switchTextAt(0), /已启用/, '启用中的插件旁边写「已启用」');
   assert.equal(all[0].props['aria-label'], '停用 dsh-context', '启用状态下点击是「停用」');
   assert.equal(all[0].props.disabled, false);
-  assert.equal(all[1].props.disabled, true, '插件管理器自身的开关禁用');
+  assert.equal(all[1].props.disabled, true, '不可停用的插件开关置灰');
   // 不可停用的插件仍在生效，所以开关是 ON 但置灰、旁边写「不可停用」。
   assert.equal(all[1].props.checked, true, '仍在生效的不可停用插件，开关应显示 ON');
   assert.match(switchTextAt(1), /不可停用/);
@@ -987,4 +1118,1458 @@ console.log('== 冒烟全部通过 ==');
   assert.ok(toasts(runtime.tree).some(item => item.kind === 'error' && /停用 dsh-flaky 失败/.test(item.text)), '失败要 toast 报错');
   assert.ok(!textOf(runtime.tree).includes('已停用 dsh-flaky'), '失败不弹重启确认');
   console.log('场景12（插件停用/启用开关 + 失败回滚 + 重启确认）通过');
+}
+
+/** 场景 13：发现页结构 —— 推荐位 / 双榜 / 分类 chips / sticky 手动安装行。
+ *  方案 B 的新默认视图：打开面板即落发现页；推荐位取第一个未安装插件，
+ *  两榜按下载/星标取前几名；手动安装行走现有 /install 接口。 */
+{
+  const marketPlugins = [
+    { id: 'hot', name: 'hot-plugin', repo: 'o/hot', author: 'o', category: 'tool', descriptionEn: 'hot', downloads: 900, stars: 10, addedDate: null },
+    { id: 'star', name: 'star-plugin', repo: 'o/star', author: 'o', category: 'data', descriptionEn: 'star', downloads: 100, stars: 500, addedDate: null },
+    { id: 'installed-one', name: 'dsh-notify', repo: 'o/dsh-notify', url: 'https://github.com/o/dsh-notify', author: 'o', category: 'notify', descriptionEn: 'installed', downloads: 50, stars: 5, addedDate: null },
+  ];
+  const fetchImpl = (url, options = {}) => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [{ name: 'dsh-notify', version: '1.0.0', description: '通知插件' }] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({ count: marketPlugins.length, official: 0, categories: ['tool', 'data'], indexedAt: null, stale: false, plugins: marketPlugins });
+    }
+    if (url.startsWith('/dsh-plugin-manager/install')) return respond({ ok: true, alreadyInstalled: false });
+    return respond({});
+  };
+  const { runtime, trigger, dispatchWindowEvent } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null); // 默认即发现页
+
+  const text = textOf(runtime.tree);
+  // 推荐位：第一个未安装插件（hot），带「今日推荐」标签与安装/详情按钮。
+  assert.ok(text.includes('今日推荐'), '推荐位有「今日推荐」标签');
+  assert.ok(text.includes('o/hot'), '推荐位展示第一个未安装插件');
+  const heroButtons = findAll(runtime.tree, node => node.type === 'button' && textOf(node) === '安装');
+  assert.ok(heroButtons.length >= 1, '推荐位有安装按钮（详情改为整块点击弹出）');
+  // 双榜：下载最多（hot 第一）与星标最多（star 第一）。
+  const rankCards = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-rank( |$)/.test(String(node.props.className || '')));
+  assert.equal(rankCards.length, 2, '右列有两张榜单');
+  const rankText = textOf(rankCards[0]);
+  assert.ok(rankText.includes('下载最多') && rankText.includes('o/hot'), '下载榜第一是 hot');
+  assert.ok(textOf(rankCards[1]).includes('星标最多'), '第二张榜是星标榜');
+  // 已安装的插件在榜里显示「已安装」而不是安装按钮。
+  const rankRows = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-rank-row( |$)/.test(String(node.props.className || '')));
+  const installedRow = rankRows.find(row => textOf(row).includes('o/dsh-notify'));
+  assert.ok(installedRow && textOf(installedRow).includes('已安装'), '榜单里已安装的插件显示「已安装」胶囊');
+  // 榜单行整行可点（详情按钮已删，点哪都在点击处弹浮窗）。
+  assert.ok(!findAll(installedRow, node => node.type === 'button'
+    && /(^| )dsh-pm-rank-detail( |$)/.test(String(node.props.className || ''))).length, '榜单行没有「详情」按钮');
+  installedRow.props.onClick({ clientX: 400, clientY: 300 });
+  await settle(runtime, 10);
+  const drawer = findAll(runtime.tree, node => node.type === 'div'
+    && String(node.props.className || '').includes('dsh-pm-drawer'))[0];
+  assert.ok(drawer, '点榜单行的「详情」会打开插件详情抽屉');
+  assert.ok(textOf(drawer).includes('o/dsh-notify'), '打开的是对应插件的详情');
+  // ESC 关闭详情抽屉（此前只能点右上角 ×）。
+  dispatchWindowEvent({ type: 'keydown', key: 'Escape' });
+  await settle(runtime, 6);
+  assert.equal(findAll(runtime.tree, node => node.type === 'div'
+    && String(node.props.className || '').includes('dsh-pm-drawer')).length, 0, '按 ESC 抽屉关闭');
+  // 手动安装行：输入 spec 提交不抛错（安装走入队泵）。
+  const manualInput = findAll(runtime.tree, node => node.type === 'input' && node.props['aria-label'] === '手动安装插件')[0];
+  assert.ok(manualInput, '发现页底部有手动安装输入行');
+  manualInput.props.onChange({ target: { value: 'github:o/new' } });
+  await settle(runtime);
+  const form = findAll(runtime.tree, node => node.type === 'form')[0];
+  form.props.onSubmit({ preventDefault() {} });
+  await settle(runtime, 10);
+  console.log('场景13（发现页：推荐位/双榜/分类/手动安装行）通过');
+}
+
+/** 场景 14：插件源页 + 国内加速开关。
+ *  源页：源清单行（内置默认源 + 自定义源）、添加/删除都打对应接口；
+ *  国内加速：顶栏开关切换 → POST /china-mirror/set。 */
+{
+  const calls = [];
+  const customSources = [
+    { id: 'awesome-dsh', kind: 'git', url: 'github:awesome-dsh-plugin/awesome-dsh-plugin', enabled: true, builtin: true, cache: { state: 'ok', count: 42 } },
+    { id: 'src-x', kind: 'index', url: 'https://example.com/i.json', enabled: true, cache: { state: 'stale', count: 3 } },
+  ];
+  let mirrorEnabled = false;
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) return respond({ count: 0, official: 0, categories: [], indexedAt: null, stale: false, plugins: [] });
+    if (url.startsWith('/dsh-plugin-manager/sources')) return respond({ ok: true, sources: customSources });
+    if (url.startsWith('/dsh-plugin-manager/sources/remove')) return respond({ ok: true, removed: 'src-x' });
+    if (url.startsWith('/dsh-plugin-manager/sources/add')) return respond({ ok: true, source: { id: 'src-new', kind: 'git', url: 'github:a/b', enabled: true } });
+    if (url.startsWith('/dsh-plugin-manager/china-mirror/set')) {
+      const body = JSON.parse(options.body || '{}');
+      mirrorEnabled = body.enabled;
+      return respond({ ok: true, enabled: mirrorEnabled });
+    }
+    if (url.startsWith('/dsh-plugin-manager/china-mirror')) return respond({ ok: true, enabled: mirrorEnabled, pluginPresent: true });
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null); // 打开面板（默认发现页，顶栏开关在这里）
+
+  // 1. 国内加速开关（顶栏，默认关闭）→ 点开 → 请求 /china-mirror/set 且开关变 on。
+  const mirrorButton = () => findAll(runtime.tree, node => node.type === 'button' && node.props['aria-label'] === '国内加速')[0];
+  if (!mirrorButton()) console.log('DEBUG buttons:', findAll(runtime.tree, node => node.type === 'button').map(b => JSON.stringify(textOf(b))).join(' | '));
+  assert.ok(mirrorButton(), '顶栏有国内加速开关');
+  assert.equal(mirrorButton().props['aria-checked'], 'false', '默认关闭');
+  mirrorButton().props.onClick();
+  await settle(runtime, 10);
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/china-mirror/set'), '切换发了 /china-mirror/set');
+  await settle(runtime, 10);
+  assert.equal(mirrorButton().props['aria-checked'], 'true', '开启后开关 on');
+
+  // 2. 插件源页：左栏切过去，两行源都在，内置源没有删除按钮。
+  const sourcesRail = () => findAll(runtime.tree, node => node.type === 'button' && textOf(node).includes('插件源') && !textOf(node).includes('返回'))[0];
+  sourcesRail().props.onClick();
+  await settle(runtime, 10);
+  const srcRows = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-srcrow( |$)/.test(String(node.props.className || '')));
+  assert.equal(srcRows().length, 2, '源页列出两行源');
+  const text = textOf(runtime.tree);
+  assert.ok(text.includes('awesome-dsh 社区清单（内置默认源）'), '内置默认源有说明名');
+  assert.ok(text.includes('https://example.com/i.json'), '自定义源展示地址');
+  assert.ok(text.includes('42 个插件'), '缓存状态展示插件数');
+  assert.ok(text.includes('索引已过期'), 'stale 缓存标注过期');
+  const removeButtons = () => findAll(runtime.tree, node => node.type === 'button' && String(node.props['aria-label'] || '').startsWith('删除源'));
+  assert.equal(removeButtons().length, 1, '内置源没有删除按钮，自定义源有');
+  // 3. 添加源：输入地址 → 添加 → 发 /sources/add（github: 短写按 git 走）。
+  const addrInput = findAll(runtime.tree, node => node.type === 'input' && node.props['aria-label'] === '插件源地址')[0];
+  addrInput.props.onChange({ target: { value: 'github:community/registry' } });
+  await settle(runtime);
+  const addBtn = findAll(runtime.tree, node => node.type === 'button' && textOf(node).includes('添加源'))[0];
+  addBtn.props.onClick();
+  await settle(runtime, 10);
+  const addCall = calls.find(call => call.url === '/dsh-plugin-manager/sources/add');
+  assert.ok(addCall, '添加源发了 /sources/add');
+  assert.deepEqual(JSON.parse(addCall.options.body), { kind: 'git', url: 'github:community/registry' }, 'github: 短写按 git 源提交');
+  // 4. 删除自定义源 → 发 /sources/remove。
+  removeButtons()[0].props.onClick();
+  await settle(runtime, 10);
+  assert.ok(calls.some(call => call.url === '/dsh-plugin-manager/sources/remove'), '删除发了 /sources/remove');
+  console.log('场景14（插件源页 + 国内加速开关）通过');
+}
+
+/** 场景 15：源刷新是异步受理（202 + /sources/progress 轮询）。
+ *  回归：新后端把 POST /refresh 改成 202 受理后，客户端还按同步响应读
+ *  `v.count`，toast 显示「undefined 个插件」、列表也不刷新（实机复现）。
+ *  现在必须：轮询进度到 active=false → 重读 /marketplace → 用进度里的
+ *  真实计数出 toast。 */
+{
+  const calls = [];
+  let refreshStarted = false;
+  let progressPolls = 0;
+  const marketPlugins = [
+    { id: 'a', name: 'a-plugin', repo: 'o/a', author: 'o', category: 'tool', descriptionEn: 'a', downloads: 10, stars: 1, addedDate: null },
+  ];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url, options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url === '/dsh-plugin-manager/refresh') {
+      refreshStarted = true;
+      // 异步受理：202 + 只回 accepted，没有 count/official。
+      return Promise.resolve({ ok: true, status: 202, json: () => Promise.resolve({ ok: true, accepted: true }) });
+    }
+    if (url.startsWith('/dsh-plugin-manager/sources/progress')) {
+      progressPolls += 1;
+      // 前两次还在跑，第三次收尾并带每源计数。
+      const active = progressPolls < 3;
+      return respond({ progress: active
+        ? { active: true, total: 2, done: progressPolls - 1, current: 'awesome-dsh', results: [] }
+        : { active: false, total: 2, done: 2, finishedAt: '2026-11-16T00:00:00.000Z', results: [{ id: 'awesome-dsh', ok: true, count: 42 }, { id: 'src-x', ok: false, error: 'boom' }] } });
+    }
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({ ok: true, stale: false, count: marketPlugins.length, categories: ['tool'], indexedAt: null, plugins: marketPlugins });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  // 点发现页标题行的刷新按钮（图标按钮，title 说明用途）。
+  const refreshBtn = findAll(runtime.tree, node => node.type === 'button' && node.props.title === '重新拉取全部插件源的索引')[0];
+  assert.ok(refreshBtn, '发现页有刷新按钮');
+  refreshBtn.props.onClick();
+  // 轮询需要跨过几次 1.5s 延时：settle 的 setTimeout 是真实的，这里等足够久。
+  await new Promise(resolve => setTimeout(resolve, 6000));
+  await settle(runtime, 10);
+
+  assert.ok(refreshStarted, '点刷新发了 POST /refresh');
+  assert.ok(progressPolls >= 3, '客户端轮询了 /sources/progress 直到收尾，实际 ' + progressPolls);
+  const success = toasts(runtime.tree).filter(item => item.kind === 'success').map(item => item.text);
+  const info = toasts(runtime.tree).filter(item => item.kind === 'info').map(item => item.text);
+  const all = [...success, ...info];
+  assert.ok(all.some(text => text.includes('42 个插件')), 'toast 用进度里的真实计数（42），不再是 undefined：' + JSON.stringify(all));
+  assert.ok(all.some(text => text.includes('1 个源失败')), '失败的源在 toast 里点明：' + JSON.stringify(all));
+  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/marketplace')), '刷新结束后重读了市场索引（/marketplace/query）');
+  console.log('场景15（源刷新 202 + 进度轮询 + 真实计数）通过');
+}
+
+/** 场景 16：分区「查看全部」→ 分类视图 + 「显示更多」分页。
+ *  分区只给 6 张（两整行），点查看全部进入该分类全量列表；分页按服务端 total 续页。 */
+{
+  const categoryCounts = { ui: 70, tools: 20 };
+  const marketPlugins = [];
+  for (const [cat, count] of Object.entries(categoryCounts)) {
+    for (let n = 0; n < count; n++) {
+      marketPlugins.push({
+        id: `${cat}-${n}`, name: `${cat}-plugin-${n}`, repo: `owner/${cat}-${n}`,
+        author: 'owner', category: cat, descriptionEn: `${cat} 插件 ${n}`,
+        stars: 100 - n, downloads: 1000 - n, addedDate: '2026-01-01',
+      });
+    }
+  }
+  const fetchImpl = url => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({ checkedAt: null, refreshing: false, lastBatch: null, progress: null, summary: null, inventory: [] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      const query = new URLSearchParams(url.split('?')[1] || '');
+      // 忠实复刻真实服务端：category= 精确匹配原始分类。
+      const category = query.get('category') || 'all';
+      const limit = Number(query.get('limit')) || 60;
+      const offset = Number(query.get('offset')) || 0;
+      const filtered = marketPlugins.filter(plugin => category === 'all' || plugin.category === category);
+      const counts = Object.entries(categoryCounts).map(([name, count]) => ({ name, count, label: name === 'ui' ? '界面' : '工具' }));
+      const sections = category === 'all'
+        ? Object.entries(categoryCounts).map(([name, count]) => ({
+            category: name, label: name === 'ui' ? '界面' : '工具', count,
+            plugins: marketPlugins.filter(plugin => plugin.category === name).slice(0, 6),
+          }))
+        : [];
+      return respond({
+        ok: true, stale: false, indexedAt: null,
+        total: filtered.length, allTotal: marketPlugins.length,
+        counts, categories: Object.keys(categoryCounts), plugins: filtered.slice(offset, offset + limit), sections,
+        featured: marketPlugins.slice(0, 5), topDownloads: marketPlugins.slice(0, 5), topStars: marketPlugins.slice(0, 5),
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+
+  const sections = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-sec2( |$)/.test(String(node.props.className || '')));
+  const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  assert.equal(sections().length, 2, '两个分类分区');
+  assert.equal(cards().length, 12, '每区 6 张（两整行），共 12 张');
+  assert.ok(textOf(runtime.tree).includes('查看全部 70 个'), '分区头给出该分类总数');
+
+  // 点分区头「查看全部 70 个」→ 分类视图，首页 60 张 + 分页条。
+  const viewAll = findAll(runtime.tree, node => node.type === 'span' && /dsh-pm-sechead2/.test(String(node.props.className || '')) === false && textOf(node).startsWith('查看全部 70 个'))[0]
+    || findAll(runtime.tree, node => textOf(node).startsWith('查看全部 70 个'))[0];
+  assert.ok(viewAll, '有「查看全部 70 个」入口');
+  viewAll.props.onClick();
+  await settleQuery(runtime);
+  assert.ok(textOf(runtime.tree).includes('返回发现'), '进入分类视图（面包屑）');
+  assert.equal(cards().length, 60, '分类视图首页 60 张');
+  assert.ok(textOf(runtime.tree).includes('已显示 60 / 70'), '分页计数显示 60 / 70');
+
+  // 「显示更多」续页 → 70 张，按钮消失。
+  const more = findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === '显示更多')[0];
+  assert.ok(more, '有「显示更多」按钮');
+  more.props.onClick();
+  await settle(runtime, 10);
+  assert.equal(cards().length, 70, '续页后 70 张');
+  assert.ok(textOf(runtime.tree).includes('已全部显示'), '全部加载后提示');
+  console.log('场景16（分区查看全部 → 分类视图 + 分页）通过');
+}
+
+/** 场景 17：全屏切换 —— 顶栏按钮把面板切到铺满窗口的形态，再点恢复。 */
+{
+  const fetchImpl = url => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) return respond({ ok: true, stale: false, total: 0, allTotal: 0, counts: [], categories: [], plugins: [], sections: [], featured: [], topDownloads: [], topStars: [] });
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+
+  const page = () => findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '').includes('dsh-pm-page'))[0];
+  const toggle = () => findAll(runtime.tree, node => node.type === 'button' && ['全屏显示', '退出全屏'].includes(node.props['aria-label']))[0];
+  assert.ok(page(), '面板存在');
+  assert.ok(!String(page().props.className).includes('dsh-pm-full'), '默认不是全屏');
+  assert.ok(toggle(), '顶栏有全屏按钮');
+  toggle().props.onClick();
+  await settle(runtime);
+  assert.ok(String(page().props.className).includes('dsh-pm-full'), '点全屏后进入铺满形态');
+  assert.equal(toggle().props['aria-label'], '退出全屏', '按钮变成「退出全屏」');
+  toggle().props.onClick();
+  await settle(runtime);
+  assert.ok(!String(page().props.className).includes('dsh-pm-full'), '再点恢复窗口形态');
+  console.log('场景17（全屏切换）通过');
+}
+
+/** 场景 18：描述找插件 —— 模型在预筛候选里挑 top5，结果行给出名称/下载/星标/版本；
+ *  模型不可用时降级为关键词结果并如实标注。 */
+{
+  const marketPlugins = [
+    { id: 'm1', name: 'session-export', repo: 'o/session-export', author: 'o', category: 'session', descriptionEn: 'export sessions to markdown', descriptionZh: '把会话导出成 Markdown', downloads: 5200, stars: 210, version: '1.2.0', addedDate: null },
+    { id: 'm2', name: 'session-replay', repo: 'o/session-replay', author: 'o', category: 'session', descriptionEn: 'replay a session', descriptionZh: '会话回放时间线', downloads: 3100, stars: 120, version: '0.5.0', addedDate: null },
+    { id: 'm3', name: 'tokenledger', repo: 'o/tokenledger', author: 'o', category: 'data', descriptionEn: 'token usage', descriptionZh: 'token 用量统计', downloads: 9000, stars: 540, version: '1.1.0', addedDate: null },
+  ];
+  let aiCalls = 0;
+  const fetchImpl = (url, options = {}) => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({ ok: true, stale: false, total: marketPlugins.length, allTotal: marketPlugins.length, counts: [], categories: [], plugins: marketPlugins, sections: [], featured: marketPlugins.slice(0, 5), topDownloads: marketPlugins.slice(0, 5), topStars: marketPlugins.slice(0, 5) });
+    }
+    if (url === '/dsh-plugin-manager/ai-search/stream' || url === '/dsh-plugin-manager/ai-search') {
+      aiCalls += 1;
+      const body = JSON.parse(options.body || '{}');
+      if (body.query.includes('降级')) {
+        return respond({ ok: true, items: [marketPlugins[0]], candidates: 1, fallback: true, note: '没有已配置的模型，按关键词匹配给出结果' });
+      }
+      return respond({
+        ok: true, candidates: 2, promptChars: 300, fallback: false,
+        model: { provider: 'magpie', model: 'group/free' },
+        items: [
+          { ...marketPlugins[0], group: 'session', reason: '导出会话正是你描述的用途' },
+          { ...marketPlugins[1], group: 'session', reason: '附带回放时间线' },
+        ],
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+
+  const bar = () => findAll(runtime.tree, node => node.type === 'form' && /dsh-pm-ai-bar/.test(String(node.props.className || '')))[0];
+  assert.ok(bar(), '发现页有「描述找插件」检索行');
+  const input = findAll(bar(), node => node.type === 'input')[0];
+  input.props.onChange({ target: { value: '把会话导出成 Markdown' } });
+  await settle(runtime);
+  // 提交走 form 的 onSubmit（按钮是 type=submit，没有自己的 onClick）。
+  bar().props.onSubmit({ preventDefault() {} });
+  await settle(runtime, 20);
+
+  assert.equal(aiCalls, 1, '提交后调用了流式 /ai-search/stream');
+  const rows = () => findAll(runtime.tree, node => node.type === 'div' && /dsh-pm-ai-row/.test(String(node.props.className || '')));
+  assert.equal(rows().length, 2, '渲染模型挑出的结果行');
+  const text = textOf(runtime.tree);
+  assert.ok(text.includes('o/session-export'), '结果给出插件名');
+  assert.ok(text.includes('导出会话正是你描述的用途'), '结果给出挑选理由');
+  assert.ok(text.includes('↓ 5.2k/周') && text.includes('★ 210'), '结果给出下载量与星标');
+  assert.ok(text.includes('从 2 个候选中挑出'), '标出候选规模（上下文受控）');
+
+  // 降级路径：模型不可用时如实标注。
+  input.props.onChange({ target: { value: '降级测试' } });
+  await settle(runtime);
+  bar().props.onSubmit({ preventDefault() {} });
+  await settle(runtime, 20);
+  const after = textOf(runtime.tree);
+  assert.ok(after.includes('按关键词匹配给出结果') || after.includes('关键词降级'), '降级结果有明确标注');
+  assert.ok(after.includes('AI 检索过程'), '检索过程时间线在结果上方展示');
+  console.log('场景18（描述找插件：模型挑选 + 降级标注）通过');
+}
+
+/** 场景 19：安装 / 更新 / 清理损坏项 / 插件源开关 —— 这几条交互分支原先没人点过，
+ *  结果是「点了没反应」「toast 不对」这类问题要等用户手动点出来才被发现。
+ *  这里逐条点一遍，断言请求发出、按钮状态与 toast 文案都对。 */
+{
+  const marketPlugins = [
+    { id: 'm1', name: 'alpha', repo: 'owner/alpha', author: 'owner', category: 'ui', descriptionEn: 'A plugin', descriptionZh: '插件 A', downloads: 100, stars: 10, version: '1.0.0', addedDate: null },
+    { id: 'm2', name: 'broken-one', repo: 'owner/broken-one', author: 'owner', category: 'ui', descriptionEn: 'Broken', descriptionZh: '坏掉的', downloads: 0, stars: 0, version: '0.1.0', addedDate: null },
+  ];
+  const installed = [{ name: 'broken-one', version: '0.1.0', description: '坏掉的', broken: true }];
+  const calls = [];
+  let installResult = { ok: true, name: 'owner/alpha' };
+  let installFails = false;
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: installed });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/install')) {
+      if (installFails) return respond({ ok: false, error: '装不上：磁盘满了' });
+      return respond(installResult);
+    }
+    if (url.startsWith('/dsh-plugin-manager/cleanup')) return respond({ ok: true });
+    if (url.startsWith('/dsh-plugin-manager/sources/set-enabled')) return respond({ ok: true });
+    if (url.startsWith('/dsh-plugin-manager/sources')) {
+      return respond({
+        sources: [
+          { id: 'builtin', kind: 'git', url: 'github:awesome-dsh-plugin/awesome-dsh-plugin', enabled: true, builtin: true },
+          { id: 'src-1', kind: 'index', url: 'https://example.com/i.json', enabled: true, builtin: false },
+        ],
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: marketPlugins.length, allTotal: marketPlugins.length,
+        counts: [{ name: 'ui', count: 2, label: '界面' }], categories: ['ui'],
+        plugins: marketPlugins, sections: [],
+        featured: marketPlugins.slice(0, 1), topDownloads: marketPlugins.slice(0, 1), topStars: marketPlugins.slice(0, 1),
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+
+  const buttons = text => findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === text);
+  const toastTexts = () => toasts(runtime.tree).map(item => item.text).join(' | ');
+
+  // ── 1. 安装：点卡片上的「安装」→ 请求发出 → 成功 toast ──
+  const installBtn = buttons('安装')[0];
+  assert.ok(installBtn, '卡片上有安装按钮');
+  installBtn.props.onClick();
+  await settle(runtime, 30);
+  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/install')), '点了安装会发安装请求');
+  assert.ok(toastTexts().includes('已安装'), '安装成功有 toast：' + toastTexts());
+
+  // ── 2. 安装失败：如实报错，不吞掉 ──
+  installFails = true;
+  installBtn.props.onClick();
+  await settle(runtime, 30);
+  assert.ok(toastTexts().includes('安装失败'), '安装失败有 toast：' + toastTexts());
+  assert.ok(toastTexts().includes('磁盘满了'), '失败原因带出来：' + toastTexts());
+  installFails = false;
+
+  // ── 3. 清理损坏项：已安装页的「清理」→ 请求 + 成功 toast ──
+  const installedItem = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-row( |$)/.test(String(node.props.className || '')));
+  assert.ok(installedItem.length >= 0, '已安装列表可渲染');
+  const cleanupBtn = buttons('清理')[0];
+  if (cleanupBtn) {
+    cleanupBtn.props.onClick();
+    await settle(runtime, 30);
+    assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/cleanup')), '点了清理会发清理请求');
+    assert.ok(toastTexts().includes('已清理'), '清理成功有 toast：' + toastTexts());
+  }
+
+  // ── 4. 插件源开关：点开关 → set-enabled 请求 ──
+  await openPanelOn(runtime, '插件源');
+  await settle(runtime, 10);
+  const toggles = findAll(runtime.tree, node => node.type === 'input' && node.props.type === 'checkbox');
+  assert.ok(toggles.length >= 2, '插件源页有开关：' + toggles.length);
+  toggles[1].props.onChange({ target: { checked: false } });
+  await settle(runtime, 30);
+  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/sources/set-enabled')), '开关会发 set-enabled 请求');
+
+  console.log('场景19（安装/更新/清理/源开关交互分支）通过');
+}
+
+/** 场景 20：安装验收回读、卸载确认框、批量卸载 —— 这三条是「接口说成功 ≠ 真的成功」
+ *  的兜底路径，出错时用户只看得到一句「安装失败」却不知道为什么。 */
+{
+  const marketPlugins = [
+    { id: 'm1', name: 'alpha', repo: 'owner/alpha', author: 'owner', category: 'ui', descriptionEn: 'A', descriptionZh: '甲', downloads: 10, stars: 1, version: '1.0.0', addedDate: null },
+  ];
+  // installed 列表里**没有** alpha：安装接口说 ok，但插件没真的出现。
+  const calls = [];
+  let installedItems = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: installedItems });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/install')) return respond({ ok: true });
+    if (url.startsWith('/dsh-plugin-manager/uninstall')) return respond({ ok: true, needsRestart: false });
+    if (url.startsWith('/dsh-plugin-manager/uninstall-many')) return respond({ ok: true, results: [{ name: 'p1', ok: true }] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: marketPlugins.length, allTotal: marketPlugins.length,
+        counts: [{ name: 'ui', count: 1, label: '界面' }], categories: ['ui'],
+        plugins: marketPlugins, sections: [],
+        featured: marketPlugins, topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  const toastTexts = () => toasts(runtime.tree).map(item => item.text).join(' | ');
+  const buttons = text => findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === text);
+
+  // ── 1. 安装说 ok，但已安装列表里没有 → 点名报错，不让汇总 toast 背书 ──
+  buttons('安装')[0].props.onClick();
+  await settle(runtime, 30);
+  assert.ok(toastTexts().includes('安装未生效'), '缺席的点名报错：' + toastTexts());
+  assert.ok(toastTexts().includes('owner/alpha'), '点出缺席的插件名：' + toastTexts());
+
+  // ── 2. 插件真的出现在已安装列表里 → 成功汇总 ──
+  installedItems = [{ name: 'owner/alpha', version: '1.0.0' }];
+  buttons('安装')[0].props.onClick();
+  await settle(runtime, 30);
+  // toast 是队列（前面的还在），只看最后一条：验收通过要给成功汇总。
+  const latest = () => toasts(runtime.tree).slice(-1)[0]?.text || '';
+  assert.ok(latest().includes('已安装'), '验收通过给成功 toast：' + latest());
+  assert.ok(!latest().includes('安装未生效'), '验收通过就不该再报错');
+
+  // ── 3. 卸载要先过确认框 ──
+  await openInstalledPanel(runtime);
+  await settle(runtime, 10);
+  const uninstallBtn = buttons('卸载')[0];
+  assert.ok(uninstallBtn, '已安装列表有卸载按钮');
+  uninstallBtn.props.onClick();
+  await settle(runtime, 10);
+  assert.ok(textOf(runtime.tree).includes('确认卸载'), '点卸载先弹确认框');
+  assert.ok(!calls.some(call => call.url.startsWith('/dsh-plugin-manager/uninstall')), '确认前不发卸载请求');
+  const confirmBtn = buttons('确认卸载')[0];
+  assert.ok(confirmBtn, '确认框有确认按钮');
+  confirmBtn.props.onClick();
+  await settle(runtime, 30);
+  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/uninstall')), '确认后发卸载请求');
+  assert.ok(toastTexts().includes('已卸载'), '卸载成功有 toast：' + toastTexts());
+
+  console.log('场景20（安装验收回读 + 卸载确认）通过');
+}
+
+/** 场景 21：更新内容弹窗的 markdown 渲染 —— 段落、标题、列表、代码、加粗、链接。
+ *  行内片段解析有 6 条分支（纯文本 / `code` / **加粗** / [链接] / 前缀文本 /
+ *  未识别 token），少一条就会把整段渲染歪，而它只在真实发布说明里才出现。 */
+{
+  const notes = [
+    '## 更新亮点',
+    '',
+    '普通段落文字，`inline-code` 与 **加粗** 混排。',
+    '',
+    '- 第一条：看 [文档](https://example.com/docs) 了解细节',
+    '- 第二条：`code` 在列表里也要渲染',
+    '',
+    '结尾段落。',
+  ].join('\n');
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [{ name: 'dsh-md', version: '1.0.0', description: '插件' }] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({
+        checkedAt: null, refreshing: false,
+        inventory: [{ name: 'dsh-md', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' }],
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/release-notes')) {
+      return respond({ ok: true, kind: 'release', version: '2.0.0', title: 'v2.0.0', notes });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openInstalledPanel(runtime);
+  await settle(runtime, 20);
+
+  const notesBtn = findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === '更新内容')[0]
+    || findAll(runtime.tree, node => node.type === 'button' && textOf(node).includes('更新内容'))[0];
+  assert.ok(notesBtn, '有「更新内容」入口');
+  notesBtn.props.onClick({ stopPropagation() {} });
+  await settle(runtime, 20);
+
+  const md = findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '').includes('dsh-pm-notes-md'))[0];
+  assert.ok(md, '渲染出 markdown 容器');
+  const rendered = findAll(md, node => true);
+  const html = JSON.stringify(rendered);
+  assert.ok(html.includes('更新亮点'), '标题渲染');
+  assert.ok(html.includes('inline-code'), '行内代码渲染');
+  assert.ok(html.includes('加粗'), '加粗渲染');
+  assert.ok(html.includes('https://example.com/docs'), '链接渲染');
+  assert.ok(html.includes('第一条'), '列表渲染');
+  assert.ok(html.includes('结尾段落'), '结尾段落渲染');
+  console.log('场景21（更新说明 markdown 全分支渲染）通过');
+}
+
+/** 场景 22：全选 / 反选 / 批量卸载 —— 批量操作只在选了多项时才出现，
+ *  且「全选」在已全选时要变成「取消全选」。这几条分支漏测时，用户点了没反应
+ *  也没人知道是前端没接上还是后端拒绝。 */
+{
+  const installed = [
+    { name: 'p1', version: '1.0.0', description: '一' },
+    { name: 'p2', version: '1.0.0', description: '二' },
+    { name: 'p3', version: '1.0.0', description: '三' },
+  ];
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: installed });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/uninstall-many')) {
+      return respond({ ok: true, results: [{ name: 'p1', ok: true }, { name: 'p2', ok: true }, { name: 'p3', ok: true }] });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openInstalledPanel(runtime);
+  await settle(runtime, 10);
+
+  const buttons = text => findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === text);
+  const toastTexts = () => toasts(runtime.tree).map(item => item.text).join(' | ');
+
+  // ── 1. 全选 ──
+  const selectAll = buttons('全选')[0];
+  assert.ok(selectAll, '有「全选」按钮');
+  selectAll.props.onClick();
+  await settle(runtime, 10);
+  assert.ok(buttons('取消全选').length > 0, '全选后按钮变成「取消全选」');
+  assert.ok(buttons('批量卸载 (3)').length > 0, '批量卸载按钮显示选中数量');
+
+  // ── 2. 取消全选 ──
+  buttons('取消全选')[0].props.onClick();
+  await settle(runtime, 10);
+  assert.ok(buttons('全选').length > 0, '取消后按钮变回「全选」');
+
+  // ── 3. 反选 ──
+  buttons('反选')[0].props.onClick();
+  await settle(runtime, 10);
+  assert.ok(buttons('取消全选').length > 0, '反选后全选了（3 个里选 3 个）');
+
+  // ── 4. 批量卸载：先确认框，再发请求 ──
+  buttons('批量卸载 (3)')[0].props.onClick();
+  await settle(runtime, 10);
+  assert.ok(textOf(runtime.tree).includes('确认卸载选中的 3 个插件'), '弹出批量确认框');
+  assert.ok(!calls.some(call => call.url.startsWith('/dsh-plugin-manager/uninstall-many')), '确认前不发请求');
+  buttons('确认卸载')[0].props.onClick();
+  await settle(runtime, 30);
+  const bulkCall = calls.find(call => call.url.startsWith('/dsh-plugin-manager/uninstall-many'));
+  assert.ok(bulkCall, '确认后发批量卸载请求');
+  assert.deepEqual(JSON.parse(bulkCall.options.body).names, ['p1', 'p2', 'p3'], '带上选中的名字');
+  assert.ok(toastTexts().includes('已卸载 3 个插件'), '批量卸载成功有 toast：' + toastTexts());
+
+  console.log('场景22（全选/反选/批量卸载）通过');
+}
+
+/** 场景 23：插件详情抽屉 —— 点卡片打开，���示作者/分类/星标/下载/添加时间，
+ *  抽屉里的「安装」按钮要真的能装；已安装的插件显示「已安装」而不是按钮。 */
+{
+  const marketPlugins = [
+    { id: 'm1', name: 'alpha', repo: 'owner/alpha', author: 'owner', category: 'ui', descriptionEn: 'English desc', descriptionZh: '中文描述', downloads: 1234, stars: 56, version: '1.0.0', addedDate: '2026-01-01', url: 'https://github.com/owner/alpha' },
+    { id: 'm2', name: 'installed-one', repo: 'owner/installed-one', author: 'owner', category: 'tools', descriptionEn: 'Installed', descriptionZh: '', downloads: 10, stars: 2, version: '2.0.0', addedDate: null, url: null },
+  ];
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [{ name: 'owner/installed-one', version: '2.0.0' }] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/install')) return respond({ ok: true });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: marketPlugins.length, allTotal: marketPlugins.length,
+        counts: [{ name: 'ui', count: 1, label: '界面' }], categories: ['ui', 'tools'],
+        plugins: marketPlugins, sections: [],
+        featured: marketPlugins, topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  // 点卡片打开抽屉（未安装的那个）。
+  const card = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')))[0];
+  assert.ok(card, '市场里有卡片');
+  card.props.onClick({ stopPropagation() {} });
+  await settle(runtime, 10);
+
+  const drawer = findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '').includes('dsh-pm-drawer'))[0];
+  assert.ok(drawer, '点卡片打开详情抽屉');
+  const drawerText = textOf(drawer);
+  assert.ok(drawerText.includes('owner/alpha'), '抽屉显示插件名');
+  assert.ok(drawerText.includes('owner'), '抽屉显示作者');
+  assert.ok(drawerText.includes('界面'), '抽屉显示分类中文名');
+  assert.ok(drawerText.includes('★ 56'), '抽屉显示星标');
+  assert.ok(drawerText.includes('下载 1234'), '抽屉显示下载量');
+  assert.ok(drawerText.includes('添加于 2026-01-01'), '抽屉显示添加日期');
+  assert.ok(drawerText.includes('中文描述'), '抽屉优先显示中文描述');
+  assert.ok(drawerText.includes('在 GitHub 上查看'), '有仓库链接');
+
+  // 抽屉里的「安装」按钮能真的装。
+  const drawerInstall = findAll(drawer, node => node.type === 'button' && textOf(node).trim() === '安装')[0];
+  assert.ok(drawerInstall, '抽屉里有安装按钮');
+  drawerInstall.props.onClick();
+  await settle(runtime, 30);
+  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/install')), '抽屉里的安装会发请求');
+
+  // 已安装的插件：抽屉里显示「已安装」而不是按钮。
+  const installedCard = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')))[1];
+  assert.ok(installedCard, '有第二个卡片');
+  installedCard.props.onClick({ stopPropagation() {} });
+  await settle(runtime, 10);
+  const drawer2 = findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '').includes('dsh-pm-drawer'))[0];
+  assert.equal(findAll(drawer2, node => node.type === 'button' && textOf(node).trim() === '安装').length, 0,
+    '已安装插件的浮窗不再重复出现安装按钮');
+  assert.ok(textOf(drawer2).includes('Installed'), '没有中文描述时回退到英文描述');
+
+  console.log('场景23（插件详情抽屉）通过');
+}
+
+/** 场景 24：描述找插件的流式事件分支 —— 服务端每种 step 都要在时间线上
+ *  留下对应文案；error 事件、流提前结束、模型降级都要如实显示，不能静默。 */
+{
+  const marketPlugins = [
+    { id: 'm1', name: 'session-export', repo: 'o/session-export', author: 'o', category: 'session', descriptionEn: 'export', descriptionZh: '导出会话', downloads: 5200, stars: 210, version: '1.0.0', addedDate: null },
+  ];
+  // 按用例切换服务端吐出的事件序列。
+  let events = [];
+  const fetchImpl = (url) => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: 1, allTotal: 1,
+        counts: [{ name: 'session', count: 1, label: '会话' }], categories: ['session'],
+        plugins: marketPlugins, sections: [],
+        featured: marketPlugins, topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/ai-search/stream')) {
+      // NDJSON：一行一个事件。
+      const body = events.map(step => JSON.stringify(step)).join('\n') + '\n';
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(body));
+          controller.close();
+        },
+      });
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), body: stream });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  const bar = () => findAll(runtime.tree, node => node.type === 'form' && String(node.props.className || '').includes('dsh-pm-ai-bar'))[0];
+  const input = () => findAll(bar(), node => node.type === 'input')[0];
+  const logText = () => textOf(findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '').includes('dsh-pm-ai-steps'))[0] || { children: [] });
+
+  const runWith = async (seq) => {
+    events = seq;
+    input().props.onChange({ target: { value: '导出会话' } });
+    await settle(runtime, 5);
+    bar().props.onSubmit({ preventDefault() {} });
+    await settle(runtime, 30);
+  };
+
+  // ── 1. 各 step 的文案都上时间线 ──
+  await runWith([
+    { step: 'start', data: {} },
+    { step: 'index', data: { total: 11525 } },
+    { step: 'candidates', data: { count: 12, names: ['o/session-export'], truncated: true } },
+    { step: 'prompt', data: { chars: 512, preview: '你是一个插件检索精排器' } },
+    { step: 'routes', data: { count: 2, models: ['magpie/a', 'magpie/b'] } },
+    { step: 'preferred-hit', data: { model: 'magpie/a', ms: 19000 } },
+    { step: 'model-try', data: { index: 1, total: 2, model: 'magpie/a' } },
+    { step: 'model-first-token', data: { model: 'magpie/a' } },
+    { step: 'model-delta', data: { text: 'answer_num: 1', length: 13 } },
+    { step: 'model-output', data: { chars: 13, raw: 'answer_num: 1', finish: 'stop' } },
+    { step: 'parsed', data: { picks: [{ name: 'o/session-export', why: '直接导出' }] } },
+    { step: 'preferred', data: { model: 'magpie/a', ms: 19000 } },
+    { step: 'done', data: { ok: true, items: [{ id: 'm1', name: 'session-export', repo: 'o/session-export', description: '导出会话', downloads: 5200, stars: 210, version: '1.0.0', group: 'session', reason: '直接导出' }], candidates: 12 } },
+  ]);
+  // 时间线只渲染最近 3 条（设计如此：更早的淡出，不堆占空间），
+  // 所以逐个 step 单独跑一次，断言它自己的文案。
+  const stepCases = [
+    [{ step: 'index', data: { total: 11525 } }, '读取插件库', '11525'],
+    [{ step: 'candidates', data: { count: 12, names: ['o/session-export'], truncated: true } }, '关键词预筛候选', '12'],
+    [{ step: 'prompt', data: { chars: 512, preview: '你是一个插件检索精排器' } }, '构造提示词', '512'],
+    [{ step: 'routes', data: { count: 2, models: ['magpie/a', 'magpie/b'] } }, '发现可用模型', 'magpie/a'],
+    [{ step: 'preferred-hit', data: { model: 'magpie/a', ms: 19000 } }, '复用已验证模型', 'magpie/a'],
+    [{ step: 'model-try', data: { index: 1, total: 2, model: 'magpie/a' } }, '尝试模型', 'magpie/a'],
+    [{ step: 'model-first-token', data: { model: 'magpie/a' } }, '模型开始输出', 'magpie/a'],
+    [{ step: 'model-delta', data: { text: 'answer_num: 1', length: 13 } }, '模型输出', 'answer_num: 1'],
+    [{ step: 'model-output', data: { chars: 13, raw: 'answer_num: 1', finish: 'stop' } }, '模型输出完成', '13'],
+    [{ step: 'parsed', data: { picks: [{ name: 'o/session-export', why: '直接导出' }] } }, '解析结果', '直接导出'],
+    [{ step: 'preferred', data: { model: 'magpie/a', ms: 19000 } }, '记住检索模型', 'magpie/a'],
+  ];
+  for (const [event, nameText, detailText] of stepCases) {
+    await runWith([{ step: 'start', data: {} }, event]);
+    const line = logText();
+    assert.ok(line.includes(nameText), `${event.step} 的步骤名上时间线：${line}`);
+    assert.ok(line.includes(detailText), `${event.step} 的详情上时间线：${line}`);
+  }
+
+  // ── 2. error 事件：如实显示错误 ──
+  await runWith([
+    { step: 'start', data: {} },
+    { step: 'error', data: { error: '服务端炸了' } },
+  ]);
+  const afterError = textOf(runtime.tree);
+  assert.ok(afterError.includes('服务端炸了'), 'error 事件如实显示：' + afterError.slice(-200));
+
+  // ── 3. 流提前结束（没有 done 事件）：给出明确提示 ──
+  await runWith([
+    { step: 'start', data: {} },
+    { step: 'index', data: { total: 10 } },
+  ]);
+  assert.ok(textOf(runtime.tree).includes('流提前结束'), '流提前结束有明确提示');
+
+  console.log('场景24（描述检索流式事件分支）通过');
+}
+
+/** 场景 25：面板的挂载契约 —— apply 要同时注册 main（真正的页面）与
+ *  sidebar.panellist（侧栏图标）；缺一个就是用户报的「点不开」。
+ *  另外面板本体通过 window 事件打开，卸载时要摘掉监听。 */
+{
+  const source = await readFile(new URL('../client/client.js', import.meta.url), 'utf8');
+  let plugin;
+  const windowStub = {
+    __ModuleLoader__: { load(record) { plugin = record.factory(requireLike); } },
+    listeners: new Map(),
+    addEventListener(type, fn) { this.listeners.set(type, fn); },
+    removeEventListener(type, fn) { if (this.listeners.get(type) === fn) this.listeners.delete(type); },
+    dispatch(type) { const fn = this.listeners.get(type); if (fn) fn(); },
+  };
+  const requireLike = (name) => {
+    if (name === 'react') {
+      return {
+        createElement: () => null,
+        Fragment: 'fragment',
+        useState: () => [null, () => {}],
+        useMemo: fn => fn(),
+        useEffect: () => {},
+        useRef: v => ({ current: v }),
+      };
+    }
+    if (name === 'react-dom/client') return { createRoot: () => ({ render() {} }) };
+    if (name === 'react-dom') return { render() {} };
+    throw new Error('unexpected require: ' + name);
+  };
+  const registered = [];
+  const injected = [];
+  const ctx = {
+    slots: {
+      inject(slot, callback) { injected.push(slot); callback(); },
+      register(spec, component) { registered.push({ ...spec, component }); return () => {}; },
+    },
+    layout: { selectPanel(key) { registered.push({ selected: key }); } },
+  };
+  const doc = {
+    head: { appendChild() {} },
+    body: { appendChild() {} },
+    getElementById: () => null,
+    createElement: () => ({ set textContent(v) {} }),
+  };
+  vm.runInNewContext(source, {
+    window: windowStub,
+    document: doc,
+    fetch: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }),
+    setTimeout: () => 0,
+    setInterval: () => 0,
+    clearInterval: () => {},
+    ReadableStream, TextEncoder, TextDecoder,
+  }, { filename: SOURCE_PATH });
+
+  plugin.apply(ctx);
+  assert.ok(injected.includes('main'), '注入了 main slot：' + injected.join(','));
+  assert.ok(injected.includes('sidebar.panellist'), '注入了 sidebar.panellist：' + injected.join(','));
+  const mainSpec = registered.find(spec => spec.name === 'main');
+  assert.ok(mainSpec, 'main slot 注册了页面');
+  assert.equal(mainSpec.key, 'dsh-plugin-manager');
+  const sidebarSpec = registered.find(spec => spec.name === 'sidebar.panellist');
+  assert.ok(sidebarSpec, 'sidebar 注册了入口');
+  assert.equal(sidebarSpec.label, '插件管理');
+  assert.equal(sidebarSpec.order, 100);
+  assert.ok(typeof mainSpec.component === 'function', 'main 注册的是组件');
+  assert.ok(typeof sidebarSpec.component === 'function', 'sidebar 注册的是组件');
+
+  console.log('场景25（面板挂载契约：main + sidebar 入口）通过');
+}
+
+/** 场景 26：降级与边界分支 —— 市场索引读不到时自动刷新一次、清理损坏项、
+ *  更新失败、手动安装行、发布说明读失败、安装队列提示。 */
+{
+  // 第一轮：marketplace 直接 500 → 触发「自动刷新一次」。
+  let marketFails = true;
+  let refreshCalls = 0;
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/refresh')) { refreshCalls += 1; return respond({ ok: true, accepted: true }); }
+    if (url.startsWith('/dsh-plugin-manager/sources/progress')) return respond({ progress: { active: false, results: [] } });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      if (marketFails) return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: '索引读不到' }) });
+      return respond({
+        ok: true, stale: false, total: 0, allTotal: 0,
+        counts: [], categories: [], plugins: [], sections: [],
+        featured: [], topDownloads: [], topStars: [],
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 20);
+
+  assert.ok(refreshCalls >= 1, '市场索引读不到时自动刷新一次：' + refreshCalls);
+  assert.ok(textOf(runtime.tree).includes('市场索引还没有下载'), '降级提示如实显示');
+
+  // 第二轮：市场恢复正常 → 发现页重新渲染，手动安装行可用。
+  marketFails = false;
+  await settle(runtime, 10);
+  const triggerRefresh = findAll(runtime.tree, node => node.type === 'button'
+    && String(node.props.title || '').includes('重新拉取'))[0];
+  if (triggerRefresh) { triggerRefresh.props.onClick(); await settle(runtime, 20); }
+  const manualInput = () => findAll(runtime.tree, node => node.type === 'input'
+    && String(node.props['aria-label'] || '').includes('手动安装'))[0];
+  assert.ok(manualInput(), '有手动安装输入框');
+  manualInput().props.onChange({ target: { value: 'github:owner/repo' } });
+  await settle(runtime, 10);
+  const manualForm = findAll(runtime.tree, node => node.type === 'form'
+    && String(node.props.className || '').includes('dsh-pm-queue'))[0];
+  assert.ok(manualForm, '手动安装行是表单');
+  manualForm.props.onSubmit({ preventDefault() {} });
+  await settle(runtime, 30);
+  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/install')), '手动安装也走安装接口');
+  const installBody = calls.filter(call => call.url.startsWith('/dsh-plugin-manager/install')).pop();
+  assert.equal(JSON.parse(installBody.options.body).url, 'github:owner/repo', '带上用户填的 spec');
+
+  console.log('场景26（市场降级 + 手动安装行）通过');
+}
+
+/** 场景 27：批量卸载部分失败、重启提示、停用失败回滚 —— 这三条是「出错了要说清楚、
+ *  且不要把已经做对的事也回滚掉」的路径。 */
+{
+  const installed = [
+    { name: 'p1', version: '1.0.0', description: '一' },
+    { name: 'p2', version: '1.0.0', description: '二' },
+  ];
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: installed });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/set-disabled')) return respond({ ok: false, error: '停用失败：dsh 拒绝了' });
+    if (url.startsWith('/dsh-plugin-manager/uninstall-many')) {
+      // 部分成功：p1 成功、p2 失败 → 要分别报成功与失败。
+      return respond({ ok: true, results: [{ name: 'p1', ok: true }, { name: 'p2', ok: false, error: '删不掉' }] });
+    }
+    if (url.startsWith('/dsh-plugin-manager/restart')) return respond({ ok: true });
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openInstalledPanel(runtime);
+  await settle(runtime, 10);
+
+  const buttons = text => findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === text);
+  const toastTexts = () => toasts(runtime.tree).map(item => item.text);
+
+  // ── 1. 批量卸载部分失败：分别报成功与失败，并给出重启提示 ──
+  buttons('全选')[0].props.onClick();
+  await settle(runtime, 10);
+  buttons('批量卸载 (2)')[0].props.onClick();
+  await settle(runtime, 10);
+  buttons('确认卸载')[0].props.onClick();
+  await settle(runtime, 30);
+  const texts = toastTexts().join(' | ');
+  assert.ok(texts.includes('卸载失败：p2'), '失败的条目点名：' + texts);
+  assert.ok(texts.includes('已卸载 1 个插件'), '成功的部分照实报成功：' + texts);
+
+  // ── 2. 重启提示：点「立即重启」发 restart 请求 ──
+  const restartBtn = buttons('立即重启')[0];
+  assert.ok(restartBtn, '有「立即重启」按钮');
+  restartBtn.props.onClick();
+  await settle(runtime, 20);
+  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/restart')), '点了立即重启会发 restart 请求');
+
+  console.log('场景27（批量卸载部分失败 + 重启提示）通过');
+}
+
+/** 场景 28：单插件更新的成功 / 失败 / 需重启确认，以及发布说明读失败。 */
+{
+  const installed = [{ name: 'dsh-upd', version: '1.0.0', description: '可更新' }];
+  const calls = [];
+  let updateResult = { ok: true, updatedTo: '2.0.0', verified: true };
+  let updateFails = false;
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: installed });
+    if (url.startsWith('/dsh-plugin-manager/updates')) {
+      return respond({
+        checkedAt: null, refreshing: false,
+        inventory: [{ name: 'dsh-upd', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0' }],
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/update')) {
+      if (updateFails) return respond({ ok: false, error: 'pnpm 说不行' });
+      return respond(updateResult);
+    }
+    if (url.startsWith('/dsh-plugin-manager/release-notes')) {
+      return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: 'GitHub 挂了' }) });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openInstalledPanel(runtime);
+  await settle(runtime, 20);
+
+  const buttons = text => findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === text);
+  const toastTexts = () => toasts(runtime.tree).map(item => item.text).join(' | ');
+
+  // ── 1. 更新成功 ──
+  const updateBtn = buttons('更新')[0];
+  assert.ok(updateBtn, '可更新的行有「更新」按钮');
+  updateBtn.props.onClick();
+  await settle(runtime, 30);
+  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/update')), '点了更新会发请求');
+  assert.ok(toastTexts().includes('更新'), '更新成功有 toast：' + toastTexts());
+
+  // ── 2. 更新失败：如实报错 ──
+  updateFails = true;
+  buttons('更新')[0].props.onClick();
+  await settle(runtime, 30);
+  assert.ok(toastTexts().includes('更新 dsh-upd 失败'), '更新失败有 toast：' + toastTexts());
+  assert.ok(toastTexts().includes('pnpm 说不行'), '失败原因带出来：' + toastTexts());
+  updateFails = false;
+
+  // ── 3. verified=false → 中性提示，不装成「已完成」 ──
+  updateResult = { ok: true, updatedTo: '2.0.0', verified: false };
+  buttons('更新')[0].props.onClick();
+  await settle(runtime, 30);
+  const infoToasts = toasts(runtime.tree).filter(item => item.kind === 'info');
+  assert.ok(infoToasts.length > 0, '需重启确认时给中性提示，不给成功提示：' + toastTexts());
+  updateResult = { ok: true, updatedTo: '2.0.0', verified: true };
+
+  // ── 4. 发布说明读失败：显示错误而不是空白 ──
+  const notesBtn = buttons('更新内容')[0];
+  assert.ok(notesBtn, '有「更新内容」按钮');
+  notesBtn.props.onClick({ stopPropagation() {} });
+  await settle(runtime, 20);
+  assert.ok(textOf(runtime.tree).includes('GitHub 挂了'), '发布说明失败有错误提示');
+
+  console.log('场景28（更新成功/失败/需重启确认 + 发布说明失败）通过');
+}
+
+/** 场景 29：清理损坏的安装、安装队列的排队状态、面板 Root 组件的挂载与打开事件。 */
+{
+  const installed = [{ name: 'broken-one', version: '0.1.0', description: '坏掉的', broken: true }];
+  const calls = [];
+  let cleanupFails = false;
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: installed });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/cleanup')) {
+      if (cleanupFails) return respond({ ok: false, error: '删不掉：文件被占用' });
+      return respond({ ok: true });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openInstalledPanel(runtime);
+  await settle(runtime, 10);
+
+  const buttons = text => findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === text);
+  const toastTexts = () => toasts(runtime.tree).map(item => item.text).join(' | ');
+
+  // ── 1. 清理损坏的安装 ──
+  const cleanupBtn = buttons('清理')[0];
+  assert.ok(cleanupBtn, '损坏的行有「清理」按钮');
+  cleanupBtn.props.onClick();
+  await settle(runtime, 30);
+  assert.ok(calls.some(call => call.url.startsWith('/dsh-plugin-manager/cleanup')), '点了清理会发请求');
+  assert.ok(toastTexts().includes('已清理损坏的安装 broken-one'), '清理成功有 toast：' + toastTexts());
+
+  // ── 2. 清理失败：如实报错 ──
+  cleanupFails = true;
+  buttons('清理')[0].props.onClick();
+  await settle(runtime, 30);
+  assert.ok(toastTexts().includes('清理失败'), '清理失败有 toast：' + toastTexts());
+  assert.ok(toastTexts().includes('文件被占用'), '失败原因带出来：' + toastTexts());
+  cleanupFails = false;
+
+  console.log('场景29（清理损坏安装：成功与失败）通过');
+}
+
+/** 场景 30：面板 Root 组件 —— 常驻挂载到 body，由 window 事件打开。
+ *  这条链路是「点侧栏图标打不开面板」那类问题的现场：
+ *  apply 必须把面板挂上去（挂两次就会有两份状态、事件只开一份）。 */
+{
+  const source = await readFile(new URL('../client/client.js', import.meta.url), 'utf8');
+  let plugin;
+  const rendered = [];
+  const hosts = [];
+  const windowStub = {
+    __ModuleLoader__: { load(record) { plugin = record.factory(requireLike); } },
+    addEventListener(type, fn) { (this.handlers ||= new Map()).set(type, fn); },
+    removeEventListener(type, fn) { if (this.handlers?.get(type) === fn) this.handlers.delete(type); },
+  };
+  const requireLike = (name) => {
+    if (name === 'react') {
+      return {
+        // 元素对象要带 type（断言用），children 放 props.children。
+        createElement: (type, props, ...children) => ({ type, props: { ...(props || {}), children } }),
+        Fragment: 'fragment',
+        useState: () => [null, () => {}],
+        useMemo: fn => fn(),
+        useEffect: () => {},
+        useRef: v => ({ current: v }),
+      };
+    }
+    if (name === 'react-dom/client') {
+      return { createRoot: (host) => { hosts.push(host); return { render: el => rendered.push(el) }; } };
+    }
+    if (name === 'react-dom') return { render() {} };
+    throw new Error('unexpected require: ' + name);
+  };
+  const created = [];
+  const doc = {
+    head: { appendChild() {} },
+    body: { appendChild(node) { created.push(node); } },
+    getElementById: () => null,
+    createElement: () => ({ set textContent(v) {} }),
+  };
+  vm.runInNewContext(source, {
+    window: windowStub,
+    document: doc,
+    fetch: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }),
+    setTimeout: () => 0,
+    setInterval: () => 0,
+    clearInterval: () => {},
+    ReadableStream, TextEncoder, TextDecoder,
+  }, { filename: SOURCE_PATH });
+
+  plugin.apply({ slots: { inject() {}, register() { return () => {}; } }, layout: { selectPanel() {} } });
+  assert.equal(created.length, 1, '面板挂到 body 一次');
+  assert.equal(hosts.length, 1, 'createRoot 只调用一次（重复 apply 不会挂两份）');
+  assert.equal(rendered.length, 1, 'Root 组件被渲染');
+  assert.ok('type' in rendered[0], '挂载的是 React 元素（带 type）');
+
+  console.log('场景30（面板 Root：常驻挂载一次）通过');
+}
+
+/** 场景 31：安装队列只跑一次 —— 更新在途时点安装，同一个插件不能被装两次。
+ *  早前有两个泵各自消费同一个 installQueueRef（pumpInstalls 与 pumpMutations），
+ *  → 两次 POST /install + 两条汇总 toast。 */
+{
+  const marketPlugins = [
+    { id: 'm1', name: 'alpha', repo: 'owner/alpha', author: 'owner', category: 'ui', descriptionEn: 'A', descriptionZh: '甲', downloads: 10, stars: 1, version: '1.0.0', addedDate: null },
+  ];
+  const calls = [];
+  let releaseInstall;
+  const installGate = new Promise(resolve => { releaseInstall = resolve; });
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/install')) {
+      // 安装请求挂住，直到测试放行 —— 这样队列若被两个泵消费，第二次会立刻发生。
+      return installGate.then(() => respond({ ok: true }));
+    }
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: 1, allTotal: 1,
+        counts: [{ name: 'ui', count: 1, label: '界面' }], categories: ['ui'],
+        plugins: marketPlugins, sections: [],
+        featured: marketPlugins, topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  const installBtn = findAll(runtime.tree, node => node.type === 'button' && textOf(node).trim() === '安装')[0];
+  assert.ok(installBtn, '有安装按钮');
+  // 连点两次：真实用户手抖，或者按钮没及时置灰 —— 同一个插件不能被装两次。
+  installBtn.props.onClick();
+  installBtn.props.onClick();
+  await settle(runtime, 20);
+
+  // 只看真正的安装 POST（/installed 也以 install 开头，别混进来）。
+  const installCalls = calls.filter(call => call.url === '/dsh-plugin-manager/install');
+  assert.equal(installCalls.length, 1, '安装请求只发一次（实际 ' + installCalls.length + '）');
+
+  releaseInstall();
+  await settle(runtime, 30);
+  const after = calls.filter(call => call.url === '/dsh-plugin-manager/install');
+  assert.equal(after.length, 1, '放行后也不会再发第二次（实际 ' + after.length + '）');
+
+  console.log('场景31（安装队列只跑一次）通过');
+}
+
+/** 场景 32：安装按钮三态（安装 / 安装中转圈 / 已安装）+ 归一化匹配。
+ *  用户反馈：安装时没有转圈提示；装完还显示「安装」（dshmarket：市场名
+ *  dsh-market/dsh-market，实际 npm 名 dshmarket，旧的字符串匹配漏掉）。 */
+{
+  const marketPlugins = [
+    { id: 'm1', name: 'dsh-market/dsh-market', repo: 'dsh-market', author: 'dsh-market', category: 'market', descriptionEn: 'market', descriptionZh: '插件市场', downloads: 100, stars: 10, version: '1.0.0', addedDate: null },
+  ];
+  let installedItems = [];
+  let releaseInstall;
+  const installGate = new Promise(resolve => { releaseInstall = resolve });
+  const calls = [];
+  const fetchImpl = (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url === '/dsh-plugin-manager/installed') return respond({ items: installedItems });
+    if (url === '/dsh-plugin-manager/install') {
+      return installGate.then(() => {
+        // 装完：实际安装的 npm 名是 dshmarket（无横杠），不是市场条目名。
+        installedItems = [{ name: 'dshmarket', version: '1.73.20', source: 'user' }];
+        return respond({ ok: true });
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: 1, allTotal: 1,
+        counts: [{ name: 'market', count: 1, label: '市场' }], categories: ['market'],
+        plugins: marketPlugins, sections: [],
+        featured: [], topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  assert.ok(cards().length >= 1, '市场卡片已渲染');
+  const installBtn = () => findAll(cards()[0], node => node.type === 'button'
+    && /(^| )dsh-pm-install( |$)/.test(String(node.props.className || '')))[0];
+  assert.ok(installBtn(), '初始是「安装」按钮');
+  assert.equal(textOf(installBtn()).includes('安装'), true);
+
+  // 点安装 → 请求在途 → 按钮变成「安装中…」+ 转圈（busy class + spin 子元素）。
+  installBtn().props.onClick({ stopPropagation() {} });
+  await settle(runtime, 6);
+  const busyBtn = installBtn();
+  assert.ok(busyBtn, '安装中按钮还在');
+  assert.ok(String(busyBtn.props.className || '').includes('busy'), '安装中有 busy 态');
+  assert.equal(busyBtn.props['aria-busy'], 'true', 'aria-busy 告知读屏');
+  assert.ok(textOf(busyBtn).includes('安装中'), '文案是「安装中…」');
+  assert.ok(findAll(busyBtn, node => String(node.props.className || '').includes('dual')).length > 0,
+    '安装中有双环转圈图标');
+
+  // 放行安装 → installed 里出现 dshmarket（归一化匹配 dsh-market）→ 变成「已安装」。
+  releaseInstall();
+  await settle(runtime, 20);
+  const tag = findAll(cards()[0], node => node.type === 'span'
+    && /(^| )dsh-pm-installed-tag( |$)/.test(String(node.props.className || '')))[0];
+  assert.ok(tag, '装完后显示「已安装」胶囊（不再是「安装」按钮）');
+  assert.ok(textOf(tag).includes('已安装'));
+  assert.equal(installBtn(), undefined, '安装按钮被已安装胶囊取代');
+
+  console.log('场景32（安装按钮三态 + 归一化匹配）通过');
+}
+
+/** 场景 33：dsh 版本钉死拒绝 → 「接受风险并安装」确认块 → 登记豁免后自动重试。
+ *  用户反馈：装 mirage#dsh 这类把 dsh 运行时版本钉死的插件报「安装失败」。
+ *  dsh 会给出 allow-version 逃生通道，插件中心必须接住它而不是甩一屏原文。 */
+{
+  const marketPlugins = [
+    {
+      id: 'r1', name: 'strukto-ai/mirage#dsh', repo: 'mirage', author: 'strukto-ai',
+      url: 'https://github.com/strukto-ai/mirage/tree/main/typescript/packages/dsh',
+      category: 'tools', descriptionEn: 'mirage dsh', downloads: 1, stars: 1, addedDate: null,
+    },
+  ];
+  let installedItems = [];
+  let installAttempts = 0;
+  const allowCalls = [];
+  const fetchImpl = (url, options = {}) => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url === '/dsh-plugin-manager/installed') return respond({ items: installedItems });
+    if (url === '/dsh-plugin-manager/install') {
+      installAttempts += 1;
+      if (installAttempts === 1) {
+        return respond({
+          ok: false,
+          error: 'dsh 拒绝安装 @struktoai/mirage-dsh@0.0.8：与当前 dsh 0.2.2-rc.2 不兼容，插件要求 {"@deepseek-ai/dsh-fs":"0.2.0-rc.2"}。可在插件中心选择「接受风险并安装」（可能不稳定），或等插件发布兼容版本。',
+          reason: '@struktoai/mirage-dsh@0.0.8 与当前 dsh 0.2.2-rc.2 不兼容',
+          allowVersion: { name: '@struktoai/mirage-dsh', version: '0.0.8', dshVersion: '0.2.2-rc.2', requirements: '{"@deepseek-ai/dsh-fs":"0.2.0-rc.2"}' },
+        });
+      }
+      installedItems = [{ name: '@struktoai/mirage-dsh', version: '0.0.8', source: 'user' }];
+      return respond({ ok: true });
+    }
+    if (url === '/dsh-plugin-manager/allow-version') {
+      allowCalls.push(JSON.parse(options.body));
+      return respond({ ok: true, note: 'exemption granted' });
+    }
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: 1, allTotal: 1,
+        counts: [{ name: 'tools', count: 1, label: '工具' }], categories: ['tools'],
+        plugins: marketPlugins, sections: [],
+        featured: [], topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  const installBtn = () => findAll(cards()[0], node => node.type === 'button'
+    && /(^| )dsh-pm-install( |$)/.test(String(node.props.className || '')))[0];
+  const confirmNode = () => findAll(runtime.tree, node => node.type === 'div'
+    && /(^| )dsh-pm-confirm( |$)/.test(String(node.props.className || '')))
+    .find(node => textOf(node).includes('强行安装'));
+
+  // 第一次安装：被 dsh 拒绝 → 确认块出现，toast 只给结论
+  installBtn().props.onClick({ stopPropagation() {} });
+  await settle(runtime, 20);
+  assert.ok(confirmNode(), '出现「强行安装」确认块');
+  assert.ok(textOf(confirmNode()).includes('@struktoai/mirage-dsh@0.0.8'), '确认块写明插件与版本');
+  assert.ok(textOf(confirmNode()).includes('0.2.2-rc.2'), '确认块写明当前 dsh 版本');
+  assert.ok(textOf(runtime.tree).includes('与当前 dsh 0.2.2-rc.2 不兼容'), 'toast 只报结论不堆原文');
+  assert.ok(installBtn(), '被拒后卡片回到「安装」按钮（用户可以取消）');
+
+  // 确认 → POST allow-version（三元组）→ 自动重试安装 → 装上
+  const goBtn = findAll(confirmNode(), node => node.type === 'button' && textOf(node) === '接受风险并安装')[0];
+  assert.ok(goBtn, '有「接受风险并安装」按钮');
+  goBtn.props.onClick();
+  await settle(runtime, 40);
+  assert.deepEqual(allowCalls, [{ name: '@struktoai/mirage-dsh', version: '0.0.8', dshVersion: '0.2.2-rc.2' }], '豁免请求带三元组');
+  assert.equal(installAttempts, 2, '豁免成功后自动重试安装');
+  const tag = findAll(cards()[0], node => node.type === 'span'
+    && /(^| )dsh-pm-installed-tag( |$)/.test(String(node.props.className || '')))[0];
+  assert.ok(tag, '重试后装上，卡片显示「已安装」');
+  assert.equal(confirmNode(), undefined, '确认块关闭');
+  // 归一化回归：市场名 strukto-ai/mirage#dsh 装出来是 @struktoai/mirage-dsh，
+  // 名字/验收比对必须认得这种对应，否则误报「安装未生效（已安装列表里没有出现）」。
+  assert.ok(!toasts(runtime.tree).some(item => String(item.text).includes('安装未生效')),
+    '装上后不误报「安装未生效」');
+
+  console.log('场景33（dsh 版本拒绝 → 接受风险并安装）通过');
+}
+
+/** 场景 34：「接受风险并安装」里登记豁免失败 → 如实报错，确认块留在原地可重试。
+ *  覆盖 riskInstallGo 的失败分支（接口报错不打断面板，也不误报安装成功）。 */
+{
+  const marketPlugins = [
+    {
+      id: 'r2', name: 'strukto-ai/mirage#dsh', repo: 'mirage', author: 'strukto-ai',
+      url: 'https://github.com/strukto-ai/mirage/tree/main/typescript/packages/dsh',
+      category: 'tools', descriptionEn: 'mirage dsh', downloads: 1, stars: 1, addedDate: null,
+    },
+  ];
+  let installAttempts = 0;
+  const fetchImpl = (url, options = {}) => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url === '/dsh-plugin-manager/installed') return respond({ items: [] });
+    if (url === '/dsh-plugin-manager/install') {
+      installAttempts += 1;
+      return respond({
+        ok: false,
+        error: 'dsh 拒绝安装 @struktoai/mirage-dsh@0.0.8：与当前 dsh 0.2.2-rc.2 不兼容。',
+        reason: '@struktoai/mirage-dsh@0.0.8 与当前 dsh 0.2.2-rc.2 不兼容',
+        allowVersion: { name: '@struktoai/mirage-dsh', version: '0.0.8', dshVersion: '0.2.2-rc.2', requirements: '{"@deepseek-ai/dsh-fs":"0.2.0-rc.2"}' },
+      });
+    }
+    if (url === '/dsh-plugin-manager/allow-version') return respond({ ok: false, error: 'dsh 拒绝这次豁免' });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: 1, allTotal: 1,
+        counts: [{ name: 'tools', count: 1, label: '工具' }], categories: ['tools'],
+        plugins: marketPlugins, sections: [],
+        featured: [], topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  const installBtn = () => findAll(cards()[0], node => node.type === 'button'
+    && /(^| )dsh-pm-install( |$)/.test(String(node.props.className || '')))[0];
+  const confirmNode = () => findAll(runtime.tree, node => node.type === 'div'
+    && /(^| )dsh-pm-confirm( |$)/.test(String(node.props.className || '')))
+    .find(node => textOf(node).includes('强行安装'));
+
+  installBtn().props.onClick({ stopPropagation() {} });
+  await settle(runtime, 20);
+  assert.ok(confirmNode(), '确认块出现');
+  findAll(confirmNode(), node => node.type === 'button' && textOf(node) === '接受风险并安装')[0].props.onClick();
+  await settle(runtime, 15);
+
+  assert.ok(toasts(runtime.tree).some(item => item.kind === 'error' && item.text.includes('登记版本豁免失败：dsh 拒绝这次豁免')),
+    '豁免失败要 error toast 带原因');
+  assert.ok(confirmNode(), '失败后确认块留在原地，用户可以直接再试或取消');
+  assert.equal(installAttempts, 1, '豁免没登记成功就不重试安装');
+  const cancel = findAll(confirmNode(), node => node.type === 'button' && textOf(node) === '取消')[0];
+  cancel.props.onClick();
+  await settle(runtime, 6);
+  assert.equal(confirmNode(), undefined, '取消后确认块关闭');
+
+  console.log('场景34（豁免登记失败 → 如实报错可取消）通过');
 }

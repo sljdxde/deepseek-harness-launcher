@@ -78,6 +78,15 @@
   安装的 launcher/dsh**：安装器测试通过 `DHL_STOP_SCOPE=target` 把进程停止
   限定在临时目标目录内，禁止移除该作用域限制（否则每次跑测试都会杀掉用户
   正在使用的菜单栏应用，表现为"自动退出"）。
+- 插件单元测试与覆盖率门禁：`node scripts/coverage-check.mjs` 跑 `Plugins/` 下全部
+  单元测试并逐文件核对**行覆盖率 100%**，低于门槛直接失败；`scripts/test.sh` 在打包
+  前调用它（逻辑门禁，不该被 macOS 打包步骤挡住）。新增/修改插件代码必须同时补测试，
+  边界分支（错误路径、异常降级、空输入）也要覆盖 —— 不许用 `/* c8 ignore */`、
+  不许删分支、不许把断言改成永真。门禁自己解析 `NODE_V8_COVERAGE` 原始数据而不是
+  node 的报告表格：后者跨进程聚合时会按「函数名」合并区间，把别的进程没跑到
+  的函数算成已覆盖（塞一个没人调用的函数进去，单跑报 99.13%、合跑却报 100%）。
+  写测试时注意：node:test 的 `test(name, opts, fn)` 里 **fn 不能省**，
+  少传就变成「没有函数体」的空测试直接秒过（插件源测试曾因此集体空转）。
 - 提示框与窗口边界：所有 `NSAlert` 必须走统一入口——App 侧 `AlertDesign.run` / `runIfIdle`，
   安装器 `AlertBoundary.run`（两者是同一实现，安装器是独立编译目标链不了 `AlertDesign`）。
   动态长正文（shell 输出、插件清单、远端版本号）必须过 `setBoundedText`，`scripts/test.sh`
@@ -96,3 +105,19 @@
   自动化授权）；仅允许在 lsof 连接检测确认浏览器已连接后，用 AppleScript 精确选中
   标签，且必须保留降级路径（详见 `Sources/BrowserConnectionSupport.swift` 与
   `Sources/BrowserAutomationSupport.swift` 的注释）。
+- 插件中心（`Plugins/DSHPluginManager`）的 UI 是方案 B：页面内左栏四项
+  （发现 / 内置 / 已安装 / 插件源）+ 内容区；发现页 = 推荐位 + 下载榜 + 星标榜 +
+  分类 chips + sticky 手动安装行。图标一律 SVG 线性图标，不用 emoji。
+- 插件源协议（多仓库源）：源 = 含 `index.json` 的 Git 仓库（`github:owner/repo`）或
+  索引 JSON 地址；`index.json` 形如
+  `{ version: 1, plugins: [{ name, repo?, url?, category?, description: {en,zh}, stars, downloads, verified }] }`。
+  用户源存 `~/.dsh/plugin-manager/sources.json`，每源缓存存 `sources-cache/<id>.json`；
+  聚合顺序 = 官方 npm 查询 → awesome-dsh-plugin（内置默认源）→ 用户启用的自定义源，
+  按 url 去重。刷新是后台任务（`POST /refresh` 回 202，进度读 `/sources/progress`）。
+- 插件分类在服务端归并成 6 组（界面/会话/工具/自动化/数据/其他，见 `MARKET_GROUPS`）：社区清单有 30+ 个英文分类，用户明确不要那么多，分类条/分区/筛选一律按组走，原始 category 只留在条目上。**分类条不许再加「更多分类」展开或下拉**（守卫会拦）。
+- 「描述找插件」是**本地预筛 + 模型挑选**：服务端先按关键词在索引里打分取 ≤40 条候选，再把候选（每条描述截断 100 字、整个 prompt < 12000 字符）交给 `ctx.llm` 挑 top5；模型只回 JSON 编号+理由，不生成插件信息。路由按 free→便宜型号排序，遇到 402/余额不足等硬错误换下一条路由；全失败才降级为关键词结果并标注「关键词降级」。**绝不允许把整份索引灌进模型上下文**（`AI_SEARCH_MAX_CANDIDATES` 等常量就是护栏）。
+- 国内加速是**独立插件** `Plugins/DSHChinaMirror`（Windows 内置，`assets.Plugins` 解出并
+  链接，base patch 现场合成）。两个插件之间只允许一条协议：镜像插件提供
+  `GET /dsh-china-mirror/state → { enabled, table }` 与 `POST /dsh-china-mirror/enabled`，
+  管理器读 state 并用 table 做 URL 前缀替换（`mirrorMapURL`），开关即时生效、失败自动
+  直连；两边不互相 import。它同样不能进 macOS 共享的 `DSHArchiveManager/cordis.patch.yml`。
