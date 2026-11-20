@@ -1,6 +1,36 @@
 import Foundation
 
 enum ServiceProbe {
+    /// 同步探针，把**失败原因**一起带回来（`body(at:)` 只留 body，超时与连接
+    /// 被拒绝都变成 nil——存活看护拿它判死，等于把「忙」当成「死」）。
+    ///
+    /// 返回值约定：
+    /// - `error == nil`：确实收到了 HTTP 响应，`body` 是响应体；空响应体也是 nil；
+    /// - `error != nil`：请求没成功，交给 `RuntimeHealthSupport.classify` 分流。
+    static func probe(at url: URL, timeout: TimeInterval = 1.5) -> (body: String?, error: NSError?) {
+        let semaphore = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var body: String?
+        var failure: NSError?
+        let task = URLSession.shared.dataTask(with: request(url: url, timeout: timeout)) { data, _, error in
+            let text = data.flatMap { String(data: $0, encoding: .utf8) }
+            lock.lock()
+            body = text
+            failure = error as NSError?
+            lock.unlock()
+            semaphore.signal()
+        }
+        task.resume()
+        // 信号量比 request 的 timeoutInterval 多留 0.5 秒：正常情况下 URLSession
+        // 自己会以 NSURLErrorTimedOut 回调；这里只是兜底，防止回调永远不来。
+        let completed = semaphore.wait(timeout: .now() + timeout + 0.5) == .success
+        task.cancel()
+        lock.lock()
+        defer { lock.unlock() }
+        if completed { return (body, failure) }
+        return (nil, NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
+    }
+
     static func body(at url: URL, timeout: TimeInterval = 1.5) -> String? {
         let semaphore = DispatchSemaphore(value: 0)
         var result: String?

@@ -7,10 +7,17 @@ import Foundation
 // 那个实例退出后 state 仍是 running、selectedPort 指向空端口，之后每次
 // 「打开」都只是把同一个死地址再加载一遍。
 //
-// 这里锁死三件事：
-//   1. 死端口的判定阈值（3 次）与卡死进程的更长阈值（6 次）不能相等；
-//   2. 只有「连不上」这一类错误才算连接失败——401/取消/内容错误重启没用；
-//   3. 探测间隔在合理区间，别把空闲启动器变成忙循环。
+// 2026-11-20 的一次自动重启暴露了旧判据的另一半问题：探测只看「拿没拿到
+// 能识别的 body」，把「端口没人（ECONNREFUSED）」与「还活着只是忙（超时）」
+// 当成同一件事，于是接管实例在一条约 15 秒的事件循环停顿上被判死（3 次 ×
+// 5 秒）；而它恰恰是分不清忙/死的那条路，预算却最短。
+//
+// 这里锁死四件事：
+//   1. 只有「端口没人监听」才能直接判死；超时/连上又断一律按「忙」处理，
+//      统一走一条最长预算（6 次），不再按有没有进程句柄分两套阈值；
+//   2. 探针必须留下失败原因（错误域 + 错误码），否则下次还是无法区分忙与死；
+//   3. 窗口导航的「连不上」分类保持不变——401/取消/内容错误重启没用；
+//   4. 探测间隔在合理区间，别把空闲启动器变成忙循环。
 
 @main
 struct RuntimeHealthChecks {
@@ -25,37 +32,79 @@ struct RuntimeHealthChecks {
     }
 
     static func main() {
-        // MARK: - 1. 死端口 vs 卡死进程的阈值
+        // MARK: - 1. 「没等到应答」只有一条预算，且不能太短
         check(
-            RuntimeHealthSupport.shouldTakeOver(failures: 0) == false,
+            RuntimeHealthSupport.shouldRestartUnresponsive(failures: 0) == false,
             "还没失败过：不能重启"
         )
         check(
-            RuntimeHealthSupport.shouldTakeOver(failures: 1) == false,
+            RuntimeHealthSupport.shouldRestartUnresponsive(failures: 1) == false,
             "一次探测超时只是「慢」：不能重启（会打断正在跑的回合）"
         )
         check(
-            RuntimeHealthSupport.shouldTakeOver(failures: 2) == false,
-            "两次仍要容忍"
+            RuntimeHealthSupport.shouldRestartUnresponsive(failures: 5) == false,
+            "连续 5 次仍要容忍：dsh 是单线程，插件扫描/MCP 启动能占住事件循环十秒以上"
         )
         check(
-            RuntimeHealthSupport.shouldTakeOver(failures: 3) == true,
-            "连续 3 次无应答：接管实例已死，必须重启，否则窗口永远连不上"
+            RuntimeHealthSupport.shouldRestartUnresponsive(failures: 6) == true,
+            "连续 6 次无应答（约 30 秒）：已卡死，重启"
         )
         check(
-            RuntimeHealthSupport.shouldRestartHungProcess(failures: 3) == false,
-            "进程还活着时不能用 3 次的判据：那是「慢」不是「死」"
-        )
-        check(
-            RuntimeHealthSupport.shouldRestartHungProcess(failures: 6) == true,
-            "进程活着但连续 6 次无应答：已卡死，重启"
-        )
-        check(
-            RuntimeHealthSupport.hungFailureThreshold > RuntimeHealthSupport.adoptedFailureThreshold,
-            "卡死阈值必须严格长于死端口阈值，否则会误杀健康实例"
+            RuntimeHealthSupport.unresponsiveFailureThreshold >= 6,
+            "预算不得低于 6 次：2026-11-20 那次 15 秒停顿就是被更短的判据误杀的"
         )
 
-        // MARK: - 2. 哪些错误才算「连不上」
+        // MARK: - 2. 三态归类：能不能证明「实例没了」
+        check(RuntimeHealthSupport.classify(error: nil).outcome == .alive, "收到响应就是活的")
+
+        let refusedCodes = [
+            NSURLErrorCannotConnectToHost,   // 端口没人监听：唯一能直接判死的信号
+            NSURLErrorCannotFindHost,
+            NSURLErrorDNSLookupFailed,
+            NSURLErrorNotConnectedToInternet
+        ]
+        for code in refusedCodes {
+            check(
+                RuntimeHealthSupport.classify(error: error(code)).outcome == .refused,
+                "NSURLError \(code) 说明端口上没人，应直接自愈"
+            )
+        }
+
+        let timeoutCodes = [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost]
+        for code in timeoutCodes {
+            check(
+                RuntimeHealthSupport.classify(error: error(code)).outcome == .timedOut,
+                "NSURLError \(code) 只说明这次没等到应答（可能只是忙），不能判死"
+            )
+        }
+
+        let indeterminateCodes = [NSURLErrorCancelled, NSURLErrorBadURL]
+        for code in indeterminateCodes {
+            check(
+                RuntimeHealthSupport.classify(error: error(code)).outcome == .failure,
+                "NSURLError \(code) 既不能证明死也不能证明忙，按证据不足处理"
+            )
+        }
+
+        check(
+            RuntimeHealthSupport.classify(
+                error: error(NSURLErrorCannotConnectToHost, domain: "WebKitErrorDomain")
+            ).outcome == .failure,
+            "别的错误域不能按「端口没人」处理（域必须一起判）"
+        )
+
+        // 失败原因必须落进 detail，否则日志里还是分不清忙与死。
+        let timedOut = RuntimeHealthSupport.classify(error: error(NSURLErrorTimedOut))
+        check(
+            timedOut.detail.contains("-1001"),
+            "探测超时要把 NSURLError 码记下来（诊断用），实际：\(timedOut.detail)"
+        )
+        check(
+            RuntimeHealthSupport.classify(error: nil).detail.isEmpty,
+            "成功探测不需要错误详情"
+        )
+
+        // MARK: - 3. 窗口导航的「连不上」分类（决定要不要去确认服务还在）
         let connectionCodes = [
             NSURLErrorCannotConnectToHost,   // 端口上没人：就是这张「打不开」页的来源
             NSURLErrorCannotFindHost,
@@ -85,7 +134,7 @@ struct RuntimeHealthChecks {
             "别的错误域不按连接失败处理（域必须一起判）"
         )
 
-        // MARK: - 3. 探测间隔
+        // MARK: - 4. 探测间隔
         check(
             RuntimeHealthSupport.adoptedProbeInterval >= 2,
             "探测间隔过密会白白唤醒主线程"

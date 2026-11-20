@@ -1627,9 +1627,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         appendLogString("用户确认安装更新：\(dmgURL.path)\n")
-        // 装上了才作废「跳过此版本」——这条记录在 performUpdateCheck 里按「已装版本
-        // ≥ 跳过版本」自愈清掉。这里装前清空会把安装失败也当成已装。
-        stopDHL()
+        // 只换 App，不动 dsh：更新期间服务不断，新启动器起来后走 findPort 的
+        // .reuse 分支接管同一个实例（窗口 cookie 还是这个进程签发的，打开即用）。
+        // 「先 stopDHL 再退出」做不到：stopDHL 的终止在全局队列异步跑，紧接着
+        // NSApp.terminate 就把进程收了，那把刀根本没落下去（2026-11-20 15:33 的
+        // 更新就是这样留下旧实例的：既没杀掉，也没人管它）。既然结果一定是接管，
+        // 就把接管做成显式设计——拿不到 process 句柄的那条判据现在有 6 次 ≈ 30 秒
+        // 预算，端口没人监听时还会立刻自愈。
         let appURL = Bundle.main.bundleURL
         let appDirectory = appURL.deletingLastPathComponent()
         let pid = ProcessInfo.processInfo.processIdentifier
@@ -1730,8 +1734,32 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func dshResponds(on port: Int) -> Bool {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/"), let body = ServiceProbe.body(at: url) else { return false }
-        return isHarnessWebBody(body)
+        probeDSH(on: port).outcome == .alive
+    }
+
+    /// 一次存活探测，保留失败原因。
+    ///
+    /// 判活与判死靠的是同一条请求，但「这个端口上没人监听」和「还活着只是没在
+    /// 预算内回应」必须是两件事：前者可以立刻自愈，后者只是忙（dsh 单线程，插件
+    /// 扫描/MCP 启动都能占住事件循环十几秒）。`ServiceProbe.body(at:)` 把两者都
+    /// 压成 nil，是 2026-11-20 那次误杀的直接原因。
+    private func probeDSH(on port: Int) -> RuntimeHealthSupport.ProbeResult {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/") else {
+            return RuntimeHealthSupport.ProbeResult(outcome: .failure, detail: "无效端口")
+        }
+        let probe = ServiceProbe.probe(at: url)
+        if let body = probe.body, !body.isEmpty {
+            // 端口上应答的是不是 dsh：是才算活着；不是则是证据不足（可能正返回
+            // 加载中间态），按「忙」处理，别在这里判死。
+            return isHarnessWebBody(body)
+                ? RuntimeHealthSupport.ProbeResult(outcome: .alive, detail: "")
+                : RuntimeHealthSupport.ProbeResult(outcome: .failure, detail: "响应不是 Harness 页面")
+        }
+        // 收到响应但响应体为空：同样只是证据不足。
+        if probe.error == nil {
+            return RuntimeHealthSupport.ProbeResult(outcome: .failure, detail: "空响应")
+        }
+        return RuntimeHealthSupport.classify(error: probe.error)
     }
 
     private func isHarnessWebBody(_ body: String) -> Bool {
@@ -2324,45 +2352,49 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let alive = self?.dshResponds(on: port) ?? false
+            let probe = self?.probeDSH(on: port) ?? RuntimeHealthSupport.ProbeResult(outcome: .failure, detail: "启动器已释放")
             DispatchQueue.main.async {
                 guard let self, self.state == .running, self.selectedPort == port else { return }
-                if alive {
+                if probe.outcome == .alive {
                     self.runtimeWatchdogFailures = 0
+                    return
+                }
+                // 端口没人监听、且手上没有活着的受管进程：这是唯一能证明「实例已经
+                // 没了」的信号，不必等满预算。有句柄又还活着时端口却不应答，更可能
+                // 是它正在内部重启（插件管理会以 exit 0 让 dsh 自行退出再拉起），
+                // 同样按「忙」处理，交给下面那条连续判据。
+                if probe.outcome == .refused, self.process?.isRunning != true {
+                    self.runtimeWatchdogFailures = 0
+                    self.recoverDeadHarness(port: port, reason: "端口上已没有 dsh 在监听")
                     return
                 }
                 self.runtimeWatchdogFailures += 1
-                // 自己的进程还活着：那多半只是慢/卡，用更长的预算，别用 15 秒的
-                // 判据去打断正在跑的回合。
-                if let process = self.process, process.isRunning {
-                    guard RuntimeHealthSupport.shouldRestartHungProcess(failures: self.runtimeWatchdogFailures) else {
-                        return
-                    }
-                    self.appendLogString("dsh 端口 \(port) 连续 \(self.runtimeWatchdogFailures) 次探测无响应（进程仍在运行但已卡死）\n")
-                    self.runtimeWatchdogFailures = 0
-                    self.recoverDeadHarness(port: port, reason: "dsh 进程仍在但端口不再应答")
-                    return
+                if self.runtimeWatchdogFailures == 1 {
+                    self.appendLogString("dsh 端口 \(port) 探测无响应（\(probe.outcome.label)：\(probe.detail)），先按「忙」处理，连续 \(RuntimeHealthSupport.unresponsiveFailureThreshold) 次才重启\n")
                 }
-                guard RuntimeHealthSupport.shouldTakeOver(failures: self.runtimeWatchdogFailures) else { return }
+                guard RuntimeHealthSupport.shouldRestartUnresponsive(failures: self.runtimeWatchdogFailures) else { return }
+                let failures = self.runtimeWatchdogFailures
                 self.runtimeWatchdogFailures = 0
-                self.recoverDeadHarness(port: port, reason: "端口上已没有 dsh 在应答")
+                self.recoverDeadHarness(port: port, reason: "dsh 连续 \(failures) 次探测无响应（\(probe.outcome.label)：\(probe.detail)）")
             }
         }
     }
 
     /// 内置窗口连不上那个端口（WKWebView 报到 -1004 之类）时立刻确认一次。
-    /// 等 5 秒看护节拍也行，但用户眼前已经是一张死页面了，没理由再让他多等。
+    ///
+    /// 只处理**能证明实例没了**的那一种：端口没人监听。其余情况（导航超时、
+    /// 连上又断）在窗口里只是一次失败的加载，在服务端可能只是一次事件循环停顿，
+    /// 一次探针失败就重启等于把以前那条 0 容忍的误杀路径留着——交给看护的连续
+    /// 判据（6 次 ≈ 30 秒），期间用户重开窗口也会重试。
     private func handleHarnessWindowConnectionFailure(port: Int?) {
         guard !runtimeRecoveryInFlight, state == .running, let current = selectedPort else { return }
         let target = port ?? current
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let alive = self?.dshResponds(on: target) ?? false
+            let probe = self?.probeDSH(on: target) ?? RuntimeHealthSupport.ProbeResult(outcome: .failure, detail: "启动器已释放")
             DispatchQueue.main.async {
                 guard let self, self.state == .running, self.selectedPort == current else { return }
-                // 端口还在应答：问题不是「服务没了」（401 / 内容类型 / 证书），
-                // 交给兜底页与提示，重启解决不了。
-                guard !alive else { return }
-                self.recoverDeadHarness(port: target, reason: "内置窗口连不上该端口")
+                guard probe.outcome == .refused, self.process?.isRunning != true else { return }
+                self.recoverDeadHarness(port: target, reason: "内置窗口连不上该端口（端口已无人监听）")
             }
         }
     }
