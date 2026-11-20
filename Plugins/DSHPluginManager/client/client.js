@@ -1505,6 +1505,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         : updater;
       setInstallStatusState(installStatusRef.current)
     }
+    // 本次会话里装上的「插件 id → 实际包名」对照表（服务端 installedAs）。市场名与
+    // 包名可能毫无字面关联（tt-a1i/archify#… → @tt-a1i/archify-dsh），已安装判定
+    // 要靠这张表把卡片切到「已安装」。卸载时按值剔除。
+    const installedAsRef = React.useRef({})
     const [queueView, setQueueView] = React.useState([])
     // 更新队列：与安装队列共用同一把串行锁（都要跑 pnpm，并发写同一 profile
     // 会互相踩）。点多个「更新」依次排队，排队期间还能继续点其他的。
@@ -1523,7 +1527,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const updateTotalRef = React.useRef(0)
     const mutationRunningRef = React.useRef(false)
     const [mutationActive, setMutationActive] = React.useState(false)
-    /// 单个安装请求；返回 'ok' | 'already' | 'fail'。失败当场 toast（读错误需要时间）。
+    /// 单个安装请求；返回 { outcome: 'ok'|'already'|'fail', installedAs }。
+    /// installedAs 是服务端回报的**实际包名**（验收回读用它，市场名猜包名必错：
+    /// tt-a1i/archify#integrations/deepseek-harness 装出来叫 @tt-a1i/archify-dsh）。
+    /// 失败当场 toast（读错误需要时间）。
     const installOne = async (plugin) => {
       try {
         const r = await fetch('/dsh-plugin-manager/install', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: plugin.url, name: plugin.name }) })
@@ -1533,14 +1540,21 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           // toast 只说结论，details 在确认块里，别让一整段 requirements 淹没队列条。
           setRiskInstall({ plugin, ...v.allowVersion })
           toast('info', `安装失败：${plugin.repo || plugin.name} — ${v.reason || '与当前 dsh 版本不兼容'}，可选择「接受风险并安装」`)
-          return 'fail'
+          return { outcome: 'fail', installedAs: '' }
         }
         if (v.error) throw Error(v.error)
         if (!v.ok) throw Error(v.error || '安装失败')
-        return v.alreadyInstalled ? 'already' : 'ok'
+        if (v.installedAs || v.packageName) {
+          const normalized = normalizedName(v.installedAs || v.packageName)
+          if (normalized) installedAsRef.current[plugin.id] = normalized
+        }
+        return {
+          outcome: v.alreadyInstalled ? 'already' : 'ok',
+          installedAs: v.installedAs || v.packageName || '',
+        }
       } catch (e) {
         toast('error', `安装失败：${plugin.repo || plugin.name} — ${String(e.message || e)}`)
-        return 'fail'
+        return { outcome: 'fail', installedAs: '' }
       }
     }
     // 「接受风险并安装」：先向 dsh 登记精确版本豁免（dsh plugin allow-version），
@@ -1681,13 +1695,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const runOneInstall = async (plugin) => {
       await waitWhileDestructive()
       setInstallStatus(s2 => ({ ...s2, [plugin.id]: 'installing' }))
-      const outcome = await installOne(plugin)
+      const { outcome, installedAs } = await installOne(plugin)
       installQueueRef.current = installQueueRef.current.slice(1)
       setQueueView([...installQueueRef.current])
       setInstallStatus(s2 => { const next = { ...s2 }; delete next[plugin.id]; return next })
       // full 是市场全名（strukto-ai/mirage#dsh）：装出来的 npm 名可能只有从全名
       // 归一化后才对得上（@struktoai/mirage-dsh），repo 短名比对不上。
-      return { outcome, name: plugin.repo || plugin.name, full: plugin.name || '' }
+      // installedAs 是服务端回报的真名，验收回读的**第一**比对键。
+      return { outcome, name: plugin.repo || plugin.name, full: plugin.name || '', installedAs }
     }
     const pumpMutations = async () => {
       if (mutationRunningRef.current) return
@@ -1706,8 +1721,8 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           }
           while (installQueueRef.current.length > 0) {
             sawInstall = true
-            const { outcome, name, full } = await runOneInstall(installQueueRef.current[0])
-            if (outcome === 'ok') installedNames.push({ name, full })
+            const { outcome, name, full, installedAs } = await runOneInstall(installQueueRef.current[0])
+            if (outcome === 'ok') installedNames.push({ name, full, installedAs })
             else if (outcome === 'already') toast('info', `${name} 已安装过，无需重复安装`)
           }
         }
@@ -1723,10 +1738,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
             listing = (await r.json()).items || []
           } catch { /* 列表读不到就不做缺席判定，保留成功汇总 */ }
           const present = new Set(listing.map(item => normalizedName(item.name)))
-          // 一条安装记录有两个名字可比：repo 短名与市场全名。比对口径与
-          // isInstalledPlugin 一致（归一化 + 双向 endsWith），任何一个命中都算在场。
+          // 比对键按可靠度排序：installedAs 是服务端回报的**实际包名**（archify：
+          // tt-a1i/archify#integrations/deepseek-harness 装出来叫 @tt-a1i/archify-dsh，
+          // 市场名怎么猜都猜不到）；repo 短名与市场全名只是兜底。口径与
+          // isInstalledPlugin 一致（归一化 + 双向 endsWith）。
           const seenInstalled = record => {
-            for (const candidate of [record.name, record.full]) {
+            for (const candidate of [record.installedAs, record.name, record.full]) {
               const normalized = normalizedName(candidate)
               if (!normalized) continue
               if (present.has(normalized)) return true
@@ -1809,6 +1826,14 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     /// 卸载成功后立刻重读一次检测结果：服务端会把已卸载插件的条目裁掉，侧边栏角标与
     /// 「全部更新 (n)」不必等下一轮 60 秒轮询才归一。
     const reloadUpdatesAfterUninstall = () => loadUpdates().then(value => { if (value) applyUpdates(value) })
+    // 卸载成功后把「本次会话装上」的实际包名从对照表里剔掉，否则卡片会一直显示已安装。
+    const dropInstalledExtra = name => {
+      const normalized = normalizedName(name)
+      if (!normalized) return
+      for (const [id, known] of Object.entries(installedAsRef.current)) {
+        if (known === normalized) delete installedAsRef.current[id]
+      }
+    }
     const confirmUninstallGo = () => {
       if (!confirmUninstall) return
       const name = confirmUninstall.name
@@ -1817,6 +1842,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         .then(r => r.json()).then(v => {
           if (v.error) throw Error(v.error)
           if (!v.ok) throw Error(v.error || '卸载失败')
+          dropInstalledExtra(name)
           if (v.needsRestart) setRestartPrompt({ title: `已卸载 ${name}`, copy: '侧边栏入口会在重启 dsh 后消失。是否立即重启？' })
           else toast('success', `已卸载 ${name}`)
           return loadInstalled().then(reloadUpdatesAfterUninstall)
@@ -2026,6 +2052,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
               setRestartPrompt({ title: `已卸载 ${done.length} 个插件`, copy: '侧边栏入口会在重启 dsh 后消失。是否立即重启？' })
             }
           }
+          selectedNames.forEach(dropInstalledExtra)
           setSelected(new Set())
           return loadInstalled().then(reloadUpdatesAfterUninstall)
         })
@@ -2052,6 +2079,10 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
       // 再比整个 name（含作者），以及 url 里的仓库名兜底。
       const whole = normalizedName(plugin.name)
       if (whole && installedIndex.some(name => name === whole || name.endsWith(whole))) return true
+      // 最后按安装响应里服务端回报的实际包名（installedAs）精确比对：市场名与包名
+      // 可能毫无字面关联（tt-a1i/archify#… → @tt-a1i/archify-dsh），上面两步都够不到。
+      const known = installedAsRef.current[plugin.id]
+      if (known && installedIndex.includes(known)) return true
       return false
     }
 

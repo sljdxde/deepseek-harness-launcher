@@ -1597,7 +1597,7 @@ await openInstalledPanel(runtime);
     if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: installedItems });
     if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
     if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
-    if (url.startsWith('/dsh-plugin-manager/install')) return respond({ ok: true });
+    if (url.startsWith('/dsh-plugin-manager/install')) return respond({ ok: true, installedAs: 'p1', packageName: 'p1' });
     if (url.startsWith('/dsh-plugin-manager/uninstall')) return respond({ ok: true, needsRestart: false });
     if (url.startsWith('/dsh-plugin-manager/uninstall-many')) return respond({ ok: true, results: [{ name: 'p1', ok: true }] });
     if (url.startsWith('/dsh-plugin-manager/marketplace')) {
@@ -2572,4 +2572,60 @@ await openInstalledPanel(runtime);
   assert.equal(confirmNode(), undefined, '取消后确认块关闭');
 
   console.log('场景34（豁免登记失败 → 如实报错可取消）通过');
+}
+
+/** 场景 35：验收回读用服务端回报的实际包名（installedAs），不再拿市场名猜。
+ *  用户实测：装 tt-a1i/archify#integrations/deepseek-harness 明明装上了
+ *  （实际包名 @tt-a1i/archify-dsh），却误报「安装未生效（已安装列表里没有出现）」——
+ *  市场名和实际包名毫无字面关联，猜是猜不到的。 */
+{
+  const marketPlugins = [
+    {
+      id: 'a1', name: 'tt-a1i/archify#integrations/deepseek-harness', repo: 'archify',
+      author: 'tt-a1i', url: 'https://github.com/tt-a1i/archify/tree/main/integrations/deepseek-harness',
+      category: 'tools', descriptionEn: 'archify dsh', downloads: 1, stars: 1, addedDate: null,
+    },
+  ];
+  let installedItems = [];
+  const fetchImpl = (url, options = {}) => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url === '/dsh-plugin-manager/installed') return respond({ items: installedItems });
+    if (url === '/dsh-plugin-manager/install') {
+      // 服务端只认得实际包名；市场名与它毫无字面交集。
+      installedItems = [{ name: '@tt-a1i/archify-dsh', version: '1.1.0', source: 'user' }];
+      return respond({ ok: true, installedAs: '@tt-a1i/archify-dsh', packageName: '@tt-a1i/archify-dsh' });
+    }
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: 1, allTotal: 1,
+        counts: [{ name: 'tools', count: 1, label: '工具' }], categories: ['tools'],
+        plugins: marketPlugins, sections: [],
+        featured: [], topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  const cards = () => findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  const installBtn = () => findAll(cards()[0], node => node.type === 'button'
+    && /(^| )dsh-pm-install( |$)/.test(String(node.props.className || '')))[0];
+  installBtn().props.onClick({ stopPropagation() {} });
+  await settle(runtime, 30);
+
+  assert.ok(toasts(runtime.tree).some(item => item.kind === 'success' && String(item.text).includes('已安装，重启 dsh 后生效')),
+    '验收以 installedAs 为准：实际包名在列表里就是装上了');
+  assert.ok(!toasts(runtime.tree).some(item => String(item.text).includes('安装未生效')),
+    '不能再误报「安装未生效」');
+  const tag = findAll(cards()[0], node => node.type === 'span'
+    && /(^| )dsh-pm-installed-tag( |$)/.test(String(node.props.className || '')))[0];
+  assert.ok(tag, '卡片切到「已安装」胶囊');
+
+  console.log('场景35（验收回读用 installedAs 实际包名）通过');
 }
