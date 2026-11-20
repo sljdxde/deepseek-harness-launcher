@@ -781,7 +781,7 @@ serialTest('installPlugin：克隆出来的仓库没有 package.json 就拒绝�
   });
 });
 
-serialTest('installPlugin：克隆出来的源码缺模块时拒绝安装，原有源码不动', async () => {
+serialTest('installPlugin：克隆出来的源码缺模块时不进 profile（npm 没有发行版就拒绝 file: 安装）', async () => {
   await withTempHome(async home => {
     await writeProfile(home);
     execHook = (call) => {
@@ -795,11 +795,53 @@ serialTest('installPlugin：克隆出来的源码缺模块时拒绝安装，原�
       }
       return { stdout: '', stderr: '' };
     };
-    const result = await installPlugin({ name: 'Owner/Repo' }, async () => ({ note: 'x' }), { verifyPresent: async () => true });
+    const commands = [];
+    const result = await installPlugin({ name: 'Owner/Repo' }, async (args) => {
+      commands.push(args);
+      return { note: 'x' };
+    }, { verifyPresent: async () => true });
+    // npm 没有发行版、构建也救不了 import 缺口：安装前复查把 file: add 拦下。
     assert.equal(result.ok, false);
     assert.match(result.error, /缺少模块/);
+    assert.equal(commands.some(args => args[0] === 'add' && String(args[1]).startsWith('file:')), false,
+      '残缺源码绝不能被 add file: 进 profile');
+    // 源码目录会留下（npm 路径/后续重试还要用 marker），但它没有被链接进 profile。
     const dest = join(home, 'profiles', 'web', 'plugin-sources', 'Owner-Repo');
-    assert.equal(await exists(dest), false, '残缺源码不能落成正式目录');
+    assert.equal(await exists(dest), true, '源码目录保留（不再一票否决）');
+  });
+});
+
+serialTest('installPlugin：源码缺模块但 npm 发行版完整时，直接装 npm 包（git 目录的缺口不挡道）', async () => {
+  await withTempHome(async home => {
+    await writeProfile(home);
+    execHook = (call) => {
+      if (call.args[0] === 'view') {
+        const key = call.args.slice(1).join(' ');
+        // 市场名派生的两个候选都 404，逼进 git 源码路径；克隆出来的 package.json
+        // 叫 published-pkg，npm 上有发行版（名字与仓库名无关，materialize 的场景）。
+        if (key === '@owner/repo version' || key === 'repo version') throw execError('E404 Not Found');
+        if (key === 'published-pkg version') return { stdout: '2.0.0', stderr: '' };
+        if (key === 'published-pkg repository --json') return { stdout: JSON.stringify({ url: 'https://github.com/Owner/Repo' }), stderr: '' };
+      }
+      if (call.args[0] === 'clone') {
+        const dest = call.args[call.args.length - 1];
+        return writeTree(dest, {
+          'package.json': JSON.stringify({ name: 'published-pkg', version: '2.0.0' }),
+          'index.js': "import './dist/generated.js'\n"
+        }).then(() => ({ stdout: '', stderr: '' }));
+      }
+      if (call.args.includes('rev-parse')) return { stdout: 'c'.repeat(40), stderr: '' };
+      return { stdout: '', stderr: '' };
+    };
+    const commands = [];
+    const result = await installPlugin({ name: 'Owner/Repo' }, async (args) => {
+      commands.push(args);
+      return { note: 'installed' };
+    }, { verifyPresent: async () => true });
+    // hindsight 型场景：git 目录缺 dist/*，但 npm 发行版自带完整产物。
+    assert.equal(result.ok, true, result.error || '应从 npm 发行版装上');
+    assert.deepEqual(commands, [['add', 'published-pkg']]);
+    assert.equal(result.fromNpm, true);
   });
 });
 

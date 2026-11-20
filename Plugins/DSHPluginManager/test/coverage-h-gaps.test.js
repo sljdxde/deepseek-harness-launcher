@@ -81,7 +81,7 @@ afterEach(() => { execHook = null; });
 
 // 必须在替换 execFile 之后再 import：lib/index.js 顶层就会 promisify(execFile)。
 const lib = await import('../lib/index.js');
-const { applyPluginUpdate, discoverPluginRowIds, installPlugin, parseVersionRejection, allowPluginVersion, resetMirrorCache } = lib;
+const { applyPluginUpdate, discoverPluginRowIds, installPlugin, parseVersionRejection, allowPluginVersion, resetMirrorCache, gitCloneUrlChain } = lib;
 const { readJsonFile } = await import('../lib/atomic.js');
 
 // ---------------------------------------------------------------------------
@@ -89,6 +89,17 @@ const { readJsonFile } = await import('../lib/atomic.js');
 // ---------------------------------------------------------------------------
 
 const serialTest = (name, fn) => test(name, { concurrency: false }, fn);
+
+/** 在假 clone 目标里铺一棵最小文件树（package.json 等）。 */
+async function writeTree(root, tree) {
+  const { mkdir: mk, writeFile: wf } = await import('node:fs/promises');
+  const { dirname } = await import('node:path');
+  for (const [relative, content] of Object.entries(tree || {})) {
+    const target = join(root, ...relative.split('/'));
+    await mk(dirname(target), { recursive: true });
+    await wf(target, content, 'utf8');
+  }
+}
 
 /** 临时 DSH_HOME（跑完恢复环境变量并删目录）。 */
 async function withTempHome(run) {
@@ -166,6 +177,115 @@ async function exists(path) {
 // ---------------------------------------------------------------------------
 // 1) installPlugin：npm 探测抛错
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 0) git clone 的 URL 候选链：镜像挂了不能把安装一起带走
+// ---------------------------------------------------------------------------
+
+serialTest('gitCloneUrlChain：镜像开启时镜像在前，关闭时直连在前，ssh 永远兜底', () => {
+  const ref = { author: 'vectorize-io', repo: 'hindsight' };
+  const mirrorTable = [{ match: 'https://github.com/', replace: 'https://ghfast.top/https://github.com/', kind: 'git' }];
+  const withMirror = gitCloneUrlChain(ref, mirrorTable);
+  assert.deepEqual(withMirror, [
+    'https://ghfast.top/https://github.com/vectorize-io/hindsight.git',
+    'https://github.com/vectorize-io/hindsight.git',
+    'git@github.com:vectorize-io/hindsight.git',
+  ]);
+  const withoutMirror = gitCloneUrlChain(ref, null);
+  assert.deepEqual(withoutMirror, [
+    'https://github.com/vectorize-io/hindsight.git',
+    'git@github.com:vectorize-io/hindsight.git',
+  ]);
+});
+
+serialTest('cloneToSources：镜像连不上时自动落到直连，装完不误报', async () => {
+  await withTempHome(async home => {
+    await writeProfile(home);
+    const previousPort = process.env.DSH_PORT;
+    process.env.DSH_PORT = '3999';
+    const realFetch = globalThis.fetch;
+    // 镜像开启：第一个候选是 ghfast 前缀；让它失败，直连应当顶上。
+    globalThis.fetch = async () => ({
+      ok: true, status: 200,
+      json: async () => ({ enabled: true, table: [{ match: 'https://github.com/', replace: 'https://ghfast.top/https://github.com/', kind: 'git' }] }),
+    });
+    resetMirrorCache();
+    const cloneTargets = [];
+    const writeRepo = dest => writeTree(dest, {
+      'package.json': JSON.stringify({ name: 'hindsight-plugin', version: '1.0.0' }),
+    });
+    execHook = (call) => {
+      if (call.args[0] === 'clone') {
+        const url = call.args[call.args.length - 2];
+        const dest = call.args[call.args.length - 1];
+        cloneTargets.push(url);
+        // 第一个（镜像）候选连不上；后面的候选成功。
+        return cloneTargets.length === 1
+          ? Promise.reject(execError("Command failed: git clone\nfatal: unable to access 'https://ghfast.top/…': Could not connect to server"))
+          : writeRepo(dest).then(() => ({ stdout: '', stderr: '' }));
+      }
+      if (call.args.includes('rev-parse')) return { stdout: 'b'.repeat(40), stderr: '' };
+      return { stdout: '', stderr: '' };
+    };
+    try {
+      const result = await installPlugin(
+        { name: 'vectorize-io/hindsight', url: 'https://github.com/vectorize-io/hindsight' },
+        async () => ({}),
+        { verifyPresent: async () => true, npmProbe: async () => false, repositoryOf: async () => null },
+      );
+      assert.equal(result.ok, true, '镜像失败后直连装上：' + (result.error || ''));
+      assert.ok(cloneTargets[0].startsWith('https://ghfast.top/'), '第一个候选走镜像');
+      assert.equal(cloneTargets[1], 'https://github.com/vectorize-io/hindsight.git', '第二个候选直连');
+      // marker 里记的是实际生效的 URL，更新检测靠它反推远端。
+      const marker = JSON.parse(await readFile(join(home, 'profiles', 'web', 'plugin-sources', 'vectorize-io-hindsight', '.dsh-source.json'), 'utf8'));
+      assert.equal(marker.url, 'https://github.com/vectorize-io/hindsight.git');
+    } finally {
+      globalThis.fetch = realFetch;
+      if (previousPort === undefined) delete process.env.DSH_PORT;
+      else process.env.DSH_PORT = previousPort;
+      resetMirrorCache();
+    }
+  });
+});
+
+serialTest('cloneToSources：全部候选都失败时聚合报错（镜像 → 直连 → ssh 各试一遍）', async () => {
+  await withTempHome(async home => {
+    await writeProfile(home);
+    const previousPort = process.env.DSH_PORT;
+    process.env.DSH_PORT = '3999';
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true, status: 200,
+      json: async () => ({ enabled: true, table: [{ match: 'https://github.com/', replace: 'https://ghfast.top/https://github.com/', kind: 'git' }] }),
+    });
+    resetMirrorCache();
+    const cloneTargets = [];
+    execHook = (call) => {
+      if (call.args[0] === 'clone') {
+        cloneTargets.push(call.args[call.args.length - 2]);
+        return Promise.reject(execError('fatal: unable to access: Could not connect to server'));
+      }
+      return { stdout: '', stderr: '' };
+    };
+    try {
+      const result = await installPlugin(
+        { name: 'vectorize-io/hindsight', url: 'https://github.com/vectorize-io/hindsight' },
+        async () => ({}),
+        { verifyPresent: async () => true, npmProbe: async () => false, repositoryOf: async () => null },
+      );
+      assert.equal(result.ok, false);
+      assert.match(result.error, /clone 失败（3 个地址都试过了：镜像 → GitHub 直连 → ssh）/);
+      assert.match(result.error, /Could not connect to server/, '带最后一次的原始错误');
+      assert.equal(cloneTargets.length, 3, '三个候选都尝试过');
+      assert.ok(cloneTargets[2].startsWith('git@github.com:'), 'ssh 是最后一个候选');
+    } finally {
+      globalThis.fetch = realFetch;
+      if (previousPort === undefined) delete process.env.DSH_PORT;
+      else process.env.DSH_PORT = previousPort;
+      resetMirrorCache();
+    }
+  });
+});
 
 serialTest('installPlugin：npm 探测抛错时不崩，记成 unreachable 后如实报错', async () => {
   await withTempHome(async home => {

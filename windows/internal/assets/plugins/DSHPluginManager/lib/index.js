@@ -1410,30 +1410,70 @@ function describeUnresolvableImports(missing) {
  * @param {string|null} subdir - subdirectory to materialize, or null for root.
  * @returns {Promise<{ok:boolean,dest?:string,packageName?:string,error?:string}>}
  */
+/**
+ * clone 的 URL 候选链（按序尝试，第一个成功的生效）：
+ *   1. 国内加速开启时的镜像前缀（ghfast 这类公共代理今天能用明天就挂）；
+ *   2. GitHub 直连 https；
+ *   3. ssh（用户配过 key 时可用；GIT_TERMINAL_PROMPT=0 + 空 ASKPASS 保证无 key 时快速失败）。
+ * 任何一个候选都不能是唯一依赖——实测 ghfast.top 整机不可达时安装直接失败。
+ * @param {{author:string,repo:string}} ref
+ * @param {Array<{match:string,replace:string}>|null} mirrorTable - activeMirrorTable() 结果（null = 关闭）。
+ */
+export function gitCloneUrlChain(ref, mirrorTable) {
+  const plain = `https://github.com/${ref.author}/${ref.repo}.git`;
+  const mirrored = mirrorMapURL(plain, mirrorTable);
+  const urls = mirrored !== plain ? [mirrored] : [];
+  urls.push(plain);
+  urls.push(`git@github.com:${ref.author}/${ref.repo}.git`);
+  return urls;
+}
+
 async function cloneToSources(ref, subdir) {
-  // 国内加速打开时 clone 地址过镜像表；`probeGitHead` 等只读探测走 raw，不在此处。
-  const repoUrl = mirrorMapURL(`https://github.com/${ref.author}/${ref.repo}.git`, await activeMirrorTable());
   const sourcesDir = join(profilesWebModules(), '..', 'plugin-sources');
   const safeName = ((subdir ? subdir.split('/').pop() : ref.repo) || 'plugin').replace(/[^a-zA-Z0-9._-]/g, '-');
   const dest = join(sourcesDir, `${ref.author}-${ref.repo}${subdir ? '-' + safeName : ''}`);
   const tmpRoot = await fs.mkdtemp(join(tmpdir(), 'dsh-pm-'));
   const cloneDir = join(tmpRoot, 'repo');
+  // 每个候选 URL 依次把「sparse →（失败）→ plain」整组试一遍；clone 成功后
+  // 用实际生效的 URL 记 marker（更新检测靠它反推远端）。
+  const urlChain = gitCloneUrlChain(ref, await activeMirrorTable());
+  let usedUrl = null;
+  // 无 TTY 环境里 git 需要认证时会一直等输入：关掉提示，让它快速失败进下一个候选。
+  const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'true' };
   try {
-    if (subdir) {
-      // Sparse checkout materializes only the subdirectory — a few MB instead
-      // of the whole repo. Fall back to a plain shallow clone on older git.
+    let lastCloneError = '';
+    for (const candidate of urlChain) {
       try {
-        await run('git', ['clone', '--depth', '1', '--filter=blob:none', '--sparse', repoUrl, cloneDir], { timeout: 300000 });
-        await run('git', ['-C', cloneDir, 'sparse-checkout', 'set', subdir], { timeout: 120000 });
-      } catch {
+        if (subdir) {
+          // Sparse checkout materializes only the subdirectory — a few MB instead
+          // of the whole repo. Fall back to a plain shallow clone on older git.
+          try {
+            await run('git', ['clone', '--depth', '1', '--filter=blob:none', '--sparse', candidate, cloneDir], { timeout: 300000, env: gitEnv });
+            await run('git', ['-C', cloneDir, 'sparse-checkout', 'set', subdir], { timeout: 120000, env: gitEnv });
+          } catch {
+            await fs.rm(cloneDir, { recursive: true, force: true }).catch(() => {});
+            await run('git', ['clone', '--depth', '1', candidate, cloneDir], { timeout: 300000, env: gitEnv });
+          }
+        } else {
+          // Whole-repo plugin: a plain shallow clone (sparse would drop the
+          // subdirectories the plugin source depends on).
+          await run('git', ['clone', '--depth', '1', candidate, cloneDir], { timeout: 300000, env: gitEnv });
+        }
+        usedUrl = candidate;
+        break;
+      } catch (error) {
+        lastCloneError = String(error?.message || error);
         await fs.rm(cloneDir, { recursive: true, force: true }).catch(() => {});
-        await run('git', ['clone', '--depth', '1', repoUrl, cloneDir], { timeout: 300000 });
       }
-    } else {
-      // Whole-repo plugin: a plain shallow clone (sparse would drop the
-      // subdirectories the plugin source depends on).
-      await run('git', ['clone', '--depth', '1', repoUrl, cloneDir], { timeout: 300000 });
     }
+    if (!usedUrl) {
+      return {
+        ok: false,
+        error: `clone 失败（${urlChain.length} 个地址都试过了：镜像 → GitHub 直连 → ssh）`
+          + `，最后错误：${lastCloneError.slice(0, 600)}。请检查网络或稍后再试`,
+      };
+    }
+    const repoUrl = usedUrl;
     const src = subdir ? join(cloneDir, subdir) : cloneDir;
     const meta = await readPackageMeta(src);
     if (!meta?.name) {
@@ -1456,14 +1496,15 @@ async function cloneToSources(ref, subdir) {
       commit: /^[0-9a-f]{40}$/.test(head ?? '') ? head : null,
       clonedAt: new Date().toISOString()
     }, null, 2), 'utf8').catch(() => {});
+    // 相对 import 落不了地**不在这里一票否决**：monorepo 子包的 dist 常常只在
+    // npm 包里（实测 hindsight：index.js import ./dist/*.js，git 目录就是没有），
+    // 而它的 npm 发行版装上完全没问题——这里否决会把能装的插件一起挡掉。
+    // gaps 如实带回：npm 路径用不到源码；file: 路径在 materialize 里装前还有
+    // 一道无条件复查，残缺源码照样进不了 profile。
     const gaps = await findUnresolvableLocalImports(staging);
-    if (gaps.length) {
-      await fs.rm(staging, { recursive: true, force: true }).catch(() => {});
-      return { ok: false, error: `${describeUnresolvableImports(gaps)}；原有源码未改动` };
-    }
     await fs.rm(dest, { recursive: true, force: true }).catch(() => {});
     await fs.rename(staging, dest);
-    return { ok: true, dest, packageName: meta.name };
+    return { ok: true, dest, packageName: meta.name, gaps };
   } finally {
     await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -1685,9 +1726,11 @@ async function materializeClonedPlugin(src, options) {
  * We sparse-clone the repo, copy the subdirectory into a persistent source
  * folder under the profile, and add it as a `file:` dependency so pnpm records
  * it in the profile manifest and node_modules (and dsh reconciles its bundle).
- * A clone whose own relative imports don't land is refused here rather than
- * linked into the profile (see findUnresolvableLocalImports), and a clone that
- * needs a build before its entry files exist is built first (materializeClonedPlugin).
+ * Import gaps in the cloned source do **not** block here: materializeClonedPlugin
+ * installs the published npm release first (its dist is complete even when the
+ * git checkout is not) and unconditionally re-scans before any `file:` add, so
+ * a broken source still never reaches the profile. A clone that needs a build
+ * before its entry files exist is built there too (materializeClonedPlugin).
  * @param {{author:string,repo:string,subdir:string,full:string}} ref
  * @param {Set<string>} installedNames - lower-cased names already present.
  * @returns {Promise<{ok:boolean,alreadyInstalled?:boolean,installedAs?:string,packageName?:string,note?:string,error?:string}>}
@@ -1697,8 +1740,6 @@ async function installSubdirPlugin(ref, installedNames, command = pluginCommand,
   const clone = options.clone ?? cloneToSources;
   const src = await clone(ref, ref.subdir);
   if (!src.ok) return src;
-  const missing = await findUnresolvableLocalImports(src.dest);
-  if (missing.length) return { ok: false, error: describeUnresolvableImports(missing) };
   if (installedNames.has(src.packageName.toLowerCase())) {
     return { ok: true, alreadyInstalled: true, installedAs: src.packageName, packageName: src.packageName };
   }
