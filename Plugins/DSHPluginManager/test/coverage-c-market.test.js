@@ -5,11 +5,11 @@
 //
 // 纪律：
 //   * 全程离线：网络、git、pnpm 全部换成注入的假实现，不发真实请求；
-//   * 改 process.env.DSH_HOME / PATH / NODE_OPTIONS 的用例一律串行
+//   * 改 process.env.DSH_HOME / PATH 的用例一律串行
 //     （concurrency: false），并在 finally 里逐个还原；
 //   * 路径一律用 node:path 的 join（Windows 上手写 '/' 会错）。
 import assert from 'node:assert/strict';
-import { chmod, copyFile, link, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import test from 'node:test';
@@ -83,7 +83,7 @@ import {
   writeUpdateCache,
 } from '../lib/index.js';
 
-// 这些用例都要改 process.env.DSH_HOME（以及 PATH / NODE_OPTIONS），必须串行：
+// 这些用例都要改 process.env.DSH_HOME / PATH，必须串行：
 // node:test 默认并发跑同一文件里的用例，环境会被互相踩。
 const serialTest = (name, options, fn) => {
   if (typeof options === 'function') return test(name, { concurrency: false }, options);
@@ -197,56 +197,77 @@ async function seedMarket(home, plugins, extra = {}) {
 }
 
 /**
- * 假可执行文件：把 node.exe 硬链成 `pnpm` / `git`，
- * 再用 NODE_OPTIONS=--require 挂一个预加载脚本，按 argv[0] 的名字分流出
- * 「假装自己是 pnpm / git」的输出。这样 `probeNpmDistTags` / `probeGitHead`
- * 能在**完全离线**的情况下跑到成功分支。
+ * 假可执行文件：直接写 POSIX shell / Windows cmd 脚本（不再硬链 node + NODE_OPTIONS
+ * 预加载）。早前那套依赖 `NODE_OPTIONS=--require`，在 GitHub macOS runner 上预加载
+ * 不生效，probe 拿不到输出（CI 上 4 条探测用例稳定失败，本地却绿）。脚本方式不依赖
+ * 任何 Node 启动参数，离线也能跑到成功分支。
  */
-const FAKE_EXEC_PRELOAD = [
-  "const fs = require('node:fs');",
-  "const path = require('node:path');",
-  "const base = path.basename(process.argv[0] || '').replace(/\\.(exe|cmd|bat)$/i, '').toLowerCase();",
-  "const args = process.argv.slice(1).map(String);",
-  "if (base === 'pnpm') {",
-  "  if (path.basename(args[0] || '') === 'view') { fs.writeSync(1, process.env.DSH_FAKE_PNPM_OUT || '{}'); process.exit(0); }",
-  "  fs.writeSync(2, 'fake pnpm: unsupported'); process.exit(1);",
-  "}",
-  "if (base === 'git') {",
-  "  if (process.env.DSH_FAKE_GIT_FAIL) { fs.writeSync(2, 'fake git: failed'); process.exit(128); }",
-  "  fs.writeSync(1, (process.env.DSH_FAKE_GIT_OUT || '') + '\\n'); process.exit(0);",
-  "}",
-  '',
-].join('\n');
+const PNPM_SHIM_POSIX = `#!/bin/sh
+if [ "$1" = "view" ]; then
+  printf '%s' "$DSH_FAKE_PNPM_OUT"
+  exit 0
+fi
+echo 'fake pnpm: unsupported' >&2
+exit 1
+`;
+const GIT_SHIM_POSIX = `#!/bin/sh
+if [ -n "$DSH_FAKE_GIT_FAIL" ]; then
+  echo 'fake git: failed' >&2
+  exit 128
+fi
+printf '%s\n' "$DSH_FAKE_GIT_OUT"
+`;
 
-/** 在 dir 里造出假的 pnpm / git 可执行文件，返回 { preload, dir }。 */
+async function writePnpmShim(target) {
+  if (isWindows) {
+    await writeFile(target, [
+      '@echo off',
+      'if "%~1"=="view" (',
+      '  <nul set /p "=%DSH_FAKE_PNPM_OUT%"',
+      '  exit /b 0',
+      ')',
+      'echo fake pnpm: unsupported 1>&2',
+      'exit /b 1',
+      '',
+    ].join('\r\n'), 'utf8');
+    return;
+  }
+  await writeFile(target, PNPM_SHIM_POSIX, 'utf8');
+  await chmod(target, 0o755);
+}
+
+async function writeGitShim(target) {
+  if (isWindows) {
+    await writeFile(target, [
+      '@echo off',
+      'if defined DSH_FAKE_GIT_FAIL (',
+      '  echo fake git: failed 1>&2',
+      '  exit /b 128',
+      ')',
+      'echo %DSH_FAKE_GIT_OUT%',
+      '',
+    ].join('\r\n'), 'utf8');
+    return;
+  }
+  await writeFile(target, GIT_SHIM_POSIX, 'utf8');
+  await chmod(target, 0o755);
+}
+
+/** 在 dir 里造出假的 pnpm / git 可执行文件。 */
 async function installFakeExecutables(dir) {
   await mkdir(dir, { recursive: true });
-  const preload = join(dir, 'fake-exec.cjs');
-  await writeFile(preload, FAKE_EXEC_PRELOAD, 'utf8');
-  for (const name of ['pnpm', 'git']) {
-    const target = join(dir, isWindows ? `${name}.exe` : name);
-    try {
-      await link(process.execPath, target);
-    } catch {
-      await copyFile(process.execPath, target);
-    }
-    if (!isWindows) await chmod(target, 0o755);
-  }
-  return { preload, dir };
+  await writePnpmShim(join(dir, isWindows ? 'pnpm.cmd' : 'pnpm'));
+  await writeGitShim(join(dir, isWindows ? 'git.cmd' : 'git'));
+  return { dir };
 }
 
 /**
- * 让 `git` / `pnpm` 命令指向假实现：改 PATH（git 靠它被找到），
- * 再用 NODE_OPTIONS 让假可执行文件按名字走不同的剧本。
+ * 让 `git` / `pnpm` 命令指向假实现：只改 PATH（脚本自带剧本，不需要 NODE_OPTIONS）。
  */
 async function withFakeExecutables(dir, run) {
-  const { preload } = await installFakeExecutables(dir);
-  const preloadPosix = preload.split('\\').join('/');
+  await installFakeExecutables(dir);
   await withEnv(
-    {
-      PATH: `${dir}${delimiter}${process.env.PATH ?? ''}`,
-      NODE_OPTIONS: `--require "${preloadPosix}"`,
-    },
+    { PATH: `${dir}${delimiter}${process.env.PATH ?? ''}` },
     run,
   );
 }
@@ -255,13 +276,8 @@ async function withFakeExecutables(dir, run) {
 async function seedFakePnpmShim(home, dir) {
   const binDir = join(home, 'pnpm-bin');
   await mkdir(binDir, { recursive: true });
-  const target = join(binDir, isWindows ? 'pnpm.exe' : 'pnpm');
-  try {
-    await link(process.execPath, target);
-  } catch {
-    await copyFile(process.execPath, target);
-  }
-  if (!isWindows) await chmod(target, 0o755);
+  const target = join(binDir, isWindows ? 'pnpm.cmd' : 'pnpm');
+  await writePnpmShim(target);
   return binDir;
 }
 
