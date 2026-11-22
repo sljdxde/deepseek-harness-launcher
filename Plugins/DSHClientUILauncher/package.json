@@ -1,10 +1,21 @@
 {
   "name": "@deepseek-ai/dsh-client-ui-layout",
-  "version": "0.2.2-rc.5",
+  "version": "0.2.2-rc.4",
   "description": "dsh 新外壳（同名 drop-in：以 @deepseek-ai/dsh-client-ui-layout 的名义替换宿主 layout 实现）",
   "private": true,
   "type": "module",
   "main": "lib/index.js",
+  "engines": {
+    "dsh": ">=0.2.2-rc.4 <0.3.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.2.2-rc.4 <0.3.0",
+    "@deepseek-ai/dsh-client-locale": ">=0.2.2-rc.4 <0.3.0",
+    "@deepseek-ai/dsh-client-ui-renderer": ">=0.2.2-rc.4 <0.3.0",
+    "@deepseek-ai/dsh-client-ui-session": ">=0.2.2-rc.4 <0.3.0",
+    "@deepseek-ai/dsh-client-ui-theme": ">=0.2.2-rc.4 <0.3.0",
+    "@deepseek-ai/dsh-client-shortcuts": ">=0.2.2-rc.4 <0.3.0"
+  },
   "exports": {
     ".": "./lib/index.js",
     "./client": "./client/client.js",

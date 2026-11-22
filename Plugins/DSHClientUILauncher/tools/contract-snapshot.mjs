@@ -9,10 +9,17 @@
  * 用法：
  *   node tools/contract-snapshot.mjs --check
  *   node tools/contract-snapshot.mjs --write
- *   node tools/contract-snapshot.mjs --check --layout-from <dir> --sidebar-from <dir>
+ *   node tools/contract-snapshot.mjs --check --layout-from <dir> --sidebar-from <dir> --slots-from <dir>
+ *   node tools/contract-snapshot.mjs --check --host-modules <.../@deepseek-ai>   # 显式宿主包根
+ *   node tools/contract-snapshot.mjs --check --baseline <path>                   # 覆盖 baseline（测试/fixture 用）
  *
- * 默认从 (仓库根)/Plugins/DSHClientUILauncher/node_modules 找宿主包；本仓库不装
- * node_modules 时用 --layout-from/--sidebar-from 指向 npm 快照目录。
+ * 默认宿主解析顺序：--layout-from 显式路径 → $DSH_HOST_MODULES / --host-modules →
+ * (本包)/node_modules/@deepseek-ai → ~/.dsh/runtime/node_modules/@deepseek-ai →
+ * ~/.dsh/profiles/node_modules/@deepseek-ai。第一个含 ui-layout 客户端类型的目录胜出。
+ *
+ * 比较口径（本票最小实现）：集合比较、不比顺序；缺失 / kind 变化 / 成员缺失 / 主题前缀
+ * 改名都算 blocker（退出非 0）。HostGuard 运行期可能把"主题前缀改名"降级成 warning
+ * （ticket 29），但 CI 门禁这里按结构漂移一律红，避免静默退化。
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -20,6 +27,8 @@ import { fileURLToPath } from 'node:url'
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const BASELINE = join(PACKAGE_ROOT, 'contracts', 'host-baseline.json')
+/** rc.4 桌面版把 ui-slots 打进 asar、磁盘上读不到 renderer.d.ts 时的已知别名（rc.4/rc.5 相同）。 */
+const OBSERVABLE_ALIAS_FALLBACK = 'export type HostObservable<T> = ObservableSnapshot<T>;'
 
 const args = process.argv.slice(2)
 const mode = args.includes('--write') ? 'write' : (args.includes('--check') ? 'check' : null)
@@ -116,6 +125,26 @@ function rootHookKeysOf(clientSource) {
   return [...match[1].matchAll(/([A-Za-z_$][\w$]*)\s*[:(]/g)].map((entry) => entry[1])
 }
 
+/**
+ * 从宿主 CSS 里找出主题变量前缀（如 `--dsh-`）：取出现次数最多的 `--xxx-`。
+ * 宿主把主题变量改名（`--dsh-` → `--dsw-` 之类）时，这里读到的值就变了 → blocker。
+ */
+function themePrefixOf(source) {
+  const counts = new Map()
+  for (const match of source.matchAll(/--([a-z][a-z0-9]*)-/g)) {
+    counts.set(match[1], (counts.get(match[1]) ?? 0) + 1)
+  }
+  let best = null
+  let bestCount = 0
+  for (const [prefix, count] of counts) {
+    if (count > bestCount || (count === bestCount && best !== null && prefix < best)) {
+      best = prefix
+      bestCount = count
+    }
+  }
+  return best === null ? null : `--${best}-`
+}
+
 function readOrThrow(path, what) {
   if (!existsSync(path)) {
     process.stderr.write(`找不到 ${what}：${path}\n`)
@@ -134,6 +163,40 @@ function packageVersion(packageDir) {
   }
 }
 
+/** 解析宿主包根：显式 --layout-from → $DSH_HOST_MODULES/--host-modules → 默认候选。 */
+function resolveHostDirs() {
+  const explicitLayout = argValue('--layout-from')
+  if (explicitLayout !== null) {
+    return {
+      layoutFrom: explicitLayout,
+      sidebarFrom: argValue('--sidebar-from') ?? join(dirname(explicitLayout), 'dsh-client-ui-sidebar'),
+      slotsFrom: argValue('--slots-from'),
+    }
+  }
+  const bases = []
+  const explicitBase = argValue('--host-modules') ?? process.env.DSH_HOST_MODULES
+  if (explicitBase) bases.push(explicitBase)
+  bases.push(join(PACKAGE_ROOT, 'node_modules', '@deepseek-ai'))
+  if (process.env.HOME) {
+    bases.push(join(process.env.HOME, '.dsh', 'runtime', 'node_modules', '@deepseek-ai'))
+    bases.push(join(process.env.HOME, '.dsh', 'profiles', 'node_modules', '@deepseek-ai'))
+  }
+  for (const base of bases) {
+    if (existsSync(join(base, 'dsh-client-ui-layout', 'lib/types/client/index.d.ts'))) {
+      return {
+        layoutFrom: join(base, 'dsh-client-ui-layout'),
+        sidebarFrom: join(base, 'dsh-client-ui-sidebar'),
+        slotsFrom: join(base, 'dsh-client-ui-slots'),
+      }
+    }
+  }
+  return {
+    layoutFrom: join(bases[0] ?? '', 'dsh-client-ui-layout'),
+    sidebarFrom: join(bases[0] ?? '', 'dsh-client-ui-sidebar'),
+    slotsFrom: join(bases[0] ?? '', 'dsh-client-ui-slots'),
+  }
+}
+
 /** 解析宿主：ui-layout 的 6 子槽 + root 的 renderSlots，ui-sidebar 的席位。 */
 function collect({ layoutFrom, sidebarFrom, slotsFrom }) {
   const layoutSource = readOrThrow(join(layoutFrom, 'lib/types/client/index.d.ts'), 'ui-layout 的客户端类型')
@@ -144,10 +207,18 @@ function collect({ layoutFrom, sidebarFrom, slotsFrom }) {
     : slotsOf(interfaceBlock(readOrThrow(join(sidebarFrom, 'lib/types/client/contract/slots.d.ts'), 'ui-sidebar 的槽契约'), 'SlotMap'))
   const serviceSource = readOrThrow(join(layoutFrom, 'lib/types/client/service.d.ts'), 'ui-layout 的服务面类型')
   const layoutClientSource = readOrThrow(join(layoutFrom, 'lib/client.js'), 'ui-layout 的客户端产物')
+  const observableSource = slotsFrom === null ? null : join(slotsFrom, 'lib/types/renderer.d.ts')
+  // rc.4 桌面版把 ui-slots 打进 asar，磁盘读不到 renderer.d.ts；此时用已知别名（rc.4/rc.5 相同）。
+  const observableAlias = observableSource !== null && existsSync(observableSource)
+    ? ((/export type HostObservable<T> = [^;]+;/.exec(readFileSync(observableSource, 'utf8')) ?? [OBSERVABLE_ALIAS_FALLBACK])[0])
+    : OBSERVABLE_ALIAS_FALLBACK
+  const layoutVersion = packageVersion(layoutFrom)
   return {
+    hostVersion: layoutVersion,
+    themePrefix: themePrefixOf(layoutClientSource),
     host: {
       layoutPackage: '@deepseek-ai/dsh-client-ui-layout',
-      layoutVersion: packageVersion(layoutFrom),
+      layoutVersion,
       sidebarPackage: sidebarFrom === null ? null : '@deepseek-ai/dsh-client-ui-sidebar',
       sidebarVersion: sidebarFrom === null ? null : packageVersion(sidebarFrom),
     },
@@ -170,7 +241,7 @@ function collect({ layoutFrom, sidebarFrom, slotsFrom }) {
         // HostObservable<T> = ObservableSnapshot<T> 的别名行 + 宿主实际使用的方法名（编译产物里
         // `getSnapshot` / `subscribe` 是 panelInfo 唯二被调用的成员）。别名行变了就红。
         observable: {
-          alias: (/export type HostObservable<T> = [^;]+;/.exec(readOrThrow(join(slotsFrom, 'lib/types/renderer.d.ts'), 'ui-slots 的 observable 类型')) ?? [''])[0],
+          alias: observableAlias,
           methods: ['getSnapshot', 'subscribe'],
         },
       },
@@ -199,6 +270,9 @@ function diff(baseline, current) {
   const faceBefore = JSON.stringify(baseline.layoutService?.face ?? [])
   const faceAfter = JSON.stringify(current.layoutService?.face ?? [])
   if (faceBefore !== faceAfter) out.push(`layout:face ${faceBefore} → ${faceAfter}`)
+  if ((baseline.themePrefix ?? null) !== (current.themePrefix ?? null)) {
+    out.push(`theme-prefix-changed: ${baseline.themePrefix ?? '（无）'} → ${current.themePrefix ?? '（无）'}`)
+  }
   const beforeServices = baseline.services ?? {}
   const afterServices = current.services ?? {}
   for (const group of ['layout', 'panelInfo', 'provideRoot']) {
@@ -229,34 +303,33 @@ function diff(baseline, current) {
 }
 
 if (mode === null) {
-  process.stderr.write('用法：node tools/contract-snapshot.mjs --check|--write [--layout-from <dir>] [--sidebar-from <dir>]\n')
+  process.stderr.write('用法：node tools/contract-snapshot.mjs --check|--write [--layout-from <dir>] [--sidebar-from <dir>] [--slots-from <dir>] [--host-modules <dir>] [--baseline <path>]\n')
   process.exit(2)
 }
 
-const layoutFrom = argValue('--layout-from') ?? join(PACKAGE_ROOT, 'node_modules', '@deepseek-ai', 'dsh-client-ui-layout')
-const sidebarFrom = argValue('--sidebar-from') ?? join(PACKAGE_ROOT, 'node_modules', '@deepseek-ai', 'dsh-client-ui-sidebar')
-const slotsFrom = argValue('--slots-from') ?? join(PACKAGE_ROOT, 'node_modules', '@deepseek-ai', 'dsh-client-ui-slots')
+const baselinePath = argValue('--baseline') ?? BASELINE
+const hostDirs = resolveHostDirs()
 const current = collect({
-  layoutFrom,
-  sidebarFrom: existsSync(join(sidebarFrom, 'lib/types/client/contract/slots.d.ts')) ? sidebarFrom : null,
-  slotsFrom,
+  layoutFrom: hostDirs.layoutFrom,
+  sidebarFrom: hostDirs.sidebarFrom !== null && existsSync(join(hostDirs.sidebarFrom, 'lib/types/client/contract/slots.d.ts')) ? hostDirs.sidebarFrom : null,
+  slotsFrom: hostDirs.slotsFrom ?? null,
 })
 
 if (mode === 'write') {
-  writeFileSync(BASELINE, `${JSON.stringify(current, null, 2)}\n`)
-  process.stdout.write(`已写入 ${BASELINE}\n槽 ${current.slots.length} 条，席位 ${(current.seats ?? []).length} 条，renderSlots ${current.rootRenderSlots.length} 个\n`)
+  writeFileSync(baselinePath, `${JSON.stringify(current, null, 2)}\n`)
+  process.stdout.write(`已写入 ${baselinePath}\nhostVersion ${current.hostVersion}，槽 ${current.slots.length} 条，席位 ${(current.seats ?? []).length} 条，renderSlots ${current.rootRenderSlots.length} 个，主题前缀 ${current.themePrefix ?? '（无）'}\n`)
   process.exit(0)
 }
 
-if (!existsSync(BASELINE)) {
-  process.stderr.write(`没有 baseline（${BASELINE}），先跑 --write 并确认\n`)
+if (!existsSync(baselinePath)) {
+  process.stderr.write(`没有 baseline（${baselinePath}），先跑 --write 并确认\n`)
   process.exit(3)
 }
-const differences = diff(JSON.parse(readFileSync(BASELINE, 'utf8')), current)
+const differences = diff(JSON.parse(readFileSync(baselinePath, 'utf8')), current)
 if (differences.length === 0) {
-  process.stdout.write(`宿主契约与 baseline 一致（${current.host.layoutPackage}@${current.host.layoutVersion}）\n`)
+  process.stdout.write(`宿主契约与 baseline 一致（${current.host.layoutPackage}@${current.hostVersion}）\n`)
   process.exit(0)
 }
-process.stderr.write(`宿主契约与 baseline 有 ${differences.length} 处差异：\n${differences.map((line) => `  ${line}`).join('\n')}\n`)
+process.stderr.write(`宿主契约与 baseline 有 ${differences.length} 处 blocker：\n${differences.map((line) => `  blocker: ${line}`).join('\n')}\n`)
 process.stderr.write('确认跟进后跑 --write 更新 baseline，并在 PR 里写"宿主改了什么、我们跟进了什么"。\n')
 process.exit(2)

@@ -1,9 +1,11 @@
 {
+  "hostVersion": "0.2.2-rc.4",
+  "themePrefix": "--dsh-",
   "host": {
     "layoutPackage": "@deepseek-ai/dsh-client-ui-layout",
-    "layoutVersion": "0.2.2-rc.5",
+    "layoutVersion": "0.2.2-rc.4",
     "sidebarPackage": "@deepseek-ai/dsh-client-ui-sidebar",
-    "sidebarVersion": "0.2.2-rc.5"
+    "sidebarVersion": "0.2.2-rc.4"
   },
   "slots": [
     {

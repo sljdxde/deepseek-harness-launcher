@@ -52,7 +52,8 @@ export function realHostVersion({ profileDir, dshBin } = {}) {
 export function checkHostVersion({ hostVersion, baselineVersion, profileDir, dshBin } = {}) {
   const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
   const baseline = JSON.parse(readFileSync(join(ROOT, 'contracts', 'host-baseline.json'), 'utf8'))
-  const expected = baselineVersion ?? baseline?.host?.layoutVersion
+  // baseline 用 --write 从实装宿主重生成时会记录顶层 hostVersion（旧文件退回 host.layoutVersion）。
+  const expected = baselineVersion ?? baseline?.hostVersion ?? baseline?.host?.layoutVersion
   const host = hostVersion ?? realHostVersion({ profileDir, dshBin })
   const result = { ok: false, host, baseline: String(expected ?? ''), packageVersion: manifest.version }
   if (!host) return { ...result, reason: 'host-version-unreadable' }

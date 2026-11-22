@@ -9,6 +9,14 @@
  * 我们跟进了什么"（06-设计评审 R-10）。
  */
 
+/**
+ * 支持的宿主版本区间（下界 = 实装宿主版本，见 contracts/host-baseline.json 的 hostVersion）。
+ *
+ * 单一事实：`package.json` 的 `engines.dsh` 与 HostGuard 都引用这一份，避免两处漂移。
+ * 0.2.x 为「minor 升级零改动」窗口，下界与实装版本对齐；新增能力只能走可选参数/方法。
+ */
+export const SUPPORTED_HOST_RANGE = '>=0.2.2-rc.4 <0.3.0'
+
 /** root 之外由本包重新声明的 6 个子槽，顺序即 §4.1 表格顺序。 */
 export const SUB_SLOTS = Object.freeze([
   { name: 'sidebar', kind: 'single' },

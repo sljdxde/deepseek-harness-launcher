@@ -24,14 +24,14 @@
 #   DSH_RESTART_CMD      重启钩子（默认打印、不重启；真机上配成实际命令）
 #   PNPM                 pnpm 可执行（默认 pnpm）
 #   ALLOW_UNVERIFIED=1   没有 DSH_URL 时允许 verify 记 SKIP 而不失败（仅 dry-run 用）
-#   EXPECTED_HOST_VERSION 期望的宿主版本（默认 0.2.2-rc.5）
+#   EXPECTED_HOST_VERSION 期望的宿主版本（默认 0.2.2-rc.4，与 contracts/host-baseline.json 的 hostVersion 对齐）
 #
 # 退出码：0 成功；2 版本锁；3 无法验证；4 依赖操作失败（已还原）；5 断言失败
 set -eu
 
 SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PKG_DIR=${PKG_DIR:-$(CDPATH= cd -- "$SELF_DIR/.." && pwd)}  # 默认就是本包目录（脚本在 <包>/scripts 下）
-EXPECTED_HOST_VERSION=${EXPECTED_HOST_VERSION:-0.2.2-rc.5}
+EXPECTED_HOST_VERSION=${EXPECTED_HOST_VERSION:-0.2.2-rc.4}
 PNPM=${PNPM:-pnpm}
 STATE_DIR_NAME=.shell-switch
 
