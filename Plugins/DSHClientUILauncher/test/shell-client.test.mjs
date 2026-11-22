@@ -1,3 +1,4 @@
+// source-assert-allow-file: 仅用于 region 标记切块与生成块求值（CODING_STANDARDS §1 允许的三类不变量）
 /**
  * 壳层接线（票 30）：确认 client.js 真的用上了拆分出的模块，且单文件工厂能在桩环境求值。
  *
@@ -8,15 +9,18 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
+import { withShellBlock, shellBlock } from '../tools/sync-contract.mjs'
+
 const SOURCE = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
 
 test('client 接线：日夜令牌、图标栏/状态条渲染、四列几何都来自生成模块', () => {
-  assert.match(SOURCE, /'data-theme': themeMode/, '外壳根要挂 data-theme 才能在日夜令牌间切换')
-  assert.match(SOURCE, /renderRail\(h, \{/, '图标栏用 lib/shell-render 的 renderRail')
-  assert.match(SOURCE, /renderStatusbar\(h, status\(\)/, '状态条用 renderStatusbar')
-  assert.match(SOURCE, /shellColumns\(\{ viewportWidth/, '四列宽度用 lib/shell-layout 的 shellColumns')
-  assert.match(SOURCE, /tag\.textContent = `\$\{TOKENS_CSS\}/, '样式要先铺日夜令牌')
-  assert.match(SOURCE, /#region shell-from-lib/, '必须有生成的壳层块')
+  // 生成块与源一致 = client 就是 lib 的产物（手改会被这里挡住）
+  assert.equal(withShellBlock(SOURCE), SOURCE, '壳层块由 sync 生成，别手改')
+  const block = shellBlock()
+  for (const name of ['renderRail', 'renderStatusbar', 'shellColumns', 'TOKENS_CSS']) {
+    assert.ok(block.includes(name), `壳层生成块应包含 ${name}`)
+  }
+  // 手写接线（data-theme 挂根、ensureStyle 组装）由 factory 求值 + S3 canary 覆盖，不在此断言源码文本
 })
 
 test('client 单文件工厂可在桩环境求值（无 TDZ / 未定义引用）', () => {

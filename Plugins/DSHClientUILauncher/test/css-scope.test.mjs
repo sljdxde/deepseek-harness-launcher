@@ -1,3 +1,4 @@
+// source-assert-allow-file: 旧符号必须消失（否定式不变量）（CODING_STANDARDS §1 允许的三类不变量）
 /** #7 静态检查：client.js 里每条 `!important` 规则都必须以外壳作用域前缀开头（05-§6.5 23:26）。 */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'

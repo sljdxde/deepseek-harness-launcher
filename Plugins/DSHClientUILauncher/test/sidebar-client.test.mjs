@@ -1,3 +1,4 @@
+// source-assert-allow-file: 仅用于 region 标记切块与生成块求值（CODING_STANDARDS §1 允许的三类不变量）
 /**
  * 侧栏接线（票 31）：确认 client.js 真的用上了 lib/sidebar.js 的生成块，
  * 且单文件工厂能在桩环境求值（无 TDZ / 未定义引用）。
@@ -11,11 +12,12 @@ import { withSidebarBlock, sidebarBlock } from '../tools/sync-contract.mjs'
 const SOURCE = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
 
 test('client 接线：侧栏三段卡片走 lib/sidebar.js 的生成块', () => {
-  assert.match(SOURCE, /#region sidebar-from-lib/, '必须有生成的侧栏块')
-  assert.match(SOURCE, /renderSidebar\(h, sidebarState, \{/, '侧栏用 renderSidebar')
-  assert.match(SOURCE, /buildSidebarState\(\{/, '侧栏状态由 buildSidebarState 组装')
-  assert.match(SOURCE, /\$\{SIDEBAR_CSS\}/, '侧栏样式要注入 ensureStyle')
-  assert.match(SOURCE, /props\.useSessions/, '会话行来自宿主 useSessions')
+  assert.equal(withSidebarBlock(SOURCE), SOURCE, '侧栏块由 sync 生成，别手改')
+  const block = sidebarBlock()
+  for (const name of ['renderSidebar', 'buildSidebarState', 'SIDEBAR_CSS', 'SIDEBAR_METRICS']) {
+    assert.ok(block.includes(name), `侧栏生成块应包含 ${name}`)
+  }
+  // props.useSessions 是宿主注入接线，无独立缝；会话行为由 factory 求值 + S3 canary 覆盖
 })
 
 test('client 的侧栏块是生成的，手改就会红', () => {

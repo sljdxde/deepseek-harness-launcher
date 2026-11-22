@@ -79,6 +79,9 @@ node "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 # T3 外壳（同名 drop-in layout）：契约块必须与 lib 一致，单测全跑（与 T4 分支同一段，别各插一处）
 node --check "$ROOT/Plugins/DSHClientUILauncher/client/client.js"
 node "$ROOT/Plugins/DSHClientUILauncher/tools/sync-contract.mjs" --check
+# 生成物纪律（冲突标记 / 生成块同名符号 / BUILD_STAMP）与测试断言纪律（禁源码文本断言）
+node "$ROOT/scripts/check-generated.mjs"
+node "$ROOT/scripts/check-tests.mjs"
 node --test "$ROOT/Plugins/DSHClientUILauncher/test/"*.test.mjs
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-manager.integration.test.js"
 # 插件停用/启用：行 id 发现 → patch 文本渲染 → 状态写入/启用移除 → 去重/不可停用过滤。

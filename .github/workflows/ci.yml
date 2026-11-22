@@ -11,6 +11,30 @@ permissions:
   contents: read
 
 jobs:
+  # 生成物与测试纪律（retro 2026-11-22）：比 regression 快得多，先跑，失败早于打包。
+  # 覆盖三类真实事故：合并残留冲突标记、生成块同名顶层符号、BUILD_STAMP 漂移；
+  # 以及 CODING_STANDARDS §1「禁止源码文本断言」（文件级放行需写明理由）。
+  guards:
+    name: Guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 3
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Generated-region guard
+        run: node scripts/check-generated.mjs
+
+      - name: Test-assertion guard
+        run: node scripts/check-tests.mjs
+
   regression:
     name: Regression
     runs-on: macos-15

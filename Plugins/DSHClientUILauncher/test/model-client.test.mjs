@@ -1,3 +1,4 @@
+// source-assert-allow-file: 仅用于 region 标记切块与生成块求值（CODING_STANDARDS §1 允许的三类不变量）
 /**
  * 模型浮层接线（票 34）：确认 client.js 真用上了 lib/model-surface.js，
  * 且 model-from-lib 生成块能在桩作用域独立求值（兜住「内联函数引用了没一起内联的常量」）。
