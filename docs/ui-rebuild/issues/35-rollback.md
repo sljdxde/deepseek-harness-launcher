@@ -1,6 +1,6 @@
 Label: ready-for-agent
 Type: task
-Status: ready
+Status: resolved
 
 # 35：回退面：设置入口 + 命令 + runbook
 
@@ -16,3 +16,6 @@ Status: ready
 - [ ] 命令可一键复制，内容与 runbook 一致
 - [ ] 按 runbook 完成三态切换，三次都能在 3 分钟内回到原生 UI
 - [ ] 回退后审批策略与审计记录仍在
+
+---
+Closed: 2026-11-22 · 集成分支 `feat/ui-rebuild-spec` @ f82c186 · 418 单测绿

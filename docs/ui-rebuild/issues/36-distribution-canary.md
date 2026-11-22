@@ -1,6 +1,6 @@
 Label: ready-for-agent
 Type: task
-Status: ready
+Status: resolved
 
 # 36：分发清单 + CI canary
 
@@ -17,3 +17,6 @@ Status: ready
 - [ ] canary 在正常基线下断言 v17 外壳渲染且无横幅
 - [ ] canary 在变异基线下断言横幅出现、原生 UI 可见
 - [ ] canary 在 CI 里对两个 rc 版本都能跑起来
+
+---
+Closed: 2026-11-22 · 集成分支 `feat/ui-rebuild-spec` @ f82c186 · 418 单测绿

@@ -1,6 +1,6 @@
 Label: ready-for-agent
 Type: task
-Status: ready
+Status: resolved
 
 # 28：声明与基线：engines/peer + 契约基线重生成 + CI 接线
 
@@ -19,3 +19,6 @@ Status: ready
 - [ ] 版本锁三方不一致时退出非 0，并指出是哪一方
 - [ ] CI 对「实装 rc 版本」与「最新 rc 版本」各跑一次，任一失败即红
 - [ ] 安装到干净 profile 后包能被正常解析（同名 drop-in 生效）
+
+---
+Closed: 2026-11-22 · 集成分支 `feat/ui-rebuild-spec` @ f82c186 · 418 单测绿

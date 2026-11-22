@@ -1,6 +1,6 @@
 Label: ready-for-agent
 Type: task
-Status: ready
+Status: resolved
 
 # 31：侧栏移植：三段卡片 / 层级 / 需要你
 
@@ -18,3 +18,6 @@ Status: ready
 - [ ] 需要你显示两组计数，合计等于头部数字
 - [ ] 点击会话/折叠分区后滚动位置与行位置不变（几何可测）
 - [ ] 全键盘可达：Tab 能到每个行与操作，焦点可见
+
+---
+Closed: 2026-11-22 · 集成分支 `feat/ui-rebuild-spec` @ f82c186 · 418 单测绿

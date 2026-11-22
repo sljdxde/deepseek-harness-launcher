@@ -1,6 +1,6 @@
 Label: ready-for-agent
 Type: task
-Status: ready
+Status: resolved
 
 # 33：右栏与设置页移植
 
@@ -16,3 +16,6 @@ Status: ready
 - [ ] 右栏收起/展开不影响主区宽度计算（无跳动、无溢出）
 - [ ] 设置六组可切换，主题/密度/右栏开关即时生效
 - [ ] 设置页内所有控件有可读标签，键盘可达
+
+---
+Closed: 2026-11-22 · 集成分支 `feat/ui-rebuild-spec` @ f82c186 · 418 单测绿
