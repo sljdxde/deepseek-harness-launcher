@@ -13,7 +13,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, DOCK_TABS, diffContract, describeDiff } from '../lib/contract.js'
-import { moduleIdBlock, withContractBlock, withModuleId, runSync, buildStampBlock} from '../tools/sync-contract.mjs'
+import { moduleIdBlock, withContractBlock, withModuleId, withShellBlock, runSync, buildStampBlock, shellBlock } from '../tools/sync-contract.mjs'
 import { checkHostVersion, realHostVersion } from '../tools/check-host-version.mjs'
 import { chmodSync, mkdirSync, mkdtempSync as mkTmp, rmSync as rmTmp } from 'node:fs'
 
@@ -83,6 +83,23 @@ test('client/client.js 的契约块是生成的，手改就会红', () => {
   assert.notEqual(synced, null, 'client.js 里必须有 children-from-contract 标记区')
   // BUILD_STAMP 随每次提交变化（stamp 提交天然落后一笔），不参与“手改”判定
   assert.equal(normalize(synced), normalize(source), '跑 node tools/sync-contract.mjs 更新，别手改')
+})
+
+test('client/client.js 的壳层块也是生成的，手改就会红（票 30）', () => {
+  const source = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
+  assert.ok(source.includes('// #region shell-from-lib'), 'client.js 必须有 shell-from-lib 标记区')
+  assert.equal(withShellBlock(source), source, '跑 node tools/sync-contract.mjs 更新，别手改')
+})
+
+test('壳层块包含令牌 CSS、图标与渲染函数（票 30）', () => {
+  const block = shellBlock()
+  assert.match(block, /\/\/ #region shell-from-lib/)
+  assert.match(block, /const TOKENS_CSS = "/)
+  assert.match(block, /const SKELETON_CSS = "/)
+  assert.match(block, /const SHELL_ICONS = \{/)
+  assert.match(block, /const shellColumns = function shellColumns/)
+  assert.match(block, /const renderRail = function renderRail/)
+  assert.match(block, /const renderStatusbar = function renderStatusbar/)
 })
 
 test('同步脚本 CLI 自己可用：--check 退出码 0', () => {
