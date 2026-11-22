@@ -21,6 +21,25 @@ import { SHELL_ICONS, DSH_LOGO } from '../lib/icons.js'
 import { SHELL_METRICS, tokensCss, skeletonCss } from '../lib/tokens.js'
 import { shellColumns, DRAWER_BREAKPOINT } from '../lib/shell-layout.js'
 import { shellIcon, renderRail, renderStatusbar } from '../lib/shell-render.js'
+import {
+  DOCK_TABS,
+  DOCK_TAB_IDS,
+  DOCK_WIDTHS,
+  DOCK_DEMO,
+  SET_GROUPS,
+  SET_SECTIONS,
+  SET_SHORTCUTS,
+  DOCK_ICONS,
+  dockWidthFor,
+  dockColumnsFor,
+  applySetting,
+  diffSummary,
+  dockIcon,
+  renderDockTabs,
+  renderDockPanel,
+  renderSettings,
+  dockSettingsCss,
+} from '../lib/dock-settings.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLIENT = join(ROOT, 'client', 'client.js')
@@ -30,6 +49,8 @@ const START = '  // #region children-from-contract'
 const END = '  // #endregion children-from-contract'
 const SHELL_START = '  // #region shell-from-lib'
 const SHELL_END = '  // #endregion shell-from-lib'
+const DOCK_START = '  // #region dock-settings-from-lib'
+const DOCK_END = '  // #endregion dock-settings-from-lib'
 
 /** 生成标记区的那几行（缩进固定两个空格，client.js 在 factory 作用域里）。 */
 export function contractBlock() {
@@ -103,6 +124,48 @@ export function withShellBlock(source) {
   return `${source.slice(0, start)}${shellBlock()}${source.slice(end + SHELL_END.length)}`
 }
 
+/**
+ * 生成右栏 + 设置块（票 33）：五面板/设置分组的数据常量、纯函数与渲染函数。
+ *
+ * 与 shell 块同一套路：lib/dock-settings.js 是源，浏览器半区拿生成物。
+ * 渲染函数用 toString 内联，所以它们只能引用本块里同样被内联的常量/函数
+ * （DOCK_ICONS / DOCK_TAB_IDS / diffSummary / dockIcon），不能 import。
+ * @returns {string} 标记区文本（含起止标记）。
+ */
+export function dockSettingsBlock() {
+  return [
+    DOCK_START,
+    '  // 本段由 tools/sync-contract.mjs 从 lib/dock-settings.js 生成，勿手改；',
+    '  // 漂移由 test/dock-settings.test.mjs 与同步检查挡住。',
+    `  const DOCK_TABS = ${JSON.stringify(DOCK_TABS)}`,
+    `  const DOCK_TAB_IDS = ${JSON.stringify(DOCK_TAB_IDS)}`,
+    `  const DOCK_WIDTHS = ${JSON.stringify(DOCK_WIDTHS)}`,
+    `  const DOCK_DEMO = ${JSON.stringify(DOCK_DEMO)}`,
+    `  const SET_GROUPS = ${JSON.stringify(SET_GROUPS)}`,
+    `  const SET_SECTIONS = ${JSON.stringify(SET_SECTIONS)}`,
+    `  const SET_SHORTCUTS = ${JSON.stringify(SET_SHORTCUTS)}`,
+    `  const DOCK_ICONS = ${JSON.stringify(DOCK_ICONS)}`,
+    `  const DOCK_SETTINGS_CSS = ${JSON.stringify(dockSettingsCss())}`,
+    `  const diffSummary = ${diffSummary.toString()}`,
+    `  const dockIcon = ${dockIcon.toString()}`,
+    `  const dockWidthFor = ${dockWidthFor.toString()}`,
+    `  const dockColumnsFor = ${dockColumnsFor.toString()}`,
+    `  const applySetting = ${applySetting.toString()}`,
+    `  const renderDockTabs = ${renderDockTabs.toString()}`,
+    `  const renderDockPanel = ${renderDockPanel.toString()}`,
+    `  const renderSettings = ${renderSettings.toString()}`,
+    DOCK_END,
+  ].join('\n')
+}
+
+/** 把源码里的 dock-settings 标记区换成生成内容；没有该标记区时原样返回（可选区）。 */
+export function withDockSettingsBlock(source) {
+  const start = source.indexOf(DOCK_START)
+  const end = source.indexOf(DOCK_END)
+  if (start < 0 || end < 0) return source
+  return `${source.slice(0, start)}${dockSettingsBlock()}${source.slice(end + DOCK_END.length)}`
+}
+
 /** 把源码里的 module-id 段换成包名；找不到标记返回 null。 */
 export function withModuleId(source, name) {
   const start = source.indexOf(ID_START)
@@ -119,7 +182,7 @@ export function withContractBlock(source) {
   let next = `${source.slice(0, start)}${contractBlock()}${source.slice(end + END.length)}`
   // BUILD_STAMP 也随包版本/提交更新（页面 data-build 用它）
   next = next.replace(/const BUILD_STAMP = "[^"]*"/, `const BUILD_STAMP = ${JSON.stringify(buildStampBlock())}`)
-  return withShellBlock(next)
+  return withDockSettingsBlock(withShellBlock(next))
 }
 
 /**
