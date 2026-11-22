@@ -32,6 +32,7 @@ export const LAUNCHER_TOKENS = Object.freeze({
     tipInk: '#ffffff',
     amber: '#7a4d12',
     green: '#2c7458',
+    greenSoft: '#dcebe3',
     red: '#ab3f36',
   }),
   dark: Object.freeze({
@@ -56,6 +57,7 @@ export const LAUNCHER_TOKENS = Object.freeze({
     tipInk: '#f4f2ec',
     amber: '#f0bd85',
     green: '#5ec9a6',
+    greenSoft: '#1e3a31',
     red: '#f18c81',
   }),
 })
@@ -84,6 +86,17 @@ export const TEXT_PAIRS = Object.freeze([
   Object.freeze({ name: '次要文字（面板）', fg: 'ink2', bg: 'panel' }),
   Object.freeze({ name: '弱化文字', fg: 'ink3', bg: 'bg2' }),
   Object.freeze({ name: '弱化文字（面板）', fg: 'ink3', bg: 'panel' }),
+  Object.freeze({ name: '正文（卡片）', fg: 'ink', bg: 'surface' }),
+  Object.freeze({ name: '弱化文字（浅底）', fg: 'ink3', bg: 'bg' }),
+  Object.freeze({ name: '辅助文字', fg: 'ink4', bg: 'bg' }),
+  Object.freeze({ name: '辅助文字（面板）', fg: 'ink4', bg: 'panel' }),
+  Object.freeze({ name: '强调文字', fg: 'accent', bg: 'bg' }),
+  Object.freeze({ name: '强调文字（面板）', fg: 'accent', bg: 'panel' }),
+  Object.freeze({ name: '主按钮文字', fg: 'onAccent', bg: 'accent' }),
+  Object.freeze({ name: '提示冒泡文字', fg: 'tipInk', bg: 'tip' }),
+  Object.freeze({ name: '计划完成态', fg: 'green', bg: 'greenSoft' }),
+  Object.freeze({ name: '审批强调', fg: 'amber', bg: 'surface' }),
+  Object.freeze({ name: '危险文字', fg: 'red', bg: 'surface' }),
 ])
 
 /** WCAG AA 正文最小对比度。 */
@@ -212,5 +225,8 @@ export function skeletonCss() {
     // 状态条（26px）：底色 bg2、上发丝边、弱化文字
     '.launcher-statusbar{background:var(--l-bg2);border-top:1px solid var(--l-line);color:var(--l-ink3);height:var(--l-status);gap:12px;padding:0 12px;font-size:11px}',
     '.launcher-statusbar__page{color:var(--l-ink2)}',
+    // 焦点可见（票 37）：全站兜底，键盘 Tab 到的任何控件都有 2px accent 焦点环。
+    // 具体面板的 :focus-visible 规则（侧栏/右栏/设置）保留并覆盖本条。
+    '.launcher-shell :focus-visible{outline:2px solid var(--l-accent);outline-offset:2px}',
   ].join('\n')
 }

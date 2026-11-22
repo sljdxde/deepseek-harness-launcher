@@ -366,7 +366,7 @@ export function renderModelPopover(h, options = {}) {
 export function modelCss() {
   return [
     '.launcher-cm-modelwrap{display:inline-flex;align-items:center;gap:2px;margin-left:2px;flex:0 0 auto}',
-    '.launcher-cm-t{border:0;background:none;padding:2px 3px;border-radius:6px;font:inherit;font-size:13px;color:var(--l-ink3);cursor:pointer;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}',
+    '.launcher-cm-t{display:inline-flex;align-items:center;min-height:24px;border:0;background:none;padding:2px 3px;border-radius:6px;font:inherit;font-size:13px;color:var(--l-ink3);cursor:pointer;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}',
     '.launcher-cm-t:hover{background:var(--l-hover2);color:var(--l-ink2)}',
     '.launcher-cm-t:focus-visible{outline:2px solid var(--l-accent);outline-offset:1px}',
     '.launcher-cm-t.lev{color:var(--l-ink4)}',
@@ -375,7 +375,7 @@ export function modelCss() {
     '.launcher-model-pop{position:absolute;z-index:130;min-width:240px;max-width:360px;max-height:56vh;overflow:auto;padding:6px;background:var(--l-panel);border:1px solid var(--l-line);border-radius:12px;box-shadow:0 14px 34px rgba(0,0,0,.16)}',
     '.launcher-pop-search{display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px solid var(--l-line);margin:-2px -2px 6px}',
     '.launcher-pop-search svg{width:14px;height:14px;color:var(--l-ink4)}',
-    '.launcher-pop-search__in{flex:1;min-width:0;border:0;background:none;font:inherit;font-size:13px;color:var(--l-ink);outline:none}',
+    '.launcher-pop-search__in{flex:1;min-width:0;min-height:24px;border:0;background:none;font:inherit;font-size:13px;color:var(--l-ink);outline:none}',
     '.launcher-pop-g{padding:6px 8px 2px;font-size:11px;color:var(--l-ink4)}',
     '.launcher-pop-item{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:0 8px;border:0;border-radius:8px;background:none;font:inherit;font-size:13px;color:var(--l-ink);text-align:left;cursor:pointer}',
     '.launcher-pop-item:hover,.launcher-pop-item:focus-visible{background:var(--l-hover2)}',

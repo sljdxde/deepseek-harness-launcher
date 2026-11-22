@@ -380,8 +380,10 @@ test('命令面板：↑↓ 移动、点行执行、禁用行不执行', () => {
   assert.equal(down.prevented, true)
   assert.equal(up.prevented, true)
   const rows = findAll(tree, (n) => n.props.role === 'option')
-  findAll(rows[0], (n) => n.type === 'button')[0].props.onClick()
-  findAll(rows.at(-1), (n) => n.type === 'button')[0].props.onClick()
+  // 票 37：option 行本身可点（不再在 option 内嵌 button，避免交互元素嵌套）。
+  rows[0].props.onClick()
+  rows.at(-1).props.onClick()
+  assert.equal(rows.at(-1).props['aria-disabled'], true, '禁用行显式标 aria-disabled')
   assert.deepEqual(calls.slice(2), [['run', 'conversation']], '禁用行点击不执行')
 })
 
