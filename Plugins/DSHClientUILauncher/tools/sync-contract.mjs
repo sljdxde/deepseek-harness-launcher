@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 
 import { SUB_SLOTS, LAYOUT_FACE_MEMBERS, SUPPORTED_HOST_RANGE } from '../lib/contract.js'
 import { guardHost, satisfiesRange } from '../lib/guard.js'
-import { rollbackCommand, PACKAGE_NAME } from '../lib/rollback.js'
+import { rollbackCommand, rollbackSurface, ROLLBACK_NOTE, ROLLBACK_STEPS, RUNBOOK_PATH, PACKAGE_NAME } from '../lib/rollback.js'
 import { RAIL_ENTRIES } from '../lib/rail.js'
 import { MODE_LABELS, statusText } from '../lib/statusbar.js'
 import { SHELL_ICONS, DSH_LOGO } from '../lib/icons.js'
@@ -71,10 +71,14 @@ export function contractBlock() {
     // HostGuard + 回退命令：浏览器半区不能 import，用 toString() 内联，保持单一事实（票 29）。
     `  const SUPPORTED_HOST_RANGE = ${JSON.stringify(SUPPORTED_HOST_RANGE)}`,
     `  const PACKAGE_NAME = ${JSON.stringify(PACKAGE_NAME)}`,
+    `  const ROLLBACK_NOTE = ${JSON.stringify(ROLLBACK_NOTE)}`,
+    `  const ROLLBACK_STEPS = ${JSON.stringify(ROLLBACK_STEPS)}`,
+    `  const RUNBOOK_PATH = ${JSON.stringify(RUNBOOK_PATH)}`,
     `  const HOST_BASELINE = ${JSON.stringify(hostBaselineSummary())}`,
     `  const satisfiesRange = ${satisfiesRange.toString()}`,
     `  const guardHost = ${guardHost.toString()}`,
     `  const rollbackCommand = ${rollbackCommand.toString()}`,
+    `  const rollbackSurface = ${rollbackSurface.toString()}`,
     END,
   ].join('\n')
 }
