@@ -12,12 +12,13 @@ import { join } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, DOCK_TABS, diffContract, describeDiff } from '../lib/contract.js'
+import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, DOCK_TABS, SUPPORTED_HOST_RANGE, diffContract, describeDiff } from '../lib/contract.js'
 import { moduleIdBlock, withContractBlock, withModuleId, runSync, buildStampBlock} from '../tools/sync-contract.mjs'
 import { checkHostVersion, realHostVersion } from '../tools/check-host-version.mjs'
 import { chmodSync, mkdirSync, mkdtempSync as mkTmp, rmSync as rmTmp } from 'node:fs'
 
 const baseline = JSON.parse(readFileSync(new URL('../contracts/host-baseline.json', import.meta.url), 'utf8'))
+const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
 test('六条子槽的名字与 kind 与宿主 baseline 一致', () => {
   const actual = baseline.slots.map((slot) => ({ name: slot.name, kind: slot.kind }))
@@ -36,6 +37,32 @@ test('侧栏席位表与宿主 ui-sidebar 的声明一致（§4.3 落法 A 的�
 test('baseline 记下了宿主包版本，供自测文档引用', () => {
   assert.equal(baseline.host.layoutPackage, '@deepseek-ai/dsh-client-ui-layout')
   assert.match(String(baseline.host.layoutVersion), /^\d+\.\d+\.\d+/)
+})
+
+test('baseline 用实装宿主重生成：记录 hostVersion 与主题前缀', () => {
+  assert.match(String(baseline.hostVersion), /^\d+\.\d+\.\d+/, 'baseline 必须记录 hostVersion（--write 从实装宿主读出）')
+  assert.equal(baseline.hostVersion, baseline.host.layoutVersion, 'hostVersion 就是宿主包版本')
+  assert.match(String(baseline.themePrefix), /^--[a-z]+-$/, 'baseline 必须记录宿主主题变量前缀')
+})
+
+test('包声明：engines.dsh 支持区间下界取实装宿主版本，peerDependencies 覆盖 dsh + 五个 client 子包', () => {
+  assert.equal(manifest.engines?.dsh, SUPPORTED_HOST_RANGE, 'engines.dsh 与 lib/contract.js 的支持区间常量同源')
+  const lower = /^>=([^ ]+) </.exec(SUPPORTED_HOST_RANGE)?.[1]
+  assert.equal(lower, baseline.hostVersion, '支持区间下界必须等于实装宿主版本')
+  assert.equal(manifest.version, baseline.hostVersion, '同名 drop-in：本包版本镜像宿主版本（版本锁三方一致）')
+
+  const expectedPeers = [
+    '@deepseek-ai/dsh',
+    '@deepseek-ai/dsh-client-locale',
+    '@deepseek-ai/dsh-client-ui-renderer',
+    '@deepseek-ai/dsh-client-ui-session',
+    '@deepseek-ai/dsh-client-ui-theme',
+    '@deepseek-ai/dsh-client-shortcuts',
+  ]
+  assert.deepEqual(Object.keys(manifest.peerDependencies ?? {}).sort(), [...expectedPeers].sort())
+  for (const name of expectedPeers) assert.equal(manifest.peerDependencies[name], SUPPORTED_HOST_RANGE, `${name} 的 peer 区间`)
+  // dsh.client.inject 就是这五个 client 子包的实际引用来源
+  assert.deepEqual([...manifest.dsh.client.inject].sort(), expectedPeers.filter((name) => name !== '@deepseek-ai/dsh').sort())
 })
 
 test('overlay 条目 id 全部带 launcher. 前缀且互不相同', () => {
@@ -146,7 +173,7 @@ test('同步脚本 CLI 自己可用：--check', () => {
 
 test('版本锁：三方比对（宿主 = 基线 = 本包），不符即失败（裁决 §1）', () => {
   // 用 fixture 注入宿主版本，避免依赖机器上有没有装宿主（否则无宿主环境恒红）
-  const ok = checkHostVersion({ hostVersion: '0.2.2-rc.5' })
+  const ok = checkHostVersion({ hostVersion: manifest.version })
   assert.equal(ok.ok, true, JSON.stringify(ok))
   assert.equal(ok.baseline, ok.packageVersion)
   const hostMismatch = checkHostVersion({ hostVersion: '9.9.9' })
@@ -154,13 +181,17 @@ test('版本锁：三方比对（宿主 = 基线 = 本包），不符即失败�
   assert.equal(hostMismatch.reason, 'host-vs-baseline')
   const noHost = checkHostVersion({ hostVersion: '' })
   assert.equal(noHost.reason, 'host-version-unreadable')
-  const noBaseline = checkHostVersion({ hostVersion: '0.2.2-rc.5', baselineVersion: '' })
+  const noBaseline = checkHostVersion({ hostVersion: manifest.version, baselineVersion: '' })
   assert.equal(noBaseline.reason, 'contract-snapshot-missing')
+  // 宿主 = 基线但都不等于本包版本 → 指出是「本包 vs 基线」这一方。
+  const pkgMismatch = checkHostVersion({ hostVersion: '0.2.2-rc.9', baselineVersion: '0.2.2-rc.9' })
+  assert.equal(pkgMismatch.ok, false)
+  assert.equal(pkgMismatch.reason, 'package-vs-baseline')
 })
 
 test('版本锁 CLI：一致退 0、不符退 1、读不到宿主退 3（用 --host-version 注入 fixture）', () => {
   const tool = fileURLToPath(new URL('../tools/check-host-version.mjs', import.meta.url))
-  const ok = spawnSync(process.execPath, [tool, '--host-version', '0.2.2-rc.5'], { encoding: 'utf8' })
+  const ok = spawnSync(process.execPath, [tool, '--host-version', manifest.version], { encoding: 'utf8' })
   assert.equal(ok.status, 0, ok.stderr)
   assert.match(ok.stdout, /版本锁通过/)
   const bad = spawnSync(process.execPath, [tool, '--host-version', '9.9.9'], { encoding: 'utf8' })
@@ -168,6 +199,9 @@ test('版本锁 CLI：一致退 0、不符退 1、读不到宿主退 3（用 --h
   assert.match(bad.stderr, /版本锁失败/)
   const unreadable = spawnSync(process.execPath, [tool, '--host-version', ''], { encoding: 'utf8' })
   assert.equal(unreadable.status, 3)
+  const pkgBad = spawnSync(process.execPath, [tool, '--host-version', '0.2.2-rc.9', '--baseline-version', '0.2.2-rc.9'], { encoding: 'utf8' })
+  assert.equal(pkgBad.status, 1)
+  assert.match(pkgBad.stderr, /package-vs-baseline/)
 })
 
 test('版本锁工具：读不到宿主时给出可判定结果（不靠机器环境）', () => {

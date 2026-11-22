@@ -114,3 +114,72 @@ jobs:
           name: Deepseek-Harness-Launcher-windows
           path: windows/build/DHL.exe
           if-no-files-found: error
+
+  # 契约快照 + 版本锁（票 28）。对「实装 rc」与「最新 rc」各跑一次：
+  # 宿主形状/版本一旦漂移就红，别等用户白屏才发现。
+  #
+  # 版本怎么取：
+  #   * 实装 rc = contracts/host-baseline.json 的 hostVersion（由 --write 从本机实装宿主读出）
+  #     —— CI 里直接读文件，不硬编码具体 rc 号；
+  #   * 最新 rc = `npm view @deepseek-ai/dsh versions --json` 里最大的 `-rc.N` 预发布版。
+  # 这里只 `npm pack` 下载宿主 tarball 解出 d.ts（不 npm install、不启动宿主），
+  # 避免把整套运行时拉进 CI。
+  contract:
+    name: Contract check (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: installed-rc
+            rc: baseline
+          - label: latest-rc
+            rc: latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Resolve rc version
+        id: resolve
+        run: |
+          set -euo pipefail
+          RC='${{ matrix.rc }}'
+          if [ "$RC" = "baseline" ]; then
+            RC="$(node -p "require('./Plugins/DSHClientUILauncher/contracts/host-baseline.json').hostVersion")"
+          elif [ "$RC" = "latest" ]; then
+            RC="$(npm view @deepseek-ai/dsh versions --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const all=JSON.parse(s);const rc=all.filter(v=>/-rc\.\d+$/.test(v)).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));process.stdout.write(rc.at(-1)??all.at(-1))})')"
+          fi
+          echo "resolved=$RC" >> "$GITHUB_OUTPUT"
+          echo "契约检查目标宿主版本：$RC"
+
+      - name: Fetch host type snapshots
+        # 只下载并解包宿主 tarball 里的 d.ts，不安装依赖、不运行宿主。
+        run: |
+          set -euo pipefail
+          RC='${{ steps.resolve.outputs.resolved }}'
+          HOST="$RUNNER_TEMP/host"; PKGS="$RUNNER_TEMP/pkgs"
+          mkdir -p "$HOST" "$PKGS"
+          for pkg in dsh-client-ui-layout dsh-client-ui-sidebar dsh-client-ui-slots; do
+            npm pack "@deepseek-ai/$pkg@$RC" --pack-destination "$PKGS" >/dev/null
+            tar -xzf "$PKGS"/deepseek-ai-"$pkg"-*.tgz -C "$PKGS"
+            rm -rf "$HOST/$pkg"; mv "$PKGS/package" "$HOST/$pkg"
+          done
+
+      - name: Contract snapshot check
+        run: |
+          node Plugins/DSHClientUILauncher/tools/contract-snapshot.mjs --check \
+            --layout-from "$RUNNER_TEMP/host/dsh-client-ui-layout" \
+            --sidebar-from "$RUNNER_TEMP/host/dsh-client-ui-sidebar" \
+            --slots-from "$RUNNER_TEMP/host/dsh-client-ui-slots"
+
+      - name: Version lock (host = baseline = package)
+        # 三方不一致即红：latest-rc 若与基线不同，说明新 rc 需要跟进 baseline 与声明。
+        run: |
+          node Plugins/DSHClientUILauncher/tools/check-host-version.mjs \
+            --host-version '${{ steps.resolve.outputs.resolved }}'
