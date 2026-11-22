@@ -80,7 +80,7 @@ Source: wayfinder map（docs/ui-rebuild/map.md）+ issues 01-26 + 兼容性改�
 
 **好测试的标准**：只测外部行为（guard 的输入→输出、命令生成的字面结果、横幅出现/不出现、root 是否注册），不测内部函数调用次数与私有结构。
 
-**缝合点（按高度从高到低）**
+**缝合点（按高度从高到低；人类已确认采用这三个，S3 只保留一条 canary）**
 1. **契约快照 CLI + 版本锁**（最高缝，一条命令覆盖"宿主形状是否还兼容"）：`contract-snapshot --check` 对实装宿主与一组 fixture 宿主（删槽 / 改 kind / 缺 ILayout 成员 / 改主题前缀 / baseline 缺失）分别断言退出码与 blocker 列表。
 2. **插件单测（node:test + 假宿主 ctx）**：guard 判定表逐分支、`rollbackCommand` 字面值、`engines/peerDependencies` 断言、分发清单断言。沿用现有 25 个 `test/*.test.mjs` 的写法与 100% 行覆盖门禁。
 3. **端到端冒烟（一条 canary）**：无头启动 dsh 加载本包 → 断言 root 渲染出 v17 外壳、横幅不存在；再用"变异 baseline"启动 → 断言横幅存在且原生 UI 在。只在 CI 跑一条，不进日常单测。
