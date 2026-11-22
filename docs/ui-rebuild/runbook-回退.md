@@ -95,3 +95,15 @@ HostGuard 不接管横幅里的回退命令也复用同一个 `rollbackCommand`�
 - [ ] 命令一键复制，内容与本 runbook 一致。
 - [ ] 按本 runbook 走 native → launcher → native，三次都能在 3 分钟内回到原生 UI。
 - [ ] 回退后审批策略与审计指纹不变（文件仍在）。
+
+## 一键人工验收（推荐）
+
+每次发布前跑一次向导，它按 8 段带你走完两道人工门（独立实例换壳 + 真机 canary + 三态回退 + 指纹比对）：
+
+```sh
+./scripts/verify-release.sh
+```
+
+- 需要的值：仓库根、本包目录、`DSH_INSTALL`（含 `lib/bin.js`）、可选 `DSH_BIN`、profile 目录；会写入 `.env.ui-verify`。
+- 有 `DSH_BIN` 时会顺带 `gh variable set DSH_BIN`，供 CI 的 real-canary job 使用。
+- 全部通过退出 0；有未通过项退出 1；缺 DSH_BIN 时真机 canary 明确跳过（不假装成功）。
