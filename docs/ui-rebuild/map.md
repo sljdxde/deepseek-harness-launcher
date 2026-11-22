@@ -57,7 +57,7 @@ Label: `wayfinder:map`
 - [25 底纹主题/水印/时段色温](issues/25-task-底纹主题-水印-时段色温.md)：外观加纸纹/网格/点阵/纯色四种底纹；对话区同心圆+斜线水印；按小时 6 档色温微调壳色并显示时段。
 - [26 回退到 v19](issues/26-task-回退到v19.md)：v20 的三栏卡片在 1442 宽下右栏被裁、顶栏挤压；v21 改满铺又不合口味。**当前参照物改回 v19**（三张浮卡 + 壳层柔光/颗粒/点阵），v20/v21 仅留档不采用。
 
-_（05 / 04 / 08 / 10 / 11 / 12 / 13 / 14 已关闭；frontier = 09 需求重写、07 巡检。**原型已确认：`prototype/dsh-ui-merged-v17.html`；兼容方案已签收；文档已冻结到 `feat/ui-rebuild`（24b3ea5）。需求重写（09）已折叠为规格 `issues/27-spec-compat-ui-rebuild.md`（ready-for-agent）；07 死控件巡检并入该规格的验收票。下一步 = /to-tickets。**）_
+_（05 / 04 / 08 / 10 / 11 / 12 / 13 / 14 已关闭；frontier = 09 需求重写、07 巡检。**原型已确认：`prototype/dsh-ui-merged-v17.html`；兼容方案已签收；文档已冻结到 `feat/ui-rebuild`（24b3ea5）。需求重写（09）已折叠为规格 `issues/27-spec-compat-ui-rebuild.md`；已拆成 10 张实现票（28-37），frontier = **28 声明与基线**、**30 外壳骨架**（可并行）。下一步 = /implement。**）_
 
 ## Not yet specified（雾区：范围内、尚无法成票）
 
