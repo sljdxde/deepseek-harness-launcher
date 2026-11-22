@@ -2,7 +2,7 @@
 
 - 状态：**PASS**（0 dead control）
 - 巡检对象：`Plugins/DSHClientUILauncher/client/client.js`（浏览器生成产物；`lib/*.js` 经 `tools/sync-contract.mjs` 内联，不重复计数）
-- 生成时间：2026-11-22T11:10:08.264Z
+- 生成时间：2026-11-22T11:10:32.793Z
 - 巡检脚本：`cd Plugins/DSHClientUILauncher && node scripts/audit-controls.mjs`（退出码 0）
 - 机器可读数据：`docs/ui-rebuild/audit-controls.json`
 - 验收线来源：`docs/ui-rebuild/issues/27-spec-compat-ui-rebuild.md`（0 dead control / 对比度 AA / 焦点可见 / ≥24px）
