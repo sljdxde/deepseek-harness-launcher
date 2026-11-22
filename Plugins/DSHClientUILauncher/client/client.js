@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.4+8450365"
+  const BUILD_STAMP = "0.2.2-rc.4+5b4653d"
   let CURRENT_CTX = null
   // 票 29：Bootstrap 只生效一次（重复加载不注册两次、不叠第二条横幅）；卸载时复位。
   let HOST_GUARD_DONE = false
@@ -188,6 +188,142 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 }
   // #endregion children-from-contract
 
+  // #region shell-from-lib
+  // 本段由 tools/sync-contract.mjs 从 lib/{tokens,icons,shell-layout,shell-render}.js 生成，勿手改；
+  // 漂移由 test/contract.test.mjs 的同步检查挡住。
+  const SHELL_METRICS = {"rail":56,"sidebar":280,"status":26,"row":32,"radiusXs":6,"radiusSm":8,"radius":10,"radiusMd":12,"iconStroke":1.7}
+  const SHELL_ICONS = {"conversation":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M8 9h8\"  /> <path d=\"M8 13h6\"  /> <path d=\"M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12z\"  />","plugins":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1\"  />","schedules":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12z\"  /> <path d=\"M16 3v4\"  /> <path d=\"M8 3v4\"  /> <path d=\"M4 11h16\"  /> <path d=\"M11 15h1\"  /> <path d=\"M12 15v3\"  />","approvals":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M12 3a12 12 0 0 0 8.5 3a12 12 0 0 1 -8.5 15a12 12 0 0 1 -8.5 -15a12 12 0 0 0 8.5 -3\"  />","settings":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z\"  /> <path d=\"M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0\"  />","sun":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0\"  /> <path d=\"M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7\"  />","moon":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z\"  />","command":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M7 9a2 2 0 1 1 2 -2v10a2 2 0 1 1 -2 -2h10a2 2 0 1 1 -2 2v-10a2 2 0 1 1 2 2h-10\"  />","panel":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M4 6l5.5 0\"  /> <path d=\"M4 10l5.5 0\"  /> <path d=\"M4 14l5.5 0\"  /> <path d=\"M4 18l5.5 0\"  /> <path d=\"M14.5 6l5.5 0\"  /> <path d=\"M14.5 10l5.5 0\"  /> <path d=\"M14.5 14l5.5 0\"  /> <path d=\"M14.5 18l5.5 0\"  />","sidebar":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z\"  /> <path d=\"M9 4v16\"  /> <path d=\"M15 10l-2 2l2 2\"  />","help":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0\"  /> <path d=\"M12 17l0 .01\"  /> <path d=\"M12 13.5a1.5 1.5 0 0 1 1 -1.5a2.6 2.6 0 1 0 -3 -4\"  />"}
+  const DSH_LOGO = {"viewBox":"0 0 23.16 17.04","body":"M22.9168 1.43018C22.6713 1.31018 22.5658 1.53918 22.4223 1.65519C22.3733 1.69269 22.3318 1.74169 22.2903 1.78669C21.9317 2.1697 21.5127 2.42121 20.9657 2.39121C20.1657 2.34621 19.4827 2.59771 18.8787 3.20973C18.7502 2.45521 18.3236 2.0047 17.6746 1.71569C17.3351 1.56568 16.9916 1.41518 16.7536 1.08867C16.5876 0.856163 16.5421 0.597155 16.4591 0.341647C16.4061 0.187643 16.3536 0.0301382 16.1761 0.00363739C15.9836 -0.0263635 15.9081 0.135141 15.8326 0.270145C15.5306 0.822162 15.4136 1.43018 15.4251 2.0462C15.4516 3.43174 16.0366 4.53527 17.1991 5.3203C17.3311 5.4103 17.3651 5.5003 17.3236 5.63181C17.2441 5.90231 17.1501 6.16482 17.0671 6.43533C17.0141 6.60784 16.9351 6.64584 16.7501 6.57033C16.1121 6.30383 15.5611 5.90931 15.074 5.4328C14.2475 4.63328 13.5 3.75075 12.568 3.05973C12.349 2.89822 12.13 2.74822 11.9034 2.60522C10.9524 1.68169 12.028 0.923165 12.277 0.833162C12.5375 0.739159 12.3675 0.41615 11.5259 0.42015C10.6844 0.42365 9.91439 0.705658 8.93286 1.08117C8.78935 1.13767 8.63835 1.17867 8.48384 1.21267C7.59332 1.04367 6.66829 1.00617 5.70226 1.11517C3.88321 1.31768 2.43016 2.1777 1.36213 3.64575C0.0790928 5.4103 -0.222916 7.41536 0.146595 9.50642C0.535106 11.7105 1.66014 13.535 3.38869 14.9616C5.18125 16.4406 7.24581 17.1657 9.60138 17.0266C11.0319 16.9441 12.6245 16.7526 14.421 15.2321C14.874 15.4576 15.3496 15.5476 16.1381 15.6151C16.7456 15.6716 17.3306 15.5851 17.7836 15.4911C18.4931 15.3411 18.4441 14.6841 18.1876 14.5636C16.1081 13.595 16.5646 13.9891 16.1496 13.67C17.2061 12.42 18.8202 10.1979 19.3182 7.17235C19.3672 6.83834 19.4297 6.36783 19.4222 6.09732C19.4182 5.93231 19.4562 5.86831 19.6447 5.84931C20.1657 5.78931 20.6712 5.64681 21.1357 5.3913C22.4833 4.65528 23.0268 3.44624 23.1548 1.9972C23.1738 1.77569 23.1508 1.54668 22.9168 1.43018ZM11.1749 14.4736C9.15936 12.889 8.18184 12.3675 7.77832 12.39C7.40081 12.4125 7.46881 12.8445 7.55182 13.126C7.63882 13.404 7.75182 13.5955 7.91033 13.8396C8.01983 14.0011 8.09533 14.2411 7.80083 14.4216C7.15181 14.8231 6.02327 14.2866 5.97027 14.2601C4.65673 13.4865 3.5587 12.4655 2.78467 11.069C2.03715 9.72493 1.60314 8.28289 1.53164 6.74384C1.51264 6.37233 1.62214 6.24082 1.99215 6.17332C2.47916 6.08332 2.98118 6.06432 3.46769 6.13582C5.52476 6.43633 7.27581 7.35586 8.74385 8.8129C9.58188 9.64243 10.2159 10.634 10.8689 11.6025C11.5634 12.631 12.3105 13.611 13.262 14.4146C13.598 14.6961 13.866 14.9101 14.1225 15.0681C13.349 15.1546 12.058 15.1731 11.1749 14.4746L11.1749 14.4736ZM12.141 8.25988C12.141 8.09488 12.273 7.96338 12.439 7.96338C12.4765 7.96338 12.5105 7.97088 12.541 7.98188C12.5825 7.99688 12.6205 8.01938 12.6505 8.05338C12.7035 8.10588 12.7335 8.18088 12.7335 8.25988C12.7335 8.42489 12.6015 8.55639 12.4355 8.55639C12.2695 8.55639 12.141 8.42489 12.141 8.25988ZM15.1415 9.79893C14.949 9.87793 14.7565 9.94544 14.5715 9.95294C14.2845 9.96794 13.9715 9.85143 13.8015 9.70893C13.5375 9.48742 13.3485 9.36342 13.2695 8.97691C13.2355 8.8119 13.2545 8.55639 13.2845 8.40989C13.3525 8.09438 13.277 7.89187 13.0545 7.70787C12.8735 7.55786 12.643 7.51636 12.39 7.51636C12.2955 7.51636 12.209 7.47486 12.1445 7.44136C12.039 7.38886 11.9519 7.25735 12.035 7.09585C12.0615 7.04335 12.19 6.91584 12.22 6.89334C12.5635 6.69784 12.9595 6.76184 13.326 6.90834C13.6655 7.04735 13.9225 7.30236 14.292 7.66287C14.6695 8.09838 14.7375 8.21838 14.9525 8.54539C15.1225 8.8009 15.277 9.06341 15.3831 9.36392C15.4471 9.55142 15.3641 9.70493 15.1415 9.79893Z"}
+  const DRAWER_BREAKPOINT = 860
+  const TOKENS_CSS = ".launcher-shell{--l-bg:#f4f1e9;--l-bg2:#eeeae0;--l-panel:#faf8f3;--l-surface:#fffdf8;--l-surface2:#f1ede3;--l-surface3:#e6e1d3;--l-line:rgba(27,28,25,.10);--l-line2:rgba(27,28,25,.18);--l-ink:#1b1c19;--l-ink2:#4c4d46;--l-ink3:#615f56;--l-ink4:#67645a;--l-accent:#3a55c8;--l-accentSoft:rgba(58,85,200,.10);--l-onAccent:#ffffff;--l-hover:rgba(27,28,25,.055);--l-hover2:rgba(27,28,25,.09);--l-tip:#2c2c2e;--l-tipInk:#ffffff;--l-amber:#7a4d12;--l-green:#2c7458;--l-red:#ab3f36;--l-rail:56px;--l-sidebar:280px;--l-status:26px;--l-row:32px;--l-radius-xs:6px;--l-radius-sm:8px;--l-radius:10px;--l-radius-md:12px;--l-icon-stroke:1.7}\n.launcher-shell[data-theme=\"light\"]{--l-bg:#f4f1e9;--l-bg2:#eeeae0;--l-panel:#faf8f3;--l-surface:#fffdf8;--l-surface2:#f1ede3;--l-surface3:#e6e1d3;--l-line:rgba(27,28,25,.10);--l-line2:rgba(27,28,25,.18);--l-ink:#1b1c19;--l-ink2:#4c4d46;--l-ink3:#615f56;--l-ink4:#67645a;--l-accent:#3a55c8;--l-accentSoft:rgba(58,85,200,.10);--l-onAccent:#ffffff;--l-hover:rgba(27,28,25,.055);--l-hover2:rgba(27,28,25,.09);--l-tip:#2c2c2e;--l-tipInk:#ffffff;--l-amber:#7a4d12;--l-green:#2c7458;--l-red:#ab3f36;--l-rail:56px;--l-sidebar:280px;--l-status:26px;--l-row:32px;--l-radius-xs:6px;--l-radius-sm:8px;--l-radius:10px;--l-radius-md:12px;--l-icon-stroke:1.7}\n.launcher-shell[data-theme=\"dark\"]{--l-bg:#121316;--l-bg2:#15171a;--l-panel:#17191e;--l-surface:#1b1d21;--l-surface2:#22252a;--l-surface3:#2b2e34;--l-line:rgba(255,255,255,.08);--l-line2:rgba(255,255,255,.15);--l-ink:#edebe3;--l-ink2:#b8b6ac;--l-ink3:#a5a399;--l-ink4:#9a978c;--l-accent:#93a8ff;--l-accentSoft:rgba(147,168,255,.13);--l-onAccent:#101216;--l-hover:rgba(255,255,255,.06);--l-hover2:rgba(255,255,255,.10);--l-tip:#33363c;--l-tipInk:#f4f2ec;--l-amber:#f0bd85;--l-green:#5ec9a6;--l-red:#f18c81;--l-rail:56px;--l-sidebar:280px;--l-status:26px;--l-row:32px;--l-radius-xs:6px;--l-radius-sm:8px;--l-radius:10px;--l-radius-md:12px;--l-icon-stroke:1.7}"
+  const SKELETON_CSS = ".launcher-shell{background:var(--l-bg);color:var(--l-ink);overflow:hidden}\n.launcher-rail{background:var(--l-bg2);border-right:1px solid var(--l-line);gap:2px;padding:10px 0 8px;align-items:center}\n.launcher-rail__logo{width:30px;height:30px;border-radius:50%;background:var(--l-ink);color:var(--l-bg);display:grid;place-items:center;margin-bottom:8px;border:0;cursor:pointer}\n.launcher-rail__logo svg{width:16px;height:16px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-rail__entry{position:relative;width:38px;height:38px;border-radius:var(--l-radius);color:var(--l-ink3);display:grid;place-items:center;background:transparent;border:0;cursor:pointer}\n.launcher-rail__entry:hover{background:var(--l-hover);color:var(--l-ink)}\n.launcher-rail__entry.on{background:var(--l-surface3);color:var(--l-ink)}\n.launcher-rail__entry.on::before{content:'';position:absolute;left:-9px;top:10px;bottom:10px;width:2px;border-radius:2px;background:var(--l-accent)}\n.launcher-rail__entry svg{width:20px;height:20px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-rail__entry[aria-disabled=\"true\"]{opacity:.4;cursor:not-allowed}\n.launcher-rail__badge{position:absolute;top:4px;right:4px;min-width:15px;height:15px;border-radius:8px;background:var(--l-accent);color:var(--l-onAccent);font-size:11px;line-height:15px;text-align:center;padding:0 3px}\n.launcher-rail__tip{position:absolute;left:calc(100% + 9px);top:50%;transform:translateY(-50%);padding:4px 8px;border-radius:var(--l-radius-xs);background:var(--l-tip);color:var(--l-tipInk);font-size:11px;white-space:nowrap;opacity:0;pointer-events:none;z-index:90}\n.launcher-rail__entry:hover .launcher-rail__tip,.launcher-rail__entry:focus-visible .launcher-rail__tip{opacity:1}\n.launcher-rail__spacer{flex:1}\n.launcher-rail__action{width:38px;height:38px;border-radius:var(--l-radius);color:var(--l-ink3);display:grid;place-items:center;background:transparent;border:0;cursor:pointer}\n.launcher-rail__action:hover{background:var(--l-hover);color:var(--l-ink)}\n.launcher-rail__action svg{width:20px;height:20px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-sidebar{background:var(--l-bg);border-right:1px solid var(--l-line)}\n.launcher-main{background:var(--l-bg)}\n.launcher-dock{background:var(--l-panel);border-left:1px solid var(--l-line)}\n.launcher-statusbar{background:var(--l-bg2);border-top:1px solid var(--l-line);color:var(--l-ink3);height:var(--l-status);gap:12px;padding:0 12px;font-size:11px}\n.launcher-statusbar__page{color:var(--l-ink2)}"
+  const shellColumns = function shellColumns({
+  viewportWidth,
+  sidebarCollapsed = false,
+  dockWidth = 0,
+  rail = SHELL_METRICS.rail,
+  sidebar = SHELL_METRICS.sidebar,
+  drawerBreakpoint = DRAWER_BREAKPOINT,
+} = {}) {
+  const width = Number(viewportWidth)
+  const viewport = Number.isFinite(width) && width > 0 ? Math.round(width) : 1440
+  const drawer = viewport <= Number(drawerBreakpoint)
+  const side = drawer || sidebarCollapsed === true ? 0 : Math.round(Number(sidebar) || 0)
+  const dockRaw = Number(dockWidth)
+  const dock = drawer || !Number.isFinite(dockRaw) ? 0 : Math.max(0, Math.round(dockRaw))
+  const railWidth = Math.max(0, Math.round(Number(rail) || 0))
+  const main = Math.max(0, viewport - railWidth - side - dock)
+  return { rail: railWidth, sidebar: side, main, dock, total: railWidth + side + main + dock, drawer }
+}
+  const shellIcon = function shellIcon(h, name) {
+  const body = SHELL_ICONS[name] ?? ''
+  return h('svg', {
+    viewBox: '0 0 24 24',
+    className: 'launcher-ic',
+    'aria-hidden': 'true',
+    focusable: 'false',
+    dangerouslySetInnerHTML: { __html: body },
+  })
+}
+  const renderRail = function renderRail(h, options) {
+  const opts = options ?? {}
+  const entries = Array.isArray(opts.entries) ? opts.entries : []
+  const theme = opts.theme === 'dark' ? 'dark' : 'light'
+  const children = []
+
+  children.push(h('button', {
+    type: 'button',
+    className: 'launcher-rail__logo',
+    title: 'dsh · 回到会话',
+    'aria-label': 'dsh 首页',
+    'data-rail-action': 'home',
+    onClick: opts.onHome,
+  }, h('svg', {
+    viewBox: DSH_LOGO.viewBox,
+    className: 'launcher-rail__mark',
+    'aria-hidden': 'true',
+    focusable: 'false',
+    dangerouslySetInnerHTML: { __html: DSH_LOGO.body },
+  })))
+
+  if (opts.leading !== undefined && opts.leading !== null) children.push(opts.leading)
+
+  children.push(h('button', {
+    type: 'button',
+    className: 'launcher-rail__action',
+    'data-rail-action': 'dock',
+    'aria-label': '开关右栏',
+    'aria-pressed': opts.dockOpen === true,
+    title: '开关右栏（宽度 320–520）',
+    onClick: opts.onToggleDock,
+  }, shellIcon(h, 'panel')))
+
+  if (opts.narrow === true) {
+    children.push(h('button', {
+      type: 'button',
+      className: 'launcher-rail__action',
+      'data-rail-action': 'drawer',
+      'aria-label': '开关侧栏',
+      'aria-expanded': opts.drawerOpen === true,
+      onClick: opts.onToggleDrawer,
+    }, shellIcon(h, 'sidebar')))
+  }
+
+  for (const entry of entries) {
+    const badge = Number(entry.badge) > 0 ? String(entry.badge) : ''
+    const disabled = entry.disabled === true
+    const title = entry.title ?? entry.label
+    children.push(h('button', {
+      type: 'button',
+      className: `launcher-rail__entry${entry.active === true ? ' on' : ''}`,
+      title,
+      'aria-label': entry.label,
+      'aria-pressed': entry.active === true,
+      'aria-disabled': disabled,
+      'data-rail-key': entry.id,
+      onClick: disabled ? undefined : entry.onSelect,
+    },
+    h('span', { className: 'launcher-rail__tip' }, title),
+    shellIcon(h, entry.icon),
+    badge === '' ? null : h('span', { className: 'launcher-rail__badge' }, badge)))
+  }
+
+  children.push(h('div', { className: 'launcher-rail__spacer' }))
+
+  children.push(h('button', {
+    type: 'button',
+    className: 'launcher-rail__action',
+    'data-rail-action': 'theme',
+    'aria-label': theme === 'dark' ? '切换到日间' : '切换到夜间',
+    'aria-pressed': theme === 'dark',
+    title: theme === 'dark' ? '当前：深色，点击切浅色' : '当前：浅色，点击切深色',
+    onClick: opts.onToggleTheme,
+  }, shellIcon(h, theme === 'dark' ? 'sun' : 'moon')))
+
+  children.push(h('button', {
+    type: 'button',
+    className: 'launcher-rail__action',
+    'data-rail-action': 'palette',
+    'aria-label': '命令面板',
+    title: '命令面板 ⌘K',
+    onClick: opts.onOpenPalette,
+  }, shellIcon(h, 'command')))
+
+  return h('nav', { className: 'launcher-rail', role: 'navigation', 'aria-label': 'launcher rail' }, ...children)
+}
+  const renderStatusbar = function renderStatusbar(h, status, options) {
+  const s = status ?? {}
+  const opts = options ?? {}
+  const children = [
+    h('span', { className: 'launcher-statusbar__page' }, String(s.page ?? '会话')),
+    h('span', { className: 'launcher-statusbar__mode' }, String(s.mode ?? '')),
+    h('span', { className: 'launcher-statusbar__running' }, String(s.running ?? '')),
+  ]
+  if (opts.bottom !== undefined && opts.bottom !== null) children.push(opts.bottom)
+  return h('footer', { className: 'launcher-statusbar' }, ...children)
+}
+  // #endregion shell-from-lib
+
   // 与 lib/new-session.js 的 STARTERS 逐条对齐（text 是整句：只填入、不发送）；
   // 漂移由 test/new-session.test.mjs 的同步检查挡住。
   const STARTERS = [
@@ -284,12 +420,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   .launcher-shell{grid-template-columns:var(--launcher-rail) 0 minmax(0,1fr) 0}
   .launcher-sidebar{position:fixed;left:var(--launcher-rail);top:0;bottom:var(--launcher-status);width:280px;z-index:30;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1,#fff));border-right:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));box-shadow:0 0 0 100vmax rgba(0,0,0,.001)}
   .launcher-sidebar[data-drawer="closed"]{display:none}
-  .launcher-shell .launcher-rail__drawer{display:inline-flex}
   .launcher-main{min-width:0}
 }
 .launcher-theme-chip{margin-left:auto;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:6px;font-size:12px;line-height:1;padding:2px 6px;cursor:pointer}
-.launcher-rail__dock{display:inline-flex;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
-.launcher-rail__drawer{display:none;align-items:center;justify-content:center;width:100%;height:32px;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px}
 .launcher-panel-back{flex:0 0 auto;padding:6px 12px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}
 .launcher-panel-back__btn{border:0;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;opacity:.8}
 .launcher-empty{position:static;flex:0 0 auto;z-index:auto;align-items:center;display:flex;justify-content:center;min-height:0;max-height:260px;overflow:auto;padding:16px 16px 8px;background:transparent}
@@ -314,7 +447,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     if (document.getElementById('dsh-launcher-style') !== null) return
     const tag = document.createElement('style')
     tag.id = 'dsh-launcher-style'
-    tag.textContent = CSS
+    // 先铺令牌（日夜两套变量），再原有样式，最后骨架覆盖（v17 图标栏/状态条/四列底色）
+    tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}`
     document.head.appendChild(tag)
   }
 
@@ -1728,9 +1862,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const shown = commands.filter((cmd) => query === '' || String(cmd.label).includes(query))
     const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
     const dockWidth = dockCanShow ? clampDock(dragWidth, viewportWidth) : 0
-    // ≤860 时侧栏是抽屉（列宽 0）；此前这里仍扣 280，导致 788–860 误降档
-    const sidebarColumnWidth = viewportWidth <= 860 ? 0 : (props.sidebarCollapsed === true ? 0 : 280)
-    const mainWidth = Math.max(0, viewportWidth - 56 - sidebarColumnWidth - dockWidth)
+    // 四列几何（票 30）：与 lib/shell-layout.js 同一条公式——列宽合计 = 视口，主区吸收余量。
+    // 取代原来手抠 `100vw - 56 - 侧栏 - 右栏`，1100-2000 无横向溢出这条验收落在这里。
+    const columns = shellColumns({ viewportWidth, sidebarCollapsed: props.sidebarCollapsed === true, dockWidth })
+    const mainWidth = columns.main
     const effectiveSplit = resolveSplit(splitMode, mainWidth, (typeof window === 'undefined' ? 900 : window.innerHeight) - 26)
     const [cols, rows] = SPLIT_GRID[effectiveSplit] ?? SPLIT_GRID[1]
     const mainKeys = (() => {
@@ -1770,6 +1905,34 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       window.addEventListener('pointercancel', up)
     }
     const collapsed = props.sidebarCollapsed === true
+    // 图标栏条目（票 30）：导航解析留在外壳，渲染交给 lib/shell-render.js 的 renderRail。
+    // 解析不到 main key 的入口置灰（aria-disabled + 说明 title），不许 throw。
+    const railEntries = RAIL_ENTRIES.map((entry) => {
+      const railKey = entry.id === 'conversation'
+        ? 'conversation'
+        : resolveMainKey(ctx, RAIL_CANDIDATES[entry.id] ?? [entry.id])
+      const disabled = railKey === null
+      const title = entry.id === 'plugins'
+        ? (disabled ? '插件工作台本版未接' : '插件工作台')
+        : (disabled ? (entry.id === 'approvals' ? '见 设置 → 审批与权限' : '本版未接') : entry.label)
+      return {
+        id: entry.id,
+        label: entry.label,
+        icon: entry.id,
+        active: props.activeRail === entry.id,
+        badge: 0,
+        disabled,
+        title,
+        onSelect: () => {
+          if (disabled) return
+          try {
+            ctx?.layout?.selectPanel?.(entry.id === 'conversation' ? null : railKey)
+          } catch (error) {
+            console.warn('dsh-client-ui-launcher: 导航失败', error)
+          }
+        },
+      }
+    })
     const runCommand = (cmd) => {
       setPaletteOpen(false)
       requestAnimationFrame(() => { const pane = document.querySelector('.launcher-pane'); if (pane !== null) pane.scrollTop = paneScrollRef.current })
@@ -1829,57 +1992,26 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       className: 'launcher-shell',
       'data-drawer': narrow ? (drawerOpen ? 'open' : 'closed') : 'static',
       'data-shell': 'launcher',
+      // 日夜两套令牌挂在外壳根（票 30）：切主题只改这一个属性，令牌即时生效
+      'data-theme': themeMode,
       // 05 §6.3-7：属性挂外壳根，不挂 documentElement（避免改到宿主自己的代码块）
       'data-code-wrap': wrapOn ? 'on' : 'off',
-      style: { '--launcher-composer-h': `${composerHeight}px`, '--launcher-dock': `${dockWidth}px` },
+      style: { '--launcher-composer-h': `${composerHeight}px`, '--launcher-dock': `${dockWidth}px`, '--launcher-sidebar': `${columns.sidebar}px` },
       'data-build': BUILD_STAMP,
       onKeyDown: onRootKeyDown,
     },
-      h('div', { className: 'launcher-rail', role: 'navigation', 'aria-label': 'launcher rail' },
-        renderSlot('shell.leading', {}),
-        h('button', {
-          type: 'button',
-          className: 'launcher-rail__dock',
-          'aria-label': '开关右栏',
-          'aria-pressed': dockOpen,
-          title: '开关右栏（宽度 320–520）',
-          onClick: () => toggleRef.current.dock?.(),
-        }, '▤'),
-        h('button', {
-          type: 'button',
-          className: 'launcher-rail__drawer',
-          'aria-label': '开关侧栏',
-          'aria-expanded': narrow ? drawerOpen : true,
-          onClick: () => setDrawerOpen((open) => !open),
-        }, '≡'),
-        RAIL_ENTRIES.map((entry) => {
-          const railKey = entry.id === 'conversation'
-            ? 'conversation'
-            : resolveMainKey(ctx, RAIL_CANDIDATES[entry.id] ?? [entry.id])
-          return h('button', {
-          key: entry.id,
-          type: 'button',
-          className: `launcher-rail__entry${props.activeRail === entry.id ? ' on' : ''}`,
-          title: entry.label,
-          'aria-label': entry.label,
-          'aria-pressed': props.activeRail === entry.id,
-          // 05 口径：点击前先 resolveMainKey(候选)；解析不到 → 置灰（aria-disabled + title），不许 throw
-        'aria-disabled': railKey === null,
-        title: entry.id === 'plugins'
-          ? (railKey === null ? '插件工作台本版未接' : '插件工作台')
-          : (railKey === null
-            ? (entry.id === 'approvals' ? '见 设置 → 审批与权限' : '本版未接')
-            : entry.label),
-        onClick: () => {
-          if (railKey === null) return
-          try {
-            ctx?.layout?.selectPanel?.(entry.id === 'conversation' ? null : railKey)
-          } catch (error) {
-            console.warn('dsh-client-ui-launcher: 导航失败', error)
-          }
-        },
-        }, entry.label.slice(0, 1))
-        })),
+      renderRail(h, {
+        leading: renderSlot('shell.leading', {}),
+        entries: railEntries,
+        dockOpen,
+        narrow,
+        drawerOpen,
+        theme: themeMode,
+        onToggleDock: () => toggleRef.current.dock?.(),
+        onToggleDrawer: () => setDrawerOpen((open) => !open),
+        onToggleTheme: toggleTheme,
+        onOpenPalette: () => { openerRef.current = document.activeElement; setPaletteOpen(true); setPaletteIndex(0) },
+      }),
       h('aside', { className: 'launcher-sidebar', 'data-drawer': narrow ? (drawerOpen ? 'open' : 'closed') : 'static' },
         collapsed ? null : renderSlot('sidebar', { collapsed, width: 280, drawer: narrow })),
       h('main', {
@@ -1953,11 +2085,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           'data-dock-hidden': dockWidth > 0 ? 'false' : 'true',
           'aria-hidden': dockWidth > 0 ? 'false' : 'true',
         }, renderSlot('rightbar', { width: dockWidth, viewportWidth, canShow: dockCanShow }))),
-      h('footer', { className: 'launcher-statusbar' },
-        h('span', { className: 'launcher-statusbar__page' }, status().page),
-        h('span', { className: 'launcher-statusbar__mode' }, status().mode),
-        h('span', { className: 'launcher-statusbar__running' }, status().running),
-        renderSlot('shell.bottom', {})),
+      renderStatusbar(h, status(), { bottom: renderSlot('shell.bottom', {}) }),
       h('div', { className: 'launcher-overlay' },
         renderSlot('shell.overlay', {})),
       devOpen ? h('div', { className: 'launcher-diag', role: 'dialog', 'aria-label': '外壳调试面板', onKeyDown: onDiagKeyDown },
