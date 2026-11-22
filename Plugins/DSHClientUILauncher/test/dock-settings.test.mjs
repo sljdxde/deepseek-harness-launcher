@@ -305,3 +305,97 @@ test('dockSettingsCss：只作用于 .launcher- 外壳、含右栏/设置关键�
     }
   }
 })
+
+// ---------- 票 35：设置 → 高级 →「回退原生 UI」入口 ----------
+
+import { rollbackSurface } from '../lib/rollback.js'
+
+test('SET_SECTIONS.adv：高级分组含「回退原生 UI」入口（可读标签），命令由 rollback 模型给', () => {
+  const adv = SET_SECTIONS.adv
+  const rows = adv.flatMap((section) => section.rows)
+  const revert = rows.find((row) => row.id === 'revert')
+  assert.ok(revert, '高级分组必须有回退行')
+  assert.equal(revert.label, '回退原生 UI')
+  assert.equal(revert.control.type, 'rollback')
+  // 命令不在静态常量里抄一份（单一真源在 lib/rollback.js 的 rollbackCommand）
+  assert.equal(revert.control.command, undefined)
+})
+
+test('renderSettings(高级)：显示说明（数据目录不动）+ 三步命令 + 复制按钮（未复制态）', () => {
+  const h = makeH()
+  const rollback = rollbackSurface()
+  const actions = []
+  const tree = renderSettings(h, {
+    groups: SET_GROUPS,
+    sections: SET_SECTIONS,
+    active: 'adv',
+    values: { theme: 'light', density: 'cozy', dockOpen: false, team: false },
+    rollback,
+    onGroup: () => {},
+    onAction: (a) => actions.push(a),
+    onClose: () => {},
+  })
+  const text = textOf(tree)
+  assert.match(text, /回退原生 UI/)
+  assert.match(text, /数据目录/)
+  assert.match(text, /不动/)
+  assert.match(text, /移除 profile 里的本版 UI 依赖/)
+  const cmd = [...walk(tree)].find((node) => node.props['data-rollback-command'] !== undefined)
+  assert.ok(cmd, '要有可复制的命令块')
+  assert.equal(textOf(cmd), rollback.command, '命令块与 rollbackSurface.command 一致')
+  assert.match(textOf(cmd), /remove/)
+  assert.match(textOf(cmd), /install/)
+  const copy = [...walk(tree)].find((node) => node.props['data-copy-rollback'] !== undefined)
+  assert.ok(copy, '要有复制按钮')
+  assert.equal(textOf(copy), '复制命令')
+  assert.ok(nameOf(copy).length > 0, '复制按钮要有可读标签')
+  copy.props.onClick()
+  assert.deepEqual(actions, [{ type: 'copyRollback' }], '点复制发出 copyRollback 动作')
+})
+
+test('renderSettings(高级)：复制后反馈「已复制」且 aria-live 状态可读', () => {
+  const h = makeH()
+  const tree = renderSettings(h, {
+    groups: SET_GROUPS,
+    sections: SET_SECTIONS,
+    active: 'adv',
+    values: { theme: 'light', density: 'cozy', dockOpen: false, team: false },
+    rollback: rollbackSurface({ copied: true }),
+    onGroup: () => {},
+    onAction: () => {},
+    onClose: () => {},
+  })
+  const copy = [...walk(tree)].find((node) => node.props['data-copy-rollback'] !== undefined)
+  assert.equal(textOf(copy), '已复制')
+  const status = [...walk(tree)].find((node) => node.props.role === 'status')
+  assert.ok(status, '复制反馈要有 role=status')
+  assert.equal(status.props['aria-live'], 'polite')
+  assert.match(textOf(status), /已复制/)
+})
+
+test('renderSettings：关闭按钮有可读标签且触发 onClose（Esc 关闭的按钮同一条路径）', () => {
+  const h = makeH()
+  let closed = 0
+  const tree = renderSettings(h, {
+    groups: SET_GROUPS,
+    sections: SET_SECTIONS,
+    active: 'adv',
+    values: { theme: 'light', density: 'cozy', dockOpen: false, team: false },
+    rollback: rollbackSurface(),
+    onGroup: () => {},
+    onAction: () => {},
+    onClose: () => { closed += 1 },
+  })
+  const close = [...walk(tree)].find((node) => node.props.className === 'launcher-settings__close')
+  assert.ok(close, '要有关闭按钮')
+  assert.match(nameOf(close), /关闭/)
+  close.props.onClick()
+  assert.equal(closed, 1)
+})
+
+test('applySetting：copyRollback 动作给出复制副作用、不改外观取值', () => {
+  const base = { theme: 'dark', density: 'compact', dockOpen: true, team: true }
+  const result = applySetting(base, { type: 'copyRollback' })
+  assert.deepEqual(result.effect, { type: 'copyRollback' })
+  assert.deepEqual(result.values, base)
+})

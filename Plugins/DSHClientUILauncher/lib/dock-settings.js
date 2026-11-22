@@ -270,7 +270,7 @@ export const SET_SECTIONS = Object.freeze({
     Object.freeze({
       title: '高级',
       rows: Object.freeze([
-        Object.freeze({ id: 'revert', label: '回退原生 UI', hint: '移除 profile 依赖并重启；审批与审计不丢', control: Object.freeze({ type: 'danger', key: 'revertNative', label: '回退' }) }),
+        Object.freeze({ id: 'revert', label: '回退原生 UI', hint: '移除 profile 依赖并重启；审批与审计不丢', control: Object.freeze({ type: 'rollback', key: 'revertNative' }) }),
         Object.freeze({ id: 'contract', label: '契约自检', hint: '接管前比对宿主版本与槽集合', control: Object.freeze({ type: 'static', value: '宿主 rc.4 / 声明 rc.5' }) }),
         Object.freeze({ id: 'update', label: '检查更新', hint: '本版不接更新通道', control: Object.freeze({ type: 'disabled', label: '检查', reason: '本版不接更新通道' }) }),
       ]),
@@ -334,6 +334,7 @@ export function applySetting(values, action) {
     return { values: { ...next, team: value }, effect: { type: 'team', value } }
   }
   if (action.type === 'nav') return { values: next, effect: { type: 'nav', target: String(action.target ?? '') } }
+  if (action.type === 'copyRollback') return { values: next, effect: { type: 'copyRollback' } }
   if (action.type === 'danger') return { values: next, effect: { type: 'danger', key: String(action.key ?? '') } }
   return { values: next, effect: null }
 }
@@ -554,6 +555,30 @@ export function renderSettings(h, options) {
 
   function renderControl(row) {
     const control = row.control ?? {}
+    if (control.type === 'rollback') {
+      // 回退入口：说明 + 三步命令 + 复制按钮。命令/说明/步骤都来自 rollbackSurface（单一真源），
+      // 这里只负责把它们排成可读、可复制的块，不另抄一份命令字符串。
+      const model = opts.rollback ?? {}
+      const steps = Array.isArray(model.steps) ? model.steps : []
+      const copied = model.copied === true
+      return h('div', { key: control.key ?? 'rollback', className: 'launcher-rollback', 'data-rollback': control.key ?? 'revertNative' },
+        h('p', { className: 'launcher-rollback__note', key: 'note' }, String(model.note ?? '')),
+        h('ol', { className: 'launcher-rollback__steps', key: 'steps' },
+          ...steps.map((step, index) => h('li', { key: `step-${index}` }, String(step)))),
+        h('pre', { className: 'launcher-rollback__cmd', key: 'cmd', 'data-rollback-command': '' }, String(model.command ?? '')),
+        h('div', { className: 'launcher-rollback__actions', key: 'actions' },
+          h('button', {
+            type: 'button',
+            className: `launcher-seg${copied ? ' on' : ''}`,
+            'data-copy-rollback': '',
+            'aria-label': copied ? '回退命令已复制' : '复制回退命令',
+            onClick: () => onAction({ type: 'copyRollback' }),
+          }, copied ? (model.copiedLabel ?? '已复制') : (model.copyLabel ?? '复制命令')),
+          h('span', { className: 'launcher-rollback__status', role: 'status', 'aria-live': 'polite' }, copied ? '已复制到剪贴板' : '')),
+        h('p', { className: 'launcher-rollback__runbook', key: 'runbook' },
+          '完整三态步骤与预期见 runbook：',
+          h('code', null, String(model.runbook ?? ''))))
+    }
     if (control.type === 'segmented') {
       const options = Array.isArray(control.options) ? control.options : []
       return options.map((option) => h('button', {
@@ -605,7 +630,8 @@ export function renderSettings(h, options) {
   }
 
   function renderRow(row, index) {
-    return h('div', { className: 'launcher-set-row', key: row.id ?? `row-${index}` },
+    const block = row.control?.type === 'rollback'
+    return h('div', { className: `launcher-set-row${block ? ' launcher-set-row--block' : ''}`, key: row.id ?? `row-${index}` },
       h('span', { className: 'launcher-set-row__lbl' },
         h('span', { className: 'launcher-set-row__label' }, row.label),
         row.hint === undefined || row.hint === null ? null : h('span', { className: 'launcher-set-row__hint' }, row.hint)),
@@ -740,6 +766,17 @@ export function dockSettingsCss() {
     '.launcher-switch:focus-visible{outline:2px solid var(--l-accent);outline-offset:1px}',
     '.launcher-switch__dot{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--l-surface);transition:left .12s ease}',
     '.launcher-switch.on .launcher-switch__dot{left:18px}',
+    // 回退原生 UI 入口（票 35）：整块铺开，命令可选中、可复制
+    '.launcher-set-row--block{flex-direction:column;align-items:stretch;gap:4px}',
+    '.launcher-set-row--block .launcher-set-row__ctl{margin-left:0;display:block}',
+    '.launcher-rollback{display:grid;gap:7px;padding:2px 0 6px}',
+    '.launcher-rollback__note{margin:0;font-size:12px;color:var(--l-ink2);line-height:1.5}',
+    '.launcher-rollback__steps{margin:0;padding-left:18px;display:grid;gap:2px;font-size:12px;color:var(--l-ink3)}',
+    '.launcher-rollback__cmd{margin:0;padding:8px 10px;background:var(--l-surface2);border:1px solid var(--l-line);border-radius:var(--l-radius-sm);font-family:var(--font-mono,monospace);font-size:11px;line-height:1.6;color:var(--l-ink);white-space:pre-wrap;word-break:break-all;user-select:all}',
+    '.launcher-rollback__actions{display:flex;align-items:center;gap:8px}',
+    '.launcher-rollback__status{font-size:11px;color:var(--l-green)}',
+    '.launcher-rollback__runbook{margin:0;font-size:11px;color:var(--l-ink4)}',
+    '.launcher-rollback__runbook code{font-family:var(--font-mono,monospace);font-size:11px;background:var(--l-surface2);border-radius:4px;padding:1px 4px}',
     // 密度：紧凑档收紧右栏/设置页的行距与内边距（主题/右栏靠属性与列宽，密度靠这里）
     '.launcher-shell[data-density="compact"]{--l-row:26px}',
     '.launcher-shell[data-density="compact"] .launcher-dock__panel{gap:5px;padding:7px 10px}',
