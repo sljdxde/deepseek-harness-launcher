@@ -47,7 +47,7 @@ import {
   SIDEBAR_METRICS, SIDEBAR_ICONS, sidebarCss, sidebarIcon, rowTitleLeftX,
   normalizeSession, normalizeSessions, workspaceName, groupSessions, needSummary, normalizeOpen, buildSidebarState,
   renderCardHeader, renderNeedRow, renderNeedCard, renderSessionRow, renderWorkspaceRow, renderWorkspaceCard,
-  renderTaskCard, renderSidebar,
+  renderSidebarTaskCard, renderSidebar,
 } from '../lib/sidebar.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -292,7 +292,7 @@ export function sidebarBlock() {
     `  const renderSessionRow = ${renderSessionRow.toString()}`,
     `  const renderWorkspaceRow = ${renderWorkspaceRow.toString()}`,
     `  const renderWorkspaceCard = ${renderWorkspaceCard.toString()}`,
-    `  const renderTaskCard = ${renderTaskCard.toString()}`,
+    `  const renderSidebarTaskCard = ${renderSidebarTaskCard.toString()}`,
     `  const renderSidebar = ${renderSidebar.toString()}`,
     SIDEBAR_END,
   ].join('\n')

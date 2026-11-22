@@ -7,11 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-<<<<<<< HEAD
-  const BUILD_STAMP = "0.2.2-rc.4+a6c7808"
-=======
-  const BUILD_STAMP = "0.2.2-rc.4+34e0b47"
->>>>>>> spec/t32
+  const BUILD_STAMP = "0.2.2-rc.4+3bfa8c9"
   let CURRENT_CTX = null
   // 票 29：Bootstrap 只生效一次（重复加载不注册两次、不叠第二条横幅）；卸载时复位。
   let HOST_GUARD_DONE = false
@@ -997,7 +993,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   }
   return h('section', { className: 'side-card side-card--workspaces', 'aria-label': '工作区' }, ...children)
 }
-  const renderTaskCard = function renderTaskCard(h, state, opts) {
+  const renderSidebarTaskCard = function renderSidebarTaskCard(h, state, opts) {
   const options = opts ?? {}
   const tasks = Array.isArray(state?.tasks) ? state.tasks : []
   const open = state?.open?.tasks !== false
@@ -1039,7 +1035,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     h('div', { className: 'side-scroll', 'data-side-scroll': 'true' },
       renderNeedCard(h, state, opts),
       renderWorkspaceCard(h, state, opts),
-      renderTaskCard(h, state, opts)))
+      renderSidebarTaskCard(h, state, opts)))
 }
   // #endregion sidebar-from-lib
 
@@ -1488,13 +1484,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const tag = document.createElement('style')
     tag.id = 'dsh-launcher-style'
     // 先铺令牌（日夜两套变量），再原有样式，最后骨架覆盖（v17 图标栏/状态条/四列底色）
-<<<<<<< HEAD
-    // 票 33 的右栏五面板 / 设置页样式由 lib/dock-settings.js 生成（DOCK_SETTINGS_CSS）铺在最后。
-    tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}\n${DOCK_SETTINGS_CSS}\n${SIDEBAR_CSS}`
-=======
-    // 主区（票 32）与右栏/设置（票 33）的样式分别由 lib/main-view.js / lib/dock-settings.js 生成。
-    tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}\n${MAIN_CSS}\n${DOCK_SETTINGS_CSS}`
->>>>>>> spec/t32
+    // 款式分层：令牌 → 原有 CSS → 骨架 → 主区 → 右栏/设置 → 侧栏（各由 lib 模块生成）
+    tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}\n${MAIN_CSS}\n${DOCK_SETTINGS_CSS}\n${SIDEBAR_CSS}`
     document.head.appendChild(tag)
   }
 

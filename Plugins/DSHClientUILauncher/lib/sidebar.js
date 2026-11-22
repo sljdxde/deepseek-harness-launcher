@@ -327,7 +327,7 @@ export function renderWorkspaceCard(h, state, opts) {
 }
 
 /** 任务卡片：未绑定目录的临时会话。 */
-export function renderTaskCard(h, state, opts) {
+export function renderSidebarTaskCard(h, state, opts) {
   const options = opts ?? {}
   const tasks = Array.isArray(state?.tasks) ? state.tasks : []
   const open = state?.open?.tasks !== false
@@ -378,7 +378,7 @@ export function renderSidebar(h, state, options) {
     h('div', { className: 'side-scroll', 'data-side-scroll': 'true' },
       renderNeedCard(h, state, opts),
       renderWorkspaceCard(h, state, opts),
-      renderTaskCard(h, state, opts)))
+      renderSidebarTaskCard(h, state, opts)))
 }
 
 /**
