@@ -49,6 +49,12 @@ import {
   renderCardHeader, renderNeedRow, renderNeedCard, renderSessionRow, renderWorkspaceRow, renderWorkspaceCard,
   renderSidebarTaskCard, renderSidebar,
 } from '../lib/sidebar.js'
+import {
+  MODEL_GROUPS, REASON_LEVELS, MODEL_ICONS, DEFAULT_MODEL, DEFAULT_REASON, POPOVER_KINDS,
+  isDeepReason, createModelState, pickModel, pickReason, createPopoverState, openPopover, closePopover,
+  togglePopover, setPopoverQuery, filterModelGroups, modelTriggerLabel, modelRowLabel, modelMeta,
+  popoverPlacement, modelIcon, renderPopItem, renderModelTrigger, renderModelPopover, modelCss,
+} from '../lib/model-surface.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLIENT = join(ROOT, 'client', 'client.js')
@@ -64,6 +70,8 @@ const DOCK_START = '  // #region dock-settings-from-lib'
 const DOCK_END = '  // #endregion dock-settings-from-lib'
 const SIDEBAR_START = '  // #region sidebar-from-lib'
 const SIDEBAR_END = '  // #endregion sidebar-from-lib'
+const MODEL_START = '  // #region model-from-lib'
+const MODEL_END = '  // #endregion model-from-lib'
 
 /** 生成标记区的那几行（缩进固定两个空格，client.js 在 factory 作用域里）。 */
 export function contractBlock() {
@@ -306,6 +314,62 @@ export function withSidebarBlock(source) {
   return `${source.slice(0, start)}${sidebarBlock()}${source.slice(end + SIDEBAR_END.length)}`
 }
 
+/**
+ * 生成模型浮层块（票 34）：模型/等级数据、纯状态变换、定位与渲染函数 + 样式。
+ *
+ * 与 sidebar 块同一套路：lib/model-surface.js 是源，浏览器半区拿生成物。
+ * 渲染函数用 toString 内联，所以它们只能引用本块里同样被内联的常量/函数
+ * （MODEL_* / REASON_* / createModelState / filterModelGroups / renderPopItem ...）。
+ * @returns {string} 标记区文本（含起止标记）。
+ */
+export function modelBlock() {
+  const names = [
+    'isDeepReason',
+    'createModelState',
+    'pickModel',
+    'pickReason',
+    'createPopoverState',
+    'openPopover',
+    'closePopover',
+    'togglePopover',
+    'setPopoverQuery',
+    'filterModelGroups',
+    'modelTriggerLabel',
+    'modelMeta',
+    'modelRowLabel',
+    'popoverPlacement',
+    'modelIcon',
+    'renderPopItem',
+    'renderModelTrigger',
+    'renderModelPopover',
+  ]
+  const lines = [
+    MODEL_START,
+    '  // 本段由 tools/sync-contract.mjs 从 lib/model-surface.js 生成，勿手改；',
+    '  // 漂移由 test/model-client.test.mjs 的同步检查挡住。',
+    `  const MODEL_GROUPS = ${JSON.stringify(MODEL_GROUPS)}`,
+    `  const REASON_LEVELS = ${JSON.stringify(REASON_LEVELS)}`,
+    `  const MODEL_ICONS = ${JSON.stringify(MODEL_ICONS)}`,
+    `  const DEFAULT_MODEL = ${JSON.stringify(DEFAULT_MODEL)}`,
+    `  const DEFAULT_REASON = ${JSON.stringify(DEFAULT_REASON)}`,
+    `  const MODEL_IDS = ${JSON.stringify(MODEL_GROUPS.reduce((ids, group) => ids.concat(group.models.map((model) => model.id)), []))}`,
+    `  const REASON_IDS = ${JSON.stringify(REASON_LEVELS.map((level) => level.id))}`,
+    `  const POPOVER_KINDS = ${JSON.stringify(POPOVER_KINDS)}`,
+    `  const MODEL_CSS = ${JSON.stringify(modelCss())}`,
+  ]
+  for (const name of names) lines.push(`  const ${name} = ${{ isDeepReason, createModelState, pickModel, pickReason, createPopoverState, openPopover, closePopover, togglePopover, setPopoverQuery, filterModelGroups, modelTriggerLabel, modelMeta, modelRowLabel, popoverPlacement, modelIcon, renderPopItem, renderModelTrigger, renderModelPopover }[name].toString()}`)
+  lines.push(MODEL_END)
+  return lines.join('\n')
+}
+
+/** 把源码里的模型浮层标记区换成生成内容；没有该标记区时原样返回（可选区，兼容旧 fixture）。 */
+export function withModelBlock(source) {
+  const start = source.indexOf(MODEL_START)
+  const end = source.indexOf(MODEL_END)
+  if (start < 0 || end < 0) return source
+  return `${source.slice(0, start)}${modelBlock()}${source.slice(end + MODEL_END.length)}`
+}
+
 /** 把源码里的 module-id 段换成包名；找不到标记返回 null。 */
 export function withModuleId(source, name) {
   const start = source.indexOf(ID_START)
@@ -322,7 +386,7 @@ export function withContractBlock(source) {
   let next = `${source.slice(0, start)}${contractBlock()}${source.slice(end + END.length)}`
   // BUILD_STAMP 也随包版本/提交更新（页面 data-build 用它）
   next = next.replace(/const BUILD_STAMP = "[^"]*"/, `const BUILD_STAMP = ${JSON.stringify(buildStampBlock())}`)
-  return withSidebarBlock(withDockSettingsBlock(withMainBlock(withShellBlock(next))))
+  return withModelBlock(withSidebarBlock(withDockSettingsBlock(withMainBlock(withShellBlock(next)))))
 }
 
 /**

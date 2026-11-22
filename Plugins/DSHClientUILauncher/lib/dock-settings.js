@@ -222,8 +222,8 @@ export const SET_SECTIONS = Object.freeze({
     Object.freeze({
       title: '模型',
       rows: Object.freeze([
-        Object.freeze({ id: 'model', label: '模型', control: Object.freeze({ type: 'static', value: 'deepseek · routing group' }) }),
-        Object.freeze({ id: 'reason', label: '推理等级', control: Object.freeze({ type: 'static', value: 'Default' }) }),
+        Object.freeze({ id: 'model', label: '模型', control: Object.freeze({ type: 'static', key: 'model', value: 'deepseek · routing group' }) }),
+        Object.freeze({ id: 'reason', label: '推理等级', control: Object.freeze({ type: 'static', key: 'reason', value: 'Default' }) }),
         Object.freeze({ id: 'team', label: '启用智能体团队协作', hint: '允许多个子代理分工协作，主代理汇总', control: Object.freeze({ type: 'switch', key: 'team' }) }),
       ]),
     }),
@@ -590,7 +590,11 @@ export function renderSettings(h, options) {
         onClick: () => onAction({ type: 'switch', key: control.key }),
       }, h('span', { className: 'launcher-switch__dot' }))
     }
-    if (control.type === 'static') return h('span', { className: 'launcher-static' }, String(control.value ?? ''))
+    if (control.type === 'static') {
+      // 票 34：静态条目可绑定 values[key]（模型/推理等级读真实状态），没绑定就用固定文案。
+      const bound = control.key !== undefined && Object.prototype.hasOwnProperty.call(values, control.key) ? values[control.key] : control.value
+      return h('span', { className: 'launcher-static' }, String(bound ?? ''))
+    }
     if (control.type === 'kbd') return h('kbd', { className: 'launcher-kbd' }, String(control.value ?? ''))
     if (control.type === 'nav') {
       return h('button', { key: 'nav', type: 'button', className: 'launcher-seg', 'data-target': control.target, onClick: () => onAction({ type: 'nav', target: control.target }) }, control.label ?? '打开')

@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.4+3bfa8c9"
+  const BUILD_STAMP = "0.2.2-rc.4+5f23358"
   let CURRENT_CTX = null
   // 票 29：Bootstrap 只生效一次（重复加载不注册两次、不叠第二条横幅）；卸载时复位。
   let HOST_GUARD_DONE = false
@@ -658,6 +658,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }),
       h('div', { className: 'launcher-cm-row' },
         h('span', { className: 'launcher-cm-meta' }, canSend ? 'Enter 发送' : '⌘↵ 发送'),
+        // 票 34：模型/等级触发按钮由 client 传入（lib/model-surface.js），没传就不渲染。
+        opts.extras ?? null,
         h('button', {
           type: 'button',
           className: 'launcher-send',
@@ -740,6 +742,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     renderComposer(h, {
       value: composer.value,
       canSend: composer.canSend === true,
+      extras: opts.composerExtras,
       onInput: opts.onCompose,
       onSend: opts.onSend,
     }),
@@ -1047,7 +1050,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const DOCK_WIDTHS = {"min":320,"max":520,"default":380,"hideBelow":1020}
   const DOCK_DEMO = {"diff":[{"file":"dsh-ui-merged.html","add":218,"del":0,"staged":false,"lines":[["","  <!doctype html>"],["","  <html lang=\"zh-CN\" data-theme=\"dark\">"],["+","  <link rel=\"stylesheet\" href=\"tokens.css\">"],["+","  <script src=\"shell.js\"></script>"],["","  </html>"]]},{"file":"tokens.css","add":64,"del":12,"staged":false,"lines":[["-","  --bg:#eeeae0;"],["+","  --bg:#121316;"],["-","  --accent:#3a55c8;"],["+","  --accent:#93a8ff;"]]}],"files":[{"d":0,"n":"dsh-launcher","t":"dir"},{"d":1,"n":"dsh-ui-merged.html","t":"file","chg":true},{"d":1,"n":"tokens.css","t":"file","chg":true},{"d":1,"n":"shell.js","t":"file"},{"d":1,"n":"notes","t":"dir"},{"d":2,"n":"fusion.md","t":"file","chg":true}],"fileSel":0,"term":[["p","yuzhou@mac-mini  ~/Pod"],["o","git status --short"],["o"," M dsh-ui-merged.html"],["o"," M tokens.css"],["ok","✓ 42 passing（演示）"]],"tasks":[{"id":"t1","t":"左栏按工作区 / 会话分组","who":"UI-UX 设计师","col":"doing","sub":"等用户点头"},{"id":"t2","t":"融合版：对话流组件移植","who":"研发工程师","col":"doing","sub":"接口已定"},{"id":"t3","t":"图标声明表与兜底链","who":"UI-UX 设计师","col":"todo","sub":"没声明的用兜底"},{"id":"t4","t":"日夜两套对比度校对","who":"UI-UX 设计师","col":"done","sub":"已交付"}],"side":[{"me":false,"t":"这个侧聊是独立上下文的，不会污染主会话。"},{"me":true,"t":"右栏审阅的 diff 卡片按文件分块，头行带 +N。"}]}
   const SET_GROUPS = [{"id":"general","label":"常用"},{"id":"model","label":"模型"},{"id":"ext","label":"扩展"},{"id":"conn","label":"连接"},{"id":"data","label":"数据"},{"id":"adv","label":"高级"}]
-  const SET_SECTIONS = {"general":[{"title":"外观","rows":[{"id":"theme","label":"主题","hint":"日夜两套对比度都过 AA","control":{"type":"segmented","key":"theme","options":[{"id":"light","label":"日间"},{"id":"dark","label":"夜间"}]}},{"id":"density","label":"密度","hint":"紧凑省 6px 行高，适合长对话","control":{"type":"segmented","key":"density","options":[{"id":"cozy","label":"舒适"},{"id":"compact","label":"紧凑"}]}},{"id":"dock","label":"右栏","hint":"审阅、文件、终端、任务、侧聊","control":{"type":"toggle","key":"dock","onLabel":"关右栏","offLabel":"开右栏"}}]},{"title":"快捷键","rows":[{"id":"shortcut-0","label":"命令面板","control":{"type":"kbd","value":"⌘K"}},{"id":"shortcut-1","label":"右栏","control":{"type":"kbd","value":"⌘J"}},{"id":"shortcut-2","label":"分屏","control":{"type":"kbd","value":"⌘D"}},{"id":"shortcut-3","label":"日间 / 夜间","control":{"type":"kbd","value":"⌘⇧L"}},{"id":"shortcut-4","label":"设置","control":{"type":"kbd","value":"⌘,"}},{"id":"shortcut-5","label":"关掉浮层","control":{"type":"kbd","value":"Esc"}}]}],"model":[{"title":"模型","rows":[{"id":"model","label":"模型","control":{"type":"static","value":"deepseek · routing group"}},{"id":"reason","label":"推理等级","control":{"type":"static","value":"Default"}},{"id":"team","label":"启用智能体团队协作","hint":"允许多个子代理分工协作，主代理汇总","control":{"type":"switch","key":"team"}}]},{"title":"其他","rows":[{"id":"submodel","label":"子代理模型","hint":"拆活时用哪条路由","control":{"type":"static","value":"同主模型"}},{"id":"compact","label":"上下文压缩","hint":"到 85% 提醒、95% 强制","control":{"type":"static","value":"自动"}}]}],"ext":[{"title":"扩展","rows":[{"id":"skill","label":"Skill 管理","hint":"装好的 Skill、从 GitHub 或文件夹安装","control":{"type":"nav","target":"ext-skill","label":"打开"}},{"id":"mcp","label":"MCP 管理","hint":"服务器、工具数、连接状态","control":{"type":"nav","target":"ext-mcp","label":"打开"}},{"id":"ssh","label":"SSH 管理","hint":"主机、端口转发","control":{"type":"nav","target":"ext-ssh","label":"打开"}},{"id":"archive","label":"归档管理","hint":"归档的会话与任务","control":{"type":"nav","target":"ext-archive","label":"打开"}}]}],"conn":[{"title":"连接","rows":[{"id":"net","label":"网络","hint":"直连，未设代理","control":{"type":"static","value":"正常"}},{"id":"proxy","label":"代理","hint":"HTTP / SOCKS 代理","control":{"type":"static","value":"未设置"}},{"id":"ssh","label":"SSH 主机","hint":"已保存 3 台","control":{"type":"nav","target":"ext-ssh","label":"管理"}}]}],"data":[{"title":"数据","rows":[{"id":"whitelist","label":"目录白名单","hint":"白名单内不触发审批","control":{"type":"static","value":"~/Pod · ~/Pod/tasks"}},{"id":"archive","label":"归档","hint":"归档的会话与任务","control":{"type":"nav","target":"ext-archive","label":"打开"}},{"id":"plugindata","label":"插件数据","hint":"插件自己的设置与缓存","control":{"type":"static","value":"随插件管理"}}]}],"adv":[{"title":"高级","rows":[{"id":"revert","label":"回退原生 UI","hint":"移除 profile 依赖并重启；审批与审计不丢","control":{"type":"danger","key":"revertNative","label":"回退"}},{"id":"contract","label":"契约自检","hint":"接管前比对宿主版本与槽集合","control":{"type":"static","value":"宿主 rc.4 / 声明 rc.5"}},{"id":"update","label":"检查更新","hint":"本版不接更新通道","control":{"type":"disabled","label":"检查","reason":"本版不接更新通道"}}]}]}
+  const SET_SECTIONS = {"general":[{"title":"外观","rows":[{"id":"theme","label":"主题","hint":"日夜两套对比度都过 AA","control":{"type":"segmented","key":"theme","options":[{"id":"light","label":"日间"},{"id":"dark","label":"夜间"}]}},{"id":"density","label":"密度","hint":"紧凑省 6px 行高，适合长对话","control":{"type":"segmented","key":"density","options":[{"id":"cozy","label":"舒适"},{"id":"compact","label":"紧凑"}]}},{"id":"dock","label":"右栏","hint":"审阅、文件、终端、任务、侧聊","control":{"type":"toggle","key":"dock","onLabel":"关右栏","offLabel":"开右栏"}}]},{"title":"快捷键","rows":[{"id":"shortcut-0","label":"命令面板","control":{"type":"kbd","value":"⌘K"}},{"id":"shortcut-1","label":"右栏","control":{"type":"kbd","value":"⌘J"}},{"id":"shortcut-2","label":"分屏","control":{"type":"kbd","value":"⌘D"}},{"id":"shortcut-3","label":"日间 / 夜间","control":{"type":"kbd","value":"⌘⇧L"}},{"id":"shortcut-4","label":"设置","control":{"type":"kbd","value":"⌘,"}},{"id":"shortcut-5","label":"关掉浮层","control":{"type":"kbd","value":"Esc"}}]}],"model":[{"title":"模型","rows":[{"id":"model","label":"模型","control":{"type":"static","key":"model","value":"deepseek · routing group"}},{"id":"reason","label":"推理等级","control":{"type":"static","key":"reason","value":"Default"}},{"id":"team","label":"启用智能体团队协作","hint":"允许多个子代理分工协作，主代理汇总","control":{"type":"switch","key":"team"}}]},{"title":"其他","rows":[{"id":"submodel","label":"子代理模型","hint":"拆活时用哪条路由","control":{"type":"static","value":"同主模型"}},{"id":"compact","label":"上下文压缩","hint":"到 85% 提醒、95% 强制","control":{"type":"static","value":"自动"}}]}],"ext":[{"title":"扩展","rows":[{"id":"skill","label":"Skill 管理","hint":"装好的 Skill、从 GitHub 或文件夹安装","control":{"type":"nav","target":"ext-skill","label":"打开"}},{"id":"mcp","label":"MCP 管理","hint":"服务器、工具数、连接状态","control":{"type":"nav","target":"ext-mcp","label":"打开"}},{"id":"ssh","label":"SSH 管理","hint":"主机、端口转发","control":{"type":"nav","target":"ext-ssh","label":"打开"}},{"id":"archive","label":"归档管理","hint":"归档的会话与任务","control":{"type":"nav","target":"ext-archive","label":"打开"}}]}],"conn":[{"title":"连接","rows":[{"id":"net","label":"网络","hint":"直连，未设代理","control":{"type":"static","value":"正常"}},{"id":"proxy","label":"代理","hint":"HTTP / SOCKS 代理","control":{"type":"static","value":"未设置"}},{"id":"ssh","label":"SSH 主机","hint":"已保存 3 台","control":{"type":"nav","target":"ext-ssh","label":"管理"}}]}],"data":[{"title":"数据","rows":[{"id":"whitelist","label":"目录白名单","hint":"白名单内不触发审批","control":{"type":"static","value":"~/Pod · ~/Pod/tasks"}},{"id":"archive","label":"归档","hint":"归档的会话与任务","control":{"type":"nav","target":"ext-archive","label":"打开"}},{"id":"plugindata","label":"插件数据","hint":"插件自己的设置与缓存","control":{"type":"static","value":"随插件管理"}}]}],"adv":[{"title":"高级","rows":[{"id":"revert","label":"回退原生 UI","hint":"移除 profile 依赖并重启；审批与审计不丢","control":{"type":"danger","key":"revertNative","label":"回退"}},{"id":"contract","label":"契约自检","hint":"接管前比对宿主版本与槽集合","control":{"type":"static","value":"宿主 rc.4 / 声明 rc.5"}},{"id":"update","label":"检查更新","hint":"本版不接更新通道","control":{"type":"disabled","label":"检查","reason":"本版不接更新通道"}}]}]}
   const SET_SHORTCUTS = [{"keys":"⌘K","label":"命令面板"},{"keys":"⌘J","label":"右栏"},{"keys":"⌘D","label":"分屏"},{"keys":"⌘⇧L","label":"日间 / 夜间"},{"keys":"⌘,","label":"设置"},{"keys":"Esc","label":"关掉浮层"}]
   const DOCK_ICONS = {"file":"<path d=\"M14 3v4a1 1 0 0 0 1 1h4\" /><path d=\"M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z\" />","folder":"<path d=\"M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2\" />","terminal":"<path d=\"M8 9l3 3l-3 3\" /><path d=\"M13 15l3 0\" /><path d=\"M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z\" />","target":"<path d=\"M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0\" /><path d=\"M12 12m-5 0a5 5 0 1 0 10 0a5 5 0 1 0 -10 0\" /><path d=\"M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\" />","message":"<path d=\"M8 9h8\" /><path d=\"M8 13h6\" /><path d=\"M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12z\" />","git":"<path d=\"M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\" /><path d=\"M12 3l7 7l-7 7l-7 -7z\" />","check":"<path d=\"M5 12l5 5l10 -10\" />","plus":"<path d=\"M12 5l0 14\" /><path d=\"M5 12l14 0\" />","x":"<path d=\"M18 6l-12 12\" /><path d=\"M6 6l12 12\" />"}
   const DOCK_SETTINGS_CSS = ".launcher-dock-tabs{display:flex;align-items:center;gap:1px;padding:4px 8px 0;border-bottom:1px solid var(--l-line);overflow-x:auto;scrollbar-width:none;flex:0 0 auto}\n.launcher-dock-tabs__grow{flex:1}\n.launcher-dock-tab{display:inline-flex;align-items:center;gap:4px;padding:8px 7px;font:inherit;font-size:12px;color:var(--l-ink3);background:transparent;border:0;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}\n.launcher-dock-tab:hover{color:var(--l-ink)}\n.launcher-dock-tab.on{color:var(--l-ink);border-bottom-color:var(--l-accent);font-weight:500}\n.launcher-dock-tab:focus-visible{outline:2px solid var(--l-accent);outline-offset:-2px}\n.launcher-dock-tab svg{width:15px;height:15px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-dock-tab__n{font-size:11px;line-height:1;background:var(--l-surface3);border-radius:4px;padding:2px 3px;color:var(--l-ink3)}\n.launcher-dock-tab--icon{margin-left:2px}\n.launcher-dock__panel{flex:1;min-height:0;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}\n.launcher-dock__host{display:none}\n.launcher-dock-sum{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--l-ink2);padding:2px 2px 4px}\n.launcher-dock-sum svg{width:14px;height:14px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-dock-sum__g{font-size:11px;color:var(--l-ink4)}\n.launcher-dock-sum__cg{margin-left:auto;display:flex;gap:6px;font-size:11px}\n.launcher-git-add{color:var(--l-green)}\n.launcher-git-del{color:var(--l-red)}\n.launcher-dock-empty{display:grid;gap:4px;place-items:center;padding:18px 8px;border:1px dashed var(--l-line2);border-radius:var(--l-radius-md);color:var(--l-ink3);font-size:12px}\n.launcher-dock-foot{border-top:1px solid var(--l-line);padding:8px 2px 2px;display:flex;gap:6px;align-items:center;margin-top:auto}\n.launcher-dock-foot__grow{flex:1}\n.launcher-dock-foot__note{font-size:11px;color:var(--l-ink4)}\n.launcher-diff{border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-surface);overflow:hidden}\n.launcher-diff-h{display:flex;align-items:center;gap:6px;padding:6px 9px;background:var(--l-surface2);font-size:12px}\n.launcher-diff-h svg{width:13px;height:13px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-diff-h__f{font-family:var(--font-mono,monospace);font-size:11px;color:var(--l-ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.launcher-diff-h__a{color:var(--l-green);font-size:11px;margin-left:auto}\n.launcher-diff-h__d{color:var(--l-red);font-size:11px}\n.launcher-diff-line{display:grid;grid-template-columns:26px 12px minmax(0,1fr);font-family:var(--font-mono,monospace);font-size:11px;line-height:1.7}\n.launcher-diff-line__ln{text-align:right;color:var(--l-ink4);padding-right:6px;user-select:none}\n.launcher-diff-line__sg{text-align:center;user-select:none}\n.launcher-diff-line__cd{overflow:hidden;text-overflow:ellipsis;white-space:pre;padding-right:8px}\n.launcher-diff-line.add{background:var(--l-accentSoft);color:var(--l-ink)}\n.launcher-diff-line.del{background:var(--l-surface2);color:var(--l-ink3)}\n.launcher-tree{display:grid;gap:1px;font-size:12px}\n.launcher-tree-row{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:var(--l-radius-xs);color:var(--l-ink2);width:100%;text-align:left;background:transparent;border:0;cursor:pointer;font:inherit}\n.launcher-tree-row:hover{background:var(--l-hover)}\n.launcher-tree-row.on{background:var(--l-surface3);color:var(--l-ink)}\n.launcher-tree-row:focus-visible{outline:2px solid var(--l-accent);outline-offset:-2px}\n.launcher-tree-row svg{width:14px;height:14px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-tree-row__n{font-family:var(--font-mono,monospace);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.launcher-tree-row__d{margin-left:auto;font-size:11px;color:var(--l-ink4)}\n.launcher-term{background:var(--l-surface2);border:1px solid var(--l-line);border-radius:var(--l-radius-md);padding:9px 10px;font-family:var(--font-mono,monospace);font-size:12px;line-height:1.7;min-height:150px;max-height:340px;overflow:auto;white-space:pre-wrap;color:var(--l-ink2);margin:0}\n.launcher-term__p{color:var(--l-accent)}\n.launcher-term__ok{color:var(--l-green)}\n.launcher-term__er{color:var(--l-red)}\n.launcher-term-in{display:flex;gap:6px;margin-top:7px;align-items:center}\n.launcher-term-in__prompt{color:var(--l-accent);font-family:var(--font-mono,monospace)}\n.launcher-term-in__input{flex:1;min-width:0;background:var(--l-surface);border:1px solid var(--l-line);border-radius:var(--l-radius-sm);padding:0 8px;height:28px;font-family:var(--font-mono,monospace);font-size:12px;outline:none;color:var(--l-ink)}\n.launcher-term-in__input:focus{border-color:var(--l-accent)}\n.launcher-chat-mini{display:grid;gap:7px}\n.launcher-bub{max-width:88%;padding:6px 10px;border-radius:var(--l-radius-md);font-size:12px;line-height:1.5;background:var(--l-surface2);border:1px solid var(--l-line);color:var(--l-ink)}\n.launcher-bub.me{justify-self:end;background:var(--l-accent);color:var(--l-onAccent);border-color:transparent}\n.launcher-mini{background:var(--l-surface);border:1px solid var(--l-line);border-radius:var(--l-radius-md);padding:9px 10px;display:grid;gap:2px}\n.launcher-mini__t{font-size:13px;line-height:1.4}\n.launcher-mini__s{font-size:11px;color:var(--l-ink3);display:flex;gap:5px;align-items:center;flex-wrap:wrap}\n.launcher-tag{font-size:11px;border-radius:4px;padding:0 4px;background:var(--l-surface3);color:var(--l-ink3)}\n.launcher-tag.ok{background:var(--l-accentSoft);color:var(--l-green)}\n.launcher-tag.acc{background:var(--l-accentSoft);color:var(--l-accent)}\n.launcher-seg{height:24px;padding:0 8px;border:1px solid var(--l-line);border-radius:var(--l-radius-xs);font:inherit;font-size:12px;color:var(--l-ink2);background:var(--l-surface);cursor:pointer}\n.launcher-seg:hover{border-color:var(--l-line2);color:var(--l-ink)}\n.launcher-seg:focus-visible{outline:2px solid var(--l-accent);outline-offset:1px}\n.launcher-seg.on{background:var(--l-accentSoft);border-color:transparent;color:var(--l-accent);font-weight:500}\n.launcher-seg--primary{background:var(--l-accent);border-color:transparent;color:var(--l-onAccent)}\n.launcher-seg--danger{color:var(--l-red);border-color:var(--l-red)}\n.launcher-seg[disabled]{opacity:.5;cursor:not-allowed}\n.launcher-settings{position:fixed;inset:0;z-index:46;background:var(--l-bg);color:var(--l-ink);display:flex;flex-direction:column;overflow:hidden}\n.launcher-settings__head{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--l-line);background:var(--l-bg2)}\n.launcher-settings__title{font-size:15px;font-weight:600;margin:0}\n.launcher-settings__close{margin-left:auto;border:0;background:transparent;color:var(--l-ink3);font-size:16px;cursor:pointer;width:28px;height:28px;border-radius:var(--l-radius-xs)}\n.launcher-settings__close:hover{background:var(--l-hover);color:var(--l-ink)}\n.launcher-settings__close:focus-visible{outline:2px solid var(--l-accent)}\n.launcher-settings__tabs{display:flex;gap:2px;padding:0 14px;border-bottom:1px solid var(--l-line);overflow-x:auto;background:var(--l-bg)}\n.launcher-settings__tab{padding:8px 10px;font:inherit;font-size:12px;color:var(--l-ink3);background:transparent;border:0;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}\n.launcher-settings__tab:hover{color:var(--l-ink)}\n.launcher-settings__tab.on{color:var(--l-ink);border-bottom-color:var(--l-accent);font-weight:500}\n.launcher-settings__tab:focus-visible{outline:2px solid var(--l-accent);outline-offset:-2px}\n.launcher-settings__body{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;max-width:720px;width:100%;margin:0 auto}\n.launcher-settings__card{border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-panel);padding:4px 12px}\n.launcher-settings__colh{font-size:11px;letter-spacing:.04em;color:var(--l-ink4);text-transform:uppercase;padding:8px 0 4px}\n.launcher-set-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--l-line);font-size:13px}\n.launcher-set-row:last-child{border-bottom:0}\n.launcher-set-row__lbl{display:grid;gap:1px;min-width:0}\n.launcher-set-row__hint{font-size:11px;color:var(--l-ink3)}\n.launcher-set-row__ctl{margin-left:auto;display:flex;gap:4px;align-items:center;flex:none}\n.launcher-static{font-size:12px;color:var(--l-ink3)}\n.launcher-kbd{font-family:var(--font-mono,monospace);font-size:11px;background:var(--l-surface2);border:1px solid var(--l-line);border-radius:4px;padding:1px 5px;color:var(--l-ink2)}\n.launcher-switch{width:38px;height:22px;border-radius:11px;border:1px solid var(--l-line2);background:var(--l-surface3);position:relative;cursor:pointer;padding:0}\n.launcher-switch.on{background:var(--l-accent);border-color:transparent}\n.launcher-switch:focus-visible{outline:2px solid var(--l-accent);outline-offset:1px}\n.launcher-switch__dot{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--l-surface);transition:left .12s ease}\n.launcher-switch.on .launcher-switch__dot{left:18px}\n.launcher-shell[data-density=\"compact\"]{--l-row:26px}\n.launcher-shell[data-density=\"compact\"] .launcher-dock__panel{gap:5px;padding:7px 10px}\n.launcher-shell[data-density=\"compact\"] .launcher-set-row{padding:6px 0}\n.launcher-shell[data-density=\"compact\"] .launcher-mini{padding:6px 8px}"
@@ -1311,7 +1314,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         onClick: () => onAction({ type: 'switch', key: control.key }),
       }, h('span', { className: 'launcher-switch__dot' }))
     }
-    if (control.type === 'static') return h('span', { className: 'launcher-static' }, String(control.value ?? ''))
+    if (control.type === 'static') {
+      // 票 34：静态条目可绑定 values[key]（模型/推理等级读真实状态），没绑定就用固定文案。
+      const bound = control.key !== undefined && Object.prototype.hasOwnProperty.call(values, control.key) ? values[control.key] : control.value
+      return h('span', { className: 'launcher-static' }, String(bound ?? ''))
+    }
     if (control.type === 'kbd') return h('kbd', { className: 'launcher-kbd' }, String(control.value ?? ''))
     if (control.type === 'nav') {
       return h('button', { key: 'nav', type: 'button', className: 'launcher-seg', 'data-target': control.target, onClick: () => onAction({ type: 'nav', target: control.target }) }, control.label ?? '打开')
@@ -1359,6 +1366,212 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     h('div', { className: 'launcher-settings__body' }, ...body))
 }
   // #endregion dock-settings-from-lib
+
+  // #region model-from-lib
+  // 本段由 tools/sync-contract.mjs 从 lib/model-surface.js 生成，勿手改；
+  // 漂移由 test/model-client.test.mjs 的同步检查挡住。
+  const MODEL_GROUPS = [{"id":"deepseek","label":"DeepSeek","models":[{"id":"DeepSeek V3.2","name":"DeepSeek V3.2","note":"默认：长上下文、工具调得稳"},{"id":"DeepSeek V3.2 mini","name":"DeepSeek V3.2 mini","note":"便宜、快，适合小事"},{"id":"DeepSeek R1","name":"DeepSeek R1","note":"想久一点再答"}]},{"id":"routing","label":"路由组","models":[{"id":"deepseek 爽用 · routing group","name":"deepseek 爽用 · routing group","note":"Magpie 提供，按任务自动选型","routing":true}]}]
+  const REASON_LEVELS = [{"id":"Default","label":"Default","hint":"默认档","note":"约 1 倍 token"},{"id":"Low","label":"Low","hint":"少想，快","note":"约 0.7 倍 token"},{"id":"High","label":"High","hint":"多查几轮再答","note":"约 1.5-2 倍 token"},{"id":"Max","label":"Max","hint":"最长推理，慢","note":"约 3 倍 token"}]
+  const MODEL_ICONS = {"search":"<path d=\"M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0\" /><path d=\"M21 21l-6 -6\" />","check":"<path d=\"M5 12l5 5l10 -10\" />","chevronDown":"<path d=\"M6 9l6 6l6 -6\" />"}
+  const DEFAULT_MODEL = "DeepSeek V3.2"
+  const DEFAULT_REASON = "Default"
+  const MODEL_IDS = ["DeepSeek V3.2","DeepSeek V3.2 mini","DeepSeek R1","deepseek 爽用 · routing group"]
+  const REASON_IDS = ["Default","Low","High","Max"]
+  const POPOVER_KINDS = {"model":"model","reason":"reason"}
+  const MODEL_CSS = ".launcher-cm-modelwrap{display:inline-flex;align-items:center;gap:2px;margin-left:2px;flex:0 0 auto}\n.launcher-cm-t{border:0;background:none;padding:2px 3px;border-radius:6px;font:inherit;font-size:13px;color:var(--l-ink3);cursor:pointer;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}\n.launcher-cm-t:hover{background:var(--l-hover2);color:var(--l-ink2)}\n.launcher-cm-t:focus-visible{outline:2px solid var(--l-accent);outline-offset:1px}\n.launcher-cm-t.lev{color:var(--l-ink4)}\n.launcher-cm-t.chev{width:24px;height:24px;padding:0;display:grid;place-items:center;color:var(--l-ink4)}\n.launcher-cm-t.chev svg{width:14px;height:14px}\n.launcher-model-pop{position:absolute;z-index:130;min-width:240px;max-width:360px;max-height:56vh;overflow:auto;padding:6px;background:var(--l-panel);border:1px solid var(--l-line);border-radius:12px;box-shadow:0 14px 34px rgba(0,0,0,.16)}\n.launcher-pop-search{display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px solid var(--l-line);margin:-2px -2px 6px}\n.launcher-pop-search svg{width:14px;height:14px;color:var(--l-ink4)}\n.launcher-pop-search__in{flex:1;min-width:0;border:0;background:none;font:inherit;font-size:13px;color:var(--l-ink);outline:none}\n.launcher-pop-g{padding:6px 8px 2px;font-size:11px;color:var(--l-ink4)}\n.launcher-pop-item{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:0 8px;border:0;border-radius:8px;background:none;font:inherit;font-size:13px;color:var(--l-ink);text-align:left;cursor:pointer}\n.launcher-pop-item:hover,.launcher-pop-item:focus-visible{background:var(--l-hover2)}\n.launcher-pop-item.on{color:var(--l-accent)}\n.launcher-pop-item__label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.launcher-pop-note{margin-left:auto;font-size:11px;color:var(--l-ink4)}\n.launcher-pop-item .chk{margin-left:auto;color:var(--l-accent);display:grid;place-items:center}\n.launcher-pop-item .chk svg{width:16px;height:16px}"
+  const isDeepReason = function isDeepReason(reason) {
+  return reason === 'High' || reason === 'Max'
+}
+  const createModelState = function createModelState(input = {}) {
+  const model = MODEL_IDS.includes(input?.model) ? input.model : DEFAULT_MODEL
+  const reason = REASON_IDS.includes(input?.reason) ? input.reason : DEFAULT_REASON
+  return { model, reason, deep: isDeepReason(reason) }
+}
+  const pickModel = function pickModel(state, id) {
+  const base = createModelState(state)
+  return MODEL_IDS.includes(id) ? { ...base, model: id } : base
+}
+  const pickReason = function pickReason(state, id) {
+  const base = createModelState(state)
+  return REASON_IDS.includes(id) ? { ...base, reason: id, deep: isDeepReason(id) } : base
+}
+  const createPopoverState = function createPopoverState() {
+  return { kind: null, query: '' }
+}
+  const openPopover = function openPopover(popover, kind) {
+  if (kind !== POPOVER_KINDS.model && kind !== POPOVER_KINDS.reason) return createPopoverState()
+  return { kind, query: '' }
+}
+  const closePopover = function closePopover() {
+  return createPopoverState()
+}
+  const togglePopover = function togglePopover(popover, kind) {
+  const current = popover?.kind ?? null
+  if (current === kind) return closePopover()
+  return openPopover(popover, kind)
+}
+  const setPopoverQuery = function setPopoverQuery(popover, query) {
+  const kind = popover?.kind ?? null
+  return { kind, query: typeof query === 'string' ? query : '' }
+}
+  const filterModelGroups = function filterModelGroups(query) {
+  const q = typeof query === 'string' ? query.trim().toLowerCase() : ''
+  return MODEL_GROUPS
+    .map((group) => ({
+      id: group.id,
+      label: group.label,
+      models: group.models.filter((model) => q === '' || model.name.toLowerCase().includes(q) || model.id.toLowerCase().includes(q)),
+    }))
+    .filter((group) => group.models.length > 0)
+}
+  const modelTriggerLabel = function modelTriggerLabel(state) {
+  const model = createModelState(state).model
+  return model.toLowerCase()
+}
+  const modelMeta = function modelMeta(id) {
+  for (const group of MODEL_GROUPS) {
+    const found = group.models.find((model) => model.id === id)
+    if (found !== undefined) return found
+  }
+  return null
+}
+  const modelRowLabel = function modelRowLabel(state) {
+  const base = modelTriggerLabel(state)
+  const meta = modelMeta(createModelState(state).model)
+  return meta !== null && meta.routing === true ? base : `${base} · routing group`
+}
+  const popoverPlacement = function popoverPlacement(input = {}) {
+  const margin = Number.isFinite(input?.margin) ? input.margin : 8
+  const gap = Number.isFinite(input?.gap) ? input.gap : 8
+  const vw = Number.isFinite(input?.viewportWidth) && input.viewportWidth > 0 ? input.viewportWidth : 0
+  const vh = Number.isFinite(input?.viewportHeight) && input.viewportHeight > 0 ? input.viewportHeight : 0
+  const width = Number.isFinite(input?.popWidth) && input.popWidth > 0 ? input.popWidth : 260
+  const right = Number.isFinite(input?.triggerRect?.right) ? input.triggerRect.right : margin
+  const top = Number.isFinite(input?.triggerRect?.top) ? input.triggerRect.top : vh
+  const maxLeft = Math.max(margin, vw - width - margin)
+  const left = Math.min(Math.max(margin, right - width), maxLeft)
+  const bottom = Math.max(margin, vh - top + gap)
+  return { left, bottom }
+}
+  const modelIcon = function modelIcon(h, name) {
+  const body = MODEL_ICONS[name] ?? ''
+  return h('svg', {
+    viewBox: '0 0 24 24',
+    className: 'launcher-ic',
+    'aria-hidden': 'true',
+    focusable: 'false',
+    dangerouslySetInnerHTML: { __html: body },
+  })
+}
+  const renderPopItem = function renderPopItem(h, { key, label, note, checked, onPick }) {
+  const children = [h('span', { className: 'launcher-pop-item__label' }, label)]
+  if (note !== undefined) children.push(h('span', { className: 'launcher-pop-note' }, note))
+  children.push(checked ? h('span', { className: 'chk' }, modelIcon(h, 'check')) : null)
+  return h('button', {
+    key,
+    type: 'button',
+    role: 'menuitemradio',
+    'aria-checked': checked === true,
+    className: `launcher-pop-item${checked === true ? ' on' : ''}`,
+    'data-model-pick': key,
+    onClick: () => onPick(key),
+  }, ...children)
+}
+  const renderModelTrigger = function renderModelTrigger(h, options = {}) {
+  const state = createModelState(options.state)
+  const popover = options.popover ?? null
+  const onAct = typeof options.onAct === 'function' ? options.onAct : () => {}
+  const modelOpen = popover === POPOVER_KINDS.model
+  const reasonOpen = popover === POPOVER_KINDS.reason
+  return h('span', { className: 'launcher-cm-modelwrap', 'data-model-trigger': '' },
+    h('button', {
+      key: 'model',
+      type: 'button',
+      className: 'launcher-cm-t',
+      title: '选模型',
+      'aria-haspopup': 'menu',
+      'aria-expanded': modelOpen,
+      'data-model-act': 'model',
+      onClick: () => onAct('model'),
+    }, modelTriggerLabel(state)),
+    h('button', {
+      key: 'reason',
+      type: 'button',
+      className: 'launcher-cm-t lev',
+      title: '推理等级',
+      'aria-haspopup': 'menu',
+      'aria-expanded': reasonOpen,
+      'data-model-act': 'reason',
+      onClick: () => onAct('reason'),
+    }, state.reason),
+    h('button', {
+      key: 'chev',
+      type: 'button',
+      className: 'launcher-cm-t chev',
+      'aria-label': '模型与推理等级',
+      'aria-haspopup': 'menu',
+      'aria-expanded': modelOpen,
+      'data-model-act': 'model',
+      onClick: () => onAct('model'),
+    }, modelIcon(h, 'chevronDown')))
+}
+  const renderModelPopover = function renderModelPopover(h, options = {}) {
+  const kind = options.kind ?? null
+  if (kind !== POPOVER_KINDS.model && kind !== POPOVER_KINDS.reason) return null
+  const state = createModelState(options.state)
+  const query = typeof options.query === 'string' ? options.query : ''
+  const onQuery = typeof options.onQuery === 'function' ? options.onQuery : () => {}
+  const onPickModel = typeof options.onPickModel === 'function' ? options.onPickModel : () => {}
+  const onPickReason = typeof options.onPickReason === 'function' ? options.onPickReason : () => {}
+  const body = []
+
+  if (kind === POPOVER_KINDS.model) {
+    body.push(h('div', { key: 'search', className: 'launcher-pop-search' },
+      modelIcon(h, 'search'),
+      h('input', {
+        className: 'launcher-pop-search__in',
+        type: 'search',
+        value: query,
+        placeholder: '搜索模型…',
+        'aria-label': '搜索模型',
+        'data-model-search': '',
+        onChange: (event) => onQuery(event?.target?.value ?? ''),
+      })))
+    const groups = filterModelGroups(query)
+    for (const group of groups) {
+      body.push(h('div', { key: `g-${group.id}`, className: 'launcher-pop-g' }, group.label))
+      for (const model of group.models) {
+        body.push(renderPopItem(h, {
+          key: model.id,
+          label: model.name,
+          checked: state.model === model.id,
+          onPick: onPickModel,
+        }))
+      }
+    }
+    if (groups.length === 0) body.push(h('div', { key: 'empty', className: 'launcher-pop-g' }, '没有匹配的模型'))
+  } else {
+    body.push(h('div', { key: 'g-reason', className: 'launcher-pop-g' }, '推理等级'))
+    for (const level of REASON_LEVELS) {
+      body.push(renderPopItem(h, {
+        key: level.id,
+        label: level.label,
+        note: level.hint,
+        checked: state.reason === level.id,
+        onPick: onPickReason,
+      }))
+    }
+  }
+
+  return h('div', {
+    className: 'launcher-model-pop',
+    role: 'menu',
+    'aria-label': kind === POPOVER_KINDS.model ? '选择模型' : '选择推理等级',
+    'data-model-popover': kind,
+    ref: options.popoverRef,
+  }, ...body)
+}
+  // #endregion model-from-lib
 
   // 与 lib/new-session.js 的 STARTERS 逐条对齐（text 是整句：只填入、不发送）；
   // 漂移由 test/new-session.test.mjs 的同步检查挡住。
@@ -1485,7 +1698,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     tag.id = 'dsh-launcher-style'
     // 先铺令牌（日夜两套变量），再原有样式，最后骨架覆盖（v17 图标栏/状态条/四列底色）
     // 款式分层：令牌 → 原有 CSS → 骨架 → 主区 → 右栏/设置 → 侧栏（各由 lib 模块生成）
-    tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}\n${MAIN_CSS}\n${DOCK_SETTINGS_CSS}\n${SIDEBAR_CSS}`
+    tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}\n${MAIN_CSS}\n${DOCK_SETTINGS_CSS}\n${SIDEBAR_CSS}\n${MODEL_CSS}`
     document.head.appendChild(tag)
   }
 
@@ -2642,6 +2855,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const [paletteOpen, setPaletteOpen] = React.useState(false)
     const [paletteQuery, setPaletteQuery] = React.useState('')
     const [paletteIndex, setPaletteIndex] = React.useState(0)
+    const [modelPopover, setModelPopover] = React.useState(() => createPopoverState())
+    const modelPopRef = React.useRef(null)
     const threadRef = React.useRef(null)
     const canSend = composerCanSend(composer)
     const shown = paletteFilter(MAIN_DEMO_COMMANDS, paletteQuery)
@@ -2695,28 +2910,95 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         }
       }
     }
-    return renderMainView(h, {
-      thread,
-      approvals,
-      expanded,
-      crit,
-      composer: { value: composer, canSend },
-      palette: { open: paletteOpen, query: paletteQuery, commands: MAIN_DEMO_COMMANDS, index: paletteIndex },
-      threadRef,
-      onApproval: (id, choice) => setApprovals((state) => applyApproval(state, id, choice)),
-      onApprovalReset: (id) => setApprovals((state) => resetApproval(state, id)),
-      onToggleFold: (id) => setExpanded((state) => toggleExpanded(state, id)),
-      onToggleTools: (id) => setExpanded((state) => toggleExpanded(state, id)),
-      onToggleReport: (title) => setExpanded((state) => toggleExpanded(state, `report:${title}`)),
-      onToggleCrit: (key) => setCrit((state) => toggleExpanded(state, key)),
-      onCompose: setComposer,
-      onSend: send,
-      onPaletteQuery: (query) => { setPaletteQuery(query); setPaletteIndex(0) },
-      onPaletteMove: (delta) => setPaletteIndex((i) => paletteStep(i, delta, shown.length)),
-      onPaletteRun: (cmd) => { setPaletteOpen(false); props.onCommand?.(cmd.id) },
-      onPaletteClose: () => setPaletteOpen(false),
-      onKeyDown,
-    })
+    // 票 34：模型/等级浮层——贴触发按钮定位、点外/Esc/切页收起、选中即回写并关闭。
+    React.useEffect(() => {
+      if (modelPopover.kind === null) return
+      const place = () => {
+        const pop = modelPopRef.current
+        if (pop === null || pop === undefined) return
+        const pane = pop.closest?.('.launcher-pane') ?? null
+        const trig = pane?.querySelector?.('[data-model-trigger]') ?? null
+        if (trig === null || pane === null) return
+        const tr = trig.getBoundingClientRect()
+        const pr = pane.getBoundingClientRect()
+        const spot = popoverPlacement({
+          triggerRect: { right: tr.right - pr.left, top: tr.top - pr.top },
+          popWidth: pop.offsetWidth || 260,
+          viewportWidth: pr.width,
+          viewportHeight: pr.height,
+        })
+        pop.style.left = `${spot.left}px`
+        pop.style.bottom = `${spot.bottom}px`
+        pop.style.top = 'auto'
+        pop.style.right = 'auto'
+      }
+      place()
+      window.addEventListener('resize', place)
+      return () => window.removeEventListener('resize', place)
+    }, [modelPopover.kind, props.modelState])
+    React.useEffect(() => {
+      if (modelPopover.kind === null) return
+      const onDown = (event) => {
+        if (event.target?.closest?.('[data-model-popover], [data-model-trigger]')) return
+        setModelPopover(closePopover())
+      }
+      const onKey = (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          event.stopPropagation()
+          setModelPopover(closePopover())
+        }
+      }
+      document.addEventListener('mousedown', onDown, true)
+      window.addEventListener('keydown', onKey, true)
+      return () => {
+        document.removeEventListener('mousedown', onDown, true)
+        window.removeEventListener('keydown', onKey, true)
+      }
+    }, [modelPopover.kind])
+    React.useEffect(() => {
+      if (modelPopover.kind !== 'model') return
+      modelPopRef.current?.querySelector?.('[data-model-search]')?.focus?.()
+    }, [modelPopover.kind])
+    React.useEffect(() => {
+      if (props.settingsOpen === true) setModelPopover(closePopover())
+    }, [props.settingsOpen])
+    const actModel = (kind) => setModelPopover((prev) => togglePopover(prev, kind))
+    const chooseModel = (id) => { props.onPickModel?.(id); setModelPopover(closePopover()) }
+    const chooseReason = (id) => { props.onPickReason?.(id); setModelPopover(closePopover()) }
+    return h(React.Fragment, null,
+      renderMainView(h, {
+        thread,
+        approvals,
+        expanded,
+        crit,
+        composer: { value: composer, canSend },
+        composerExtras: renderModelTrigger(h, { state: props.modelState, popover: modelPopover.kind, onAct: actModel }),
+        palette: { open: paletteOpen, query: paletteQuery, commands: MAIN_DEMO_COMMANDS, index: paletteIndex },
+        threadRef,
+        onApproval: (id, choice) => setApprovals((state) => applyApproval(state, id, choice)),
+        onApprovalReset: (id) => setApprovals((state) => resetApproval(state, id)),
+        onToggleFold: (id) => setExpanded((state) => toggleExpanded(state, id)),
+        onToggleTools: (id) => setExpanded((state) => toggleExpanded(state, id)),
+        onToggleReport: (title) => setExpanded((state) => toggleExpanded(state, `report:${title}`)),
+        onToggleCrit: (key) => setCrit((state) => toggleExpanded(state, key)),
+        onCompose: setComposer,
+        onSend: send,
+        onPaletteQuery: (query) => { setPaletteQuery(query); setPaletteIndex(0) },
+        onPaletteMove: (delta) => setPaletteIndex((i) => paletteStep(i, delta, shown.length)),
+        onPaletteRun: (cmd) => { setPaletteOpen(false); props.onCommand?.(cmd.id) },
+        onPaletteClose: () => setPaletteOpen(false),
+        onKeyDown,
+      }),
+      renderModelPopover(h, {
+        kind: modelPopover.kind,
+        query: modelPopover.query,
+        state: props.modelState,
+        popoverRef: modelPopRef,
+        onQuery: (value) => setModelPopover((prev) => setPopoverQuery(prev, value)),
+        onPickModel: chooseModel,
+        onPickReason: chooseReason,
+      }))
   }
 
   /** 外壳本体：56 图标栏 + 侧栏列 + 主区 + 右栏轨道 + 底状态条 + 浮层。 */
@@ -2788,6 +3070,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const [settingsGroup, setSettingsGroup] = React.useState('general')
     const [density, setDensity] = React.useState('cozy')
     const [teamOn, setTeamOn] = React.useState(false)
+    // 票 34：模型/等级是真实状态源——输入行浮层与设置条目读同一份。
+    const [modelState, setModelState] = React.useState(() => createModelState())
     // ≤860：侧栏转抽屉（默认收起），与 rail 互斥；主区从 rail 后起算
     const [drawerOpen, setDrawerOpen] = React.useState(false)
     const [themeMode, setThemeMode] = React.useState(() => {
@@ -3188,6 +3472,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const previewConversation = showMainPreview && conversationActive
     const renderMainPreview = () => h(MainPreview, {
       onToast: showLauncherToast,
+      modelState,
+      settingsOpen,
+      onPickModel: (id) => setModelState((state) => pickModel(state, id)),
+      onPickReason: (id) => setModelState((state) => pickReason(state, id)),
       onCommand: (id) => {
         if (id === 'theme') toggleTheme()
         else if (id === 'dock') toggleRef.current.dock?.()
@@ -3330,7 +3618,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             sections: SET_SECTIONS,
             shortcuts: SET_SHORTCUTS,
             active: settingsGroup,
-            values: { theme: themeMode, density, dockOpen, team: teamOn },
+            values: { theme: themeMode, density, dockOpen, team: teamOn, model: modelRowLabel(modelState), reason: modelState.reason },
             onGroup: (id) => setSettingsGroup(id),
             onAction: handleSettingAction,
             onClose: () => setSettingsOpen(false),

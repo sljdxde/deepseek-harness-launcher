@@ -557,6 +557,8 @@ export function renderComposer(h, opts = {}) {
       }),
       h('div', { className: 'launcher-cm-row' },
         h('span', { className: 'launcher-cm-meta' }, canSend ? 'Enter 发送' : '⌘↵ 发送'),
+        // 票 34：模型/等级触发按钮由 client 传入（lib/model-surface.js），没传就不渲染。
+        opts.extras ?? null,
         h('button', {
           type: 'button',
           className: 'launcher-send',
@@ -648,6 +650,7 @@ export function renderMainView(h, opts = {}) {
     renderComposer(h, {
       value: composer.value,
       canSend: composer.canSend === true,
+      extras: opts.composerExtras,
       onInput: opts.onCompose,
       onSend: opts.onSend,
     }),
