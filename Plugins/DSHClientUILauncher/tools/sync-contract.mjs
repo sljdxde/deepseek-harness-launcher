@@ -21,6 +21,7 @@ import { SHELL_ICONS, DSH_LOGO } from '../lib/icons.js'
 import { SHELL_METRICS, tokensCss, skeletonCss } from '../lib/tokens.js'
 import { shellColumns, DRAWER_BREAKPOINT } from '../lib/shell-layout.js'
 import { shellIcon, renderRail, renderStatusbar } from '../lib/shell-render.js'
+import * as mainView from '../lib/main-view.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLIENT = join(ROOT, 'client', 'client.js')
@@ -30,6 +31,8 @@ const START = '  // #region children-from-contract'
 const END = '  // #endregion children-from-contract'
 const SHELL_START = '  // #region shell-from-lib'
 const SHELL_END = '  // #endregion shell-from-lib'
+const MAIN_START = '  // #region main-from-lib'
+const MAIN_END = '  // #endregion main-from-lib'
 
 /** 生成标记区的那几行（缩进固定两个空格，client.js 在 factory 作用域里）。 */
 export function contractBlock() {
@@ -95,6 +98,66 @@ export function shellBlock() {
   ].join('\n')
 }
 
+/**
+ * 生成主区块（票 32）：主区渲染函数 + 状态变换 + 主区 CSS。
+ *
+ * 与 shell 同一套路：Node 模块是源，浏览器半区拿生成物；渲染函数用 toString 内联，
+ * 只能引用本块内同样被内联的常量/函数（MAIN_* 前缀避免与 client 既有常量撞名）。
+ * @returns {string} 标记区文本（含起止标记）。
+ */
+export function mainBlock() {
+  const names = [
+    'mainIcon',
+    'applyApproval',
+    'resetApproval',
+    'approvalOf',
+    'pendingApprovals',
+    'isApprovalPending',
+    'composerCanSend',
+    'composerKeyDown',
+    'paletteFilter',
+    'paletteStep',
+    'paletteCommand',
+    'toggleExpanded',
+    'shouldFollowScroll',
+    'renderUserMessage',
+    'renderFoldSummary',
+    'renderTools',
+    'renderPlan',
+    'renderTaskCard',
+    'renderReportCard',
+    'renderChangedCard',
+    'renderApprovalCard',
+    'renderApprovalDock',
+    'renderBotMessage',
+    'renderThread',
+    'renderComposer',
+    'renderCommandPalette',
+    'renderMainView',
+  ]
+  const lines = [
+    MAIN_START,
+    '  // 本段由 tools/sync-contract.mjs 从 lib/main-view.js 生成，勿手改；',
+    '  // 漂移由 test/contract.test.mjs 的同步检查挡住。',
+    `  const MAIN_APPROVAL_CHOICES = ${JSON.stringify(mainView.APPROVAL_CHOICES)}`,
+    `  const MAIN_DEMO_COMMANDS = ${JSON.stringify(mainView.DEMO_COMMANDS)}`,
+    `  const MAIN_DEMO_THREAD = ${JSON.stringify(mainView.DEMO_THREAD)}`,
+    `  const MAIN_ICONS = ${JSON.stringify(mainView.MAIN_ICONS)}`,
+    `  const MAIN_CSS = ${JSON.stringify(mainView.mainCss())}`,
+  ]
+  for (const name of names) lines.push(`  const ${name} = ${mainView[name].toString()}`)
+  lines.push(MAIN_END)
+  return lines.join('\n')
+}
+
+/** 把源码里的 main 标记区换成生成内容；没有该标记区时原样返回（可选区）。 */
+export function withMainBlock(source) {
+  const start = source.indexOf(MAIN_START)
+  const end = source.indexOf(MAIN_END)
+  if (start < 0 || end < 0) return source
+  return `${source.slice(0, start)}${mainBlock()}${source.slice(end + MAIN_END.length)}`
+}
+
 /** 把源码里的 shell 标记区换成生成内容；没有该标记区时原样返回（可选区，兼容旧 fixture）。 */
 export function withShellBlock(source) {
   const start = source.indexOf(SHELL_START)
@@ -119,7 +182,7 @@ export function withContractBlock(source) {
   let next = `${source.slice(0, start)}${contractBlock()}${source.slice(end + END.length)}`
   // BUILD_STAMP 也随包版本/提交更新（页面 data-build 用它）
   next = next.replace(/const BUILD_STAMP = "[^"]*"/, `const BUILD_STAMP = ${JSON.stringify(buildStampBlock())}`)
-  return withShellBlock(next)
+  return withMainBlock(withShellBlock(next))
 }
 
 /**
