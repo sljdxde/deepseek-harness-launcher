@@ -13,7 +13,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, DOCK_TABS, SUPPORTED_HOST_RANGE, diffContract, describeDiff } from '../lib/contract.js'
-import { moduleIdBlock, withContractBlock, withModuleId, withShellBlock, runSync, buildStampBlock, shellBlock } from '../tools/sync-contract.mjs'
+import { moduleIdBlock, withContractBlock, withModuleId, withShellBlock, withMainBlock, runSync, buildStampBlock, shellBlock, mainBlock } from '../tools/sync-contract.mjs'
 import { checkHostVersion, realHostVersion } from '../tools/check-host-version.mjs'
 import { chmodSync, mkdirSync, mkdtempSync as mkTmp, rmSync as rmTmp } from 'node:fs'
 
@@ -127,6 +127,24 @@ test('壳层块包含令牌 CSS、图标与渲染函数（票 30）', () => {
   assert.match(block, /const shellColumns = function shellColumns/)
   assert.match(block, /const renderRail = function renderRail/)
   assert.match(block, /const renderStatusbar = function renderStatusbar/)
+})
+
+test('client/client.js 的主区块也是生成的，手改就会红（票 32）', () => {
+  const source = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
+  assert.ok(source.includes('// #region main-from-lib'), 'client.js 必须有 main-from-lib 标记区')
+  assert.equal(withMainBlock(source), source, '跑 node tools/sync-contract.mjs 更新，别手改')
+})
+
+test('主区块包含主区渲染函数、状态变换与主区 CSS（票 32）', () => {
+  const block = mainBlock()
+  assert.match(block, /\/\/ #region main-from-lib/)
+  assert.match(block, /const MAIN_CSS = "/)
+  assert.match(block, /const MAIN_DEMO_THREAD = /)
+  assert.match(block, /const renderApprovalCard = function renderApprovalCard/)
+  assert.match(block, /const renderComposer = function renderComposer/)
+  assert.match(block, /const renderCommandPalette = function renderCommandPalette/)
+  assert.match(block, /const renderMainView = function renderMainView/)
+  assert.match(block, /const composerKeyDown = function composerKeyDown/)
 })
 
 test('同步脚本 CLI 自己可用：--check 退出码 0', () => {

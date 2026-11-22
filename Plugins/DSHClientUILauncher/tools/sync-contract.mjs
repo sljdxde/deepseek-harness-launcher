@@ -23,6 +23,7 @@ import { SHELL_ICONS, DSH_LOGO } from '../lib/icons.js'
 import { SHELL_METRICS, tokensCss, skeletonCss } from '../lib/tokens.js'
 import { shellColumns, DRAWER_BREAKPOINT } from '../lib/shell-layout.js'
 import { shellIcon, renderRail, renderStatusbar } from '../lib/shell-render.js'
+import * as mainView from '../lib/main-view.js'
 import {
   DOCK_TABS,
   DOCK_TAB_IDS,
@@ -42,6 +43,12 @@ import {
   renderSettings,
   dockSettingsCss,
 } from '../lib/dock-settings.js'
+import {
+  SIDEBAR_METRICS, SIDEBAR_ICONS, sidebarCss, sidebarIcon, rowTitleLeftX,
+  normalizeSession, normalizeSessions, workspaceName, groupSessions, needSummary, normalizeOpen, buildSidebarState,
+  renderCardHeader, renderNeedRow, renderNeedCard, renderSessionRow, renderWorkspaceRow, renderWorkspaceCard,
+  renderTaskCard, renderSidebar,
+} from '../lib/sidebar.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLIENT = join(ROOT, 'client', 'client.js')
@@ -51,8 +58,12 @@ const START = '  // #region children-from-contract'
 const END = '  // #endregion children-from-contract'
 const SHELL_START = '  // #region shell-from-lib'
 const SHELL_END = '  // #endregion shell-from-lib'
+const MAIN_START = '  // #region main-from-lib'
+const MAIN_END = '  // #endregion main-from-lib'
 const DOCK_START = '  // #region dock-settings-from-lib'
 const DOCK_END = '  // #endregion dock-settings-from-lib'
+const SIDEBAR_START = '  // #region sidebar-from-lib'
+const SIDEBAR_END = '  // #endregion sidebar-from-lib'
 
 /** 生成标记区的那几行（缩进固定两个空格，client.js 在 factory 作用域里）。 */
 export function contractBlock() {
@@ -145,6 +156,66 @@ export function shellBlock() {
   ].join('\n')
 }
 
+/**
+ * 生成主区块（票 32）：主区渲染函数 + 状态变换 + 主区 CSS。
+ *
+ * 与 shell 同一套路：Node 模块是源，浏览器半区拿生成物；渲染函数用 toString 内联，
+ * 只能引用本块内同样被内联的常量/函数（MAIN_* 前缀避免与 client 既有常量撞名）。
+ * @returns {string} 标记区文本（含起止标记）。
+ */
+export function mainBlock() {
+  const names = [
+    'mainIcon',
+    'applyApproval',
+    'resetApproval',
+    'approvalOf',
+    'pendingApprovals',
+    'isApprovalPending',
+    'composerCanSend',
+    'composerKeyDown',
+    'paletteFilter',
+    'paletteStep',
+    'paletteCommand',
+    'toggleExpanded',
+    'shouldFollowScroll',
+    'renderUserMessage',
+    'renderFoldSummary',
+    'renderTools',
+    'renderPlan',
+    'renderTaskCard',
+    'renderReportCard',
+    'renderChangedCard',
+    'renderApprovalCard',
+    'renderApprovalDock',
+    'renderBotMessage',
+    'renderThread',
+    'renderComposer',
+    'renderCommandPalette',
+    'renderMainView',
+  ]
+  const lines = [
+    MAIN_START,
+    '  // 本段由 tools/sync-contract.mjs 从 lib/main-view.js 生成，勿手改；',
+    '  // 漂移由 test/contract.test.mjs 的同步检查挡住。',
+    `  const MAIN_APPROVAL_CHOICES = ${JSON.stringify(mainView.APPROVAL_CHOICES)}`,
+    `  const MAIN_DEMO_COMMANDS = ${JSON.stringify(mainView.DEMO_COMMANDS)}`,
+    `  const MAIN_DEMO_THREAD = ${JSON.stringify(mainView.DEMO_THREAD)}`,
+    `  const MAIN_ICONS = ${JSON.stringify(mainView.MAIN_ICONS)}`,
+    `  const MAIN_CSS = ${JSON.stringify(mainView.mainCss())}`,
+  ]
+  for (const name of names) lines.push(`  const ${name} = ${mainView[name].toString()}`)
+  lines.push(MAIN_END)
+  return lines.join('\n')
+}
+
+/** 把源码里的 main 标记区换成生成内容；没有该标记区时原样返回（可选区）。 */
+export function withMainBlock(source) {
+  const start = source.indexOf(MAIN_START)
+  const end = source.indexOf(MAIN_END)
+  if (start < 0 || end < 0) return source
+  return `${source.slice(0, start)}${mainBlock()}${source.slice(end + MAIN_END.length)}`
+}
+
 /** 把源码里的 shell 标记区换成生成内容；没有该标记区时原样返回（可选区，兼容旧 fixture）。 */
 export function withShellBlock(source) {
   const start = source.indexOf(SHELL_START)
@@ -195,6 +266,53 @@ export function withDockSettingsBlock(source) {
   return `${source.slice(0, start)}${dockSettingsBlock()}${source.slice(end + DOCK_END.length)}`
 }
 
+/**
+ * 生成侧栏块（票 31）：三段卡片的数据变换与渲染函数 + 侧栏 CSS。
+ *
+ * 与 shell-from-lib 同一套路（Node 模块是源，浏览器半区拿生成物），但独立成区，
+ * 这样并行票改 shell / main / dock 时不会在同一段里冲突。
+ * @returns {string} 标记区文本（含起止标记）。
+ */
+export function sidebarBlock() {
+  return [
+    SIDEBAR_START,
+    '  // 本段由 tools/sync-contract.mjs 从 lib/sidebar.js 生成，勿手改；',
+    '  // 漂移由 test/sidebar-client.test.mjs 的同步检查挡住。',
+    `  const SIDEBAR_METRICS = ${JSON.stringify(SIDEBAR_METRICS)}`,
+    `  const SIDEBAR_ICONS = ${JSON.stringify(SIDEBAR_ICONS)}`,
+    `  const SIDEBAR_CSS = ${JSON.stringify(sidebarCss())}`,
+    `  const sidebarIcon = ${sidebarIcon.toString()}`,
+    `  const rowTitleLeftX = ${rowTitleLeftX.toString()}`,
+    `  const normalizeSession = ${normalizeSession.toString()}`,
+    `  const normalizeSessions = ${normalizeSessions.toString()}`,
+    `  const workspaceName = ${workspaceName.toString()}`,
+    `  const groupSessions = ${groupSessions.toString()}`,
+    `  const needSummary = ${needSummary.toString()}`,
+    `  const normalizeOpen = ${normalizeOpen.toString()}`,
+    `  const buildSidebarState = ${buildSidebarState.toString()}`,
+    `  const renderCardHeader = ${renderCardHeader.toString()}`,
+    `  const renderNeedRow = ${renderNeedRow.toString()}`,
+    `  const renderNeedCard = ${renderNeedCard.toString()}`,
+    `  const renderSessionRow = ${renderSessionRow.toString()}`,
+    `  const renderWorkspaceRow = ${renderWorkspaceRow.toString()}`,
+    `  const renderWorkspaceCard = ${renderWorkspaceCard.toString()}`,
+    `  const renderTaskCard = ${renderTaskCard.toString()}`,
+    `  const renderSidebar = ${renderSidebar.toString()}`,
+    SIDEBAR_END,
+  ].join('\n')
+    // 与主区（票 32）同名：两个模块都导出 renderTaskCard，单文件工厂里同名 const
+    // 会重复声明直接 SyntaxError，侧栏这份改名错开（Node 侧导出名不变，不影响单测）。
+    .replaceAll('renderTaskCard', 'renderSidebarTaskCard')
+}
+
+/** 把源码里的侧栏标记区换成生成内容；没有该标记区时原样返回（可选区，兼容旧 fixture）。 */
+export function withSidebarBlock(source) {
+  const start = source.indexOf(SIDEBAR_START)
+  const end = source.indexOf(SIDEBAR_END)
+  if (start < 0 || end < 0) return source
+  return `${source.slice(0, start)}${sidebarBlock()}${source.slice(end + SIDEBAR_END.length)}`
+}
+
 /** 把源码里的 module-id 段换成包名；找不到标记返回 null。 */
 export function withModuleId(source, name) {
   const start = source.indexOf(ID_START)
@@ -211,7 +329,7 @@ export function withContractBlock(source) {
   let next = `${source.slice(0, start)}${contractBlock()}${source.slice(end + END.length)}`
   // BUILD_STAMP 也随包版本/提交更新（页面 data-build 用它）
   next = next.replace(/const BUILD_STAMP = "[^"]*"/, `const BUILD_STAMP = ${JSON.stringify(buildStampBlock())}`)
-  return withDockSettingsBlock(withShellBlock(next))
+  return withSidebarBlock(withDockSettingsBlock(withMainBlock(withShellBlock(next))))
 }
 
 /**
