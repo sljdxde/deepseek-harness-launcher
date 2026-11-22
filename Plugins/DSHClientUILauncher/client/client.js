@@ -7,7 +7,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.4+e907506"
+<<<<<<< HEAD
+  const BUILD_STAMP = "0.2.2-rc.4+a6c7808"
+=======
+  const BUILD_STAMP = "0.2.2-rc.4+34e0b47"
+>>>>>>> spec/t32
   let CURRENT_CTX = null
   // 票 29：Bootstrap 只生效一次（重复加载不注册两次、不叠第二条横幅）；卸载时复位。
   let HOST_GUARD_DONE = false
@@ -323,6 +327,438 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   return h('footer', { className: 'launcher-statusbar' }, ...children)
 }
   // #endregion shell-from-lib
+  // #region main-from-lib
+  // 本段由 tools/sync-contract.mjs 从 lib/main-view.js 生成，勿手改；
+  // 漂移由 test/contract.test.mjs 的同步检查挡住。
+  const MAIN_APPROVAL_CHOICES = {"allow":{"label":"允许一次","tone":"primary","icon":"check"},"always":{"label":"总是允许这类","tone":"","icon":""},"deny":{"label":"拒绝","tone":"ghost danger","icon":"x"}}
+  const MAIN_DEMO_COMMANDS = [{"id":"conversation","label":"回到会话","hint":"⌘1"},{"id":"settings","label":"打开设置","hint":"settings · ⌘,"},{"id":"theme","label":"切换日间 / 夜间","hint":"⌘⇧L"},{"id":"dock","label":"开关右栏","hint":"⌘J"}]
+  const MAIN_DEMO_THREAD = [{"k":"user","id":"u1","t":"把 dsh 界面整套换掉：以现在这版原型为骨架，把仿工作台那版的密度和组件拿过来。任务卡、汇报卡不能变样。","at":"14:02"},{"k":"bot","id":"b1","fold":{"dur":"6 分 12 秒","files":14,"cmds":5},"tx":["按骨架 + 组件两层拆：外壳与信息架构沿用现有原型，对话流与右栏沿用工作台那版（运行摘要折叠、工具行、任务卡、汇报卡、改动卡、审批卡）。","配色只保留一套基准：日间暖纸 + 夜间近黑，对比度按 WCAG AA 校过一遍。"],"tools":[{"k":"Read","c":"dsh-ui-proto-v2.html","d":"0.2 s"},{"k":"Read","c":"dsh-ui-prototype.html","d":"0.2 s"},{"k":"Bash","c":"ls tasks/*/frozen/*.html","d":"0.4 s"},{"k":"Grep","c":"插件｜扩展管理｜归档","d":"0.1 s"},{"k":"Write","c":"dsh-ui-merged.html","d":"1.1 s"}],"plan":[{"s":"对齐两版的信息架构差异","st":"done"},{"s":"对话流与右栏组件移植","st":"done"},{"s":"日夜两套 + 窄窗校对","st":"doing"},{"s":"接线到 dsh 插件槽位","st":"next"}],"chg":[{"f":"dsh-ui-merged.html","add":218,"del":0},{"f":"notes/fusion.md","add":64,"del":12}]},{"k":"task","id":"t1","who":"任务卡 · dsh-bot","title":"融合版原型（现有 + 工作台）","assignee":"UI-UX 设计师","pct":62,"rows":[{"t":"外壳与导航（图标栏 / 侧栏 / 顶栏）","st":"done"},{"t":"对话流：运行摘要、工具行、任务卡、汇报卡","st":"done"},{"t":"右栏审阅：改动卡 + 提交","st":"doing"},{"t":"窄窗 320 与键盘走查","st":"doing"}],"dyn":"14:31 外壳完成 · 14:38 对话流完成 · 14:52 右栏完成"},{"k":"approval","id":"a1","cwd":"~/Pod","cmd":"npm run build -- --watch","why":"会写 dist/ 并常驻一个进程。批准后同一条命令不再问。"},{"k":"report","id":"r1","status":"READY","title":"融合版能点了","body":"骨架全是现有原型那套，换掉的是密度：对话流有运行摘要折叠、工具行、任务卡、汇报卡、改动卡、审批卡；右栏审阅带 diff 和提交。日 / 夜、320 窄窗、键盘焦点都过了一遍。","links":["dsh-ui-merged.html","图标声明表"],"dyn":"评测：数据是演示数据，写操作只改本地状态。"},{"k":"user","id":"u2","t":"先看夜间的密度够不够，不够就再压一档。","at":"14:56"}]
+  const MAIN_ICONS = {"caret":"<path d=\"M9 6l6 6l-6 6\" />","chevronDown":"<path d=\"M6 9l6 6l6 -6\" />","chevronRight":"<path d=\"M9 6l6 6l-6 6\" />","check":"<path d=\"M5 12l5 5l10 -10\" />","x":"<path d=\"M18 6l-12 12\" /><path d=\"M6 6l12 12\" />","alert":"<path d=\"M12 9v4\" /><path d=\"M12 17l.01 0\" /><path d=\"M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18\" />","terminal":"<path d=\"M5 7l5 5l-5 5\" /><path d=\"M12 19l7 0\" />","file":"<path d=\"M14 3v4a1 1 0 0 0 1 1h4\" /><path d=\"M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z\" />","eye":"<path d=\"M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\" /><path d=\"M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6\" />","target":"<path d=\"M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0\" /><path d=\"M12 12m-5 0a5 5 0 1 0 10 0a5 5 0 1 0 -10 0\" /><path d=\"M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\" />","sparkles":"<path d=\"M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2zm0 -12a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2zm-7 12a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6z\" />","copy":"<path d=\"M8 8m0 2a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z\" /><path d=\"M16 8v-2a2 2 0 0 0 -2 -2h-8a2 2 0 0 0 -2 2v8a2 2 0 0 0 2 2h2\" />","doc":"<path d=\"M14 3v4a1 1 0 0 0 1 1h4\" /><path d=\"M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z\" />","git":"<path d=\"M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\" /><path d=\"M12 3v6\" /><path d=\"M12 15v6\" />","bot":"<path d=\"M6 6m0 2a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z\" /><path d=\"M9 12l.01 0\" /><path d=\"M15 12l.01 0\" />","arrowUp":"<path d=\"M12 5l0 14\" /><path d=\"M16 9l-4 -4l-4 4\" />","search":"<path d=\"M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0\" /><path d=\"M21 21l-6 -6\" />","message":"<path d=\"M8 9h8\" /><path d=\"M8 13h6\" /><path d=\"M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12z\" />","plus":"<path d=\"M12 5l0 14\" /><path d=\"M5 12l14 0\" />"}
+  const MAIN_CSS = ".launcher-ic{width:14px;height:14px;stroke-width:1.7;fill:none;stroke:currentColor;flex:none}\n.launcher-mainview{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;overflow:hidden;background:var(--l-bg);color:var(--l-ink);font-size:13px}\n.launcher-mainview *{box-sizing:border-box}\n.launcher-thread-wrap{flex:1 1 auto;min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;padding:14px 0 8px;scrollbar-gutter:stable}\n.launcher-thread{max-width:740px;min-width:0;margin:0 auto;padding:0 20px;display:grid;gap:14px}\n.launcher-turn{display:grid;gap:10px;min-width:0}\n.launcher-msg-user{justify-self:end;max-width:82%;min-width:0;background:var(--l-surface2);border:1px solid var(--l-line);border-radius:var(--l-radius-md) var(--l-radius-md) 4px var(--l-radius-md);padding:9px 13px;font-size:13px;line-height:1.5;overflow-wrap:anywhere;white-space:pre-wrap}\n.launcher-stamp{font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4);margin-top:5px;text-align:right}\n.launcher-msg-bot{display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;min-width:0}\n.launcher-msg-bot__who{width:22px;height:22px;border-radius:50%;background:var(--l-ink);color:var(--l-bg);display:grid;place-items:center;margin-top:1px}\n.launcher-msg-bot__bd{min-width:0;overflow-wrap:anywhere}\n.launcher-msg-bot__hd{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--l-ink3);margin-bottom:4px}\n.launcher-msg-bot__hd b{color:var(--l-ink2);font-weight:600}\n.launcher-tx{font-size:13px;line-height:1.5;color:var(--l-ink)}\n.launcher-tx p{margin:0}.launcher-tx p+p{margin-top:8px}\n.launcher-msg-acts{display:flex;gap:2px;margin-top:4px;opacity:0;transition:opacity .12s ease}\n.launcher-msg-bot:hover .launcher-msg-acts,.launcher-msg-bot:focus-within .launcher-msg-acts{opacity:1}\n.launcher-icon-btn{display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:var(--l-ink3);cursor:pointer}\n.launcher-icon-btn:hover{background:var(--l-hover);color:var(--l-ink)}\n.launcher-fold{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;color:var(--l-ink3);padding:3px 7px;border:0;border-radius:var(--l-radius-xs);background:transparent;margin:2px 0 2px -2px;cursor:pointer;text-align:left}\n.launcher-fold:hover{background:var(--l-hover);color:var(--l-ink2)}\n.launcher-fold svg{transition:transform .12s ease}.launcher-fold.open svg{transform:rotate(90deg)}\n.launcher-tools{margin:6px 0 2px;border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-surface);overflow:hidden}\n.launcher-tools__h{display:flex;align-items:center;gap:7px;padding:7px 10px;font:inherit;font-size:12px;color:var(--l-ink2);width:100%;text-align:left;border:0;background:transparent;cursor:pointer}\n.launcher-tools__h:hover{background:var(--l-hover)}\n.launcher-tools__n{color:var(--l-ink4);font-family:var(--font-mono,ui-monospace);font-size:11px}\n.launcher-main-grow{flex:1}\n.launcher-tool-row{display:grid;grid-template-columns:18px 52px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 10px;border-top:1px solid var(--l-line);font-size:12px;min-width:0}\n.launcher-tool-row__k{color:var(--l-ink3);font-family:var(--font-mono,ui-monospace);font-size:11px}\n.launcher-tool-row__c{font-family:var(--font-mono,ui-monospace);font-size:12px;color:var(--l-ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.launcher-tool-row__d{font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4)}\n.launcher-tool-row.bad .launcher-tool-row__c{color:var(--l-red)}\n.launcher-plan{border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-surface);padding:11px 12px;margin:8px 0 0}\n.launcher-plan__h{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--l-ink2);margin-bottom:8px}\n.launcher-main-kbd{margin-left:auto;font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4)}\n.launcher-plan-step{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;align-items:center;padding:5px 0;font-size:13px}\n.launcher-plan-step__no{width:18px;height:18px;border-radius:50%;border:1px solid var(--l-line2);display:grid;place-items:center;font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink3)}\n.launcher-plan-step.done .launcher-plan-step__no{background:var(--l-green-soft);border-color:transparent;color:var(--l-green)}\n.launcher-plan-step.doing .launcher-plan-step__no{background:var(--l-accentSoft);border-color:transparent;color:var(--l-accent)}\n.launcher-plan-step__nm{color:var(--l-ink2);min-width:0;overflow-wrap:anywhere}\n.launcher-bcard{border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-surface);overflow:hidden;margin:2px 0;min-width:0}\n.launcher-bcard__h{display:flex;align-items:center;gap:7px;padding:8px 12px;border-bottom:1px solid var(--l-line);font-size:12px;color:var(--l-ink3);flex-wrap:wrap;min-width:0}\n.launcher-bcard__who{color:var(--l-ink2);font-weight:600;white-space:nowrap}\n.launcher-bcard__r{margin-left:auto;display:flex;gap:5px;align-items:center}\n.launcher-bcard__b{padding:11px 12px;min-width:0}\n.launcher-card-t{font-size:14px;font-weight:600;margin:0 0 4px;overflow-wrap:anywhere}\n.launcher-sub{font-size:12px;color:var(--l-ink3);line-height:1.7;overflow-wrap:anywhere}\n.launcher-main-tag{display:inline-flex;align-items:center;gap:3px;font:11px/1 var(--font-mono,ui-monospace);border:1px solid var(--l-line);border-radius:4px;padding:2px 5px;color:var(--l-ink3);background:transparent}\n.launcher-main-tag.acc{color:var(--l-accent);background:var(--l-accentSoft);border-color:transparent}\n.launcher-report-tag{font:11px/1 var(--font-mono,ui-monospace);letter-spacing:.4px;color:var(--l-accent);background:var(--l-accentSoft);border-radius:4px;padding:3px 5px}\n.launcher-prog-row{display:flex;align-items:center;gap:8px;margin-top:9px;font-size:11px;color:var(--l-ink3)}\n.launcher-bar{flex:1;height:6px;border-radius:3px;background:var(--l-surface3);overflow:hidden}\n.launcher-bar i{display:block;height:100%;background:var(--l-accent)}\n.launcher-crit{display:grid;gap:2px;margin-top:9px;padding-top:9px;border-top:1px solid var(--l-line)}\n.launcher-crit-row{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;align-items:center;min-height:32px;padding:2px 0;font-size:12px;color:var(--l-ink2);cursor:pointer;min-width:0}\n.launcher-crit-row input{appearance:none;width:18px;height:18px;border:1.5px solid var(--l-line2);border-radius:4px;display:grid;place-items:center;margin:0}\n.launcher-crit-row input:checked{background:var(--l-accent);border-color:transparent}\n.launcher-crit-row span.on{color:var(--l-ink4);text-decoration:line-through}\n.launcher-crit__who{font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4)}\n.launcher-dyn{margin-top:9px;padding-top:8px;border-top:1px solid var(--l-line);font-size:12px;color:var(--l-ink3);display:grid;gap:3px;min-width:0}\n.launcher-dyn b{color:var(--l-ink4);font:11px/1 var(--font-mono,ui-monospace);font-weight:500}\n.launcher-chg-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 0;font-size:12px;border-bottom:1px solid var(--l-line);min-width:0}\n.launcher-chg-row:last-child{border-bottom:0}\n.launcher-chg-row__f{font-family:var(--font-mono,ui-monospace);font-size:12px;color:var(--l-ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.launcher-chg-sum{font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4);white-space:nowrap}\n.launcher-main-git-add{color:var(--l-green)}.launcher-main-git-del{color:var(--l-red)}\n.launcher-main-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}\n.launcher-appr{border:1px solid var(--l-line2);background:var(--l-surface);border-radius:var(--l-radius-md);overflow:hidden;min-width:0}\n.launcher-appr__h{display:flex;align-items:center;gap:7px;padding:8px 12px;font-size:12px;color:var(--l-amber);font-weight:600;border-bottom:1px solid var(--l-line)}\n.launcher-appr__b{padding:11px 12px;min-width:0}\n.launcher-appr__cmd{font-family:var(--font-mono,ui-monospace);font-size:12px;background:var(--l-surface2);border:1px solid var(--l-line);border-radius:var(--l-radius-sm);padding:8px 10px;margin:7px 0;overflow-x:auto;white-space:pre;color:var(--l-ink)}\n.launcher-appr__why{font-size:12px;color:var(--l-ink2);line-height:1.5;overflow-wrap:anywhere}\n.launcher-appr__hint{font-size:11px;color:var(--l-ink4);margin-top:8px;display:inline-flex;align-items:center;gap:8px}\n.launcher-appr__acts{display:flex;gap:6px;align-items:center;margin-top:9px;flex-wrap:wrap}\n.launcher-appr.done{background:var(--l-surface);border-color:var(--l-line)}\n.launcher-appr.done .launcher-appr__h{color:var(--l-green);border-color:var(--l-line)}\n.launcher-btn{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--l-line2);border-radius:var(--l-radius-sm);background:transparent;color:var(--l-ink2);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}\n.launcher-btn:hover{background:var(--l-hover);color:var(--l-ink)}\n.launcher-btn.primary{background:var(--l-accent);border-color:transparent;color:var(--l-onAccent)}\n.launcher-btn.primary:hover{filter:brightness(1.08);color:var(--l-onAccent)}\n.launcher-btn.ghost{border-color:transparent;background:transparent}\n.launcher-btn.danger{color:var(--l-red)}\n.launcher-btn.sm{height:26px;padding:0 8px}\n.launcher-codec{font-family:var(--font-mono,ui-monospace);font-size:12px;background:var(--l-surface2);border:1px solid var(--l-line);border-radius:6px;padding:1px 5px}\n.launcher-composer{padding:8px 14px 12px;border-top:1px solid var(--l-line);background:var(--l-bg);flex:0 0 auto;min-width:0}\n.launcher-cm-box{border:1px solid var(--l-line2);border-radius:var(--l-radius-md);background:var(--l-surface);padding:9px 10px 8px;min-width:0}\n.launcher-cm-box:focus-within{border-color:var(--l-accent);box-shadow:0 0 0 3px var(--l-accentSoft)}\n.launcher-cm-input{width:100%;max-width:100%;border:0;background:transparent;resize:none;font:inherit;font-size:13px;line-height:1.5;min-height:40px;max-height:160px;outline:none;display:block;padding:2px 2px 6px;color:var(--l-ink)}\n.launcher-cm-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}\n.launcher-cm-meta{margin-left:auto;font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4)}\n.launcher-send{width:30px;height:30px;border:0;border-radius:var(--l-radius-sm);background:var(--l-accent);color:var(--l-onAccent);display:grid;place-items:center;cursor:pointer}\n.launcher-send[disabled]{opacity:.38;cursor:not-allowed}\n.launcher-approval-dock{border-top:1px solid var(--l-amber);background:var(--l-surface2);padding:8px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:0 0 auto;min-width:0}\n.launcher-approval-dock__main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}\n.launcher-approval-dock__main b{font-size:12px;color:var(--l-amber)}\n.launcher-approval-dock__main code{font-family:var(--font-mono,ui-monospace);font-size:11px;background:var(--l-surface);border:1px solid var(--l-line);border-radius:6px;padding:1px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n.launcher-approval-dock__acts{display:flex;gap:4px;flex-wrap:wrap}\n.launcher-palette{position:fixed;left:50%;top:14vh;transform:translateX(-50%);width:min(560px,calc(100vw - 32px));max-width:100%;max-height:60vh;display:flex;flex-direction:column;background:var(--l-panel);color:var(--l-ink);border:1px solid var(--l-line2);border-radius:var(--l-radius-md);box-shadow:0 14px 34px rgba(0,0,0,.18);z-index:50;overflow:hidden}\n.launcher-palette__in{display:flex;align-items:center;gap:8px;padding:11px 12px;border-bottom:1px solid var(--l-line)}\n.launcher-palette__input{flex:1;min-width:0;border:0;background:transparent;outline:none;font:inherit;font-size:14px;color:var(--l-ink)}\n.launcher-palette__list{list-style:none;margin:0;padding:4px;overflow:auto;min-height:0}\n.launcher-palette__row{display:block;padding:0;border-radius:6px;cursor:pointer}\n.launcher-palette__row.sel{background:var(--l-accentSoft)}\n.launcher-palette__row.off{opacity:.45;cursor:not-allowed}\n.launcher-palette__btn{display:flex;justify-content:space-between;gap:12px;width:100%;padding:8px 10px;border:0;border-radius:6px;background:transparent;color:var(--l-ink2);font:inherit;font-size:13px;text-align:left;cursor:pointer}\n.launcher-palette__row.sel .launcher-palette__btn{color:var(--l-ink)}\n.launcher-palette__hint{color:var(--l-ink4);font:11px/1 var(--font-mono,ui-monospace)}\n.launcher-palette__empty{padding:10px;font-size:12px;color:var(--l-ink3)}\n.launcher-palette__foot{display:flex;gap:10px;padding:7px 12px;border-top:1px solid var(--l-line);font-size:11px;color:var(--l-ink4);font-family:var(--font-mono,ui-monospace)}"
+  const mainIcon = function mainIcon(h, name) {
+  const body = MAIN_ICONS[name] ?? ''
+  return h('svg', {
+    viewBox: '0 0 24 24',
+    className: 'launcher-ic',
+    'aria-hidden': 'true',
+    focusable: 'false',
+    dangerouslySetInnerHTML: { __html: body },
+  })
+}
+  const applyApproval = function applyApproval(state, cardId, choice) {
+  if (!Object.prototype.hasOwnProperty.call(MAIN_APPROVAL_CHOICES, choice)) return { ...(state ?? {}) }
+  return { ...(state ?? {}), [cardId]: choice }
+}
+  const resetApproval = function resetApproval(state, cardId) {
+  const next = { ...(state ?? {}) }
+  delete next[cardId]
+  return next
+}
+  const approvalOf = function approvalOf(state, cardId) {
+  return state?.[cardId] ?? 'pending'
+}
+  const pendingApprovals = function pendingApprovals(state, thread) {
+  const list = Array.isArray(thread) ? thread : []
+  return list.filter((m) => m?.k === 'approval' && approvalOf(state, m.id) === 'pending')
+}
+  const isApprovalPending = function isApprovalPending(state, thread) {
+  return pendingApprovals(state, thread).length > 0
+}
+  const composerCanSend = function composerCanSend(text) {
+  return String(text ?? '').trim() !== ''
+}
+  const composerKeyDown = function composerKeyDown({ key, shiftKey = false, canSend = false } = {}) {
+  if (key !== 'Enter') return 'none'
+  if (shiftKey) return 'newline'
+  return canSend ? 'send' : 'none'
+}
+  const paletteFilter = function paletteFilter(commands, query) {
+  const list = Array.isArray(commands) ? commands : []
+  const q = String(query ?? '').trim().toLowerCase()
+  if (q === '') return list.slice()
+  return list.filter((cmd) => `${cmd?.label ?? ''} ${cmd?.hint ?? ''}`.toLowerCase().includes(q))
+}
+  const paletteStep = function paletteStep(index, delta, length) {
+  const len = Number.isInteger(length) ? length : 0
+  if (len <= 0) return 0
+  const base = Number.isInteger(index) ? index : 0
+  return ((base + delta) % len + len) % len
+}
+  const paletteCommand = function paletteCommand({ key, hasSelection = false } = {}) {
+  if (key === 'Escape') return 'close'
+  if (key === 'ArrowDown') return 'next'
+  if (key === 'ArrowUp') return 'prev'
+  if (key === 'Enter' && hasSelection) return 'run'
+  return 'none'
+}
+  const toggleExpanded = function toggleExpanded(map, key) {
+  const next = { ...(map ?? {}) }
+  if (next[key] === true) delete next[key]
+  else next[key] = true
+  return next
+}
+  const shouldFollowScroll = function shouldFollowScroll({ scrollTop, clientHeight, scrollHeight, threshold = 48 } = {}) {
+  const top = Number(scrollTop) || 0
+  const client = Number(clientHeight) || 0
+  const height = Number(scrollHeight) || 0
+  const gap = Number(threshold) || 0
+  return height - (top + client) <= gap
+}
+  const renderUserMessage = function renderUserMessage(h, msg) {
+  const m = msg ?? {}
+  return h('div', { className: 'launcher-turn' },
+    h('div', { className: 'launcher-msg-user' },
+      h('span', { className: 'launcher-msg-user__text' }, String(m.t ?? '')),
+      m.at ? h('div', { className: 'launcher-stamp' }, String(m.at)) : null))
+}
+  const renderFoldSummary = function renderFoldSummary(h, fold, opts = {}) {
+  const f = fold ?? {}
+  const open = opts.open === true
+  return h('button', {
+    type: 'button',
+    className: `launcher-fold${open ? ' open' : ''}`,
+    'aria-expanded': open,
+    'data-fold': opts.id ?? '',
+    onClick: () => opts.onToggle?.(opts.id),
+  },
+  mainIcon(h, 'caret'),
+  h('span', null, `已处理 ${f.dur ?? ''} · 读了 ${f.files ?? 0} 个文件 · 运行 ${f.cmds ?? 0} 条命令`))
+}
+  const renderTools = function renderTools(h, tools, opts = {}) {
+  const list = Array.isArray(tools) ? tools : []
+  const open = opts.open === true
+  const children = [
+    h('button', {
+      type: 'button',
+      className: 'launcher-tools__h',
+      'aria-expanded': open,
+      onClick: () => opts.onToggle?.(opts.id),
+    },
+    mainIcon(h, 'terminal'),
+    h('span', null, `这一轮跑了 ${list.length} 步`),
+    h('span', { className: 'launcher-tools__n' }, open ? '收起' : '展开'),
+    h('span', { className: 'launcher-main-grow' }),
+    mainIcon(h, open ? 'chevronDown' : 'chevronRight')),
+  ]
+  if (open) {
+    for (const t of list) {
+      children.push(h('div', { className: `launcher-tool-row${t?.bad === true ? ' bad' : ''}` },
+        mainIcon(h, t?.k === 'Bash' ? 'terminal' : t?.k === 'Write' ? 'file' : 'eye'),
+        h('span', { className: 'launcher-tool-row__k' }, String(t?.k ?? '')),
+        h('span', { className: 'launcher-tool-row__c', title: String(t?.c ?? '') }, String(t?.c ?? '')),
+        h('span', { className: 'launcher-tool-row__d' }, String(t?.d ?? ''))))
+    }
+  }
+  return h('div', { className: 'launcher-tools', 'aria-expanded': open }, ...children)
+}
+  const renderPlan = function renderPlan(h, plan) {
+  const list = Array.isArray(plan) ? plan : []
+  const done = list.filter((p) => p?.st === 'done').length
+  return h('div', { className: 'launcher-plan' },
+    h('div', { className: 'launcher-plan__h' },
+      mainIcon(h, 'target'),
+      h('span', null, '实现计划'),
+      h('span', { className: 'launcher-main-kbd' }, `${done} / ${list.length}`)),
+    list.map((p, idx) => h('div', { className: `launcher-plan-step ${p?.st ?? ''}` },
+      h('span', { className: 'launcher-plan-step__no' }, p?.st === 'done' ? '✓' : String(idx + 1)),
+      h('span', { className: 'launcher-plan-step__nm' }, String(p?.s ?? '')),
+      h('span', { className: 'launcher-main-tag' }, p?.st === 'done' ? '完成' : p?.st === 'doing' ? '进行中' : '待排期'))))
+}
+  const renderTaskCard = function renderTaskCard(h, card, opts = {}) {
+  const c = card ?? {}
+  const rows = Array.isArray(c.rows) ? c.rows : []
+  const crit = opts.crit ?? {}
+  return h('div', { className: 'launcher-bcard', 'data-card': 'task' },
+    h('div', { className: 'launcher-bcard__h' },
+      mainIcon(h, 'target'),
+      h('span', { className: 'launcher-bcard__who' }, String(c.who ?? '')),
+      h('span', { className: 'launcher-main-tag acc' }, String(c.assignee ?? '')),
+      h('span', { className: 'launcher-bcard__r' }, h('span', { className: 'launcher-main-tag' }, `覆盖 ${rows.length} 项`))),
+    h('div', { className: 'launcher-bcard__b' },
+      h('h4', { className: 'launcher-card-t' }, String(c.title ?? '')),
+      h('div', { className: 'launcher-sub' }, '做完一项勾一项，勾完即算过。'),
+      h('div', { className: 'launcher-prog-row' },
+        h('span', null, `${Number(c.pct) || 0}%`),
+        h('div', { className: 'launcher-bar' }, h('i', { style: { width: `${Number(c.pct) || 0}%` } }))),
+      h('div', { className: 'launcher-crit' }, rows.map((r, idx) => {
+        const key = `${c.title ?? ''}${idx}`
+        const on = crit[key] === true
+        return h('label', { className: 'launcher-crit-row' },
+          h('input', { type: 'checkbox', checked: on, 'data-crit-key': key, onChange: () => opts.onToggleCrit?.(key) }),
+          h('span', { className: on ? 'on' : '' }, String(r?.t ?? '')),
+          h('span', { className: 'launcher-crit__who' }, r?.st === 'done' ? '完成' : r?.st === 'doing' ? '在做' : '待办'))
+      })),
+      c.dyn ? h('div', { className: 'launcher-dyn' }, h('b', null, '动态'), h('span', null, String(c.dyn))) : null))
+}
+  const renderReportCard = function renderReportCard(h, card, opts = {}) {
+  const c = card ?? {}
+  const open = opts.open === true
+  const links = Array.isArray(c.links) ? c.links : []
+  return h('div', { className: 'launcher-bcard', 'data-card': 'report' },
+    h('div', { className: 'launcher-bcard__h' },
+      mainIcon(h, 'sparkles'),
+      h('span', { className: 'launcher-bcard__who' }, '汇报卡 · dsh-bot'),
+      h('span', { className: 'launcher-report-tag' }, String(c.status ?? '')),
+      h('span', { className: 'launcher-bcard__r' },
+        h('button', { type: 'button', className: 'launcher-btn sm ghost', onClick: () => opts.onToggle?.(c.title) }, open ? '收起动态' : '展开动态'))),
+    h('div', { className: 'launcher-bcard__b' },
+      h('h4', { className: 'launcher-card-t' }, String(c.title ?? '')),
+      h('div', { className: 'launcher-sub' }, String(c.body ?? '')),
+      links.length
+        ? h('div', { className: 'launcher-main-tags' }, links.map((l) => h('span', { className: 'launcher-main-tag acc' }, mainIcon(h, 'file'), String(l))))
+        : null,
+      open === true ? h('div', { className: 'launcher-dyn' }, h('b', null, '动态'), h('span', null, String(c.dyn ?? ''))) : null))
+}
+  const renderChangedCard = function renderChangedCard(h, chg, opts = {}) {
+  const list = Array.isArray(chg) ? chg : []
+  return h('div', { className: 'launcher-bcard', 'data-card': 'changed' },
+    h('div', { className: 'launcher-bcard__h' },
+      mainIcon(h, 'file'),
+      h('span', { className: 'launcher-bcard__who' }, '改动'),
+      h('span', { className: 'launcher-chg-sum' }, `${list.length} 个文件`),
+      h('span', { className: 'launcher-bcard__r' },
+        h('button', { type: 'button', className: 'launcher-btn sm ghost', onClick: () => opts.onReview?.() }, '去审阅', mainIcon(h, 'chevronRight')))),
+    h('div', { className: 'launcher-bcard__b' }, list.map((f) => h('div', { className: 'launcher-chg-row' },
+      mainIcon(h, 'file'),
+      h('span', { className: 'launcher-chg-row__f', title: String(f?.f ?? '') }, String(f?.f ?? '')),
+      h('span', { className: 'launcher-chg-sum' },
+        h('span', { className: 'launcher-main-git-add' }, `+${f?.add ?? 0}`),
+        ' ',
+        h('span', { className: 'launcher-main-git-del' }, `−${f?.del ?? 0}`))))))
+}
+  const renderApprovalCard = function renderApprovalCard(h, card, opts = {}) {
+  const c = card ?? {}
+  const state = opts.state ?? 'pending'
+  if (state !== 'pending') {
+    return h('div', { className: 'launcher-appr done', 'data-approval': state },
+      h('div', { className: 'launcher-appr__h' },
+        mainIcon(h, state === 'deny' ? 'x' : 'check'),
+        h('span', null, state === 'deny' ? '已拒绝' : state === 'always' ? '已总是允许' : '已允许 · 本次')),
+      h('div', { className: 'launcher-appr__b' },
+        h('div', { className: 'launcher-appr__cmd' }, String(c.cmd ?? '')),
+        h('div', { className: 'launcher-appr__hint' },
+          state === 'deny' ? '没有执行。想改主意可以点下面的按钮。' : '已写进本地状态，宿主那边会记成同一种决策。',
+          h('button', { type: 'button', className: 'launcher-btn sm ghost', onClick: () => opts.onReset?.(c.id) }, '撤销'))))
+  }
+  return h('div', { className: 'launcher-appr', 'data-approval': 'pending' },
+    h('div', { className: 'launcher-appr__h' }, mainIcon(h, 'alert'), h('span', null, '需要你批准 · 运行命令')),
+    h('div', { className: 'launcher-appr__b' },
+      h('div', { className: 'launcher-appr__why' }, '将在 ', h('span', { className: 'launcher-codec' }, String(c.cwd ?? '~/Pod')), ' 运行下面这条。'),
+      h('div', { className: 'launcher-appr__cmd' }, String(c.cmd ?? '')),
+      h('div', { className: 'launcher-appr__why' }, String(c.why ?? '')),
+      h('div', { className: 'launcher-appr__acts' },
+        Object.entries(MAIN_APPROVAL_CHOICES).map(([choice, meta]) => h('button', {
+          type: 'button',
+          className: `launcher-btn ${meta.tone}`.trim(),
+          'data-choice': choice,
+          onClick: () => opts.onChoose?.(choice),
+        }, meta.icon ? mainIcon(h, meta.icon) : null, meta.label)),
+        h('span', { className: 'launcher-appr__hint' }, '输入框空着按 Enter 也能允许'))))
+}
+  const renderApprovalDock = function renderApprovalDock(h, card, opts = {}) {
+  const c = card ?? {}
+  return h('div', { className: 'launcher-approval-dock' },
+    mainIcon(h, 'alert'),
+    h('div', { className: 'launcher-approval-dock__main' },
+      h('b', null, '需要你批准 · 运行命令'),
+      h('code', null, String(c.cmd ?? ''))),
+    h('div', { className: 'launcher-approval-dock__acts' },
+      Object.entries(MAIN_APPROVAL_CHOICES).map(([choice, meta]) => h('button', {
+        type: 'button',
+        className: `launcher-btn sm ${meta.tone}`.trim(),
+        'data-choice': choice,
+        onClick: () => opts.onChoose?.(c.id, choice),
+      }, meta.label))))
+}
+  const renderBotMessage = function renderBotMessage(h, msg, opts = {}) {
+  const m = msg ?? {}
+  const idx = opts.index ?? 0
+  const expanded = opts.expanded ?? {}
+  const tx = Array.isArray(m.tx) ? m.tx : []
+  const children = [
+    h('div', { className: 'launcher-msg-bot__hd' }, h('b', null, 'DeepSeek Harness'), h('span', null, '刚刚')),
+  ]
+  if (m.fold) {
+    children.push(renderFoldSummary(h, m.fold, {
+      id: `fold:${idx}`,
+      open: expanded[`fold:${idx}`] === true,
+      onToggle: opts.onToggleFold,
+    }))
+  }
+  if (tx.length) children.push(h('div', { className: 'launcher-tx' }, tx.map((p) => h('p', null, String(p)))))
+  if (m.tools?.length) {
+    children.push(renderTools(h, m.tools, {
+      id: `tools:${idx}`,
+      open: expanded[`tools:${idx}`] === true,
+      onToggle: opts.onToggleTools,
+    }))
+  }
+  if (m.plan?.length) children.push(renderPlan(h, m.plan))
+  if (m.chg?.length) children.push(renderChangedCard(h, m.chg, { onReview: opts.onReview }))
+  children.push(h('div', { className: 'launcher-msg-acts' },
+    ['copy', 'doc', 'target', 'git'].map((name) => h('button', {
+      key: name,
+      type: 'button',
+      className: 'launcher-icon-btn',
+      title: name,
+      'aria-label': name,
+      onClick: () => opts.onAction?.(name),
+    }, mainIcon(h, name)))))
+  return h('div', { className: 'launcher-turn' },
+    h('div', { className: 'launcher-msg-bot' },
+      h('span', { className: 'launcher-msg-bot__who' }, mainIcon(h, 'bot')),
+      h('div', { className: 'launcher-msg-bot__bd' }, ...children)))
+}
+  const renderThread = function renderThread(h, thread, opts = {}) {
+  const list = Array.isArray(thread) ? thread : []
+  const approvals = opts.approvals ?? {}
+  const expanded = opts.expanded ?? {}
+  const children = []
+  list.forEach((m, idx) => {
+    if (m === null || typeof m !== 'object') return
+    if (m.k === 'user') children.push(renderUserMessage(h, m))
+    else if (m.k === 'bot') children.push(renderBotMessage(h, m, { ...opts, index: idx, expanded }))
+    else if (m.k === 'task') {
+      children.push(h('div', { className: 'launcher-turn' }, renderTaskCard(h, m, { crit: opts.crit, onToggleCrit: opts.onToggleCrit })))
+    } else if (m.k === 'report') {
+      children.push(h('div', { className: 'launcher-turn' }, renderReportCard(h, m, {
+        open: expanded[`report:${m.title}`] === true,
+        onToggle: opts.onToggleReport,
+      })))
+    } else if (m.k === 'approval') {
+      const state = approvalOf(approvals, m.id)
+      if (state !== 'pending') {
+        children.push(h('div', { className: 'launcher-turn' }, renderApprovalCard(h, m, {
+          state,
+          onChoose: () => {},
+          onReset: opts.onApprovalReset,
+        })))
+      }
+    }
+  })
+  return h('div', { className: 'launcher-thread' }, ...children)
+}
+  const renderComposer = function renderComposer(h, opts = {}) {
+  const value = String(opts.value ?? '')
+  const canSend = opts.canSend === true
+  return h('div', { className: 'launcher-composer' },
+    h('div', { className: 'launcher-cm-box' },
+      h('textarea', {
+        className: 'launcher-cm-input',
+        rows: 2,
+        value,
+        placeholder: '给 dsh 发消息…（Enter 发送，Shift+Enter 换行）',
+        'aria-label': '输入消息',
+        onChange: (event) => opts.onInput?.(event?.target?.value ?? ''),
+        onKeyDown: (event) => {
+          const action = composerKeyDown({ key: event.key, shiftKey: event.shiftKey === true, canSend })
+          if (action === 'send') {
+            event.preventDefault()
+            opts.onSend?.()
+          } else if (action === 'none' && event.key === 'Enter') {
+            event.preventDefault()
+          }
+        },
+      }),
+      h('div', { className: 'launcher-cm-row' },
+        h('span', { className: 'launcher-cm-meta' }, canSend ? 'Enter 发送' : '⌘↵ 发送'),
+        h('button', {
+          type: 'button',
+          className: 'launcher-send',
+          'aria-label': '发送',
+          'aria-disabled': !canSend,
+          disabled: !canSend,
+          onClick: () => { if (canSend) opts.onSend?.() },
+        }, mainIcon(h, 'arrowUp')))))
+}
+  const renderCommandPalette = function renderCommandPalette(h, opts = {}) {
+  if (opts.open !== true) return null
+  const commands = Array.isArray(opts.commands) ? opts.commands : []
+  const shown = paletteFilter(commands, opts.query)
+  const index = Number.isInteger(opts.index) ? opts.index : 0
+  const onKeyDown = (event) => {
+    const action = paletteCommand({ key: event.key, hasSelection: shown.length > 0 })
+    if (action === 'close') {
+      event.preventDefault()
+      opts.onClose?.()
+      return
+    }
+    if (action === 'next') {
+      event.preventDefault()
+      opts.onMove?.(1)
+      return
+    }
+    if (action === 'prev') {
+      event.preventDefault()
+      opts.onMove?.(-1)
+      return
+    }
+    if (action === 'run') {
+      event.preventDefault()
+      opts.onRun?.(shown[Math.min(index, shown.length - 1)])
+    }
+  }
+  return h('div', { className: 'launcher-palette', role: 'dialog', 'aria-modal': 'true', 'aria-label': '命令面板' },
+    h('div', { className: 'launcher-palette__in' },
+      mainIcon(h, 'search'),
+      h('input', {
+        className: 'launcher-palette__input',
+        placeholder: '搜命令、页面、动作…',
+        value: String(opts.query ?? ''),
+        'aria-label': '搜索命令',
+        autoFocus: true,
+        onChange: (event) => opts.onQuery?.(event?.target?.value ?? ''),
+        onKeyDown,
+      }),
+      h('span', { className: 'launcher-main-kbd' }, 'Esc')),
+    h('ul', { className: 'launcher-palette__list', id: 'launcher-palette-list' },
+      shown.length === 0 ? h('li', { className: 'launcher-palette__empty' }, '没有匹配的命令') : null,
+      shown.map((cmd, i) => h('li', {
+        key: cmd.id,
+        role: 'option',
+        'aria-selected': i === index,
+        className: `launcher-palette__row${i === index ? ' sel' : ''}${cmd.disabled === true ? ' off' : ''}`,
+      }, h('button', {
+        type: 'button',
+        className: 'launcher-palette__btn',
+        onClick: () => { if (cmd.disabled !== true) opts.onRun?.(cmd) },
+      }, cmd.label, cmd.hint ? h('span', { className: 'launcher-palette__hint' }, cmd.hint) : null)))),
+    h('div', { className: 'launcher-palette__foot' },
+      h('span', null, '↑↓ 选择'),
+      h('span', null, 'Enter 执行'),
+      h('span', null, 'Esc 关闭')))
+}
+  const renderMainView = function renderMainView(h, opts = {}) {
+  const thread = Array.isArray(opts.thread) ? opts.thread : []
+  const approvals = opts.approvals ?? {}
+  const expanded = opts.expanded ?? {}
+  const composer = opts.composer ?? {}
+  const palette = opts.palette ?? {}
+  const pending = pendingApprovals(approvals, thread)
+  return h('div', { className: 'launcher-mainview', 'data-mainview': 'v17', onKeyDown: opts.onKeyDown },
+    h('div', { className: 'launcher-thread-wrap', ref: opts.threadRef },
+      renderThread(h, thread, { ...opts, approvals, expanded })),
+    pending.length
+      ? renderApprovalDock(h, pending[0], { onChoose: (id, choice) => opts.onApproval?.(id, choice) })
+      : null,
+    renderComposer(h, {
+      value: composer.value,
+      canSend: composer.canSend === true,
+      onInput: opts.onCompose,
+      onSend: opts.onSend,
+    }),
+    renderCommandPalette(h, {
+      open: palette.open === true,
+      query: palette.query,
+      commands: palette.commands,
+      index: palette.index,
+      onQuery: opts.onPaletteQuery,
+      onMove: opts.onPaletteMove,
+      onRun: opts.onPaletteRun,
+      onClose: opts.onPaletteClose,
+    }))
+}
+  // #endregion main-from-lib
 
   // #region sidebar-from-lib
   // 本段由 tools/sync-contract.mjs 从 lib/sidebar.js 生成，勿手改；
@@ -1052,8 +1488,13 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const tag = document.createElement('style')
     tag.id = 'dsh-launcher-style'
     // 先铺令牌（日夜两套变量），再原有样式，最后骨架覆盖（v17 图标栏/状态条/四列底色）
+<<<<<<< HEAD
     // 票 33 的右栏五面板 / 设置页样式由 lib/dock-settings.js 生成（DOCK_SETTINGS_CSS）铺在最后。
     tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}\n${DOCK_SETTINGS_CSS}\n${SIDEBAR_CSS}`
+=======
+    // 主区（票 32）与右栏/设置（票 33）的样式分别由 lib/main-view.js / lib/dock-settings.js 生成。
+    tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}\n${MAIN_CSS}\n${DOCK_SETTINGS_CSS}`
+>>>>>>> spec/t32
     document.head.appendChild(tag)
   }
 
@@ -2195,6 +2636,98 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         h('p', { className: 'launcher-empty__hint' }, '提示：⌘K 打开命令面板')))
   }
 
+  /**
+   * 主区外观预览（票 32）：宿主没提供 main 面板、或显式打开预览时，用 v17 的
+   * 对话流 + 卡片 + 输入行 + 命令面板填满主区。真实会话仍走宿主 main 槽；这里只做
+   * 「外壳自己的主区」演示与窄窗走查，状态全部落在本组件内（写操作只改本地状态）。
+   * 渲染与状态变换都在 lib/main-view.js（生成到 main-from-lib 区），组件只做 React 接线。
+   */
+  function MainPreview(props) {
+    const thread = MAIN_DEMO_THREAD
+    const [approvals, setApprovals] = React.useState({})
+    const [expanded, setExpanded] = React.useState({})
+    const [crit, setCrit] = React.useState({})
+    const [composer, setComposer] = React.useState('')
+    const [paletteOpen, setPaletteOpen] = React.useState(false)
+    const [paletteQuery, setPaletteQuery] = React.useState('')
+    const [paletteIndex, setPaletteIndex] = React.useState(0)
+    const threadRef = React.useRef(null)
+    const canSend = composerCanSend(composer)
+    const shown = paletteFilter(MAIN_DEMO_COMMANDS, paletteQuery)
+    // 首次挂载直接落到底部：打开主区先看到最新一轮，之后再按「贴底才跟随」滚动。
+    React.useEffect(() => {
+      const node = threadRef.current
+      if (node !== null) node.scrollTop = node.scrollHeight
+    }, [])
+    React.useEffect(() => {
+      const node = threadRef.current
+      if (node !== null && shouldFollowScroll({ scrollTop: node.scrollTop, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight })) {
+        node.scrollTop = node.scrollHeight
+      }
+    }, [approvals, expanded, crit])
+    const send = () => {
+      if (!canSend) return
+      setComposer('')
+      props.onToast?.('演示模式：这条只进本地预览，不接真后端')
+    }
+    const onKeyDown = (event) => {
+      const isPaletteKey = (event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === 'k'
+      if (isPaletteKey) {
+        event.preventDefault()
+        setPaletteOpen((open) => !open)
+        setPaletteIndex(0)
+        return
+      }
+      if (!paletteOpen) return
+      const action = paletteCommand({ key: event.key, hasSelection: shown.length > 0 })
+      if (action === 'close') {
+        event.preventDefault()
+        setPaletteOpen(false)
+        return
+      }
+      if (action === 'next') {
+        event.preventDefault()
+        setPaletteIndex((i) => paletteStep(i, 1, shown.length))
+        return
+      }
+      if (action === 'prev') {
+        event.preventDefault()
+        setPaletteIndex((i) => paletteStep(i, -1, shown.length))
+        return
+      }
+      if (action === 'run') {
+        event.preventDefault()
+        const cmd = shown[Math.min(paletteIndex, shown.length - 1)]
+        if (cmd !== undefined) {
+          setPaletteOpen(false)
+          props.onCommand?.(cmd.id)
+        }
+      }
+    }
+    return renderMainView(h, {
+      thread,
+      approvals,
+      expanded,
+      crit,
+      composer: { value: composer, canSend },
+      palette: { open: paletteOpen, query: paletteQuery, commands: MAIN_DEMO_COMMANDS, index: paletteIndex },
+      threadRef,
+      onApproval: (id, choice) => setApprovals((state) => applyApproval(state, id, choice)),
+      onApprovalReset: (id) => setApprovals((state) => resetApproval(state, id)),
+      onToggleFold: (id) => setExpanded((state) => toggleExpanded(state, id)),
+      onToggleTools: (id) => setExpanded((state) => toggleExpanded(state, id)),
+      onToggleReport: (title) => setExpanded((state) => toggleExpanded(state, `report:${title}`)),
+      onToggleCrit: (key) => setCrit((state) => toggleExpanded(state, key)),
+      onCompose: setComposer,
+      onSend: send,
+      onPaletteQuery: (query) => { setPaletteQuery(query); setPaletteIndex(0) },
+      onPaletteMove: (delta) => setPaletteIndex((i) => paletteStep(i, delta, shown.length)),
+      onPaletteRun: (cmd) => { setPaletteOpen(false); props.onCommand?.(cmd.id) },
+      onPaletteClose: () => setPaletteOpen(false),
+      onKeyDown,
+    })
+  }
+
   /** 外壳本体：56 图标栏 + 侧栏列 + 主区 + 右栏轨道 + 底状态条 + 浮层。 */
   function LauncherRoot(props) {
     const renderSlot = props.renderSlot
@@ -2655,6 +3188,22 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       if (event?.target?.closest?.('.launcher-palette') !== null && event?.target?.closest?.('.launcher-palette') !== undefined) return
       onKeyDown(event)
     }
+    // 票 32：主区移植默认接管「会话」这一格（v17 对话流 + 卡片 + 输入行 + 命令面板）。
+    // 其他 main 面板（插件/归档等）仍走宿主槽；`__DSH_LAUNCHER_V17_MAIN__ = false`
+    // 或 props.mainPreview=false 可回退到宿主会话（回退口留给排查与灰度）。
+    const showMainPreview = props.mainPreview === true
+      || (props.mainPreview !== false && (typeof window === 'undefined' || window.__DSH_LAUNCHER_V17_MAIN__ !== false))
+    const conversationActive = activePanelId === null || activePanelId === 'conversation'
+    const previewConversation = showMainPreview && conversationActive
+    const renderMainPreview = () => h(MainPreview, {
+      onToast: showLauncherToast,
+      onCommand: (id) => {
+        if (id === 'theme') toggleTheme()
+        else if (id === 'dock') toggleRef.current.dock?.()
+        else if (id === 'settings') { try { selectPanel('dsh-settings') } catch { /* 宿主没有设置面板时忽略 */ } }
+        else if (id === 'conversation') goConversation(CURRENT_CTX)
+      },
+    })
     return h('div', {
       className: 'launcher-shell',
       'data-drawer': narrow ? (drawerOpen ? 'open' : 'closed') : 'static',
@@ -2728,19 +3277,21 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
             'data-pane': index === 0 ? (activePanelId ?? 'conversation') : (key ?? 'unavailable'),
           },
             key === null
-              ? h('span', { className: 'launcher-pane__unavailable' }, '本版未接')
+              ? (showMainPreview ? renderMainPreview() : h('span', { className: 'launcher-pane__unavailable' }, '本版未接'))
               : index === 0
-              ? [
-                emptyDecision.render && !starterFilled
-                  ? h(EmptyStateCard, { key: 'empty', layout: cardLayout(viewportWidth, typeof window === 'undefined' ? 900 : window.innerHeight), onFilled: () => setStarterFilled(true) })
-                  : null,
-                activePanelId !== null && PANELS_NEEDING_BACK.includes(activePanelId)
-                  ? h('div', { key: 'panel-back', className: 'launcher-panel-back' },
-                    h('button', { type: 'button', className: 'launcher-panel-back__btn', onClick: () => goConversation(CURRENT_CTX) }, '← 返回会话'))
-                  : null,
-                // 宿主子树（含 composer）必须照常渲染：卡片不能顶掉输入框
-                h('div', { key: 'host-main', className: 'launcher-pane__host' }, renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' })),
-              ]
+              ? (previewConversation
+                ? renderMainPreview()
+                : [
+                  emptyDecision.render && !starterFilled
+                    ? h(EmptyStateCard, { key: 'empty', layout: cardLayout(viewportWidth, typeof window === 'undefined' ? 900 : window.innerHeight), onFilled: () => setStarterFilled(true) })
+                    : null,
+                  activePanelId !== null && PANELS_NEEDING_BACK.includes(activePanelId)
+                    ? h('div', { key: 'panel-back', className: 'launcher-panel-back' },
+                      h('button', { type: 'button', className: 'launcher-panel-back__btn', onClick: () => goConversation(CURRENT_CTX) }, '← 返回会话'))
+                    : null,
+                  // 宿主子树（含 composer）必须照常渲染：卡片不能顶掉输入框
+                  h('div', { key: 'host-main', className: 'launcher-pane__host' }, renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' })),
+                ])
               : renderSlot('main', {}, { entryKey: key }))))),
       h('aside', {
         className: 'launcher-dock',
