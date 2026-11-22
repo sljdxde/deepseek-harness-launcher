@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url'
 
 import { SUB_SLOTS, LAYOUT_FACE_MEMBERS, SUPPORTED_HOST_RANGE } from '../lib/contract.js'
 import { guardHost, satisfiesRange } from '../lib/guard.js'
+import { createBootstrap, bannerModel, BANNER_ID } from '../lib/bootstrap.js'
+import { resolveHostVersion, resolveSlots, probeLayoutMembers } from '../lib/host-shape.js'
 import { rollbackCommand, rollbackSurface, ROLLBACK_NOTE, ROLLBACK_STEPS, RUNBOOK_PATH, PACKAGE_NAME } from '../lib/rollback.js'
 import { RAIL_ENTRIES } from '../lib/rail.js'
 import { MODE_LABELS, statusText } from '../lib/statusbar.js'
@@ -58,6 +60,20 @@ import {
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLIENT = join(ROOT, 'client', 'client.js')
+/**
+ * 生成自包含的图标函数源码（B3：五份图标表统一到 lib/icons.js 的 iconEl，
+ * 但浏览器每个生成区都要能独立求值，所以这里用同一模板落地，不跨区引用 iconEl）。
+ * @param {string} fnName - 目标函数名（shellIcon / dockIcon / mainIcon / modelIcon / sidebarIcon）。
+ * @param {string} tableVar - 本区里内联的图标表变量名。
+ * @returns {string} 函数源码（不含 `const x =`）。
+ */
+function iconFnSource(fnName, tableVar) {
+  return `function ${fnName}(h, name) {
+  const body = ${tableVar}[name] ?? ''
+  return h('svg', { viewBox: '0 0 24 24', className: 'launcher-ic', 'aria-hidden': 'true', focusable: 'false', dangerouslySetInnerHTML: { __html: body } })
+}`
+}
+
 const ID_START = '// #region module-id'
 const ID_END = '// #endregion module-id'
 const START = '  // #region children-from-contract'
@@ -98,6 +114,14 @@ export function contractBlock() {
     `  const guardHost = ${guardHost.toString()}`,
     `  const rollbackCommand = ${rollbackCommand.toString()}`,
     `  const rollbackSurface = ${rollbackSurface.toString()}`,
+    // 横幅与 Bootstrap 单一实现（票 29 / A5）：client 不再自写 hostGuardBanner，直接复用这里。
+    `  const BANNER_ID = ${JSON.stringify(BANNER_ID)}`,
+    `  const bannerModel = ${bannerModel.toString()}`,
+    `  const createBootstrap = ${createBootstrap.toString()}`,
+    // 宿主形状探测的纯函数（A2）：版本/slots/layoutMembers 的判定不再写在客户端手写块里。
+    `  const resolveHostVersion = ${resolveHostVersion.toString()}`,
+    `  const resolveSlots = ${resolveSlots.toString()}`,
+    `  const probeLayoutMembers = ${probeLayoutMembers.toString()}`,
     END,
   ].join('\n')
 }
@@ -157,7 +181,7 @@ export function shellBlock() {
     `  const TOKENS_CSS = ${JSON.stringify(tokensCss())}`,
     `  const SKELETON_CSS = ${JSON.stringify(skeletonCss())}`,
     `  const shellColumns = ${shellColumns.toString()}`,
-    `  const shellIcon = ${shellIcon.toString()}`,
+    `  const shellIcon = ${iconFnSource('shellIcon', 'SHELL_ICONS')}`,
     `  const renderRail = ${renderRail.toString()}`,
     `  const renderStatusbar = ${renderStatusbar.toString()}`,
     SHELL_END,
@@ -174,6 +198,7 @@ export function shellBlock() {
 export function mainBlock() {
   const names = [
     'mainIcon',
+    'stepStatusLabel',
     'applyApproval',
     'resetApproval',
     'approvalOf',
@@ -211,7 +236,7 @@ export function mainBlock() {
     `  const MAIN_ICONS = ${JSON.stringify(mainView.MAIN_ICONS)}`,
     `  const MAIN_CSS = ${JSON.stringify(mainView.mainCss())}`,
   ]
-  for (const name of names) lines.push(`  const ${name} = ${mainView[name].toString()}`)
+  for (const name of names) lines.push(`  const ${name} = ${name === 'mainIcon' ? iconFnSource('mainIcon', 'MAIN_ICONS') : mainView[name].toString()}`)
   lines.push(MAIN_END)
   return lines.join('\n')
 }
@@ -255,7 +280,7 @@ export function dockSettingsBlock() {
     `  const DOCK_ICONS = ${JSON.stringify(DOCK_ICONS)}`,
     `  const DOCK_SETTINGS_CSS = ${JSON.stringify(dockSettingsCss())}`,
     `  const diffSummary = ${diffSummary.toString()}`,
-    `  const dockIcon = ${dockIcon.toString()}`,
+    `  const dockIcon = ${iconFnSource('dockIcon', 'DOCK_ICONS')}`,
     `  const dockWidthFor = ${dockWidthFor.toString()}`,
     `  const dockColumnsFor = ${dockColumnsFor.toString()}`,
     `  const applySetting = ${applySetting.toString()}`,
@@ -289,7 +314,7 @@ export function sidebarBlock() {
     `  const SIDEBAR_METRICS = ${JSON.stringify(SIDEBAR_METRICS)}`,
     `  const SIDEBAR_ICONS = ${JSON.stringify(SIDEBAR_ICONS)}`,
     `  const SIDEBAR_CSS = ${JSON.stringify(sidebarCss())}`,
-    `  const sidebarIcon = ${sidebarIcon.toString()}`,
+    `  const sidebarIcon = ${iconFnSource('sidebarIcon', 'SIDEBAR_ICONS')}`,
     `  const rowTitleLeftX = ${rowTitleLeftX.toString()}`,
     `  const normalizeSession = ${normalizeSession.toString()}`,
     `  const normalizeSessions = ${normalizeSessions.toString()}`,
@@ -364,7 +389,8 @@ export function modelBlock() {
     `  const POPOVER_KINDS = ${JSON.stringify(POPOVER_KINDS)}`,
     `  const MODEL_CSS = ${JSON.stringify(modelCss())}`,
   ]
-  for (const name of names) lines.push(`  const ${name} = ${{ isDeepReason, createModelState, pickModel, pickReason, createPopoverState, openPopover, closePopover, togglePopover, setPopoverQuery, filterModelGroups, modelTriggerLabel, modelMeta, modelRowLabel, popoverPlacement, modelIcon, renderPopItem, renderModelTrigger, renderModelPopover }[name].toString()}`)
+  const fns = { isDeepReason, createModelState, pickModel, pickReason, createPopoverState, openPopover, closePopover, togglePopover, setPopoverQuery, filterModelGroups, modelTriggerLabel, modelMeta, modelRowLabel, popoverPlacement, modelIcon, renderPopItem, renderModelTrigger, renderModelPopover }
+  for (const name of names) lines.push(`  const ${name} = ${name === 'modelIcon' ? iconFnSource('modelIcon', 'MODEL_ICONS') : fns[name].toString()}`)
   lines.push(MODEL_END)
   return lines.join('\n')
 }

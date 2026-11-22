@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-11-22T11:10:32.793Z",
+  "generatedAt": "2026-11-22T11:33:43.920Z",
   "source": "client/client.js",
   "controls": [
     {
-      "line": 250,
+      "line": 315,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -17,7 +17,7 @@
       "reasons": []
     },
     {
-      "line": 267,
+      "line": 332,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -31,7 +31,7 @@
       "reasons": []
     },
     {
-      "line": 278,
+      "line": 343,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -45,7 +45,7 @@
       "reasons": []
     },
     {
-      "line": 292,
+      "line": 357,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -59,7 +59,7 @@
       "reasons": []
     },
     {
-      "line": 309,
+      "line": 374,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -73,7 +73,7 @@
       "reasons": []
     },
     {
-      "line": 319,
+      "line": 384,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -87,7 +87,7 @@
       "reasons": []
     },
     {
-      "line": 429,
+      "line": 493,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -101,7 +101,7 @@
       "reasons": []
     },
     {
-      "line": 443,
+      "line": 507,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -115,7 +115,7 @@
       "reasons": []
     },
     {
-      "line": 499,
+      "line": 563,
       "kind": "vnode",
       "tag": "input",
       "role": "",
@@ -129,7 +129,7 @@
       "reasons": []
     },
     {
-      "line": 515,
+      "line": 579,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -143,7 +143,7 @@
       "reasons": []
     },
     {
-      "line": 532,
+      "line": 596,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -157,7 +157,7 @@
       "reasons": []
     },
     {
-      "line": 553,
+      "line": 617,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -171,7 +171,7 @@
       "reasons": []
     },
     {
-      "line": 562,
+      "line": 626,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -185,7 +185,7 @@
       "reasons": []
     },
     {
-      "line": 578,
+      "line": 642,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -199,7 +199,7 @@
       "reasons": []
     },
     {
-      "line": 611,
+      "line": 675,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -213,7 +213,7 @@
       "reasons": []
     },
     {
-      "line": 658,
+      "line": 722,
       "kind": "vnode",
       "tag": "textarea",
       "role": "",
@@ -227,7 +227,7 @@
       "reasons": []
     },
     {
-      "line": 679,
+      "line": 743,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -241,7 +241,7 @@
       "reasons": []
     },
     {
-      "line": 718,
+      "line": 782,
       "kind": "vnode",
       "tag": "input",
       "role": "",
@@ -255,7 +255,7 @@
       "reasons": []
     },
     {
-      "line": 730,
+      "line": 794,
       "kind": "vnode",
       "tag": "li",
       "role": "option",
@@ -269,7 +269,7 @@
       "reasons": []
     },
     {
-      "line": 883,
+      "line": 941,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -283,7 +283,7 @@
       "reasons": []
     },
     {
-      "line": 897,
+      "line": 955,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -297,7 +297,7 @@
       "reasons": []
     },
     {
-      "line": 911,
+      "line": 969,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -311,7 +311,7 @@
       "reasons": []
     },
     {
-      "line": 954,
+      "line": 1012,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -325,7 +325,7 @@
       "reasons": []
     },
     {
-      "line": 970,
+      "line": 1028,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -339,7 +339,7 @@
       "reasons": []
     },
     {
-      "line": 1042,
+      "line": 1100,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -353,7 +353,7 @@
       "reasons": []
     },
     {
-      "line": 1143,
+      "line": 1195,
       "kind": "vnode",
       "tag": "button",
       "role": "tab",
@@ -367,7 +367,7 @@
       "reasons": []
     },
     {
-      "line": 1158,
+      "line": 1210,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -381,7 +381,7 @@
       "reasons": []
     },
     {
-      "line": 1210,
+      "line": 1262,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -395,7 +395,7 @@
       "reasons": []
     },
     {
-      "line": 1211,
+      "line": 1263,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -409,7 +409,7 @@
       "reasons": []
     },
     {
-      "line": 1213,
+      "line": 1265,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -423,7 +423,7 @@
       "reasons": []
     },
     {
-      "line": 1219,
+      "line": 1271,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -437,7 +437,7 @@
       "reasons": []
     },
     {
-      "line": 1244,
+      "line": 1296,
       "kind": "vnode",
       "tag": "input",
       "role": "",
@@ -451,7 +451,7 @@
       "reasons": []
     },
     {
-      "line": 1251,
+      "line": 1303,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -465,7 +465,7 @@
       "reasons": []
     },
     {
-      "line": 1264,
+      "line": 1316,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -479,7 +479,7 @@
       "reasons": []
     },
     {
-      "line": 1272,
+      "line": 1324,
       "kind": "vnode",
       "tag": "input",
       "role": "",
@@ -493,7 +493,7 @@
       "reasons": []
     },
     {
-      "line": 1279,
+      "line": 1331,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -507,7 +507,7 @@
       "reasons": []
     },
     {
-      "line": 1309,
+      "line": 1361,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -521,7 +521,7 @@
       "reasons": []
     },
     {
-      "line": 1323,
+      "line": 1375,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -535,7 +535,7 @@
       "reasons": []
     },
     {
-      "line": 1335,
+      "line": 1387,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -549,7 +549,7 @@
       "reasons": []
     },
     {
-      "line": 1346,
+      "line": 1398,
       "kind": "vnode",
       "tag": "button",
       "role": "switch",
@@ -563,7 +563,7 @@
       "reasons": []
     },
     {
-      "line": 1364,
+      "line": 1416,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -577,7 +577,7 @@
       "reasons": []
     },
     {
-      "line": 1367,
+      "line": 1419,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -591,7 +591,7 @@
       "reasons": []
     },
     {
-      "line": 1370,
+      "line": 1422,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -605,7 +605,7 @@
       "reasons": []
     },
     {
-      "line": 1384,
+      "line": 1436,
       "kind": "vnode",
       "tag": "button",
       "role": "tab",
@@ -619,7 +619,7 @@
       "reasons": []
     },
     {
-      "line": 1405,
+      "line": 1457,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -633,7 +633,7 @@
       "reasons": []
     },
     {
-      "line": 1511,
+      "line": 1557,
       "kind": "vnode",
       "tag": "button",
       "role": "menuitemradio",
@@ -647,7 +647,7 @@
       "reasons": []
     },
     {
-      "line": 1528,
+      "line": 1574,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -661,7 +661,7 @@
       "reasons": []
     },
     {
-      "line": 1538,
+      "line": 1584,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -675,7 +675,7 @@
       "reasons": []
     },
     {
-      "line": 1548,
+      "line": 1594,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -689,7 +689,7 @@
       "reasons": []
     },
     {
-      "line": 1572,
+      "line": 1618,
       "kind": "vnode",
       "tag": "input",
       "role": "",
@@ -703,7 +703,7 @@
       "reasons": []
     },
     {
-      "line": 2051,
+      "line": 2097,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -717,7 +717,7 @@
       "reasons": []
     },
     {
-      "line": 2220,
+      "line": 2266,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -731,7 +731,7 @@
       "reasons": []
     },
     {
-      "line": 2230,
+      "line": 2276,
       "kind": "vnode",
       "tag": "select",
       "role": "",
@@ -745,7 +745,7 @@
       "reasons": []
     },
     {
-      "line": 2238,
+      "line": 2284,
       "kind": "vnode",
       "tag": "input",
       "role": "",
@@ -759,7 +759,7 @@
       "reasons": []
     },
     {
-      "line": 2246,
+      "line": 2292,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -773,7 +773,7 @@
       "reasons": []
     },
     {
-      "line": 2259,
+      "line": 2305,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -787,7 +787,7 @@
       "reasons": []
     },
     {
-      "line": 2271,
+      "line": 2317,
       "kind": "vnode",
       "tag": "input",
       "role": "",
@@ -801,7 +801,7 @@
       "reasons": []
     },
     {
-      "line": 2339,
+      "line": 2385,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -815,7 +815,7 @@
       "reasons": []
     },
     {
-      "line": 2351,
+      "line": 2397,
       "kind": "vnode",
       "tag": "button",
       "role": "menuitemradio",
@@ -829,7 +829,7 @@
       "reasons": []
     },
     {
-      "line": 2579,
+      "line": 2625,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -843,7 +843,7 @@
       "reasons": []
     },
     {
-      "line": 2885,
+      "line": 2931,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -857,7 +857,7 @@
       "reasons": []
     },
     {
-      "line": 3613,
+      "line": 3659,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -871,7 +871,7 @@
       "reasons": []
     },
     {
-      "line": 3625,
+      "line": 3671,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -885,7 +885,7 @@
       "reasons": []
     },
     {
-      "line": 3652,
+      "line": 3698,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -899,7 +899,7 @@
       "reasons": []
     },
     {
-      "line": 3665,
+      "line": 3711,
       "kind": "vnode",
       "tag": "div",
       "role": "separator",
@@ -913,7 +913,7 @@
       "reasons": []
     },
     {
-      "line": 3715,
+      "line": 3761,
       "kind": "vnode",
       "tag": "button",
       "role": "",
@@ -927,7 +927,7 @@
       "reasons": []
     },
     {
-      "line": 3723,
+      "line": 3769,
       "kind": "vnode",
       "tag": "input",
       "role": "",
@@ -941,7 +941,7 @@
       "reasons": []
     },
     {
-      "line": 3735,
+      "line": 3781,
       "kind": "vnode",
       "tag": "li",
       "role": "option",
@@ -955,7 +955,7 @@
       "reasons": []
     },
     {
-      "line": 3908,
+      "line": 3966,
       "kind": "dom",
       "tag": "button",
       "role": "",
@@ -969,7 +969,7 @@
       "reasons": []
     },
     {
-      "line": 3924,
+      "line": 3982,
       "kind": "dom",
       "tag": "button",
       "role": "",

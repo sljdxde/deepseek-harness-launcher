@@ -38,11 +38,45 @@ const TARGETS = [
   'Plugins/DSHArchiveManager/lib/index.js',
   'Plugins/DSHArchiveManager/client/client.js',
   'Plugins/DSHChinaMirror/lib/index.js',
+  // 整壳 UI 插件（spec 27 / 票 28-37）：UI 半区各模块逐文件 100% 行覆盖。
+  // 说明：generated 的 Plugins/DSHClientUILauncher/client/client.js 是**生成物**
+  // （tools/sync-contract.mjs 把 lib/*.js 的渲染函数 toString 内联进单文件），
+  // 不计入逐文件行覆盖——它没有独立可测逻辑，手改由 test/contract.test.mjs 的
+  // 「生成块与源一致」断言挡住；覆盖随源模块走。
+  // approval/ 与 lib/index.js 是更早的审批后端（票 4，独立 suite），不在本次 UI 门禁内。
+  'Plugins/DSHClientUILauncher/lib/approval-client.mjs',
+  'Plugins/DSHClientUILauncher/lib/bootstrap.js',
+  'Plugins/DSHClientUILauncher/lib/command-palette.js',
+  'Plugins/DSHClientUILauncher/lib/composer.js',
+  'Plugins/DSHClientUILauncher/lib/context-usage.js',
+  'Plugins/DSHClientUILauncher/lib/contract.js',
+  'Plugins/DSHClientUILauncher/lib/dock-settings.js',
+  'Plugins/DSHClientUILauncher/lib/dock-settings-css.js',
+  'Plugins/DSHClientUILauncher/lib/dock.js',
+  'Plugins/DSHClientUILauncher/lib/escape.js',
+  'Plugins/DSHClientUILauncher/lib/guard.js',
+  'Plugins/DSHClientUILauncher/lib/host-shape.js',
+  'Plugins/DSHClientUILauncher/lib/icons.js',
+  'Plugins/DSHClientUILauncher/lib/layout.js',
+  'Plugins/DSHClientUILauncher/lib/main-view.js',
+  'Plugins/DSHClientUILauncher/lib/model-chip.js',
+  'Plugins/DSHClientUILauncher/lib/model-surface.js',
+  'Plugins/DSHClientUILauncher/lib/new-session.js',
+  'Plugins/DSHClientUILauncher/lib/panes.js',
+  'Plugins/DSHClientUILauncher/lib/plugins.js',
+  'Plugins/DSHClientUILauncher/lib/rail.js',
+  'Plugins/DSHClientUILauncher/lib/rollback.js',
+  'Plugins/DSHClientUILauncher/lib/shell-layout.js',
+  'Plugins/DSHClientUILauncher/lib/shell-render.js',
+  'Plugins/DSHClientUILauncher/lib/sidebar.js',
+  'Plugins/DSHClientUILauncher/lib/statusbar.js',
+  'Plugins/DSHClientUILauncher/lib/tokens.js',
+  'Plugins/DSHClientUILauncher/lib/turn-actions.js',
 ];
 
 const THRESHOLD = Number(process.env.COV_THRESHOLD || 100);
 
-const pluginDirs = ['DSHPluginManager', 'DSHArchiveManager', 'DSHChinaMirror'];
+const pluginDirs = ['DSHPluginManager', 'DSHArchiveManager', 'DSHChinaMirror', 'DSHClientUILauncher'];
 const testFiles = [];
 for (const plugin of pluginDirs) {
   const dir = join(pluginsDir, plugin);

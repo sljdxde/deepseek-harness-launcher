@@ -70,6 +70,8 @@ test('执行：resolve 返回 {status:handled,run} 才跑；pass 不跑；异常
   const throwing = { command: { resolve: () => ({ status: 'handled', run: () => { throw new Error('boom') } }) } }
   assert.equal(executeCommand(throwing), 'failed')
   assert.equal(executeCommand(null), 'failed')
+  // resolve 直接返回裸字符串 'handled'、又没有 run：仍算已执行（不抛错）
+  assert.equal(executeCommand({ command: { resolve: () => 'handled' } }), 'ran')
 })
 
 test('resolve 抛异常的行：置灰而不是把面板打崩', () => {

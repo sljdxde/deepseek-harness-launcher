@@ -6,7 +6,7 @@
  * 好处是 Node 侧用假 h 就能断言结构，渲染逻辑不必依赖真浏览器。
  */
 
-import { SHELL_ICONS, DSH_LOGO } from './icons.js'
+import { SHELL_ICONS, DSH_LOGO, iconEl } from './icons.js'
 
 /**
  * 生成一个 24×24 线性图标节点。
@@ -15,14 +15,7 @@ import { SHELL_ICONS, DSH_LOGO } from './icons.js'
  * @returns {any} SVG vnode。
  */
 export function shellIcon(h, name) {
-  const body = SHELL_ICONS[name] ?? ''
-  return h('svg', {
-    viewBox: '0 0 24 24',
-    className: 'launcher-ic',
-    'aria-hidden': 'true',
-    focusable: 'false',
-    dangerouslySetInnerHTML: { __html: body },
-  })
+  return iconEl(h, SHELL_ICONS, name)
 }
 
 /**

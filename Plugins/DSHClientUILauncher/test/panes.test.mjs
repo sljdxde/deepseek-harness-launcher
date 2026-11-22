@@ -3,7 +3,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { CONVERSATION, assignPane, collapsePane, createSplit, focusPane, gridOf, restorePane, setSplitMode, visiblePanes, zoomPane } from '../lib/panes.js'
-import { BUILTIN_TABS, DOCK_HANDLE_HIT, createDock, dragDockWidth } from '../lib/dock.js'
+import { DOCK_HANDLE_HIT, createDock, dragDockWidth } from '../lib/dock.js'
+import { DOCK_TAB_IDS } from '../lib/dock-settings.js'
 
 test('分屏：初始 1 块会话，切档位补空 pane、降档丢尾部', () => {
   const one = createSplit()
@@ -50,9 +51,9 @@ test('分屏：越界索引不改状态', () => {
   assert.equal(zoomPane(state, 9), state)
 })
 
-test('dock：六个内置标签、重复注册被拒并保留前者', () => {
+test('dock：五个内置标签、重复注册被拒并保留前者', () => {
   const dock = createDock()
-  assert.deepEqual(dock.tabs().map((tab) => tab.id), [...BUILTIN_TABS])
+  assert.deepEqual(dock.tabs().map((tab) => tab.id), [...DOCK_TAB_IDS])
   const dispose = dock.register({ id: 'review', label: '审阅（插件）' })
   assert.deepEqual(dispose, { ok: false, reason: 'tab.dup' })
   assert.equal(dock.tabs().find((tab) => tab.id === 'review').label, 'review')
@@ -61,10 +62,10 @@ test('dock：六个内置标签、重复注册被拒并保留前者', () => {
 test('dock：open/toggle 的三种失败与 ⌘J 语义', () => {
   let canShow = true
   const dock = createDock({ canShow: () => canShow })
-  assert.deepEqual(dock.open('terminal'), { ok: true, active: 'terminal' })
+  assert.deepEqual(dock.open('term'), { ok: true, active: 'term' })
   dock.close()
   assert.equal(dock.active(), null, 'close 收起右栏')
-  assert.deepEqual(dock.open('terminal'), { ok: true, active: 'terminal' })
+  assert.deepEqual(dock.open('term'), { ok: true, active: 'term' })
   assert.deepEqual(dock.toggle(), { ok: true, active: null }, '⌘J 关')
   assert.deepEqual(dock.toggle('files'), { ok: true, active: 'files' }, '⌘J 开')
   assert.deepEqual(dock.open('nope'), { ok: false, reason: 'tab.unknown' })

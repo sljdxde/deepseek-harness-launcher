@@ -5,6 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { withDockSettingsBlock } from '../tools/sync-contract.mjs'
 
 const SOURCE = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
 
@@ -19,15 +20,10 @@ function regionBlock() {
   return `${SOURCE.slice(s1, e1)}\n${SOURCE.slice(s2, e2)}`
 }
 
-test('client 接线：右栏五面板 / 设置页 / 有效宽度都来自 lib/dock-settings.js', () => {
-  assert.match(SOURCE, /#region dock-settings-from-lib/, '必须有生成的右栏/设置块')
-  assert.match(SOURCE, /renderDockTabs\(h, \{/, '右栏标签栏用 renderDockTabs')
-  assert.match(SOURCE, /renderDockPanel\(h, \{ tab: dockTab/, '右栏内容用 renderDockPanel')
-  assert.match(SOURCE, /renderSettings\(h, \{/, '设置页用 renderSettings')
-  assert.match(SOURCE, /dockWidthFor\(\{ viewportWidth/, '右栏有效宽度用 dockWidthFor')
-  assert.match(SOURCE, /dockColumnsFor\(\{ viewportWidth/, '四列几何用 dockColumnsFor')
-  assert.match(SOURCE, /DOCK_SETTINGS_CSS/, '样式要铺 DOCK_SETTINGS_CSS')
-  assert.match(SOURCE, /setSettingsOpen\(true\)/, 'rail 设置入口要能打开设置页')
+test('右栏/设置块是 lib/dock-settings.js 的生成物（手改即红）', () => {
+  // 不变量：生成区必须与「从 lib 重新生成」逐字节一致——改 lib 不改 client 会在这里红。
+  assert.ok(SOURCE.includes('// #region dock-settings-from-lib'), '必须有生成的右栏/设置块')
+  assert.equal(withDockSettingsBlock(SOURCE), SOURCE, '跑 node tools/sync-contract.mjs 更新，别手改生成区')
 })
 
 test('生成块可独立求值：渲染函数只引用已内联的常量（无 ReferenceError）', () => {

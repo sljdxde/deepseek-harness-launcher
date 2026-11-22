@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, DOCK_TABS, SUPPORTED_HOST_RANGE, diffContract, describeDiff } from '../lib/contract.js'
+import { SUB_SLOTS, ROOT_RENDER_SLOTS, SIDEBAR_SEATS, LAYOUT_FACE_MEMBERS, OVERLAY_IDS, SUPPORTED_HOST_RANGE, diffContract, describeDiff } from '../lib/contract.js'
 import { moduleIdBlock, withContractBlock, withModuleId, withShellBlock, withMainBlock, runSync, buildStampBlock, shellBlock, mainBlock } from '../tools/sync-contract.mjs'
 import { checkHostVersion, realHostVersion } from '../tools/check-host-version.mjs'
 import { chmodSync, mkdirSync, mkdtempSync as mkTmp, rmSync as rmTmp } from 'node:fs'
@@ -71,10 +71,6 @@ test('overlay 条目 id 全部带 launcher. 前缀且互不相同', () => {
   for (const id of ids) assert.match(id, /^launcher\./)
 })
 
-test('右栏 6 个标签，含浏览器，顺序固定', () => {
-  assert.deepEqual([...DOCK_TABS], ['review', 'files', 'browser', 'terminal', 'tasks', 'side'])
-})
-
 test('diffContract 对一致的声明返回空数组', () => {
   const actual = {
     slots: SUB_SLOTS.map((slot) => ({ name: slot.name, kind: slot.kind })),
@@ -118,15 +114,18 @@ test('client/client.js 的壳层块也是生成的，手改就会红（票 30）
   assert.equal(withShellBlock(source), source, '跑 node tools/sync-contract.mjs 更新，别手改')
 })
 
-test('壳层块包含令牌 CSS、图标与渲染函数（票 30）', () => {
-  const block = shellBlock()
-  assert.match(block, /\/\/ #region shell-from-lib/)
-  assert.match(block, /const TOKENS_CSS = "/)
-  assert.match(block, /const SKELETON_CSS = "/)
-  assert.match(block, /const SHELL_ICONS = \{/)
-  assert.match(block, /const shellColumns = function shellColumns/)
-  assert.match(block, /const renderRail = function renderRail/)
-  assert.match(block, /const renderStatusbar = function renderStatusbar/)
+test('壳层生成块求值后可渲染：tokens/骨架样式与 rail/statusbar 输出正确结构（票 30）', () => {
+  const api = new Function(
+    `${shellBlock()}\nreturn { TOKENS_CSS, SKELETON_CSS, SHELL_ICONS, shellColumns, renderRail, renderStatusbar }`,
+  )()
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) })
+  assert.ok(api.TOKENS_CSS.includes('--l-ink:'), 'tokens CSS 应有 ink 变量')
+  assert.ok(api.SKELETON_CSS.includes('launcher-rail__entry'), '骨架样式应含图标栏类')
+  assert.ok(Object.keys(api.SHELL_ICONS).length > 0, '图标表非空')
+  assert.equal(api.shellColumns({ viewportWidth: 1440, dockWidth: 380 }).total, 1440)
+  const rail = api.renderRail(h, { entries: [{ id: 'conversation', label: '会话', icon: 'conversation', active: true, badge: 0 }] })
+  assert.equal(rail.type, 'nav')
+  assert.equal(api.renderStatusbar(h, { page: 'P' }).type, 'footer')
 })
 
 test('client/client.js 的主区块也是生成的，手改就会红（票 32）', () => {
@@ -135,16 +134,21 @@ test('client/client.js 的主区块也是生成的，手改就会红（票 32）
   assert.equal(withMainBlock(source), source, '跑 node tools/sync-contract.mjs 更新，别手改')
 })
 
-test('主区块包含主区渲染函数、状态变换与主区 CSS（票 32）', () => {
-  const block = mainBlock()
-  assert.match(block, /\/\/ #region main-from-lib/)
-  assert.match(block, /const MAIN_CSS = "/)
-  assert.match(block, /const MAIN_DEMO_THREAD = /)
-  assert.match(block, /const renderApprovalCard = function renderApprovalCard/)
-  assert.match(block, /const renderComposer = function renderComposer/)
-  assert.match(block, /const renderCommandPalette = function renderCommandPalette/)
-  assert.match(block, /const renderMainView = function renderMainView/)
-  assert.match(block, /const composerKeyDown = function composerKeyDown/)
+test('主区生成块求值后可渲染：状态变换与主区 CSS 行为正确（票 32）', () => {
+  const api = new Function(
+    `${mainBlock()}\nreturn { MAIN_CSS, MAIN_DEMO_THREAD, stepStatusLabel, renderComposer, renderCommandPalette, renderMainView, composerKeyDown }`,
+  )()
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) })
+  assert.ok(api.MAIN_CSS.includes('.launcher-main'), '主区样式应含 .launcher-main')
+  assert.ok(Array.isArray(api.MAIN_DEMO_THREAD) && api.MAIN_DEMO_THREAD.length > 0, '演示会话非空')
+  // 三档状态文案由同一 helper 给出（B3 去重后行为不变）
+  assert.equal(api.stepStatusLabel('done'), '完成')
+  assert.equal(api.stepStatusLabel('doing'), '进行中')
+  assert.equal(api.stepStatusLabel('todo'), '待排期')
+  assert.equal(typeof api.renderComposer, 'function')
+  assert.equal(typeof api.renderCommandPalette, 'function')
+  assert.equal(typeof api.renderMainView, 'function')
+  assert.equal(typeof api.composerKeyDown, 'function')
 })
 
 test('同步脚本 CLI 自己可用：--check 退出码 0', () => {
@@ -186,10 +190,15 @@ test('服务指纹进入 baseline：layout 六成员/签名、panelInfo 字段�
   assert.deepEqual(baseline.services.provideRoot.hooks, ['panelInfo'], 'provideRoot.hooks 必含 panelInfo')
 })
 
-test('client 的模块 id 由 package.json 的 name 生成（同名替换的前提）', () => {
+test('client 模块 id 由 package.json 的 name 生成（同名替换的前提，行为：加载时注册的 id 就是包名）', () => {
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const source = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
-  assert.ok(source.includes(moduleIdBlock(manifest.name)), 'module-id 段必须与包名一致')
+  let registeredId = null
+  const windowStub = { __ModuleLoader__: { load: (options) => { registeredId = options.id } } }
+  const run = new Function('window', 'require', source)
+  run(windowStub, () => ({}))
+  assert.equal(registeredId, manifest.name, 'client 向宿主模块加载器注册的 id 必须就是包名')
+  // withModuleId 仍是生成器：同一输入幂等
   assert.equal(withModuleId(source, 'x'), withModuleId(source, 'x'))
 })
 

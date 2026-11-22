@@ -30,7 +30,7 @@ const baseline = loadBaseline()
 
 test('parseArgs：默认 both + version 变异 + 非 json', () => {
   assert.deepEqual(parseArgs([]), {
-    mode: 'both', hostVersion: undefined, mutate: 'version', baselinePath: undefined, json: false, help: false,
+    mode: 'both', hostVersion: undefined, mutate: 'version', baselinePath: undefined, json: false, help: false, real: false,
   })
 })
 
@@ -204,5 +204,24 @@ test('CLI：真实进程跑缺基线退出 3', () => {
     assert.equal(result.status, 3)
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('parseArgs：--real 被解析为真机模式', () => {
+  assert.equal(parseArgs(['--real']).real, true)
+  assert.equal(parseArgs([]).real, false)
+})
+
+test('--real 无 DSH_BIN 时 exit 3（跳过而不是假装成功）', () => {
+  const previous = process.env.DSH_BIN
+  delete process.env.DSH_BIN
+  const out = []
+  const err = []
+  try {
+    const status = main(['--real'], { stdout: (line) => out.push(line), stderr: (line) => err.push(line) })
+    assert.equal(status, 3)
+    assert.match(err.join(''), /跳过.*DSH_BIN/)
+  } finally {
+    if (previous !== undefined) process.env.DSH_BIN = previous
   }
 })

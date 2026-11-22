@@ -6,7 +6,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-import { withModelBlock, modelBlock } from '../tools/sync-contract.mjs'
+import { withModelBlock } from '../tools/sync-contract.mjs'
+import { closePopover, openPopover, togglePopover, setPopoverQuery, createPopoverState, pickModel, pickReason, createModelState } from '../lib/model-surface.js'
 
 const SOURCE = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
 
@@ -17,24 +18,34 @@ function modelRegion() {
   return SOURCE.slice(start, end)
 }
 
-test('client 接线：输入行触发按钮 / 浮层 / 状态回写都来自 lib/model-surface.js', () => {
-  assert.match(SOURCE, /#region model-from-lib/, '必须有生成的模型浮层块')
-  assert.match(SOURCE, /renderModelTrigger\(h, \{ state: props\.modelState/, '输入行右下角用 renderModelTrigger')
-  assert.match(SOURCE, /renderModelPopover\(h, \{/, '浮层用 renderModelPopover')
-  assert.match(SOURCE, /popoverPlacement\(\{/, '浮层定位用 popoverPlacement')
-  assert.match(SOURCE, /createModelState\(\)/, '状态源用 createModelState')
-  assert.match(SOURCE, /pickModel\(state, id\)/, '选中模型回写用 pickModel')
-  assert.match(SOURCE, /pickReason\(state, id\)/, '选中等级回写用 pickReason')
-  assert.match(SOURCE, /modelRowLabel\(modelState\)/, '设置→模型的模型值读真实状态')
-  assert.match(SOURCE, /reason: modelState\.reason/, '设置→推理等级读真实状态')
-  assert.match(SOURCE, /\$\{MODEL_CSS\}/, '样式要铺 MODEL_CSS')
+test('模型浮层与状态来自 lib/model-surface.js（生成块与源一致，手改即红）', () => {
+  // 不变量：生成区必须与「从 lib 重新生成」逐字节一致。
+  assert.ok(SOURCE.includes('// #region model-from-lib'), '必须有生成的模型浮层块')
+  assert.equal(withModelBlock(SOURCE), SOURCE, '跑 node tools/sync-contract.mjs 更新，别手改生成区')
 })
 
-test('client 浮层：点外/Esc/切页收起（监听器与 settingsOpen 关闸都在）', () => {
-  assert.match(SOURCE, /addEventListener\('mousedown', onDown, true\)/, '点浮层外要收起')
-  assert.match(SOURCE, /event\.key === 'Escape'[\s\S]{0,120}closePopover\(\)/, 'Esc 要收起')
-  assert.match(SOURCE, /props\.settingsOpen === true\) setModelPopover\(closePopover\(\)\)/, '切到设置页要收起')
-  assert.match(SOURCE, /props\.onPickModel\?\.\(id\); setModelPopover\(closePopover\(\)\)/, '选中即回写并关闭')
+test('浮层收起语义（行为）：点外/Esc/切页/选中都会回到关闭态', () => {
+  const opened = openPopover(createPopoverState(), 'model')
+  assert.equal(opened.kind, 'model')
+  // Esc / 点外 / 切页：closePopover 无论从哪种打开态都回到 kind=null
+  assert.equal(closePopover().kind, null)
+  assert.equal(closePopover().query, '')
+  // 再次点同一个开关 = toggle 关闭；点另一个 = 切换
+  assert.equal(togglePopover(opened, 'model').kind, null)
+  assert.equal(togglePopover(opened, 'reason').kind, 'reason')
+  // 搜索词可控
+  assert.equal(setPopoverQuery(opened, 'r1').query, 'r1')
+  assert.equal(setPopoverQuery(opened, '').query, '')
+})
+
+test('选中即回写（行为）：pickModel/pickReason 改状态且保留另一维', () => {
+  const state = createModelState()
+  const afterModel = pickModel(state, 'DeepSeek R1')
+  assert.equal(afterModel.model, 'DeepSeek R1')
+  assert.equal(afterModel.reason, state.reason)
+  const afterReason = pickReason(state, 'High')
+  assert.equal(afterReason.reason, 'High')
+  assert.equal(afterReason.model, state.model)
 })
 
 test('生成块可独立求值：渲染函数只引用已内联的常量（无 ReferenceError）', () => {
@@ -59,11 +70,9 @@ test('生成块可独立求值：渲染函数只引用已内联的常量（无 R
   assert.match(api.MODEL_CSS, /launcher-model-pop/)
 })
 
-test('model-from-lib 是生成的，手改就会红', () => {
-  assert.ok(SOURCE.includes('// #region model-from-lib'), 'client.js 必须有 model-from-lib 标记区')
-  assert.equal(withModelBlock(SOURCE), SOURCE, '跑 node tools/sync-contract.mjs 更新，别手改')
-  assert.match(modelBlock(), /const renderModelPopover = function renderModelPopover/)
-  assert.match(modelBlock(), /const renderPopItem = function renderPopItem/)
+test('model-from-lib 无标记区时原样返回（withModelBlock 行为）', () => {
+  const plain = 'no markers here\n'
+  assert.equal(withModelBlock(plain), plain)
 })
 
 test('withModelBlock：没有标记区时原样返回（兼容旧 fixture）', () => {

@@ -39,8 +39,22 @@ layout 解析回宿主自带那份。
   `tools/`（契约快照 / 版本锁 / 同步工具，装后仍能跑 `contract:check`）、`cordis.patch.yml`、`README.md`。
 - **`exports`**：`.`（host 半区）、`./client`（浏览器客户端）、`./contracts/host-baseline.json`（契约基线，工具读取）、
   `./cordis.patch.yml`、`./package.json`；每个 target 都是包内真实文件。
-- **`engines.dsh` + `peerDependencies`**：支持区间 `>=0.2.2-rc.4 <0.3.0`（实装宿主版本为下界），
-  与 `lib/contract.js` 的 `SUPPORTED_HOST_RANGE` 单一同源，避免两处漂移。
+- **`engines.dsh` + `peerDependencies`**：支持区间 `>=0.2.2-rc.4 <0.3.0`（实装宿主版本为下界）。
+  该区间与 `lib/contract.js` 的 `SUPPORTED_HOST_RANGE` **各自声明**，由 `test/contract.test.mjs`
+  断言两者一致（不是同一份常量字面量，改一处必须同步另一处，测试会拦）。
+
+## 兼容开关（显式白名单）
+
+HostGuard 默认把「读不到宿主形状」当 blocker（不接管、出横幅），不静默放行。仅当明确知道
+自己在和**没有 slots API 的旧宿主**打交道时，才用显式环境开关放行（在页面注入）：
+
+| 开关 | 作用 | 风险 |
+| --- | --- | --- |
+| `window.__DSH_LAUNCHER_ALLOW_LEGACY_SLOTS__ = true` | slots API 读不到时按 baseline 形状兜底，继续注册 | 假设旧宿主与 baseline 同形；形状真变了会白屏，只在受控环境用 |
+| `window.__DSH_LAUNCHER_HOST_SHAPE__ = {…}` | 整体覆盖探测到的宿主形状（canary / 调试用） | 仅测试用途，覆盖后 HostGuard 按给定形状判定 |
+
+除此之外：版本读不到 = `version-unreadable` blocker，不再回退 baseline 版本掩盖；`ILayout` 成员
+（`layoutMembers`）必须从宿主 layout 服务实测并参与判定（不再空转）。
 
 ## 护栏
 

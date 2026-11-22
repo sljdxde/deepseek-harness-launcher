@@ -1,3 +1,6 @@
+import { MODEL_ICONS, iconEl } from './icons.js'
+export { MODEL_ICONS } from './icons.js'
+
 /**
  * 模型与推理等级浮层（票 34）：输入框右下角的轻量选择器 + 纯状态。
  *
@@ -207,11 +210,6 @@ export function popoverPlacement(input = {}) {
 // ---------- 图标 ----------
 
 /** 只搬浮层/触发按钮用到的少量 Tabler 线性图标（描边由 CSS 控制）。 */
-export const MODEL_ICONS = Object.freeze({
-  search: '<path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M21 21l-6 -6" />',
-  check: '<path d="M5 12l5 5l10 -10" />',
-  chevronDown: '<path d="M6 9l6 6l6 -6" />',
-})
 
 /**
  * 生成一个 24×24 线性图标节点（未知名字给空体，不 throw）。
@@ -220,14 +218,7 @@ export const MODEL_ICONS = Object.freeze({
  * @returns {any}
  */
 export function modelIcon(h, name) {
-  const body = MODEL_ICONS[name] ?? ''
-  return h('svg', {
-    viewBox: '0 0 24 24',
-    className: 'launcher-ic',
-    'aria-hidden': 'true',
-    focusable: 'false',
-    dangerouslySetInnerHTML: { __html: body },
-  })
+  return iconEl(h, MODEL_ICONS, name)
 }
 
 // ---------- 渲染 ----------

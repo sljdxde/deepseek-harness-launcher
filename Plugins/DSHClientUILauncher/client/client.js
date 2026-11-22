@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.4+24ef23c"
+  const BUILD_STAMP = "0.2.2-rc.4+52e454d"
   let CURRENT_CTX = null
   // 票 29：Bootstrap 只生效一次（重复加载不注册两次、不叠第二条横幅）；卸载时复位。
   let HOST_GUARD_DONE = false
@@ -202,6 +202,77 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     runbook: RUNBOOK_PATH,
   }
 }
+  const BANNER_ID = "launcher-hostguard-banner"
+  const bannerModel = function bannerModel(guard, { profile = 'web' } = {}) {
+  const blockers = Array.isArray(guard?.blockers) ? guard.blockers : []
+  const reasons = blockers.map((item) => {
+    if (item !== null && typeof item === 'object' && typeof item.message === 'string' && item.message.length > 0) return item.message
+    if (item !== null && typeof item === 'object' && typeof item.code === 'string' && item.code.length > 0) return item.code
+    return '未知原因'
+  })
+  return {
+    id: BANNER_ID,
+    title: '本版 UI 与当前 dsh 不匹配，已保留原生界面',
+    reasons,
+    command: rollbackCommand(profile),
+    dismissLabel: '本次不再提示',
+  }
+}
+  const createBootstrap = function createBootstrap({ register, mountBanner, profile = 'web', guard = guardHost } = {}) {
+  let outcome = null
+  function run(shape) {
+    if (outcome !== null) return { ...outcome, repeated: true }
+    let result
+    try {
+      result = guard(shape)
+    } catch (error) {
+      // guard 是纯函数，理论上不抛；兜底成"不接管"而不是把整页打崩。
+      result = { ok: false, blockers: [{ code: 'guard-threw', message: String(error?.message ?? error) }], warnings: [] }
+    }
+    if (result.ok) {
+      try {
+        if (typeof register === 'function') register()
+        outcome = { registered: true, guard: result, banner: null, repeated: false }
+      } catch (error) {
+        outcome = { registered: false, guard: result, banner: null, error, repeated: false }
+      }
+    } else {
+      let banner = null
+      try {
+        banner = bannerModel(result, { profile })
+        if (typeof mountBanner === 'function') mountBanner(banner)
+      } catch {
+        banner = null
+      }
+      outcome = { registered: false, guard: result, banner, repeated: false }
+    }
+    return { ...outcome }
+  }
+  return {
+    run,
+    get outcome() { return outcome },
+  }
+}
+  const resolveHostVersion = function resolveHostVersion(raw) {
+  return typeof raw === 'string' ? raw.trim() : ''
+}
+  const resolveSlots = function resolveSlots(rawSlots, { baselineSlots = [], allowLegacy = false } = {}) {
+  if (Array.isArray(rawSlots)) return rawSlots
+  if (allowLegacy === true && Array.isArray(baselineSlots)) return baselineSlots.map((slot) => ({ ...slot }))
+  return undefined
+}
+  const probeLayoutMembers = function probeLayoutMembers(layoutService, expectedMembers = []) {
+  if (layoutService === null || layoutService === undefined) return undefined
+  const type = typeof layoutService
+  if (type !== 'object' && type !== 'function') return undefined
+  return expectedMembers.filter((name) => {
+    try {
+      return name in layoutService
+    } catch {
+      return false
+    }
+  })
+}
   // #endregion children-from-contract
 
   // #region shell-from-lib
@@ -233,13 +304,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 }
   const shellIcon = function shellIcon(h, name) {
   const body = SHELL_ICONS[name] ?? ''
-  return h('svg', {
-    viewBox: '0 0 24 24',
-    className: 'launcher-ic',
-    'aria-hidden': 'true',
-    focusable: 'false',
-    dangerouslySetInnerHTML: { __html: body },
-  })
+  return h('svg', { viewBox: '0 0 24 24', className: 'launcher-ic', 'aria-hidden': 'true', focusable: 'false', dangerouslySetInnerHTML: { __html: body } })
 }
   const renderRail = function renderRail(h, options) {
   const opts = options ?? {}
@@ -349,13 +414,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const MAIN_CSS = ".launcher-ic{width:14px;height:14px;stroke-width:1.7;fill:none;stroke:currentColor;flex:none}\n.launcher-mainview{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;overflow:hidden;background:var(--l-bg);color:var(--l-ink);font-size:13px}\n.launcher-mainview *{box-sizing:border-box}\n.launcher-thread-wrap{flex:1 1 auto;min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;padding:14px 0 8px;scrollbar-gutter:stable}\n.launcher-thread{max-width:740px;min-width:0;margin:0 auto;padding:0 20px;display:grid;gap:14px}\n.launcher-turn{display:grid;gap:10px;min-width:0}\n.launcher-msg-user{justify-self:end;max-width:82%;min-width:0;background:var(--l-surface2);border:1px solid var(--l-line);border-radius:var(--l-radius-md) var(--l-radius-md) 4px var(--l-radius-md);padding:9px 13px;font-size:13px;line-height:1.5;overflow-wrap:anywhere;white-space:pre-wrap}\n.launcher-stamp{font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4);margin-top:5px;text-align:right}\n.launcher-msg-bot{display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;min-width:0}\n.launcher-msg-bot__who{width:22px;height:22px;border-radius:50%;background:var(--l-ink);color:var(--l-bg);display:grid;place-items:center;margin-top:1px}\n.launcher-msg-bot__bd{min-width:0;overflow-wrap:anywhere}\n.launcher-msg-bot__hd{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--l-ink3);margin-bottom:4px}\n.launcher-msg-bot__hd b{color:var(--l-ink2);font-weight:600}\n.launcher-tx{font-size:13px;line-height:1.5;color:var(--l-ink)}\n.launcher-tx p{margin:0}.launcher-tx p+p{margin-top:8px}\n.launcher-msg-acts{display:flex;gap:2px;margin-top:4px;opacity:0;transition:opacity .12s ease}\n.launcher-msg-bot:hover .launcher-msg-acts,.launcher-msg-bot:focus-within .launcher-msg-acts{opacity:1}\n.launcher-icon-btn{display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:var(--l-ink3);cursor:pointer}\n.launcher-icon-btn:hover{background:var(--l-hover);color:var(--l-ink)}\n.launcher-fold{display:inline-flex;align-items:center;gap:6px;min-height:24px;font:inherit;font-size:12px;color:var(--l-ink3);padding:3px 7px;border:0;border-radius:var(--l-radius-xs);background:transparent;margin:2px 0 2px -2px;cursor:pointer;text-align:left}\n.launcher-fold:hover{background:var(--l-hover);color:var(--l-ink2)}\n.launcher-fold svg{transition:transform .12s ease}.launcher-fold.open svg{transform:rotate(90deg)}\n.launcher-tools{margin:6px 0 2px;border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-surface);overflow:hidden}\n.launcher-tools__h{display:flex;align-items:center;gap:7px;padding:7px 10px;font:inherit;font-size:12px;color:var(--l-ink2);width:100%;text-align:left;border:0;background:transparent;cursor:pointer}\n.launcher-tools__h:hover{background:var(--l-hover)}\n.launcher-tools__n{color:var(--l-ink4);font-family:var(--font-mono,ui-monospace);font-size:11px}\n.launcher-main-grow{flex:1}\n.launcher-tool-row{display:grid;grid-template-columns:18px 52px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 10px;border-top:1px solid var(--l-line);font-size:12px;min-width:0}\n.launcher-tool-row__k{color:var(--l-ink3);font-family:var(--font-mono,ui-monospace);font-size:11px}\n.launcher-tool-row__c{font-family:var(--font-mono,ui-monospace);font-size:12px;color:var(--l-ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.launcher-tool-row__d{font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4)}\n.launcher-tool-row.bad .launcher-tool-row__c{color:var(--l-red)}\n.launcher-plan{border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-surface);padding:11px 12px;margin:8px 0 0}\n.launcher-plan__h{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--l-ink2);margin-bottom:8px}\n.launcher-main-kbd{margin-left:auto;font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4)}\n.launcher-plan-step{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;align-items:center;padding:5px 0;font-size:13px}\n.launcher-plan-step__no{width:18px;height:18px;border-radius:50%;border:1px solid var(--l-line2);display:grid;place-items:center;font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink3)}\n.launcher-plan-step.done .launcher-plan-step__no{background:var(--l-greenSoft);border-color:transparent;color:var(--l-green)}\n.launcher-plan-step.doing .launcher-plan-step__no{background:var(--l-accentSoft);border-color:transparent;color:var(--l-accent)}\n.launcher-plan-step__nm{color:var(--l-ink2);min-width:0;overflow-wrap:anywhere}\n.launcher-bcard{border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-surface);overflow:hidden;margin:2px 0;min-width:0}\n.launcher-bcard__h{display:flex;align-items:center;gap:7px;padding:8px 12px;border-bottom:1px solid var(--l-line);font-size:12px;color:var(--l-ink3);flex-wrap:wrap;min-width:0}\n.launcher-bcard__who{color:var(--l-ink2);font-weight:600;white-space:nowrap}\n.launcher-bcard__r{margin-left:auto;display:flex;gap:5px;align-items:center}\n.launcher-bcard__b{padding:11px 12px;min-width:0}\n.launcher-card-t{font-size:14px;font-weight:600;margin:0 0 4px;overflow-wrap:anywhere}\n.launcher-sub{font-size:12px;color:var(--l-ink3);line-height:1.7;overflow-wrap:anywhere}\n.launcher-main-tag{display:inline-flex;align-items:center;gap:3px;font:11px/1 var(--font-mono,ui-monospace);border:1px solid var(--l-line);border-radius:4px;padding:2px 5px;color:var(--l-ink3);background:transparent}\n.launcher-main-tag.acc{color:var(--l-accent);background:var(--l-accentSoft);border-color:transparent}\n.launcher-report-tag{font:11px/1 var(--font-mono,ui-monospace);letter-spacing:.4px;color:var(--l-accent);background:var(--l-accentSoft);border-radius:4px;padding:3px 5px}\n.launcher-prog-row{display:flex;align-items:center;gap:8px;margin-top:9px;font-size:11px;color:var(--l-ink3)}\n.launcher-bar{flex:1;height:6px;border-radius:3px;background:var(--l-surface3);overflow:hidden}\n.launcher-bar i{display:block;height:100%;background:var(--l-accent)}\n.launcher-crit{display:grid;gap:2px;margin-top:9px;padding-top:9px;border-top:1px solid var(--l-line)}\n.launcher-crit-row{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;align-items:center;min-height:32px;padding:2px 0;font-size:12px;color:var(--l-ink2);cursor:pointer;min-width:0}\n.launcher-crit-row input{appearance:none;width:18px;height:18px;border:1.5px solid var(--l-line2);border-radius:4px;display:grid;place-items:center;margin:0}\n.launcher-crit-row input:checked{background:var(--l-accent);border-color:transparent}\n.launcher-crit-row span.on{color:var(--l-ink4);text-decoration:line-through}\n.launcher-crit__who{font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4)}\n.launcher-dyn{margin-top:9px;padding-top:8px;border-top:1px solid var(--l-line);font-size:12px;color:var(--l-ink3);display:grid;gap:3px;min-width:0}\n.launcher-dyn b{color:var(--l-ink4);font:11px/1 var(--font-mono,ui-monospace);font-weight:500}\n.launcher-chg-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 0;font-size:12px;border-bottom:1px solid var(--l-line);min-width:0}\n.launcher-chg-row:last-child{border-bottom:0}\n.launcher-chg-row__f{font-family:var(--font-mono,ui-monospace);font-size:12px;color:var(--l-ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.launcher-chg-sum{font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4);white-space:nowrap}\n.launcher-main-git-add{color:var(--l-green)}.launcher-main-git-del{color:var(--l-red)}\n.launcher-main-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}\n.launcher-appr{border:1px solid var(--l-line2);background:var(--l-surface);border-radius:var(--l-radius-md);overflow:hidden;min-width:0}\n.launcher-appr__h{display:flex;align-items:center;gap:7px;padding:8px 12px;font-size:12px;color:var(--l-amber);font-weight:600;border-bottom:1px solid var(--l-line)}\n.launcher-appr__b{padding:11px 12px;min-width:0}\n.launcher-appr__cmd{font-family:var(--font-mono,ui-monospace);font-size:12px;background:var(--l-surface2);border:1px solid var(--l-line);border-radius:var(--l-radius-sm);padding:8px 10px;margin:7px 0;overflow-x:auto;white-space:pre;color:var(--l-ink)}\n.launcher-appr__why{font-size:12px;color:var(--l-ink2);line-height:1.5;overflow-wrap:anywhere}\n.launcher-appr__hint{font-size:11px;color:var(--l-ink4);margin-top:8px;display:inline-flex;align-items:center;gap:8px}\n.launcher-appr__acts{display:flex;gap:6px;align-items:center;margin-top:9px;flex-wrap:wrap}\n.launcher-appr.done{background:var(--l-surface);border-color:var(--l-line)}\n.launcher-appr.done .launcher-appr__h{color:var(--l-green);border-color:var(--l-line)}\n.launcher-btn{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--l-line2);border-radius:var(--l-radius-sm);background:transparent;color:var(--l-ink2);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}\n.launcher-btn:hover{background:var(--l-hover);color:var(--l-ink)}\n.launcher-btn.primary{background:var(--l-accent);border-color:transparent;color:var(--l-onAccent)}\n.launcher-btn.primary:hover{filter:brightness(1.08);color:var(--l-onAccent)}\n.launcher-btn.ghost{border-color:transparent;background:transparent}\n.launcher-btn.danger{color:var(--l-red)}\n.launcher-btn.sm{height:26px;padding:0 8px}\n.launcher-codec{font-family:var(--font-mono,ui-monospace);font-size:12px;background:var(--l-surface2);border:1px solid var(--l-line);border-radius:6px;padding:1px 5px}\n.launcher-composer{padding:8px 14px 12px;border-top:1px solid var(--l-line);background:var(--l-bg);flex:0 0 auto;min-width:0}\n.launcher-cm-box{border:1px solid var(--l-line2);border-radius:var(--l-radius-md);background:var(--l-surface);padding:9px 10px 8px;min-width:0}\n.launcher-cm-box:focus-within{border-color:var(--l-accent);box-shadow:0 0 0 3px var(--l-accentSoft)}\n.launcher-cm-input{width:100%;max-width:100%;border:0;background:transparent;resize:none;font:inherit;font-size:13px;line-height:1.5;min-height:40px;max-height:160px;outline:none;display:block;padding:2px 2px 6px;color:var(--l-ink)}\n.launcher-cm-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}\n.launcher-cm-meta{margin-left:auto;font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4)}\n.launcher-send{width:30px;height:30px;border:0;border-radius:var(--l-radius-sm);background:var(--l-accent);color:var(--l-onAccent);display:grid;place-items:center;cursor:pointer}\n.launcher-send[disabled]{opacity:.38;cursor:not-allowed}\n.launcher-approval-dock{border-top:1px solid var(--l-amber);background:var(--l-surface2);padding:8px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:0 0 auto;min-width:0}\n.launcher-approval-dock__main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}\n.launcher-approval-dock__main b{font-size:12px;color:var(--l-amber)}\n.launcher-approval-dock__main code{font-family:var(--font-mono,ui-monospace);font-size:11px;background:var(--l-surface);border:1px solid var(--l-line);border-radius:6px;padding:1px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n.launcher-approval-dock__acts{display:flex;gap:4px;flex-wrap:wrap}\n.launcher-palette{position:fixed;left:50%;top:14vh;transform:translateX(-50%);width:min(560px,calc(100vw - 32px));max-width:100%;max-height:60vh;display:flex;flex-direction:column;background:var(--l-panel);color:var(--l-ink);border:1px solid var(--l-line2);border-radius:var(--l-radius-md);box-shadow:0 14px 34px rgba(0,0,0,.18);z-index:50;overflow:hidden}\n.launcher-palette__in{display:flex;align-items:center;gap:8px;padding:11px 12px;border-bottom:1px solid var(--l-line)}\n.launcher-palette__input{flex:1;min-width:0;min-height:24px;border:0;background:transparent;outline:none;font:inherit;font-size:14px;color:var(--l-ink)}\n.launcher-palette__list{list-style:none;margin:0;padding:4px;overflow:auto;min-height:0}\n.launcher-palette__row{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:24px;padding:8px 10px;border-radius:6px;color:var(--l-ink2);font:inherit;font-size:13px;text-align:left;cursor:pointer}\n.launcher-palette__row.sel{background:var(--l-accentSoft)}\n.launcher-palette__row.off{opacity:.45;cursor:not-allowed}\n.launcher-palette__row.sel{color:var(--l-ink)}\n.launcher-palette__hint{color:var(--l-ink4);font:11px/1 var(--font-mono,ui-monospace)}\n.launcher-palette__empty{padding:10px;font-size:12px;color:var(--l-ink3)}\n.launcher-palette__foot{display:flex;gap:10px;padding:7px 12px;border-top:1px solid var(--l-line);font-size:11px;color:var(--l-ink4);font-family:var(--font-mono,ui-monospace)}"
   const mainIcon = function mainIcon(h, name) {
   const body = MAIN_ICONS[name] ?? ''
-  return h('svg', {
-    viewBox: '0 0 24 24',
-    className: 'launcher-ic',
-    'aria-hidden': 'true',
-    focusable: 'false',
-    dangerouslySetInnerHTML: { __html: body },
-  })
+  return h('svg', { viewBox: '0 0 24 24', className: 'launcher-ic', 'aria-hidden': 'true', focusable: 'false', dangerouslySetInnerHTML: { __html: body } })
+}
+  const stepStatusLabel = function stepStatusLabel(st, labels = {}) {
+  if (st === 'done') return '完成'
+  if (st === 'doing') return labels.doing ?? '进行中'
+  return labels.todo ?? '待排期'
 }
   const applyApproval = function applyApproval(state, cardId, choice) {
   if (!Object.prototype.hasOwnProperty.call(MAIN_APPROVAL_CHOICES, choice)) return { ...(state ?? {}) }
@@ -474,7 +538,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     list.map((p, idx) => h('div', { className: `launcher-plan-step ${p?.st ?? ''}` },
       h('span', { className: 'launcher-plan-step__no' }, p?.st === 'done' ? '✓' : String(idx + 1)),
       h('span', { className: 'launcher-plan-step__nm' }, String(p?.s ?? '')),
-      h('span', { className: 'launcher-main-tag' }, p?.st === 'done' ? '完成' : p?.st === 'doing' ? '进行中' : '待排期'))))
+      h('span', { className: 'launcher-main-tag' }, stepStatusLabel(p?.st)))))
 }
   const renderTaskCard = function renderTaskCard(h, card, opts = {}) {
   const c = card ?? {}
@@ -498,7 +562,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         return h('label', { className: 'launcher-crit-row' },
           h('input', { type: 'checkbox', checked: on, 'data-crit-key': key, 'aria-label': `勾选 ${String(r?.t ?? '')}`, onChange: () => opts.onToggleCrit?.(key) }),
           h('span', { className: on ? 'on' : '' }, String(r?.t ?? '')),
-          h('span', { className: 'launcher-crit__who' }, r?.st === 'done' ? '完成' : r?.st === 'doing' ? '在做' : '待办'))
+          h('span', { className: 'launcher-crit__who' }, stepStatusLabel(r?.st, { doing: '在做', todo: '待办' })))
       })),
       c.dyn ? h('div', { className: 'launcher-dyn' }, h('b', null, '动态'), h('span', null, String(c.dyn))) : null))
 }
@@ -782,13 +846,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const SIDEBAR_CSS = ".launcher-sidebar__inner{display:flex;flex-direction:column;height:100%;min-height:0;color:var(--l-ink)}\n.launcher-sidebar .side-h{display:flex;align-items:center;gap:8px;padding:12px 12px 6px 16px;min-height:44px}\n.launcher-sidebar .side-h h2{font-size:14px;font-weight:600;letter-spacing:.2px;margin:0}\n.launcher-sidebar .side-h .side-collapse{margin-left:auto;display:grid;place-items:center;width:28px;height:28px;border:0;background:none;border-radius:8px;color:var(--l-ink3);cursor:pointer}\n.launcher-sidebar .side-h .side-collapse:hover{background:var(--l-hover);color:var(--l-ink)}\n.launcher-sidebar .side-h .side-collapse svg{width:16px;height:16px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-sidebar .side-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 8px 12px;display:flex;flex-direction:column;gap:0}\n.launcher-sidebar .side-card{border:1px solid var(--l-line);border-radius:12px;background:var(--l-surface);overflow:hidden;margin:0 0 8px;flex:0 0 auto}\n.launcher-sidebar .side-card:last-child{margin-bottom:0}\n.launcher-sidebar .card-hd{display:flex;align-items:center;gap:4px;height:40px;padding:0 6px 0 10px}\n.launcher-sidebar .card-toggle{display:flex;align-items:center;gap:6px;flex:1;min-width:0;height:28px;padding:0 6px;border:0;border-radius:8px;background:none;font:inherit;text-align:left;color:inherit;cursor:pointer}\n.launcher-sidebar .card-toggle:hover{background:var(--l-hover)}\n.launcher-sidebar .card-toggle .dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto}\n.launcher-sidebar .card-toggle .dot.wait{background:var(--l-amber)}\n.launcher-sidebar .card-toggle .dot.accent{background:var(--l-accent)}\n.launcher-sidebar .card-toggle .dot.muted{background:var(--l-ink4)}\n.launcher-sidebar .card-toggle b{font-size:13px;font-weight:600;color:var(--l-ink);white-space:nowrap}\n.launcher-sidebar .card-toggle .n{font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;padding:3px 6px;border-radius:6px;background:var(--l-surface2);color:var(--l-ink3)}\n.launcher-sidebar .card-toggle .n.wait{background:var(--l-accentSoft);color:var(--l-amber)}\n.launcher-sidebar .card-toggle .n.accent{background:var(--l-accentSoft);color:var(--l-accent)}\n.launcher-sidebar .card-hd .acts{display:flex;gap:2px;margin-left:2px}\n.launcher-sidebar .card-chev{margin-left:auto;width:28px;height:28px;display:grid;place-items:center;border:0;border-radius:8px;background:none;color:var(--l-ink4);cursor:pointer;flex:0 0 auto}\n.launcher-sidebar .card-chev:hover{background:var(--l-hover);color:var(--l-ink2)}\n.launcher-sidebar .card-chev svg{width:14px;height:14px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-sidebar .card-body{display:flex;flex-direction:column;gap:2px;padding:0 4px 6px}\n.launcher-sidebar .row{position:relative;display:flex;align-items:center;height:32px;padding:0 8px 0 9px;border-radius:12px;width:100%;box-sizing:border-box}\n.launcher-sidebar .row:hover{background:var(--l-hover)}\n.launcher-sidebar .row.is-on{background:var(--l-accentSoft)}\n.launcher-sidebar .row-main{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;height:100%;background:none;border:0;padding:0;font:inherit;color:var(--l-ink);text-align:left;cursor:pointer}\n.launcher-sidebar .row .lead{flex:0 0 auto;width:16px;height:20px;display:grid;place-items:center;color:var(--l-ink4)}\n.launcher-sidebar .row .lead svg{width:16px;height:16px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-sidebar .row .ttl{flex:1 1 auto;min-width:0;font-size:13px;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--l-ink)}\n.launcher-sidebar .row .meta{flex:0 0 auto;font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--l-ink4);display:flex;align-items:center;gap:5px}\n.launcher-sidebar .row.child{padding:0 8px 0 9px}\n.launcher-sidebar .row.child .ttl{color:var(--l-ink2)}\n.launcher-sidebar .ws-group{display:flex;flex-direction:column;gap:2px}\n.launcher-sidebar .ws-row .lead{color:var(--l-ink4)}\n.launcher-sidebar .need-sub{display:flex;align-items:center;gap:6px;height:28px;padding:0 12px;font-size:11px;font-weight:600;letter-spacing:.2px;color:var(--l-ink3);background:var(--l-surface2);border-top:1px solid var(--l-line)}\n.launcher-sidebar .need-sub .n{font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--l-ink4)}\n.launcher-sidebar .row.flat{border-radius:0}\n.launcher-sidebar .ndot{width:6px;height:6px;border-radius:50%;display:inline-block}\n.launcher-sidebar .ndot.wait{background:var(--l-amber)}\n.launcher-sidebar .ndot.ok{background:var(--l-green)}\n.launcher-sidebar .side-empty{padding:8px 10px;font-size:12px;color:var(--l-ink3);line-height:1.5}\n.launcher-sidebar :focus-visible{outline:2px solid var(--l-accent);outline-offset:1px;border-radius:8px}"
   const sidebarIcon = function sidebarIcon(h, name) {
   const body = SIDEBAR_ICONS[name] ?? ''
-  return h('svg', {
-    viewBox: '0 0 24 24',
-    className: 'launcher-ic',
-    'aria-hidden': 'true',
-    focusable: 'false',
-    dangerouslySetInnerHTML: { __html: body },
-  })
+  return h('svg', { viewBox: '0 0 24 24', className: 'launcher-ic', 'aria-hidden': 'true', focusable: 'false', dangerouslySetInnerHTML: { __html: body } })
 }
   const rowTitleLeftX = function rowTitleLeftX() {
   return SIDEBAR_METRICS.rowPaddingLeft + SIDEBAR_METRICS.leadWidth + SIDEBAR_METRICS.gap
@@ -1081,13 +1139,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 }
   const dockIcon = function dockIcon(h, name) {
   const body = DOCK_ICONS[name] ?? ''
-  return h('svg', {
-    viewBox: '0 0 24 24',
-    className: 'launcher-ic',
-    'aria-hidden': 'true',
-    focusable: 'false',
-    dangerouslySetInnerHTML: { __html: body },
-  })
+  return h('svg', { viewBox: '0 0 24 24', className: 'launcher-ic', 'aria-hidden': 'true', focusable: 'false', dangerouslySetInnerHTML: { __html: body } })
 }
   const dockWidthFor = function dockWidthFor({ viewportWidth, requestedWidth, open = true, min = DOCK_WIDTHS.min, max = DOCK_WIDTHS.max, hideBelow = DOCK_WIDTHS.hideBelow } = {}) {
   const viewport = Number(viewportWidth)
@@ -1496,13 +1548,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 }
   const modelIcon = function modelIcon(h, name) {
   const body = MODEL_ICONS[name] ?? ''
-  return h('svg', {
-    viewBox: '0 0 24 24',
-    className: 'launcher-ic',
-    'aria-hidden': 'true',
-    focusable: 'false',
-    dangerouslySetInnerHTML: { __html: body },
-  })
+  return h('svg', { viewBox: '0 0 24 24', className: 'launcher-ic', 'aria-hidden': 'true', focusable: 'false', dangerouslySetInnerHTML: { __html: body } })
 }
   const renderPopItem = function renderPopItem(h, { key, label, note, checked, onPick }) {
   const children = [h('span', { className: 'launcher-pop-item__label' }, label)]
@@ -3855,43 +3901,55 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
    * @param {object} ctx - cordis 上下文。
    * @returns {object} guardHost 的输入。
    */
-  function probeHostShape(ctx) {
-    const override = typeof window !== 'undefined' ? window.__DSH_LAUNCHER_HOST_SHAPE__ : null
-    if (override !== null && typeof override === 'object') return override
-    let slots
-    if (typeof ctx?.slots?.spec === 'function') {
-      const found = []
-      for (const name of Object.keys(CHILDREN)) {
-        let spec
-        try { spec = ctx.slots.spec(name) } catch { spec = undefined }
-        if (spec !== undefined && spec !== null) found.push({ name, kind: spec.kind, scope: spec.scope })
-      }
-      slots = found.length > 0 ? found : undefined
+  function readSlotDeclarations(ctx) {
+    if (typeof ctx?.slots?.spec !== 'function') return undefined
+    const found = []
+    for (const name of Object.keys(CHILDREN)) {
+      let spec
+      try { spec = ctx.slots.spec(name) } catch { spec = undefined }
+      if (spec !== undefined && spec !== null) found.push({ name, kind: spec.kind, scope: spec.scope })
     }
-    let renderSlots
+    return found.length > 0 ? found : undefined
+  }
+
+  function readRootRenderSlots(ctx) {
     try {
       const rootSpec = typeof ctx?.slots?.spec === 'function' ? ctx.slots.spec('root') : undefined
-      if (rootSpec !== undefined && rootSpec !== null && Array.isArray(rootSpec.renderSlots)) renderSlots = rootSpec.renderSlots
+      if (rootSpec !== undefined && rootSpec !== null && Array.isArray(rootSpec.renderSlots)) return rootSpec.renderSlots
     } catch {
       /* 读不到就不检查 renderSlots */
     }
-    let hostVersion = typeof window !== 'undefined'
-      ? (window.__DSH_LAUNCHER_HOST_VERSION__ || window.__DSH_BOOT__?.release?.version || '')
-      : ''
-    if (typeof hostVersion !== 'string' || hostVersion.length === 0) hostVersion = HOST_BASELINE.hostVersion
-    return { hostVersion, baseline: HOST_BASELINE, slots, renderSlots, themePrefix: detectThemePrefix() }
+    return undefined
   }
 
-  /** 横幅模型（原因列表 + 回退命令 + 本次不再提示），命令复用生成的 rollbackCommand。 */
-  function hostGuardBanner(verdict) {
-    return {
-      id: 'launcher-hostguard-banner',
-      title: '本版 UI 与当前 dsh 不匹配，已保留原生界面',
-      reasons: verdict.blockers.map((item) => item.message || item.code),
-      command: rollbackCommand(launcherProfile()),
-      dismissLabel: '本次不再提示',
-    }
+  /** 宿主 layout 服务（ILayout）；ctx.get 绕过 inject 要求，读不到返回 undefined。 */
+  function readLayoutService(ctx) {
+    try { if (typeof ctx?.get === 'function') { const service = ctx.get('layout'); if (service !== undefined) return service } } catch { /* 继续兜底 */ }
+    try { if (typeof ctx?.reflect?.get === 'function') { const service = ctx.reflect.get('layout', false); if (service !== undefined) return service } } catch { /* 继续兜底 */ }
+    try { const service = ctx?.layout; if (service !== undefined) return service } catch { /* 读不到就跳过 */ }
+    return undefined
   }
+
+  /**
+   * 从运行期 ctx 探测宿主形状（供 HostGuard）。
+   * A2：版本读不到不再回退 baseline；slots 读不到由 guard 判 slots-unreadable（除非显式白名单）；
+   * layoutMembers 必须真实探测并参与判定（ILayout 检查不再空转）。
+   */
+  function probeHostShape(ctx) {
+    const override = typeof window !== 'undefined' ? window.__DSH_LAUNCHER_HOST_SHAPE__ : null
+    if (override !== null && typeof override === 'object') return override
+    // 「旧宿主无 slots API」只有显式环境白名单才兜底成 baseline 形状（见 README「兼容开关」）。
+    const allowLegacySlots = typeof window !== 'undefined' && window.__DSH_LAUNCHER_ALLOW_LEGACY_SLOTS__ === true
+    const slots = resolveSlots(readSlotDeclarations(ctx), { baselineSlots: HOST_BASELINE.slots, allowLegacy: allowLegacySlots })
+    const renderSlots = readRootRenderSlots(ctx)
+    const rawVersion = typeof window !== 'undefined'
+      ? (window.__DSH_LAUNCHER_HOST_VERSION__ || window.__DSH_BOOT__?.release?.version || '')
+      : ''
+    const hostVersion = resolveHostVersion(rawVersion)
+    const layoutMembers = probeLayoutMembers(readLayoutService(ctx), HOST_BASELINE.layoutMembers)
+    return { hostVersion, baseline: HOST_BASELINE, slots, renderSlots, layoutMembers, themePrefix: detectThemePrefix() }
+  }
+
 
   /** 渲染可关闭横幅（不持久化：关闭只移除本节点，下次启动仍提示）。重复 id 不叠加。 */
   function showHostGuardBanner(model) {
@@ -3942,21 +4000,21 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     if (HOST_GUARD_DONE) return () => {}
     HOST_GUARD_DONE = true
     const hostShape = probeHostShape(ctx)
-    if (hostShape.slots === undefined) {
-      // 读不到槽声明 API（旧宿主）就不能判定；按旧宿主兼容继续，不让自检把界面挡死。
-      console.warn('dsh-client-ui-launcher: 读不到宿主槽声明（ctx.slots.spec 缺失），跳过 HostGuard 自检')
-    } else {
-      const verdict = guardHost(hostShape)
-      if (!verdict.ok) {
-        window.__DSH_LAUNCHER_SHELL__ = false
-        window.__DSH_LAUNCHER_HOST_GUARD__ = verdict
-        try { showHostGuardBanner(hostGuardBanner(verdict)) } catch (error) { console.warn('dsh-client-ui-launcher: 横幅渲染失败', error) }
-        console.info('dsh-client-ui-launcher: HostGuard 未接管', JSON.stringify(verdict.blockers.map((item) => item.code)))
-        return () => { HOST_GUARD_DONE = false }
-      }
-      if (verdict.warnings.length > 0) {
-        console.warn('dsh-client-ui-launcher: HostGuard 警告（仍接管）', JSON.stringify(verdict.warnings.map((item) => item.code)))
-      }
+    // A2：slots/版本读不到都已是 blocker（不再 warn 后照常注册），统一走 createBootstrap 的注册/横幅分支。
+    const bootstrap = createBootstrap({
+      register: () => { window.__DSH_LAUNCHER_SHELL__ = true },
+      mountBanner: showHostGuardBanner,
+      profile: launcherProfile(),
+    })
+    const outcome = bootstrap.run(hostShape)
+    if (!outcome.registered) {
+      window.__DSH_LAUNCHER_SHELL__ = false
+      window.__DSH_LAUNCHER_HOST_GUARD__ = outcome.guard
+      console.info('dsh-client-ui-launcher: HostGuard 未接管', JSON.stringify((outcome.guard?.blockers ?? []).map((item) => item.code)))
+      return () => { HOST_GUARD_DONE = false }
+    }
+    if (Array.isArray(outcome.guard?.warnings) && outcome.guard.warnings.length > 0) {
+      console.warn('dsh-client-ui-launcher: HostGuard 警告（仍接管）', JSON.stringify(outcome.guard.warnings.map((item) => item.code)))
     }
     // 本实现的运行时标记：verify 用它 + [data-shell] 双特征判"现在装的是哪一版 layout"，
     // 不靠容易在两侧都出现的槽标记（实测 [data-slot="sidebar"] 两态都有）。

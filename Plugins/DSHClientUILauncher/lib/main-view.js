@@ -1,3 +1,6 @@
+import { MAIN_ICONS, iconEl } from './icons.js'
+export { MAIN_ICONS } from './icons.js'
+
 /**
  * 主区渲染与状态（票 32）：对话流 + 各类卡片 + 输入行 + 命令面板。
  *
@@ -100,28 +103,22 @@ export const APPROVAL_CHOICES = MAIN_APPROVAL_CHOICES
 export const DEMO_COMMANDS = MAIN_DEMO_COMMANDS
 export const DEMO_THREAD = MAIN_DEMO_THREAD
 
+/**
+ * 计划/任务步骤的状态文案（三档一处映射，避免 renderPlan / renderTaskCard 各写一份）：
+ * - done → 完成
+ * - doing → 进行中（计划）/ 在做（任务）
+ * - 其它 → 待排期（计划）/ 待办（任务）
+ * @param {string} [st] - 步骤状态。
+ * @param {{ doing?: string, todo?: string }} [labels] - 非完成态的用词覆盖。
+ * @returns {string} 显示文案。
+ */
+export function stepStatusLabel(st, labels = {}) {
+  if (st === 'done') return '完成'
+  if (st === 'doing') return labels.doing ?? '进行中'
+  return labels.todo ?? '待排期'
+}
+
 /** 主区用到的 Tabler 线性图标体（1.7 描边由 CSS 控制）。 */
-export const MAIN_ICONS = Object.freeze({
-  caret: '<path d="M9 6l6 6l-6 6" />',
-  chevronDown: '<path d="M6 9l6 6l6 -6" />',
-  chevronRight: '<path d="M9 6l6 6l-6 6" />',
-  check: '<path d="M5 12l5 5l10 -10" />',
-  x: '<path d="M18 6l-12 12" /><path d="M6 6l12 12" />',
-  alert: '<path d="M12 9v4" /><path d="M12 17l.01 0" /><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18" />',
-  terminal: '<path d="M5 7l5 5l-5 5" /><path d="M12 19l7 0" />',
-  file: '<path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" />',
-  eye: '<path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" /><path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6" />',
-  target: '<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /><path d="M12 12m-5 0a5 5 0 1 0 10 0a5 5 0 1 0 -10 0" /><path d="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />',
-  sparkles: '<path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2zm0 -12a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2zm-7 12a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6z" />',
-  copy: '<path d="M8 8m0 2a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z" /><path d="M16 8v-2a2 2 0 0 0 -2 -2h-8a2 2 0 0 0 -2 2v8a2 2 0 0 0 2 2h2" />',
-  doc: '<path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" />',
-  git: '<path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" /><path d="M12 3v6" /><path d="M12 15v6" />',
-  bot: '<path d="M6 6m0 2a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z" /><path d="M9 12l.01 0" /><path d="M15 12l.01 0" />',
-  arrowUp: '<path d="M12 5l0 14" /><path d="M16 9l-4 -4l-4 4" />',
-  search: '<path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M21 21l-6 -6" />',
-  message: '<path d="M8 9h8" /><path d="M8 13h6" /><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12z" />',
-  plus: '<path d="M12 5l0 14" /><path d="M5 12l14 0" />',
-})
 
 /**
  * 生成一个 24×24 线性图标节点（未知名字给空体，不 throw）。
@@ -130,14 +127,7 @@ export const MAIN_ICONS = Object.freeze({
  * @returns {any} SVG vnode。
  */
 export function mainIcon(h, name) {
-  const body = MAIN_ICONS[name] ?? ''
-  return h('svg', {
-    viewBox: '0 0 24 24',
-    className: 'launcher-ic',
-    'aria-hidden': 'true',
-    focusable: 'false',
-    dangerouslySetInnerHTML: { __html: body },
-  })
+  return iconEl(h, MAIN_ICONS, name)
 }
 
 /* ============ 纯状态变换 ============ */
@@ -341,7 +331,7 @@ export function renderPlan(h, plan) {
     list.map((p, idx) => h('div', { className: `launcher-plan-step ${p?.st ?? ''}` },
       h('span', { className: 'launcher-plan-step__no' }, p?.st === 'done' ? '✓' : String(idx + 1)),
       h('span', { className: 'launcher-plan-step__nm' }, String(p?.s ?? '')),
-      h('span', { className: 'launcher-main-tag' }, p?.st === 'done' ? '完成' : p?.st === 'doing' ? '进行中' : '待排期'))))
+      h('span', { className: 'launcher-main-tag' }, stepStatusLabel(p?.st)))))
 }
 
 /** 任务卡（勾选项）。 */
@@ -367,7 +357,7 @@ export function renderTaskCard(h, card, opts = {}) {
         return h('label', { className: 'launcher-crit-row' },
           h('input', { type: 'checkbox', checked: on, 'data-crit-key': key, 'aria-label': `勾选 ${String(r?.t ?? '')}`, onChange: () => opts.onToggleCrit?.(key) }),
           h('span', { className: on ? 'on' : '' }, String(r?.t ?? '')),
-          h('span', { className: 'launcher-crit__who' }, r?.st === 'done' ? '完成' : r?.st === 'doing' ? '在做' : '待办'))
+          h('span', { className: 'launcher-crit__who' }, stepStatusLabel(r?.st, { doing: '在做', todo: '待办' })))
       })),
       c.dyn ? h('div', { className: 'launcher-dyn' }, h('b', null, '动态'), h('span', null, String(c.dyn))) : null))
 }

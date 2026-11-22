@@ -1,3 +1,6 @@
+import { DOCK_ICONS, iconEl } from './icons.js'
+export { DOCK_ICONS } from './icons.js'
+
 /**
  * 右栏五面板 + 设置六分组（票 33）。
  *
@@ -10,6 +13,7 @@
  */
 
 import { shellColumns } from './shell-layout.js'
+import { DOCK } from './layout.js'
 
 // ---------- 右栏五面板 ----------
 
@@ -45,8 +49,8 @@ export function setDockTab(state, id) {
   return { tab: DOCK_TAB_IDS.includes(id) ? id : current }
 }
 
-/** 右栏宽度区间与隐藏阈值（与 lib/layout.js 的 DOCK 同口径，内联到 client 时不 import）。 */
-export const DOCK_WIDTHS = Object.freeze({ min: 320, max: 520, default: 380, hideBelow: 1020 })
+/** 右栏宽度区间与隐藏阈值：唯一真源是 lib/layout.js 的 DOCK（本模块不再抄一份数值）。 */
+export const DOCK_WIDTHS = DOCK
 
 /**
  * 右栏此刻的**有效宽度**：收起或窄于阈值给 0，否则夹在 [min, max] 并受视口预算约束。
@@ -342,17 +346,6 @@ export function applySetting(values, action) {
 // ---------- 图标（只搬右栏/设置用到的少量 Tabler 线性图标） ----------
 
 /** 24×24 视野下的图标主体（描边由 CSS 控制）。 */
-export const DOCK_ICONS = Object.freeze({
-  file: '<path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" />',
-  folder: '<path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2" />',
-  terminal: '<path d="M8 9l3 3l-3 3" /><path d="M13 15l3 0" /><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z" />',
-  target: '<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /><path d="M12 12m-5 0a5 5 0 1 0 10 0a5 5 0 1 0 -10 0" /><path d="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />',
-  message: '<path d="M8 9h8" /><path d="M8 13h6" /><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12z" />',
-  git: '<path d="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M12 3l7 7l-7 7l-7 -7z" />',
-  check: '<path d="M5 12l5 5l10 -10" />',
-  plus: '<path d="M12 5l0 14" /><path d="M5 12l14 0" />',
-  x: '<path d="M18 6l-12 12" /><path d="M6 6l12 12" />',
-})
 
 /**
  * 生成一个 24×24 线性图标节点（未知名字给空体，不 throw）。
@@ -361,14 +354,7 @@ export const DOCK_ICONS = Object.freeze({
  * @returns {any} SVG vnode。
  */
 export function dockIcon(h, name) {
-  const body = DOCK_ICONS[name] ?? ''
-  return h('svg', {
-    viewBox: '0 0 24 24',
-    className: 'launcher-ic',
-    'aria-hidden': 'true',
-    focusable: 'false',
-    dangerouslySetInnerHTML: { __html: body },
-  })
+  return iconEl(h, DOCK_ICONS, name)
 }
 
 // ---------- 渲染：右栏 ----------
@@ -668,123 +654,5 @@ export function renderSettings(h, options) {
     h('div', { className: 'launcher-settings__body' }, ...body))
 }
 
-// ---------- 样式 ----------
-
-/**
- * 右栏五面板 + 设置页的样式（全部挂在 `.launcher-` 外壳作用域，不碰宿主）。
- * @returns {string} CSS 文本。
- */
-export function dockSettingsCss() {
-  return [
-    // 右栏：标签栏 / 面板 / 底栏
-    '.launcher-dock-tabs{display:flex;align-items:center;gap:1px;padding:4px 8px 0;border-bottom:1px solid var(--l-line);overflow-x:auto;scrollbar-width:none;flex:0 0 auto}',
-    '.launcher-dock-tabs__grow{flex:1}',
-    '.launcher-dock-tab{display:inline-flex;align-items:center;gap:4px;padding:8px 7px;font:inherit;font-size:12px;color:var(--l-ink3);background:transparent;border:0;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}',
-    '.launcher-dock-tab:hover{color:var(--l-ink)}',
-    '.launcher-dock-tab.on{color:var(--l-ink);border-bottom-color:var(--l-accent);font-weight:500}',
-    '.launcher-dock-tab:focus-visible{outline:2px solid var(--l-accent);outline-offset:-2px}',
-    '.launcher-dock-tab svg{width:15px;height:15px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}',
-    '.launcher-dock-tab__n{font-size:11px;line-height:1;background:var(--l-surface3);border-radius:4px;padding:2px 3px;color:var(--l-ink3)}',
-    '.launcher-dock-tab--icon{margin-left:2px}',
-    '.launcher-dock__panel{flex:1;min-height:0;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}',
-    '.launcher-dock__host{display:none}',
-    '.launcher-dock-sum{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--l-ink2);padding:2px 2px 4px}',
-    '.launcher-dock-sum svg{width:14px;height:14px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}',
-    '.launcher-dock-sum__g{font-size:11px;color:var(--l-ink4)}',
-    '.launcher-dock-sum__cg{margin-left:auto;display:flex;gap:6px;font-size:11px}',
-    '.launcher-git-add{color:var(--l-green)}',
-    '.launcher-git-del{color:var(--l-red)}',
-    '.launcher-dock-empty{display:grid;gap:4px;place-items:center;padding:18px 8px;border:1px dashed var(--l-line2);border-radius:var(--l-radius-md);color:var(--l-ink3);font-size:12px}',
-    '.launcher-dock-foot{border-top:1px solid var(--l-line);padding:8px 2px 2px;display:flex;gap:6px;align-items:center;margin-top:auto}',
-    '.launcher-dock-foot__grow{flex:1}',
-    '.launcher-dock-foot__note{font-size:11px;color:var(--l-ink4)}',
-    '.launcher-diff{border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-surface);overflow:hidden}',
-    '.launcher-diff-h{display:flex;align-items:center;gap:6px;padding:6px 9px;background:var(--l-surface2);font-size:12px}',
-    '.launcher-diff-h svg{width:13px;height:13px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}',
-    '.launcher-diff-h__f{font-family:var(--font-mono,monospace);font-size:11px;color:var(--l-ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-    '.launcher-diff-h__a{color:var(--l-green);font-size:11px;margin-left:auto}',
-    '.launcher-diff-h__d{color:var(--l-red);font-size:11px}',
-    '.launcher-diff-line{display:grid;grid-template-columns:26px 12px minmax(0,1fr);font-family:var(--font-mono,monospace);font-size:11px;line-height:1.7}',
-    '.launcher-diff-line__ln{text-align:right;color:var(--l-ink4);padding-right:6px;user-select:none}',
-    '.launcher-diff-line__sg{text-align:center;user-select:none}',
-    '.launcher-diff-line__cd{overflow:hidden;text-overflow:ellipsis;white-space:pre;padding-right:8px}',
-    '.launcher-diff-line.add{background:var(--l-accentSoft);color:var(--l-ink)}',
-    '.launcher-diff-line.del{background:var(--l-surface2);color:var(--l-ink3)}',
-    '.launcher-tree{display:grid;gap:1px;font-size:12px}',
-    '.launcher-tree-row{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:var(--l-radius-xs);color:var(--l-ink2);width:100%;text-align:left;background:transparent;border:0;cursor:pointer;font:inherit}',
-    '.launcher-tree-row:hover{background:var(--l-hover)}',
-    '.launcher-tree-row.on{background:var(--l-surface3);color:var(--l-ink)}',
-    '.launcher-tree-row:focus-visible{outline:2px solid var(--l-accent);outline-offset:-2px}',
-    '.launcher-tree-row svg{width:14px;height:14px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}',
-    '.launcher-tree-row__n{font-family:var(--font-mono,monospace);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-    '.launcher-tree-row__d{margin-left:auto;font-size:11px;color:var(--l-ink4)}',
-    '.launcher-term{background:var(--l-surface2);border:1px solid var(--l-line);border-radius:var(--l-radius-md);padding:9px 10px;font-family:var(--font-mono,monospace);font-size:12px;line-height:1.7;min-height:150px;max-height:340px;overflow:auto;white-space:pre-wrap;color:var(--l-ink2);margin:0}',
-    '.launcher-term__p{color:var(--l-accent)}',
-    '.launcher-term__ok{color:var(--l-green)}',
-    '.launcher-term__er{color:var(--l-red)}',
-    '.launcher-term-in{display:flex;gap:6px;margin-top:7px;align-items:center}',
-    '.launcher-term-in__prompt{color:var(--l-accent);font-family:var(--font-mono,monospace)}',
-    '.launcher-term-in__input{flex:1;min-width:0;background:var(--l-surface);border:1px solid var(--l-line);border-radius:var(--l-radius-sm);padding:0 8px;height:28px;font-family:var(--font-mono,monospace);font-size:12px;outline:none;color:var(--l-ink)}',
-    '.launcher-term-in__input:focus{border-color:var(--l-accent)}',
-    '.launcher-chat-mini{display:grid;gap:7px}',
-    '.launcher-bub{max-width:88%;padding:6px 10px;border-radius:var(--l-radius-md);font-size:12px;line-height:1.5;background:var(--l-surface2);border:1px solid var(--l-line);color:var(--l-ink)}',
-    '.launcher-bub.me{justify-self:end;background:var(--l-accent);color:var(--l-onAccent);border-color:transparent}',
-    '.launcher-mini{background:var(--l-surface);border:1px solid var(--l-line);border-radius:var(--l-radius-md);padding:9px 10px;display:grid;gap:2px}',
-    '.launcher-mini__t{font-size:13px;line-height:1.4}',
-    '.launcher-mini__s{font-size:11px;color:var(--l-ink3);display:flex;gap:5px;align-items:center;flex-wrap:wrap}',
-    '.launcher-tag{font-size:11px;border-radius:4px;padding:0 4px;background:var(--l-surface3);color:var(--l-ink3)}',
-    '.launcher-tag.ok{background:var(--l-accentSoft);color:var(--l-green)}',
-    '.launcher-tag.acc{background:var(--l-accentSoft);color:var(--l-accent)}',
-    // 通用小按钮
-    '.launcher-seg{height:24px;padding:0 8px;border:1px solid var(--l-line);border-radius:var(--l-radius-xs);font:inherit;font-size:12px;color:var(--l-ink2);background:var(--l-surface);cursor:pointer}',
-    '.launcher-seg:hover{border-color:var(--l-line2);color:var(--l-ink)}',
-    '.launcher-seg:focus-visible{outline:2px solid var(--l-accent);outline-offset:1px}',
-    '.launcher-seg.on{background:var(--l-accentSoft);border-color:transparent;color:var(--l-accent);font-weight:500}',
-    '.launcher-seg--primary{background:var(--l-accent);border-color:transparent;color:var(--l-onAccent)}',
-    '.launcher-seg--danger{color:var(--l-red);border-color:var(--l-red)}',
-    '.launcher-seg[disabled]{opacity:.5;cursor:not-allowed}',
-    // 设置页
-    '.launcher-settings{position:fixed;inset:0;z-index:46;background:var(--l-bg);color:var(--l-ink);display:flex;flex-direction:column;overflow:hidden}',
-    '.launcher-settings__head{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--l-line);background:var(--l-bg2)}',
-    '.launcher-settings__title{font-size:15px;font-weight:600;margin:0}',
-    '.launcher-settings__close{margin-left:auto;border:0;background:transparent;color:var(--l-ink3);font-size:16px;cursor:pointer;width:28px;height:28px;border-radius:var(--l-radius-xs)}',
-    '.launcher-settings__close:hover{background:var(--l-hover);color:var(--l-ink)}',
-    '.launcher-settings__close:focus-visible{outline:2px solid var(--l-accent)}',
-    '.launcher-settings__tabs{display:flex;gap:2px;padding:0 14px;border-bottom:1px solid var(--l-line);overflow-x:auto;background:var(--l-bg)}',
-    '.launcher-settings__tab{padding:8px 10px;font:inherit;font-size:12px;color:var(--l-ink3);background:transparent;border:0;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}',
-    '.launcher-settings__tab:hover{color:var(--l-ink)}',
-    '.launcher-settings__tab.on{color:var(--l-ink);border-bottom-color:var(--l-accent);font-weight:500}',
-    '.launcher-settings__tab:focus-visible{outline:2px solid var(--l-accent);outline-offset:-2px}',
-    '.launcher-settings__body{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;max-width:720px;width:100%;margin:0 auto}',
-    '.launcher-settings__card{border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-panel);padding:4px 12px}',
-    '.launcher-settings__colh{font-size:11px;letter-spacing:.04em;color:var(--l-ink4);text-transform:uppercase;padding:8px 0 4px}',
-    '.launcher-set-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--l-line);font-size:13px}',
-    '.launcher-set-row:last-child{border-bottom:0}',
-    '.launcher-set-row__lbl{display:grid;gap:1px;min-width:0}',
-    '.launcher-set-row__hint{font-size:11px;color:var(--l-ink3)}',
-    '.launcher-set-row__ctl{margin-left:auto;display:flex;gap:4px;align-items:center;flex:none}',
-    '.launcher-static{font-size:12px;color:var(--l-ink3)}',
-    '.launcher-kbd{font-family:var(--font-mono,monospace);font-size:11px;background:var(--l-surface2);border:1px solid var(--l-line);border-radius:4px;padding:1px 5px;color:var(--l-ink2)}',
-    '.launcher-switch{width:38px;height:24px;border-radius:12px;border:1px solid var(--l-line2);background:var(--l-surface3);position:relative;cursor:pointer;padding:0}',
-    '.launcher-switch.on{background:var(--l-accent);border-color:transparent}',
-    '.launcher-switch:focus-visible{outline:2px solid var(--l-accent);outline-offset:1px}',
-    '.launcher-switch__dot{position:absolute;top:3px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--l-surface);transition:left .12s ease}',
-    '.launcher-switch.on .launcher-switch__dot{left:19px}',
-    // 回退原生 UI 入口（票 35）：整块铺开，命令可选中、可复制
-    '.launcher-set-row--block{flex-direction:column;align-items:stretch;gap:4px}',
-    '.launcher-set-row--block .launcher-set-row__ctl{margin-left:0;display:block}',
-    '.launcher-rollback{display:grid;gap:7px;padding:2px 0 6px}',
-    '.launcher-rollback__note{margin:0;font-size:12px;color:var(--l-ink2);line-height:1.5}',
-    '.launcher-rollback__steps{margin:0;padding-left:18px;display:grid;gap:2px;font-size:12px;color:var(--l-ink3)}',
-    '.launcher-rollback__cmd{margin:0;padding:8px 10px;background:var(--l-surface2);border:1px solid var(--l-line);border-radius:var(--l-radius-sm);font-family:var(--font-mono,monospace);font-size:11px;line-height:1.6;color:var(--l-ink);white-space:pre-wrap;word-break:break-all;user-select:all}',
-    '.launcher-rollback__actions{display:flex;align-items:center;gap:8px}',
-    '.launcher-rollback__status{font-size:11px;color:var(--l-green)}',
-    '.launcher-rollback__runbook{margin:0;font-size:11px;color:var(--l-ink4)}',
-    '.launcher-rollback__runbook code{font-family:var(--font-mono,monospace);font-size:11px;background:var(--l-surface2);border-radius:4px;padding:1px 4px}',
-    // 密度：紧凑档收紧右栏/设置页的行距与内边距（主题/右栏靠属性与列宽，密度靠这里）
-    '.launcher-shell[data-density="compact"]{--l-row:26px}',
-    '.launcher-shell[data-density="compact"] .launcher-dock__panel{gap:5px;padding:7px 10px}',
-    '.launcher-shell[data-density="compact"] .launcher-set-row{padding:6px 0}',
-    '.launcher-shell[data-density="compact"] .launcher-mini{padding:6px 8px}',
-  ].join('\n')
-}
+// B3：CSS 独立成 lib/dock-settings-css.js；这里 re-export 保持既有 import 路径不变。
+export { dockSettingsCss } from './dock-settings-css.js'

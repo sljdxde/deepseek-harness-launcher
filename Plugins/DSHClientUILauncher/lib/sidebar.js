@@ -1,3 +1,6 @@
+import { SIDEBAR_ICONS, iconEl } from './icons.js'
+export { SIDEBAR_ICONS } from './icons.js'
+
 /**
  * 侧栏（票 31）：v17「需要你 / 工作区 / 任务」三段统一卡片。
  *
@@ -29,15 +32,6 @@ export function rowTitleLeftX() {
 }
 
 /** 侧栏用到的 Tabler 线性图标（1.7 描边由 CSS 控制），从 v17 原型搬字形。 */
-export const SIDEBAR_ICONS = Object.freeze({
-  chevronRight: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M9 6l6 6l-6 6"  />',
-  chevronDown: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M6 9l6 6l6 -6"  />',
-  folder: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"  />',
-  folderOpen: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M5 19l2.757 -7.351a1 1 0 0 1 .936 -.649h12.307a1 1 0 0 1 .986 1.164l-.996 5.211a2 2 0 0 1 -1.964 1.625h-14.026a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v2"  />',
-  dots: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M5 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"  /> <path d="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"  /> <path d="M19 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"  />',
-  plus: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M12 5l0 14"  /> <path d="M5 12l14 0"  />',
-  search: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"  /> <path d="M21 21l-6 -6"  />',
-})
 
 /**
  * 生成 24×24 线性图标节点（未知名字给空体，不 throw）。
@@ -46,14 +40,7 @@ export const SIDEBAR_ICONS = Object.freeze({
  * @returns {any} SVG vnode。
  */
 export function sidebarIcon(h, name) {
-  const body = SIDEBAR_ICONS[name] ?? ''
-  return h('svg', {
-    viewBox: '0 0 24 24',
-    className: 'launcher-ic',
-    'aria-hidden': 'true',
-    focusable: 'false',
-    dangerouslySetInnerHTML: { __html: body },
-  })
+  return iconEl(h, SIDEBAR_ICONS, name)
 }
 
 /** 单条会话归一化；缺 id 的丢弃。 */

@@ -14,6 +14,7 @@
  * 用法：
  *   node scripts/canary.mjs [--mode baseline|mutated|both] [--host-version x.y.z]
  *                           [--mutate version|slot] [--baseline <path>] [--json]
+ *   node scripts/canary.mjs --real   # 用 DSH_BIN 起真机跑一次（无 DSH_BIN → exit 3）
  *
  * 退出码（两种主要结果 + 两个环境码）：
  *   0  所有断言通过（baseline 外壳无横幅；mutated 横幅 + 原生）
@@ -21,7 +22,9 @@
  *   2  参数错误
  *   3  环境缺件（baseline 文件缺失/不可读，跑不了就明确报错，不假装成功）
  */
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createBootstrap } from '../lib/bootstrap.js'
@@ -43,7 +46,7 @@ const MUTATIONS = new Set(['version', 'slot'])
  * @throws {Error} 参数非法时抛出（由 main 映射成退出码 2）。
  */
 export function parseArgs(argv) {
-  const out = { mode: 'both', hostVersion: undefined, mutate: 'version', baselinePath: undefined, json: false, help: false }
+  const out = { mode: 'both', hostVersion: undefined, mutate: 'version', baselinePath: undefined, json: false, help: false, real: false }
   const take = (index, flag) => {
     const value = argv[index]
     if (value === undefined || value.startsWith('--')) throw new Error(`参数 ${flag} 缺少取值`)
@@ -63,6 +66,8 @@ export function parseArgs(argv) {
       out.mutate = value
     } else if (arg === '--baseline') {
       out.baselinePath = take(index += 1, '--baseline')
+    } else if (arg === '--real') {
+      out.real = true
     } else if (arg === '--json') {
       out.json = true
     } else if (arg === '-h' || arg === '--help') {
@@ -212,8 +217,71 @@ export function runCanary({ mode, baseline, hostVersion, mutate = 'version' }) {
   }
 }
 
+/**
+ * 真机 canary（A3）：从 DSH_BIN 起一个**独立**的 dsh web，断言 root 渲染成 v17 外壳。
+ *
+ * 不假装成功：没有 DSH_BIN / 二进制不存在 / 缺 DSH_INSTALL(lib/bin.js) 或 profile /
+ * 缺 Chrome·puppeteer 等环境件，一律 exit 3 并说明跳过；只有真机断言失败才 exit 1。
+ * 复用 scripts/verify-shell-standalone.sh（临时 DSH_HOME，不碰正在用的 dsh）。
+ * @param {{ stdout?: Function, stderr?: Function, env?: object }} [io] - 输出与进程环境（可注入）。
+ * @returns {number} 退出码。
+ */
+export function runReal(io = {}) {
+  const stdout = io.stdout ?? ((line) => process.stdout.write(line))
+  const stderr = io.stderr ?? ((line) => process.stderr.write(line))
+  const env = io.env ?? process.env
+  const dshBin = String(env.DSH_BIN ?? '').trim()
+  if (dshBin.length === 0) {
+    stderr('[canary --real] 跳过（exit 3）：未设置 DSH_BIN —— 真机 canary 需要 dsh 可执行文件\n')
+    return 3
+  }
+  if (!existsSync(dshBin)) {
+    stderr(`[canary --real] 跳过（exit 3）：DSH_BIN 不存在：${dshBin}\n`)
+    return 3
+  }
+  const dshHome = env.DSH_HOME ?? join(homedir(), '.dsh')
+  const installCandidates = [
+    env.DSH_INSTALL,
+    join(dirname(dshBin), '..', '..', '@deepseek-ai', 'dsh'),
+    join(dshHome, 'runtime', 'node_modules', '@deepseek-ai', 'dsh'),
+  ].filter((value) => typeof value === 'string' && value.length > 0)
+  const install = installCandidates.find((dir) => existsSync(join(dir, 'lib', 'bin.js')))
+  const profile = env.PROFILE_SRC ?? join(dshHome, 'profiles', 'web')
+  if (install === undefined) {
+    stderr('[canary --real] 跳过（exit 3）：定位不到 dsh 安装目录（需含 lib/bin.js，可用 DSH_INSTALL 指定）\n')
+    return 3
+  }
+  if (!existsSync(join(profile, 'package.json'))) {
+    stderr(`[canary --real] 跳过（exit 3）：找不到可用 profile：${profile}\n`)
+    return 3
+  }
+  const script = join(ROOT, 'scripts', 'verify-shell-standalone.sh')
+  if (!existsSync(script)) {
+    stderr(`[canary --real] 跳过（exit 3）：缺少 ${script}\n`)
+    return 3
+  }
+  const child = spawnSync('sh', [script, 'launcher'], {
+    cwd: ROOT,
+    env: { ...env, DSH_INSTALL: install, PROFILE_SRC: profile, PACKAGE_DIR: ROOT },
+    encoding: 'utf8',
+  })
+  if (child.stdout) stdout(child.stdout)
+  if (child.stderr) stderr(child.stderr)
+  if (child.status === 0) {
+    stdout('[canary --real] PASS：真机 root 渲染为 v17 外壳（无 HostGuard 横幅）\n')
+    return 0
+  }
+  if (child.status === 3) {
+    stderr('[canary --real] 跳过（exit 3）：环境缺件（Chrome / puppeteer / 宿主未就绪）\n')
+    return 3
+  }
+  stderr('[canary --real] FAIL：真机断言不通过\n')
+  return 1
+}
+
 const USAGE = `用法：node scripts/canary.mjs [--mode baseline|mutated|both] [--host-version x.y.z]
-                          [--mutate version|slot] [--baseline <path>] [--json]`
+                          [--mutate version|slot] [--baseline <path>] [--json]
+       node scripts/canary.mjs --real   # 真机（需 DSH_BIN；无则 exit 3）`
 
 /**
  * CLI 入口：返回退出码而不是直接 process.exit，便于单测。
@@ -234,6 +302,9 @@ export function main(argv, io = {}) {
   if (args.help) {
     stdout(`${USAGE}\n`)
     return 0
+  }
+  if (args.real) {
+    return runReal({ stdout, stderr })
   }
   let baseline
   try {

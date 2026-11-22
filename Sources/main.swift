@@ -274,11 +274,17 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
     private var pluginManagerURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHPluginManager") ?? rootURL.appendingPathComponent("Plugins/DSHPluginManager") }
     private var sessionNotifyPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSessionNotify") ?? rootURL.appendingPathComponent("Plugins/DSHSessionNotify") }
+    /// 整壳 UI 插件（同名 drop-in）：包名就是宿主 layout 包名，运行时按名解析到本包。
+    private var clientUILauncherURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHClientUILauncher") ?? rootURL.appendingPathComponent("Plugins/DSHClientUILauncher") }
     private var bundledPlugins: [BundledPlugin] {
         [
             BundledPlugin(linkName: "dsh-archive-manager", bundleMarker: "DSHArchiveManager", url: pluginURL),
             BundledPlugin(linkName: "dsh-plugin-manager", bundleMarker: "DSHPluginManager", url: pluginManagerURL),
-            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL)
+            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL),
+            // 分发通道一：随安装包默认携带。linkName 用**宿主包名**（含 scope），
+            // profile 的 node_modules/@deepseek-ai/dsh-client-ui-layout 指到 App 包，
+            // dsh 运行期按名解析时用这条链接顶替宿主原生 layout。
+            BundledPlugin(linkName: "@deepseek-ai/dsh-client-ui-layout", bundleMarker: "DSHClientUILauncher", url: clientUILauncherURL)
         ]
     }
     private var patchPath: String { pluginURL.appendingPathComponent("cordis.patch.yml").path }

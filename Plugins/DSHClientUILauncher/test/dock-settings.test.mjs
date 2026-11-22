@@ -399,3 +399,38 @@ test('applySetting：copyRollback 动作给出复制副作用、不改外观取�
   assert.deepEqual(result.effect, { type: 'copyRollback' })
   assert.deepEqual(result.values, base)
 })
+
+test('renderDockPanel(审阅)：没有 diff 时给「都提交了」空态（不渲染 diff 列表）', () => {
+  const h = makeH()
+  const empty = renderDockPanel(h, { tab: 'review', data: { ...DOCK_DEMO, diff: [] }, onAction: () => {} })
+  assert.match(textOf(empty), /都提交了/)
+})
+
+test('renderSettings：danger 控件可点并透传动作，未知控件类型渲染为空（0 dead control）', () => {
+  const h = makeH()
+  const actions = []
+  const sections = {
+    general: [{
+      title: '高级',
+      rows: [
+        { id: 'revert', label: '回退原生 UI', control: { type: 'danger', key: 'revertNative', label: '回退' } },
+        { id: 'unknown', label: '未知控件', control: { type: 'not-a-control' } },
+      ],
+    }],
+  }
+  const tree = renderSettings(h, {
+    groups: [{ id: 'general', label: '常用' }],
+    sections,
+    active: 'general',
+    values: {},
+    onGroup: () => {},
+    onAction: (action) => actions.push(action),
+    onClose: () => {},
+  })
+  const danger = [...walk(tree)].find((node) => node.type === 'button' && textOf(node) === '回退')
+  assert.ok(danger, 'danger 按钮要渲染出来')
+  danger.props.onClick()
+  assert.deepEqual(actions, [{ type: 'danger', key: 'revertNative' }])
+  // 未知控件类型不产生按钮（renderControl 返回 null），行标签仍在
+  assert.match(textOf(tree), /未知控件/)
+})

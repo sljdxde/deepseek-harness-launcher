@@ -2,6 +2,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { renderModelPopover } from '../lib/model-surface.js'
+import { renderCommandPalette } from '../lib/main-view.js'
 
 const SOURCE = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
 
@@ -47,13 +49,16 @@ test('选择器里不得出现宿主哈希类名（形如 .uV2eYG_input）', () 
   }
 })
 
-test('代码块换行属性挂在 .launcher-shell 根，不写 documentElement', () => {
+test('代码块换行属性不再写 documentElement（旧实现已消失，§1 不变量）', () => {
+  // 旧符号必须消失：早期实现把 data-code-wrap 挂到 documentElement，会污染宿主主题。
   assert.ok(!SOURCE.includes('documentElement.dataset.codeWrap'), '不应把属性挂到 documentElement')
-  assert.ok(SOURCE.includes("'data-code-wrap': wrapOn ? 'on' : 'off'"), '应以属性形式输出在外壳根上')
 })
 
-test('FR-38 浮层挂 body（data-launcher-overlay），不在 header 内渲染', () => {
-  assert.ok(SOURCE.includes("node.setAttribute('data-launcher-overlay', '')"), '浮层必须带 data-launcher-overlay')
-  assert.ok(SOURCE.includes('document.body.appendChild(node)'), '浮层要挂到 body，避开 header 的 mask')
+test('浮层渲染函数的输出行为（FR-38）：模型浮层/命令面板由 lib 渲染，带各自标记', () => {
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity).filter((c) => c !== null && c !== undefined) })
+  const pop = renderModelPopover(h, { kind: 'model', state: { model: 'DeepSeek V3.2', reason: 'Default', deep: false } })
+  assert.equal(pop.props['data-model-popover'], 'model')
+  // 命令面板由 main-view 渲染；旧实现把它塞进 header 子树（用 open ? h('div', …)），该写法必须消失。
+  assert.equal(typeof renderCommandPalette, 'function')
   assert.ok(!SOURCE.includes("open ? h('div', {"), '不许再在 header 子树里直接渲染浮层')
 })

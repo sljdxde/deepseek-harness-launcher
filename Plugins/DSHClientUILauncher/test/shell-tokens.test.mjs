@@ -124,3 +124,10 @@ test('skeletonCss 只作用于外壳类，不含 !important', () => {
     }
   }
 })
+
+test('relativeLuminance：不可解析的颜色与含非有限分量的数组都返回 NaN（不抛错）', () => {
+  assert.ok(Number.isNaN(relativeLuminance('rgba(0,0,0,.1)')), '解析不出的颜色 → NaN')
+  assert.ok(Number.isNaN(relativeLuminance([Number.NaN, 0, 0])), '含 NaN 的分量 → NaN')
+  assert.ok(Number.isNaN(relativeLuminance([255, Infinity, 0])), '含 Infinity 的分量 → NaN')
+  assert.ok(Number.isFinite(relativeLuminance([255, 255, 255])), '直接给分量也能算')
+})

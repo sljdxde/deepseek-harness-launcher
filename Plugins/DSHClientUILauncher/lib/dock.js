@@ -1,17 +1,18 @@
 /**
  * 右栏 dock 的注册与显隐（05-§6.1 / FR-12 / FR-13）。
  *
- * 六个内置标签 + 插件可注册的标签；宽度与"放不放得下"交给 lib/layout.js（setDockWidth/dockCanShow），
+ * 五个内置标签 + 插件可注册的标签；宽度与"放不放得下"交给 lib/layout.js（setDockWidth/dockCanShow），
  * 这里只管注册表与打开/关闭的语义，错误一律返回结果对象（渲染层不能因一个标签抛错整页崩）。
  */
 
 import { setDockWidth } from './layout.js'
+import { DOCK_TAB_IDS } from './dock-settings.js'
 
 /** 拖动把手的命中宽度（px）。 */
 export const DOCK_HANDLE_HIT = 6
 
-/** 六个内置标签，顺序即标签栏顺序。 */
-export const BUILTIN_TABS = Object.freeze(['review', 'files', 'browser', 'terminal', 'tasks', 'side'])
+/** 内置标签：唯一真源是 lib/dock-settings.js 的 DOCK_TAB_IDS（只 5 个，不再带越界的 browser）。 */
+const BUILTIN_TABS = DOCK_TAB_IDS
 
 /**
  * 拖拽把手算新宽度（FR-13）：把手在右栏左缘，往左拖变宽；宽度夹紧交给 layout.setDockWidth。

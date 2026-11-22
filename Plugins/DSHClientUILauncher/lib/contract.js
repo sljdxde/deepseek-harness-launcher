@@ -12,7 +12,8 @@
 /**
  * 支持的宿主版本区间（下界 = 实装宿主版本，见 contracts/host-baseline.json 的 hostVersion）。
  *
- * 单一事实：`package.json` 的 `engines.dsh` 与 HostGuard 都引用这一份，避免两处漂移。
+ * 注意：`package.json` 的 `engines.dsh` 与本常量是两个各自声明的位置，由
+ * `test/contract.test.mjs` 断言二者一致（不是同一个字面量），改一处必须同步另一处。
  * 0.2.x 为「minor 升级零改动」窗口，下界与实装版本对齐；新增能力只能走可选参数/方法。
  */
 export const SUPPORTED_HOST_RANGE = '>=0.2.2-rc.4 <0.3.0'
@@ -69,9 +70,6 @@ export const OVERLAY_IDS = Object.freeze({
 export const LAYOUT_FACE_MEMBERS = Object.freeze([
   'panelInfo', 'selectPanel', 'beginNavigation', 'toggleSidebar', 'openRightbar', 'closeRightbar',
 ])
-
-/** 右栏 6 个内置标签，顺序即标签栏顺序（原型 DOCK_TABS）。 */
-export const DOCK_TABS = Object.freeze(['review', 'files', 'browser', 'terminal', 'tasks', 'side'])
 
 /** main 槽的保留键：只有它绑 Session。 */
 export const MAIN_CONVERSATION_KEY = 'conversation'
