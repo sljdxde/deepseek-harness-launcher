@@ -14,7 +14,9 @@ import { execFileSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { SUB_SLOTS, LAYOUT_FACE_MEMBERS } from '../lib/contract.js'
+import { SUB_SLOTS, LAYOUT_FACE_MEMBERS, SUPPORTED_HOST_RANGE } from '../lib/contract.js'
+import { guardHost, satisfiesRange } from '../lib/guard.js'
+import { rollbackCommand, PACKAGE_NAME } from '../lib/rollback.js'
 import { RAIL_ENTRIES } from '../lib/rail.js'
 import { MODE_LABELS, statusText } from '../lib/statusbar.js'
 
@@ -39,8 +41,31 @@ export function contractBlock() {
     `  const RAIL_ENTRIES = ${JSON.stringify(RAIL_ENTRIES)}`,
     `  const MODE_LABELS = ${JSON.stringify(MODE_LABELS)}`,
     `  const statusText = ${statusText.toString()}`,
+    // HostGuard + 回退命令：浏览器半区不能 import，用 toString() 内联，保持单一事实（票 29）。
+    `  const SUPPORTED_HOST_RANGE = ${JSON.stringify(SUPPORTED_HOST_RANGE)}`,
+    `  const PACKAGE_NAME = ${JSON.stringify(PACKAGE_NAME)}`,
+    `  const HOST_BASELINE = ${JSON.stringify(hostBaselineSummary())}`,
+    `  const satisfiesRange = ${satisfiesRange.toString()}`,
+    `  const guardHost = ${guardHost.toString()}`,
+    `  const rollbackCommand = ${rollbackCommand.toString()}`,
     END,
   ].join('\n')
+}
+
+/**
+ * 把 contracts/host-baseline.json 裁成 HostGuard 运行期需要的字段。
+ * 生成进浏览器半区，客户端不读磁盘也能拿到"应该长什么样"。
+ * @returns {{ hostVersion: string, themePrefix: string, slots: object[], rootRenderSlots: string[], layoutMembers: string[] }}
+ */
+export function hostBaselineSummary() {
+  const baseline = JSON.parse(readFileSync(join(ROOT, 'contracts', 'host-baseline.json'), 'utf8'))
+  return {
+    hostVersion: baseline.hostVersion ?? baseline.host?.layoutVersion ?? '',
+    themePrefix: baseline.themePrefix ?? '',
+    slots: (baseline.slots ?? []).map((slot) => ({ name: slot.name, kind: slot.kind, scope: slot.scope })),
+    rootRenderSlots: baseline.rootRenderSlots ?? [],
+    layoutMembers: baseline.services?.layout?.members ?? baseline.layoutService?.face ?? [],
+  }
 }
 
 /** 模块 id 段：与 package.json 的 name 一致（同名替换时两边一起变，见 tools/build-layout-alias.mjs）。 */

@@ -7,8 +7,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.4+241b02c"
+  const BUILD_STAMP = "0.2.2-rc.4+8450365"
   let CURRENT_CTX = null
+  // 票 29：Bootstrap 只生效一次（重复加载不注册两次、不叠第二条横幅）；卸载时复位。
+  let HOST_GUARD_DONE = false
 
   // #region children-from-contract
   // 本段由 tools/sync-contract.mjs 从 lib/contract.js 生成，勿手改；
@@ -35,6 +37,154 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     mode: MODE_LABELS[mode] ?? MODE_LABELS['auto-safe'],
     running: parts.join(' · '),
   }
+}
+  const SUPPORTED_HOST_RANGE = ">=0.2.2-rc.4 <0.3.0"
+  const PACKAGE_NAME = "@deepseek-ai/dsh-client-ui-layout"
+  const HOST_BASELINE = {"hostVersion":"0.2.2-rc.4","themePrefix":"--dsh-","slots":[{"name":"sidebar","kind":"single","scope":"root"},{"name":"main","kind":"keyed","scope":"root"},{"name":"rightbar","kind":"single","scope":"root"},{"name":"shell.bottom","kind":"single","scope":"root"},{"name":"shell.overlay","kind":"list","scope":"root"},{"name":"shell.leading","kind":"single","scope":"root"}],"rootRenderSlots":["sidebar","main","rightbar","shell.bottom","shell.overlay","shell.leading"],"layoutMembers":["panelInfo","selectPanel","beginNavigation","toggleSidebar","openRightbar","closeRightbar"]}
+  const satisfiesRange = function satisfiesRange(version, rangeText = SUPPORTED_HOST_RANGE) {
+  const parseVersion = (value) => {
+    const text = String(value ?? '').trim().replace(/^v/, '')
+    const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(text)
+    if (match === null) return null
+    return {
+      numbers: [Number(match[1]), Number(match[2]), Number(match[3])],
+      prerelease: match[4] === undefined ? [] : match[4].split('.'),
+    }
+  }
+  const compareVersions = (left, right) => {
+    const a = parseVersion(left)
+    const b = parseVersion(right)
+    if (a === null || b === null) return null
+    for (let index = 0; index < 3; index += 1) {
+      if (a.numbers[index] !== b.numbers[index]) return a.numbers[index] < b.numbers[index] ? -1 : 1
+    }
+    const aPre = a.prerelease
+    const bPre = b.prerelease
+    if (aPre.length === 0 && bPre.length === 0) return 0
+    if (aPre.length === 0) return 1
+    if (bPre.length === 0) return -1
+    for (let index = 0; index < Math.max(aPre.length, bPre.length); index += 1) {
+      const one = aPre[index]
+      const two = bPre[index]
+      if (one === undefined) return -1
+      if (two === undefined) return 1
+      if (one === two) continue
+      const oneNumeric = /^\d+$/.test(one)
+      const twoNumeric = /^\d+$/.test(two)
+      if (oneNumeric && twoNumeric) return Number(one) < Number(two) ? -1 : 1
+      if (oneNumeric !== twoNumeric) return oneNumeric ? -1 : 1
+      return one < two ? -1 : 1
+    }
+    return 0
+  }
+  const text = String(rangeText ?? '').trim()
+  const comparators = [...text.matchAll(/(>=|<=|>|<|=)?\s*([0-9]+(?:\.[0-9]+){2}(?:-[0-9A-Za-z.-]+)?)/g)]
+    .map((match) => ({ operator: match[1] ?? '=', target: match[2] }))
+  if (comparators.length === 0) return false
+  for (const { operator, target } of comparators) {
+    const delta = compareVersions(version, target)
+    if (delta === null) return false
+    if (operator === '>=' && delta < 0) return false
+    if (operator === '<=' && delta > 0) return false
+    if (operator === '>' && delta <= 0) return false
+    if (operator === '<' && delta >= 0) return false
+    if (operator === '=' && delta !== 0) return false
+  }
+  return true
+}
+  const guardHost = function guardHost(input = {}) {
+  const range = input.range ?? SUPPORTED_HOST_RANGE
+  const blockers = []
+  const warnings = []
+  const block = (code, message, name) => {
+    const item = { code, message }
+    if (name !== undefined) item.name = name
+    blockers.push(item)
+  }
+  const warn = (code, message, name) => {
+    const item = { code, message }
+    if (name !== undefined) item.name = name
+    warnings.push(item)
+  }
+
+  // 1) 版本：读不到 / 出区间都算 blocker。
+  const version = typeof input.hostVersion === 'string' ? input.hostVersion.trim() : ''
+  if (version.length === 0) block('version-unreadable', '宿主版本读不到，无法确认兼容')
+  else if (!satisfiesRange(version, range)) block('version-out-of-range', `宿主版本 ${version} 不在支持区间 ${range}`)
+
+  // 2) 基线：读不到按"不匹配"处理（安全侧），不再往下比结构。
+  const baseline = input.baseline
+  const baselineOk = baseline !== null && typeof baseline === 'object'
+    && typeof baseline.hostVersion === 'string' && baseline.hostVersion.length > 0
+    && Array.isArray(baseline.slots)
+  if (!baselineOk) {
+    block('baseline-unreadable', '契约基线不可读，按不匹配处理')
+    return { ok: blockers.length === 0, blockers, warnings }
+  }
+
+  // 3) 六条子槽：缺失 / kind 变化 / scope 变化都是 blocker；新增子槽只告警。
+  if (!Array.isArray(input.slots)) {
+    block('slots-unreadable', '读不到宿主子槽声明，不能盲注册')
+  } else {
+    const actual = new Map(input.slots.map((slot) => [slot?.name, slot]))
+    const expectedNames = new Set()
+    for (const expected of baseline.slots) {
+      expectedNames.add(expected.name)
+      const found = actual.get(expected.name)
+      if (found === undefined || found === null) {
+        block('slot-missing', `缺少子槽 ${expected.name}（${expected.kind}）`, expected.name)
+        continue
+      }
+      if (found.kind != null && expected.kind != null && found.kind !== expected.kind) {
+        block('slot-kind-changed', `子槽 ${expected.name} 由 ${expected.kind} 变 ${found.kind}`, expected.name)
+      }
+      if (found.scope != null && expected.scope != null && found.scope !== expected.scope) {
+        block('slot-scope-changed', `子槽 ${expected.name} scope 由 ${expected.scope} 变 ${found.scope}`, expected.name)
+      }
+    }
+    for (const slot of input.slots) {
+      if (slot?.name !== undefined && !expectedNames.has(slot.name)) warn('slot-added', `宿主新增子槽 ${slot.name}`, slot.name)
+    }
+  }
+
+  // 4) root.renderSlots：宿主报了的名字集合里缺项 = blocker；没报（undefined）= 跳过。
+  if (Array.isArray(input.renderSlots)) {
+    const have = new Set(input.renderSlots)
+    for (const name of (Array.isArray(baseline.rootRenderSlots) ? baseline.rootRenderSlots : [])) {
+      if (!have.has(name)) block('render-slot-missing', `root.renderSlots 缺 ${name}`, name)
+    }
+  }
+
+  // 5) ILayout 六成员：缺项 = blocker；新增成员只告警。基线两种形状都认。
+  const expectedMembers = Array.isArray(baseline.layoutMembers)
+    ? baseline.layoutMembers
+    : (baseline.services?.layout?.members ?? baseline.layoutService?.face ?? null)
+  if (Array.isArray(input.layoutMembers) && Array.isArray(expectedMembers)) {
+    const have = new Set(input.layoutMembers)
+    for (const name of expectedMembers) {
+      if (!have.has(name)) block('layout-member-missing', `ILayout 缺成员 ${name}`, name)
+    }
+    for (const name of input.layoutMembers) {
+      if (!expectedMembers.includes(name)) warn('layout-member-added', `ILayout 新增成员 ${name}`, name)
+    }
+  }
+
+  // 6) 主题前缀改名：只是配色退化，仍接管（warning）。
+  const expectedPrefix = typeof baseline.themePrefix === 'string' ? baseline.themePrefix : ''
+  const actualPrefix = typeof input.themePrefix === 'string' ? input.themePrefix : ''
+  if (expectedPrefix.length > 0 && actualPrefix.length > 0 && expectedPrefix !== actualPrefix) {
+    warn('theme-prefix-changed', `主题变量前缀由 ${expectedPrefix} 变 ${actualPrefix}，配色走 fallback`)
+  }
+
+  return { ok: blockers.length === 0, blockers, warnings }
+}
+  const rollbackCommand = function rollbackCommand(profile = 'web') {
+  const name = typeof profile === 'string' && profile.trim().length > 0 ? profile.trim() : 'web'
+  return [
+    `dsh plugin --profile ${name} remove ${PACKAGE_NAME}`,
+    `dsh plugin --profile ${name} install`,
+    '# 之后重启 dsh（退出 dsh web 后重新打开，并硬刷新页面）',
+  ].join('\n')
 }
   // #endregion children-from-contract
 
@@ -153,6 +303,11 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-empty__starter{align-items:center;background:var(--dsw-alias-button-floating-fill,rgba(127,127,127,.08));border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));border-radius:10px;color:inherit;cursor:pointer;display:flex;font:inherit;font-size:13px;height:36px;justify-content:center;padding:0 10px}
 .launcher-empty__hint{color:var(--dsw-alias-label-tertiary,#8a8a8a);font-size:11px;margin:4px 0 0}
 .launcher-conflict{border-bottom:1px solid var(--dsw-alias-state-warn-border,#d9a441);background:var(--dsw-alias-state-warn-fill,#fff6e0);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.5;padding:6px 12px;position:sticky;top:0;z-index:50}
+.launcher-hostguard{position:sticky;top:0;z-index:60;border-bottom:1px solid var(--dsw-alias-state-warn-border,#d9a441);background:var(--dsw-alias-state-warn-fill,#fff6e0);color:var(--dsw-alias-label-primary,#1f1f1f);font-size:12px;line-height:1.6;padding:8px 12px;display:flex;flex-direction:column;gap:6px}
+.launcher-hostguard__head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:600}
+.launcher-hostguard__close{font:inherit;font-size:12px;height:24px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.2));border-radius:6px;background:transparent;color:inherit;cursor:pointer;flex:none}
+.launcher-hostguard__reasons{margin:0;padding-left:18px}
+.launcher-hostguard__cmd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--dsw-alias-bg-2,rgba(0,0,0,.06));border-radius:6px;padding:6px;margin:0}
 `
 
   function ensureStyle() {
@@ -1925,8 +2080,138 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   // W5 命令清单**动态枚举**：由接线方（clientRoot 包装层）从宿主命令源取；取不到就是空表，
   // 面板显示「未接入命令源」——不拿硬编码清单充数（05 §6.5 TC-16-3/16-6）。
 
+  // ---- HostGuard / Bootstrap（票 29）：注册前自检，不接管时保留原生 UI + 可关闭横幅 ----
+
+  /** 宿主主题变量前缀（能读到的第一个）；读不到返回 undefined（guard 按"未知"跳过）。 */
+  function detectThemePrefix() {
+    if (typeof window !== 'undefined' && typeof window.__DSH_LAUNCHER_THEME_PREFIX__ === 'string') {
+      return window.__DSH_LAUNCHER_THEME_PREFIX__
+    }
+    if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return undefined
+    try {
+      const style = getComputedStyle(document.documentElement)
+      for (const prefix of ['--dsh-', '--dsw-']) {
+        if (style.getPropertyValue(`${prefix}alias-bg-base`).trim().length > 0) return prefix
+      }
+    } catch {
+      /* 读不到就跳过前缀检查 */
+    }
+    return undefined
+  }
+
+  /**
+   * 从运行期 ctx 探测宿主形状（供 HostGuard）。
+   * `ctx.slots.spec` 是宿主槽声明；读不到（旧宿主 / API 缺失）返回无 slots，Bootstrap 跳过自检而不是误判。
+   * 允许 `window.__DSH_LAUNCHER_HOST_SHAPE__` 覆盖（canary 用变异基线注入）。
+   * @param {object} ctx - cordis 上下文。
+   * @returns {object} guardHost 的输入。
+   */
+  function probeHostShape(ctx) {
+    const override = typeof window !== 'undefined' ? window.__DSH_LAUNCHER_HOST_SHAPE__ : null
+    if (override !== null && typeof override === 'object') return override
+    let slots
+    if (typeof ctx?.slots?.spec === 'function') {
+      const found = []
+      for (const name of Object.keys(CHILDREN)) {
+        let spec
+        try { spec = ctx.slots.spec(name) } catch { spec = undefined }
+        if (spec !== undefined && spec !== null) found.push({ name, kind: spec.kind, scope: spec.scope })
+      }
+      slots = found.length > 0 ? found : undefined
+    }
+    let renderSlots
+    try {
+      const rootSpec = typeof ctx?.slots?.spec === 'function' ? ctx.slots.spec('root') : undefined
+      if (rootSpec !== undefined && rootSpec !== null && Array.isArray(rootSpec.renderSlots)) renderSlots = rootSpec.renderSlots
+    } catch {
+      /* 读不到就不检查 renderSlots */
+    }
+    let hostVersion = typeof window !== 'undefined'
+      ? (window.__DSH_LAUNCHER_HOST_VERSION__ || window.__DSH_BOOT__?.release?.version || '')
+      : ''
+    if (typeof hostVersion !== 'string' || hostVersion.length === 0) hostVersion = HOST_BASELINE.hostVersion
+    return { hostVersion, baseline: HOST_BASELINE, slots, renderSlots, themePrefix: detectThemePrefix() }
+  }
+
+  /** 横幅模型（原因列表 + 回退命令 + 本次不再提示），命令复用生成的 rollbackCommand。 */
+  function hostGuardBanner(verdict) {
+    const profile = typeof window !== 'undefined' && typeof window.__DSH_LAUNCHER_PROFILE__ === 'string'
+      ? window.__DSH_LAUNCHER_PROFILE__
+      : 'web'
+    return {
+      id: 'launcher-hostguard-banner',
+      title: '本版 UI 与当前 dsh 不匹配，已保留原生界面',
+      reasons: verdict.blockers.map((item) => item.message || item.code),
+      command: rollbackCommand(profile),
+      dismissLabel: '本次不再提示',
+    }
+  }
+
+  /** 渲染可关闭横幅（不持久化：关闭只移除本节点，下次启动仍提示）。重复 id 不叠加。 */
+  function showHostGuardBanner(model) {
+    if (typeof document === 'undefined' || document.body === null) return
+    if (document.getElementById(model.id) !== null) return
+    const bar = document.createElement('div')
+    bar.id = model.id
+    bar.className = 'launcher-hostguard'
+    bar.setAttribute('role', 'alert')
+    const head = document.createElement('div')
+    head.className = 'launcher-hostguard__head'
+    const title = document.createElement('span')
+    title.textContent = model.title
+    const close = document.createElement('button')
+    close.type = 'button'
+    close.className = 'launcher-hostguard__close'
+    close.textContent = model.dismissLabel
+    close.addEventListener('click', () => bar.remove())
+    head.append(title, close)
+    const reasons = document.createElement('ul')
+    reasons.className = 'launcher-hostguard__reasons'
+    for (const reason of model.reasons) {
+      const li = document.createElement('li')
+      li.textContent = reason
+      reasons.append(li)
+    }
+    const command = document.createElement('pre')
+    command.className = 'launcher-hostguard__cmd'
+    command.textContent = model.command
+    const copy = document.createElement('button')
+    copy.type = 'button'
+    copy.className = 'launcher-hostguard__close'
+    copy.textContent = '复制命令'
+    copy.addEventListener('click', () => {
+      try {
+        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(model.command)
+      } catch {
+        /* 复制失败就让用户手动选中命令 */
+      }
+    })
+    bar.append(head, reasons, command, copy)
+    document.body.prepend(bar)
+  }
+
   function apply(ctx) {
     ensureStyle()
+    // 票 29 Bootstrap：guard.ok 才注册 root；不 ok 时保留原生 UI + 横幅，不抛错、不重复。
+    if (HOST_GUARD_DONE) return () => {}
+    HOST_GUARD_DONE = true
+    const hostShape = probeHostShape(ctx)
+    if (hostShape.slots === undefined) {
+      // 读不到槽声明 API（旧宿主）就不能判定；按旧宿主兼容继续，不让自检把界面挡死。
+      console.warn('dsh-client-ui-launcher: 读不到宿主槽声明（ctx.slots.spec 缺失），跳过 HostGuard 自检')
+    } else {
+      const verdict = guardHost(hostShape)
+      if (!verdict.ok) {
+        window.__DSH_LAUNCHER_SHELL__ = false
+        window.__DSH_LAUNCHER_HOST_GUARD__ = verdict
+        try { showHostGuardBanner(hostGuardBanner(verdict)) } catch (error) { console.warn('dsh-client-ui-launcher: 横幅渲染失败', error) }
+        console.info('dsh-client-ui-launcher: HostGuard 未接管', JSON.stringify(verdict.blockers.map((item) => item.code)))
+        return () => { HOST_GUARD_DONE = false }
+      }
+      if (verdict.warnings.length > 0) {
+        console.warn('dsh-client-ui-launcher: HostGuard 警告（仍接管）', JSON.stringify(verdict.warnings.map((item) => item.code)))
+      }
+    }
     // 本实现的运行时标记：verify 用它 + [data-shell] 双特征判"现在装的是哪一版 layout"，
     // 不靠容易在两侧都出现的槽标记（实测 [data-slot="sidebar"] 两态都有）。
     window.__DSH_LAUNCHER_SHELL__ = true
@@ -2043,6 +2328,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     return () => {
       window.__DSH_LAUNCHER_SHELL__ = false
+      HOST_GUARD_DONE = false
       if (window.__DSH_LAUNCHER_CTX__ === ctx) delete window.__DSH_LAUNCHER_CTX__
       if (typeof window.removeEventListener === 'function') window.removeEventListener('resize', syncFolded)
       // 会话动作的 dispose 只释放一次（之前被外层循环重复调用）
