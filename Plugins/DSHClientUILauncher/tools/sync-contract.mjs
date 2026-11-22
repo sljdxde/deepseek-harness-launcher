@@ -14,13 +14,34 @@ import { execFileSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { SUB_SLOTS, LAYOUT_FACE_MEMBERS } from '../lib/contract.js'
+import { SUB_SLOTS, LAYOUT_FACE_MEMBERS, SUPPORTED_HOST_RANGE } from '../lib/contract.js'
+import { guardHost, satisfiesRange } from '../lib/guard.js'
+import { rollbackCommand, PACKAGE_NAME } from '../lib/rollback.js'
 import { RAIL_ENTRIES } from '../lib/rail.js'
 import { MODE_LABELS, statusText } from '../lib/statusbar.js'
 import { SHELL_ICONS, DSH_LOGO } from '../lib/icons.js'
 import { SHELL_METRICS, tokensCss, skeletonCss } from '../lib/tokens.js'
 import { shellColumns, DRAWER_BREAKPOINT } from '../lib/shell-layout.js'
 import { shellIcon, renderRail, renderStatusbar } from '../lib/shell-render.js'
+import {
+  DOCK_TABS,
+  DOCK_TAB_IDS,
+  DOCK_WIDTHS,
+  DOCK_DEMO,
+  SET_GROUPS,
+  SET_SECTIONS,
+  SET_SHORTCUTS,
+  DOCK_ICONS,
+  dockWidthFor,
+  dockColumnsFor,
+  applySetting,
+  diffSummary,
+  dockIcon,
+  renderDockTabs,
+  renderDockPanel,
+  renderSettings,
+  dockSettingsCss,
+} from '../lib/dock-settings.js'
 import {
   SIDEBAR_METRICS, SIDEBAR_ICONS, sidebarCss, sidebarIcon, rowTitleLeftX,
   normalizeSession, normalizeSessions, workspaceName, groupSessions, needSummary, normalizeOpen, buildSidebarState,
@@ -36,6 +57,8 @@ const START = '  // #region children-from-contract'
 const END = '  // #endregion children-from-contract'
 const SHELL_START = '  // #region shell-from-lib'
 const SHELL_END = '  // #endregion shell-from-lib'
+const DOCK_START = '  // #region dock-settings-from-lib'
+const DOCK_END = '  // #endregion dock-settings-from-lib'
 const SIDEBAR_START = '  // #region sidebar-from-lib'
 const SIDEBAR_END = '  // #endregion sidebar-from-lib'
 
@@ -53,8 +76,31 @@ export function contractBlock() {
     `  const RAIL_ENTRIES = ${JSON.stringify(RAIL_ENTRIES)}`,
     `  const MODE_LABELS = ${JSON.stringify(MODE_LABELS)}`,
     `  const statusText = ${statusText.toString()}`,
+    // HostGuard + 回退命令：浏览器半区不能 import，用 toString() 内联，保持单一事实（票 29）。
+    `  const SUPPORTED_HOST_RANGE = ${JSON.stringify(SUPPORTED_HOST_RANGE)}`,
+    `  const PACKAGE_NAME = ${JSON.stringify(PACKAGE_NAME)}`,
+    `  const HOST_BASELINE = ${JSON.stringify(hostBaselineSummary())}`,
+    `  const satisfiesRange = ${satisfiesRange.toString()}`,
+    `  const guardHost = ${guardHost.toString()}`,
+    `  const rollbackCommand = ${rollbackCommand.toString()}`,
     END,
   ].join('\n')
+}
+
+/**
+ * 把 contracts/host-baseline.json 裁成 HostGuard 运行期需要的字段。
+ * 生成进浏览器半区，客户端不读磁盘也能拿到"应该长什么样"。
+ * @returns {{ hostVersion: string, themePrefix: string, slots: object[], rootRenderSlots: string[], layoutMembers: string[] }}
+ */
+export function hostBaselineSummary() {
+  const baseline = JSON.parse(readFileSync(join(ROOT, 'contracts', 'host-baseline.json'), 'utf8'))
+  return {
+    hostVersion: baseline.hostVersion ?? baseline.host?.layoutVersion ?? '',
+    themePrefix: baseline.themePrefix ?? '',
+    slots: (baseline.slots ?? []).map((slot) => ({ name: slot.name, kind: slot.kind, scope: slot.scope })),
+    rootRenderSlots: baseline.rootRenderSlots ?? [],
+    layoutMembers: baseline.services?.layout?.members ?? baseline.layoutService?.face ?? [],
+  }
 }
 
 /** 模块 id 段：与 package.json 的 name 一致（同名替换时两边一起变，见 tools/build-layout-alias.mjs）。 */
@@ -109,6 +155,48 @@ export function withShellBlock(source) {
   const end = source.indexOf(SHELL_END)
   if (start < 0 || end < 0) return source
   return `${source.slice(0, start)}${shellBlock()}${source.slice(end + SHELL_END.length)}`
+}
+
+/**
+ * 生成右栏 + 设置块（票 33）：五面板/设置分组的数据常量、纯函数与渲染函数。
+ *
+ * 与 shell 块同一套路：lib/dock-settings.js 是源，浏览器半区拿生成物。
+ * 渲染函数用 toString 内联，所以它们只能引用本块里同样被内联的常量/函数
+ * （DOCK_ICONS / DOCK_TAB_IDS / diffSummary / dockIcon），不能 import。
+ * @returns {string} 标记区文本（含起止标记）。
+ */
+export function dockSettingsBlock() {
+  return [
+    DOCK_START,
+    '  // 本段由 tools/sync-contract.mjs 从 lib/dock-settings.js 生成，勿手改；',
+    '  // 漂移由 test/dock-settings.test.mjs 与同步检查挡住。',
+    `  const DOCK_TABS = ${JSON.stringify(DOCK_TABS)}`,
+    `  const DOCK_TAB_IDS = ${JSON.stringify(DOCK_TAB_IDS)}`,
+    `  const DOCK_WIDTHS = ${JSON.stringify(DOCK_WIDTHS)}`,
+    `  const DOCK_DEMO = ${JSON.stringify(DOCK_DEMO)}`,
+    `  const SET_GROUPS = ${JSON.stringify(SET_GROUPS)}`,
+    `  const SET_SECTIONS = ${JSON.stringify(SET_SECTIONS)}`,
+    `  const SET_SHORTCUTS = ${JSON.stringify(SET_SHORTCUTS)}`,
+    `  const DOCK_ICONS = ${JSON.stringify(DOCK_ICONS)}`,
+    `  const DOCK_SETTINGS_CSS = ${JSON.stringify(dockSettingsCss())}`,
+    `  const diffSummary = ${diffSummary.toString()}`,
+    `  const dockIcon = ${dockIcon.toString()}`,
+    `  const dockWidthFor = ${dockWidthFor.toString()}`,
+    `  const dockColumnsFor = ${dockColumnsFor.toString()}`,
+    `  const applySetting = ${applySetting.toString()}`,
+    `  const renderDockTabs = ${renderDockTabs.toString()}`,
+    `  const renderDockPanel = ${renderDockPanel.toString()}`,
+    `  const renderSettings = ${renderSettings.toString()}`,
+    DOCK_END,
+  ].join('\n')
+}
+
+/** 把源码里的 dock-settings 标记区换成生成内容；没有该标记区时原样返回（可选区）。 */
+export function withDockSettingsBlock(source) {
+  const start = source.indexOf(DOCK_START)
+  const end = source.indexOf(DOCK_END)
+  if (start < 0 || end < 0) return source
+  return `${source.slice(0, start)}${dockSettingsBlock()}${source.slice(end + DOCK_END.length)}`
 }
 
 /**
@@ -171,7 +259,7 @@ export function withContractBlock(source) {
   let next = `${source.slice(0, start)}${contractBlock()}${source.slice(end + END.length)}`
   // BUILD_STAMP 也随包版本/提交更新（页面 data-build 用它）
   next = next.replace(/const BUILD_STAMP = "[^"]*"/, `const BUILD_STAMP = ${JSON.stringify(buildStampBlock())}`)
-  return withSidebarBlock(withShellBlock(next))
+  return withSidebarBlock(withDockSettingsBlock(withShellBlock(next)))
 }
 
 /**

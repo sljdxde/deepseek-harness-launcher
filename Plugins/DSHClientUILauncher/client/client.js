@@ -7,8 +7,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.4+dceb4e3"
+  const BUILD_STAMP = "0.2.2-rc.4+e907506"
   let CURRENT_CTX = null
+  // 票 29：Bootstrap 只生效一次（重复加载不注册两次、不叠第二条横幅）；卸载时复位。
+  let HOST_GUARD_DONE = false
 
   // #region children-from-contract
   // 本段由 tools/sync-contract.mjs 从 lib/contract.js 生成，勿手改；
@@ -35,6 +37,154 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     mode: MODE_LABELS[mode] ?? MODE_LABELS['auto-safe'],
     running: parts.join(' · '),
   }
+}
+  const SUPPORTED_HOST_RANGE = ">=0.2.2-rc.4 <0.3.0"
+  const PACKAGE_NAME = "@deepseek-ai/dsh-client-ui-layout"
+  const HOST_BASELINE = {"hostVersion":"0.2.2-rc.4","themePrefix":"--dsh-","slots":[{"name":"sidebar","kind":"single","scope":"root"},{"name":"main","kind":"keyed","scope":"root"},{"name":"rightbar","kind":"single","scope":"root"},{"name":"shell.bottom","kind":"single","scope":"root"},{"name":"shell.overlay","kind":"list","scope":"root"},{"name":"shell.leading","kind":"single","scope":"root"}],"rootRenderSlots":["sidebar","main","rightbar","shell.bottom","shell.overlay","shell.leading"],"layoutMembers":["panelInfo","selectPanel","beginNavigation","toggleSidebar","openRightbar","closeRightbar"]}
+  const satisfiesRange = function satisfiesRange(version, rangeText = SUPPORTED_HOST_RANGE) {
+  const parseVersion = (value) => {
+    const text = String(value ?? '').trim().replace(/^v/, '')
+    const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(text)
+    if (match === null) return null
+    return {
+      numbers: [Number(match[1]), Number(match[2]), Number(match[3])],
+      prerelease: match[4] === undefined ? [] : match[4].split('.'),
+    }
+  }
+  const compareVersions = (left, right) => {
+    const a = parseVersion(left)
+    const b = parseVersion(right)
+    if (a === null || b === null) return null
+    for (let index = 0; index < 3; index += 1) {
+      if (a.numbers[index] !== b.numbers[index]) return a.numbers[index] < b.numbers[index] ? -1 : 1
+    }
+    const aPre = a.prerelease
+    const bPre = b.prerelease
+    if (aPre.length === 0 && bPre.length === 0) return 0
+    if (aPre.length === 0) return 1
+    if (bPre.length === 0) return -1
+    for (let index = 0; index < Math.max(aPre.length, bPre.length); index += 1) {
+      const one = aPre[index]
+      const two = bPre[index]
+      if (one === undefined) return -1
+      if (two === undefined) return 1
+      if (one === two) continue
+      const oneNumeric = /^\d+$/.test(one)
+      const twoNumeric = /^\d+$/.test(two)
+      if (oneNumeric && twoNumeric) return Number(one) < Number(two) ? -1 : 1
+      if (oneNumeric !== twoNumeric) return oneNumeric ? -1 : 1
+      return one < two ? -1 : 1
+    }
+    return 0
+  }
+  const text = String(rangeText ?? '').trim()
+  const comparators = [...text.matchAll(/(>=|<=|>|<|=)?\s*([0-9]+(?:\.[0-9]+){2}(?:-[0-9A-Za-z.-]+)?)/g)]
+    .map((match) => ({ operator: match[1] ?? '=', target: match[2] }))
+  if (comparators.length === 0) return false
+  for (const { operator, target } of comparators) {
+    const delta = compareVersions(version, target)
+    if (delta === null) return false
+    if (operator === '>=' && delta < 0) return false
+    if (operator === '<=' && delta > 0) return false
+    if (operator === '>' && delta <= 0) return false
+    if (operator === '<' && delta >= 0) return false
+    if (operator === '=' && delta !== 0) return false
+  }
+  return true
+}
+  const guardHost = function guardHost(input = {}) {
+  const range = input.range ?? SUPPORTED_HOST_RANGE
+  const blockers = []
+  const warnings = []
+  const block = (code, message, name) => {
+    const item = { code, message }
+    if (name !== undefined) item.name = name
+    blockers.push(item)
+  }
+  const warn = (code, message, name) => {
+    const item = { code, message }
+    if (name !== undefined) item.name = name
+    warnings.push(item)
+  }
+
+  // 1) 版本：读不到 / 出区间都算 blocker。
+  const version = typeof input.hostVersion === 'string' ? input.hostVersion.trim() : ''
+  if (version.length === 0) block('version-unreadable', '宿主版本读不到，无法确认兼容')
+  else if (!satisfiesRange(version, range)) block('version-out-of-range', `宿主版本 ${version} 不在支持区间 ${range}`)
+
+  // 2) 基线：读不到按"不匹配"处理（安全侧），不再往下比结构。
+  const baseline = input.baseline
+  const baselineOk = baseline !== null && typeof baseline === 'object'
+    && typeof baseline.hostVersion === 'string' && baseline.hostVersion.length > 0
+    && Array.isArray(baseline.slots)
+  if (!baselineOk) {
+    block('baseline-unreadable', '契约基线不可读，按不匹配处理')
+    return { ok: blockers.length === 0, blockers, warnings }
+  }
+
+  // 3) 六条子槽：缺失 / kind 变化 / scope 变化都是 blocker；新增子槽只告警。
+  if (!Array.isArray(input.slots)) {
+    block('slots-unreadable', '读不到宿主子槽声明，不能盲注册')
+  } else {
+    const actual = new Map(input.slots.map((slot) => [slot?.name, slot]))
+    const expectedNames = new Set()
+    for (const expected of baseline.slots) {
+      expectedNames.add(expected.name)
+      const found = actual.get(expected.name)
+      if (found === undefined || found === null) {
+        block('slot-missing', `缺少子槽 ${expected.name}（${expected.kind}）`, expected.name)
+        continue
+      }
+      if (found.kind != null && expected.kind != null && found.kind !== expected.kind) {
+        block('slot-kind-changed', `子槽 ${expected.name} 由 ${expected.kind} 变 ${found.kind}`, expected.name)
+      }
+      if (found.scope != null && expected.scope != null && found.scope !== expected.scope) {
+        block('slot-scope-changed', `子槽 ${expected.name} scope 由 ${expected.scope} 变 ${found.scope}`, expected.name)
+      }
+    }
+    for (const slot of input.slots) {
+      if (slot?.name !== undefined && !expectedNames.has(slot.name)) warn('slot-added', `宿主新增子槽 ${slot.name}`, slot.name)
+    }
+  }
+
+  // 4) root.renderSlots：宿主报了的名字集合里缺项 = blocker；没报（undefined）= 跳过。
+  if (Array.isArray(input.renderSlots)) {
+    const have = new Set(input.renderSlots)
+    for (const name of (Array.isArray(baseline.rootRenderSlots) ? baseline.rootRenderSlots : [])) {
+      if (!have.has(name)) block('render-slot-missing', `root.renderSlots 缺 ${name}`, name)
+    }
+  }
+
+  // 5) ILayout 六成员：缺项 = blocker；新增成员只告警。基线两种形状都认。
+  const expectedMembers = Array.isArray(baseline.layoutMembers)
+    ? baseline.layoutMembers
+    : (baseline.services?.layout?.members ?? baseline.layoutService?.face ?? null)
+  if (Array.isArray(input.layoutMembers) && Array.isArray(expectedMembers)) {
+    const have = new Set(input.layoutMembers)
+    for (const name of expectedMembers) {
+      if (!have.has(name)) block('layout-member-missing', `ILayout 缺成员 ${name}`, name)
+    }
+    for (const name of input.layoutMembers) {
+      if (!expectedMembers.includes(name)) warn('layout-member-added', `ILayout 新增成员 ${name}`, name)
+    }
+  }
+
+  // 6) 主题前缀改名：只是配色退化，仍接管（warning）。
+  const expectedPrefix = typeof baseline.themePrefix === 'string' ? baseline.themePrefix : ''
+  const actualPrefix = typeof input.themePrefix === 'string' ? input.themePrefix : ''
+  if (expectedPrefix.length > 0 && actualPrefix.length > 0 && expectedPrefix !== actualPrefix) {
+    warn('theme-prefix-changed', `主题变量前缀由 ${expectedPrefix} 变 ${actualPrefix}，配色走 fallback`)
+  }
+
+  return { ok: blockers.length === 0, blockers, warnings }
+}
+  const rollbackCommand = function rollbackCommand(profile = 'web') {
+  const name = typeof profile === 'string' && profile.trim().length > 0 ? profile.trim() : 'web'
+  return [
+    `dsh plugin --profile ${name} remove ${PACKAGE_NAME}`,
+    `dsh plugin --profile ${name} install`,
+    '# 之后重启 dsh（退出 dsh web 后重新打开，并硬刷新页面）',
+  ].join('\n')
 }
   // #endregion children-from-contract
 
@@ -457,6 +607,327 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 }
   // #endregion sidebar-from-lib
 
+  // #region dock-settings-from-lib
+  // 本段由 tools/sync-contract.mjs 从 lib/dock-settings.js 生成，勿手改；
+  // 漂移由 test/dock-settings.test.mjs 与同步检查挡住。
+  const DOCK_TABS = [{"id":"review","label":"审阅","icon":"file","badge":3},{"id":"files","label":"文件","icon":"folder","badge":0},{"id":"term","label":"终端","icon":"terminal","badge":0},{"id":"tasks","label":"任务","icon":"target","badge":2},{"id":"side","label":"侧聊","icon":"message","badge":0}]
+  const DOCK_TAB_IDS = ["review","files","term","tasks","side"]
+  const DOCK_WIDTHS = {"min":320,"max":520,"default":380,"hideBelow":1020}
+  const DOCK_DEMO = {"diff":[{"file":"dsh-ui-merged.html","add":218,"del":0,"staged":false,"lines":[["","  <!doctype html>"],["","  <html lang=\"zh-CN\" data-theme=\"dark\">"],["+","  <link rel=\"stylesheet\" href=\"tokens.css\">"],["+","  <script src=\"shell.js\"></script>"],["","  </html>"]]},{"file":"tokens.css","add":64,"del":12,"staged":false,"lines":[["-","  --bg:#eeeae0;"],["+","  --bg:#121316;"],["-","  --accent:#3a55c8;"],["+","  --accent:#93a8ff;"]]}],"files":[{"d":0,"n":"dsh-launcher","t":"dir"},{"d":1,"n":"dsh-ui-merged.html","t":"file","chg":true},{"d":1,"n":"tokens.css","t":"file","chg":true},{"d":1,"n":"shell.js","t":"file"},{"d":1,"n":"notes","t":"dir"},{"d":2,"n":"fusion.md","t":"file","chg":true}],"fileSel":0,"term":[["p","yuzhou@mac-mini  ~/Pod"],["o","git status --short"],["o"," M dsh-ui-merged.html"],["o"," M tokens.css"],["ok","✓ 42 passing（演示）"]],"tasks":[{"id":"t1","t":"左栏按工作区 / 会话分组","who":"UI-UX 设计师","col":"doing","sub":"等用户点头"},{"id":"t2","t":"融合版：对话流组件移植","who":"研发工程师","col":"doing","sub":"接口已定"},{"id":"t3","t":"图标声明表与兜底链","who":"UI-UX 设计师","col":"todo","sub":"没声明的用兜底"},{"id":"t4","t":"日夜两套对比度校对","who":"UI-UX 设计师","col":"done","sub":"已交付"}],"side":[{"me":false,"t":"这个侧聊是独立上下文的，不会污染主会话。"},{"me":true,"t":"右栏审阅的 diff 卡片按文件分块，头行带 +N。"}]}
+  const SET_GROUPS = [{"id":"general","label":"常用"},{"id":"model","label":"模型"},{"id":"ext","label":"扩展"},{"id":"conn","label":"连接"},{"id":"data","label":"数据"},{"id":"adv","label":"高级"}]
+  const SET_SECTIONS = {"general":[{"title":"外观","rows":[{"id":"theme","label":"主题","hint":"日夜两套对比度都过 AA","control":{"type":"segmented","key":"theme","options":[{"id":"light","label":"日间"},{"id":"dark","label":"夜间"}]}},{"id":"density","label":"密度","hint":"紧凑省 6px 行高，适合长对话","control":{"type":"segmented","key":"density","options":[{"id":"cozy","label":"舒适"},{"id":"compact","label":"紧凑"}]}},{"id":"dock","label":"右栏","hint":"审阅、文件、终端、任务、侧聊","control":{"type":"toggle","key":"dock","onLabel":"关右栏","offLabel":"开右栏"}}]},{"title":"快捷键","rows":[{"id":"shortcut-0","label":"命令面板","control":{"type":"kbd","value":"⌘K"}},{"id":"shortcut-1","label":"右栏","control":{"type":"kbd","value":"⌘J"}},{"id":"shortcut-2","label":"分屏","control":{"type":"kbd","value":"⌘D"}},{"id":"shortcut-3","label":"日间 / 夜间","control":{"type":"kbd","value":"⌘⇧L"}},{"id":"shortcut-4","label":"设置","control":{"type":"kbd","value":"⌘,"}},{"id":"shortcut-5","label":"关掉浮层","control":{"type":"kbd","value":"Esc"}}]}],"model":[{"title":"模型","rows":[{"id":"model","label":"模型","control":{"type":"static","value":"deepseek · routing group"}},{"id":"reason","label":"推理等级","control":{"type":"static","value":"Default"}},{"id":"team","label":"启用智能体团队协作","hint":"允许多个子代理分工协作，主代理汇总","control":{"type":"switch","key":"team"}}]},{"title":"其他","rows":[{"id":"submodel","label":"子代理模型","hint":"拆活时用哪条路由","control":{"type":"static","value":"同主模型"}},{"id":"compact","label":"上下文压缩","hint":"到 85% 提醒、95% 强制","control":{"type":"static","value":"自动"}}]}],"ext":[{"title":"扩展","rows":[{"id":"skill","label":"Skill 管理","hint":"装好的 Skill、从 GitHub 或文件夹安装","control":{"type":"nav","target":"ext-skill","label":"打开"}},{"id":"mcp","label":"MCP 管理","hint":"服务器、工具数、连接状态","control":{"type":"nav","target":"ext-mcp","label":"打开"}},{"id":"ssh","label":"SSH 管理","hint":"主机、端口转发","control":{"type":"nav","target":"ext-ssh","label":"打开"}},{"id":"archive","label":"归档管理","hint":"归档的会话与任务","control":{"type":"nav","target":"ext-archive","label":"打开"}}]}],"conn":[{"title":"连接","rows":[{"id":"net","label":"网络","hint":"直连，未设代理","control":{"type":"static","value":"正常"}},{"id":"proxy","label":"代理","hint":"HTTP / SOCKS 代理","control":{"type":"static","value":"未设置"}},{"id":"ssh","label":"SSH 主机","hint":"已保存 3 台","control":{"type":"nav","target":"ext-ssh","label":"管理"}}]}],"data":[{"title":"数据","rows":[{"id":"whitelist","label":"目录白名单","hint":"白名单内不触发审批","control":{"type":"static","value":"~/Pod · ~/Pod/tasks"}},{"id":"archive","label":"归档","hint":"归档的会话与任务","control":{"type":"nav","target":"ext-archive","label":"打开"}},{"id":"plugindata","label":"插件数据","hint":"插件自己的设置与缓存","control":{"type":"static","value":"随插件管理"}}]}],"adv":[{"title":"高级","rows":[{"id":"revert","label":"回退原生 UI","hint":"移除 profile 依赖并重启；审批与审计不丢","control":{"type":"danger","key":"revertNative","label":"回退"}},{"id":"contract","label":"契约自检","hint":"接管前比对宿主版本与槽集合","control":{"type":"static","value":"宿主 rc.4 / 声明 rc.5"}},{"id":"update","label":"检查更新","hint":"本版不接更新通道","control":{"type":"disabled","label":"检查","reason":"本版不接更新通道"}}]}]}
+  const SET_SHORTCUTS = [{"keys":"⌘K","label":"命令面板"},{"keys":"⌘J","label":"右栏"},{"keys":"⌘D","label":"分屏"},{"keys":"⌘⇧L","label":"日间 / 夜间"},{"keys":"⌘,","label":"设置"},{"keys":"Esc","label":"关掉浮层"}]
+  const DOCK_ICONS = {"file":"<path d=\"M14 3v4a1 1 0 0 0 1 1h4\" /><path d=\"M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z\" />","folder":"<path d=\"M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2\" />","terminal":"<path d=\"M8 9l3 3l-3 3\" /><path d=\"M13 15l3 0\" /><path d=\"M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z\" />","target":"<path d=\"M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0\" /><path d=\"M12 12m-5 0a5 5 0 1 0 10 0a5 5 0 1 0 -10 0\" /><path d=\"M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\" />","message":"<path d=\"M8 9h8\" /><path d=\"M8 13h6\" /><path d=\"M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12z\" />","git":"<path d=\"M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\" /><path d=\"M12 3l7 7l-7 7l-7 -7z\" />","check":"<path d=\"M5 12l5 5l10 -10\" />","plus":"<path d=\"M12 5l0 14\" /><path d=\"M5 12l14 0\" />","x":"<path d=\"M18 6l-12 12\" /><path d=\"M6 6l12 12\" />"}
+  const DOCK_SETTINGS_CSS = ".launcher-dock-tabs{display:flex;align-items:center;gap:1px;padding:4px 8px 0;border-bottom:1px solid var(--l-line);overflow-x:auto;scrollbar-width:none;flex:0 0 auto}\n.launcher-dock-tabs__grow{flex:1}\n.launcher-dock-tab{display:inline-flex;align-items:center;gap:4px;padding:8px 7px;font:inherit;font-size:12px;color:var(--l-ink3);background:transparent;border:0;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}\n.launcher-dock-tab:hover{color:var(--l-ink)}\n.launcher-dock-tab.on{color:var(--l-ink);border-bottom-color:var(--l-accent);font-weight:500}\n.launcher-dock-tab:focus-visible{outline:2px solid var(--l-accent);outline-offset:-2px}\n.launcher-dock-tab svg{width:15px;height:15px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-dock-tab__n{font-size:11px;line-height:1;background:var(--l-surface3);border-radius:4px;padding:2px 3px;color:var(--l-ink3)}\n.launcher-dock-tab--icon{margin-left:2px}\n.launcher-dock__panel{flex:1;min-height:0;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}\n.launcher-dock__host{display:none}\n.launcher-dock-sum{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--l-ink2);padding:2px 2px 4px}\n.launcher-dock-sum svg{width:14px;height:14px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-dock-sum__g{font-size:11px;color:var(--l-ink4)}\n.launcher-dock-sum__cg{margin-left:auto;display:flex;gap:6px;font-size:11px}\n.launcher-git-add{color:var(--l-green)}\n.launcher-git-del{color:var(--l-red)}\n.launcher-dock-empty{display:grid;gap:4px;place-items:center;padding:18px 8px;border:1px dashed var(--l-line2);border-radius:var(--l-radius-md);color:var(--l-ink3);font-size:12px}\n.launcher-dock-foot{border-top:1px solid var(--l-line);padding:8px 2px 2px;display:flex;gap:6px;align-items:center;margin-top:auto}\n.launcher-dock-foot__grow{flex:1}\n.launcher-dock-foot__note{font-size:11px;color:var(--l-ink4)}\n.launcher-diff{border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-surface);overflow:hidden}\n.launcher-diff-h{display:flex;align-items:center;gap:6px;padding:6px 9px;background:var(--l-surface2);font-size:12px}\n.launcher-diff-h svg{width:13px;height:13px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-diff-h__f{font-family:var(--font-mono,monospace);font-size:11px;color:var(--l-ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.launcher-diff-h__a{color:var(--l-green);font-size:11px;margin-left:auto}\n.launcher-diff-h__d{color:var(--l-red);font-size:11px}\n.launcher-diff-line{display:grid;grid-template-columns:26px 12px minmax(0,1fr);font-family:var(--font-mono,monospace);font-size:11px;line-height:1.7}\n.launcher-diff-line__ln{text-align:right;color:var(--l-ink4);padding-right:6px;user-select:none}\n.launcher-diff-line__sg{text-align:center;user-select:none}\n.launcher-diff-line__cd{overflow:hidden;text-overflow:ellipsis;white-space:pre;padding-right:8px}\n.launcher-diff-line.add{background:var(--l-accentSoft);color:var(--l-ink)}\n.launcher-diff-line.del{background:var(--l-surface2);color:var(--l-ink3)}\n.launcher-tree{display:grid;gap:1px;font-size:12px}\n.launcher-tree-row{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:var(--l-radius-xs);color:var(--l-ink2);width:100%;text-align:left;background:transparent;border:0;cursor:pointer;font:inherit}\n.launcher-tree-row:hover{background:var(--l-hover)}\n.launcher-tree-row.on{background:var(--l-surface3);color:var(--l-ink)}\n.launcher-tree-row:focus-visible{outline:2px solid var(--l-accent);outline-offset:-2px}\n.launcher-tree-row svg{width:14px;height:14px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-tree-row__n{font-family:var(--font-mono,monospace);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.launcher-tree-row__d{margin-left:auto;font-size:11px;color:var(--l-ink4)}\n.launcher-term{background:var(--l-surface2);border:1px solid var(--l-line);border-radius:var(--l-radius-md);padding:9px 10px;font-family:var(--font-mono,monospace);font-size:12px;line-height:1.7;min-height:150px;max-height:340px;overflow:auto;white-space:pre-wrap;color:var(--l-ink2);margin:0}\n.launcher-term__p{color:var(--l-accent)}\n.launcher-term__ok{color:var(--l-green)}\n.launcher-term__er{color:var(--l-red)}\n.launcher-term-in{display:flex;gap:6px;margin-top:7px;align-items:center}\n.launcher-term-in__prompt{color:var(--l-accent);font-family:var(--font-mono,monospace)}\n.launcher-term-in__input{flex:1;min-width:0;background:var(--l-surface);border:1px solid var(--l-line);border-radius:var(--l-radius-sm);padding:0 8px;height:28px;font-family:var(--font-mono,monospace);font-size:12px;outline:none;color:var(--l-ink)}\n.launcher-term-in__input:focus{border-color:var(--l-accent)}\n.launcher-chat-mini{display:grid;gap:7px}\n.launcher-bub{max-width:88%;padding:6px 10px;border-radius:var(--l-radius-md);font-size:12px;line-height:1.5;background:var(--l-surface2);border:1px solid var(--l-line);color:var(--l-ink)}\n.launcher-bub.me{justify-self:end;background:var(--l-accent);color:var(--l-onAccent);border-color:transparent}\n.launcher-mini{background:var(--l-surface);border:1px solid var(--l-line);border-radius:var(--l-radius-md);padding:9px 10px;display:grid;gap:2px}\n.launcher-mini__t{font-size:13px;line-height:1.4}\n.launcher-mini__s{font-size:11px;color:var(--l-ink3);display:flex;gap:5px;align-items:center;flex-wrap:wrap}\n.launcher-tag{font-size:11px;border-radius:4px;padding:0 4px;background:var(--l-surface3);color:var(--l-ink3)}\n.launcher-tag.ok{background:var(--l-accentSoft);color:var(--l-green)}\n.launcher-tag.acc{background:var(--l-accentSoft);color:var(--l-accent)}\n.launcher-seg{height:24px;padding:0 8px;border:1px solid var(--l-line);border-radius:var(--l-radius-xs);font:inherit;font-size:12px;color:var(--l-ink2);background:var(--l-surface);cursor:pointer}\n.launcher-seg:hover{border-color:var(--l-line2);color:var(--l-ink)}\n.launcher-seg:focus-visible{outline:2px solid var(--l-accent);outline-offset:1px}\n.launcher-seg.on{background:var(--l-accentSoft);border-color:transparent;color:var(--l-accent);font-weight:500}\n.launcher-seg--primary{background:var(--l-accent);border-color:transparent;color:var(--l-onAccent)}\n.launcher-seg--danger{color:var(--l-red);border-color:var(--l-red)}\n.launcher-seg[disabled]{opacity:.5;cursor:not-allowed}\n.launcher-settings{position:fixed;inset:0;z-index:46;background:var(--l-bg);color:var(--l-ink);display:flex;flex-direction:column;overflow:hidden}\n.launcher-settings__head{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--l-line);background:var(--l-bg2)}\n.launcher-settings__title{font-size:15px;font-weight:600;margin:0}\n.launcher-settings__close{margin-left:auto;border:0;background:transparent;color:var(--l-ink3);font-size:16px;cursor:pointer;width:28px;height:28px;border-radius:var(--l-radius-xs)}\n.launcher-settings__close:hover{background:var(--l-hover);color:var(--l-ink)}\n.launcher-settings__close:focus-visible{outline:2px solid var(--l-accent)}\n.launcher-settings__tabs{display:flex;gap:2px;padding:0 14px;border-bottom:1px solid var(--l-line);overflow-x:auto;background:var(--l-bg)}\n.launcher-settings__tab{padding:8px 10px;font:inherit;font-size:12px;color:var(--l-ink3);background:transparent;border:0;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}\n.launcher-settings__tab:hover{color:var(--l-ink)}\n.launcher-settings__tab.on{color:var(--l-ink);border-bottom-color:var(--l-accent);font-weight:500}\n.launcher-settings__tab:focus-visible{outline:2px solid var(--l-accent);outline-offset:-2px}\n.launcher-settings__body{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;max-width:720px;width:100%;margin:0 auto}\n.launcher-settings__card{border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-panel);padding:4px 12px}\n.launcher-settings__colh{font-size:11px;letter-spacing:.04em;color:var(--l-ink4);text-transform:uppercase;padding:8px 0 4px}\n.launcher-set-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--l-line);font-size:13px}\n.launcher-set-row:last-child{border-bottom:0}\n.launcher-set-row__lbl{display:grid;gap:1px;min-width:0}\n.launcher-set-row__hint{font-size:11px;color:var(--l-ink3)}\n.launcher-set-row__ctl{margin-left:auto;display:flex;gap:4px;align-items:center;flex:none}\n.launcher-static{font-size:12px;color:var(--l-ink3)}\n.launcher-kbd{font-family:var(--font-mono,monospace);font-size:11px;background:var(--l-surface2);border:1px solid var(--l-line);border-radius:4px;padding:1px 5px;color:var(--l-ink2)}\n.launcher-switch{width:38px;height:22px;border-radius:11px;border:1px solid var(--l-line2);background:var(--l-surface3);position:relative;cursor:pointer;padding:0}\n.launcher-switch.on{background:var(--l-accent);border-color:transparent}\n.launcher-switch:focus-visible{outline:2px solid var(--l-accent);outline-offset:1px}\n.launcher-switch__dot{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--l-surface);transition:left .12s ease}\n.launcher-switch.on .launcher-switch__dot{left:18px}\n.launcher-shell[data-density=\"compact\"]{--l-row:26px}\n.launcher-shell[data-density=\"compact\"] .launcher-dock__panel{gap:5px;padding:7px 10px}\n.launcher-shell[data-density=\"compact\"] .launcher-set-row{padding:6px 0}\n.launcher-shell[data-density=\"compact\"] .launcher-mini{padding:6px 8px}"
+  const diffSummary = function diffSummary(diff) {
+  const list = Array.isArray(diff) ? diff : []
+  let a = 0
+  let d = 0
+  for (const file of list) {
+    a += Number(file?.add) || 0
+    d += Number(file?.del) || 0
+  }
+  return { n: list.length, a, d }
+}
+  const dockIcon = function dockIcon(h, name) {
+  const body = DOCK_ICONS[name] ?? ''
+  return h('svg', {
+    viewBox: '0 0 24 24',
+    className: 'launcher-ic',
+    'aria-hidden': 'true',
+    focusable: 'false',
+    dangerouslySetInnerHTML: { __html: body },
+  })
+}
+  const dockWidthFor = function dockWidthFor({ viewportWidth, requestedWidth, open = true, min = DOCK_WIDTHS.min, max = DOCK_WIDTHS.max, hideBelow = DOCK_WIDTHS.hideBelow } = {}) {
+  const viewport = Number(viewportWidth)
+  const vw = Number.isFinite(viewport) && viewport > 0 ? viewport : 1440
+  if (open !== true || vw < hideBelow) return 0
+  // 视口预算：给主区至少留 816（1440 参考下 56+280+480+380=1196，余量给间距）
+  const maxFor = Math.max(min, Math.min(max, Math.round(vw - 816)))
+  const wanted = Number.isFinite(Number(requestedWidth)) ? Math.round(Number(requestedWidth)) : DOCK_WIDTHS.default
+  return Math.max(min, Math.min(maxFor, wanted))
+}
+  const dockColumnsFor = function dockColumnsFor({ viewportWidth, dockWidth = 0, sidebarCollapsed = false } = {}) {
+  return shellColumns({ viewportWidth, dockWidth, sidebarCollapsed })
+}
+  const applySetting = function applySetting(values, action) {
+  const base = values ?? {}
+  const next = {
+    theme: base.theme === 'dark' ? 'dark' : 'light',
+    density: base.density === 'compact' ? 'compact' : 'cozy',
+    dockOpen: base.dockOpen === true,
+    team: base.team === true,
+  }
+  if (action === null || typeof action !== 'object') return { values: next, effect: null }
+  if (action.type === 'segmented') {
+    if (action.key === 'theme') {
+      const value = action.value === 'dark' ? 'dark' : 'light'
+      return { values: { ...next, theme: value }, effect: { type: 'theme', value } }
+    }
+    if (action.key === 'density') {
+      const value = action.value === 'compact' ? 'compact' : 'cozy'
+      return { values: { ...next, density: value }, effect: { type: 'density', value } }
+    }
+    return { values: next, effect: null }
+  }
+  if (action.type === 'toggle' && action.key === 'dock') {
+    const value = !next.dockOpen
+    return { values: { ...next, dockOpen: value }, effect: { type: 'dock', value } }
+  }
+  if (action.type === 'switch' && action.key === 'team') {
+    const value = !next.team
+    return { values: { ...next, team: value }, effect: { type: 'team', value } }
+  }
+  if (action.type === 'nav') return { values: next, effect: { type: 'nav', target: String(action.target ?? '') } }
+  if (action.type === 'danger') return { values: next, effect: { type: 'danger', key: String(action.key ?? '') } }
+  return { values: next, effect: null }
+}
+  const renderDockTabs = function renderDockTabs(h, options) {
+  const opts = options ?? {}
+  const tabs = Array.isArray(opts.tabs) ? opts.tabs : []
+  const children = []
+  for (const tab of tabs) {
+    const badge = Number(tab.badge) > 0 ? String(tab.badge) : ''
+    children.push(h('button', {
+      key: tab.id,
+      type: 'button',
+      role: 'tab',
+      className: `launcher-dock-tab${tab.id === opts.active ? ' on' : ''}`,
+      'data-dock-tab': tab.id,
+      'aria-selected': tab.id === opts.active,
+      title: tab.label,
+      onClick: () => { if (typeof opts.onSelect === 'function') opts.onSelect(tab.id) },
+    },
+    dockIcon(h, tab.icon),
+    h('span', { className: 'launcher-dock-tab__label' }, tab.label),
+    badge === '' ? null : h('span', { className: 'launcher-dock-tab__n' }, badge)))
+  }
+  children.push(h('span', { key: 'grow', className: 'launcher-dock-tabs__grow' }))
+  children.push(h('button', {
+    key: 'collapse',
+    type: 'button',
+    className: 'launcher-dock-tab launcher-dock-tab--icon',
+    'data-dock-action': 'collapse',
+    'aria-label': '收起右栏',
+    title: '收起 ⌘J',
+    onClick: () => { if (typeof opts.onCollapse === 'function') opts.onCollapse() },
+  }, dockIcon(h, 'x')))
+  return h('div', { className: 'launcher-dock-tabs', role: 'tablist', 'aria-label': '右栏面板' }, ...children)
+}
+  const renderDockPanel = function renderDockPanel(h, options) {
+  const opts = options ?? {}
+  const data = opts.data ?? {}
+  const requested = opts.tab
+  const tab = DOCK_TAB_IDS.includes(requested) ? requested : 'review'
+  const emit = (action) => { if (typeof opts.onAction === 'function') opts.onAction(action) }
+  const body = []
+
+  const summary = diffSummary(data.diff)
+  const sum = (icon, title, note, extra) => h('div', { className: 'launcher-dock-sum', key: 'sum' },
+    dockIcon(h, icon),
+    h('b', null, title),
+    h('span', { className: 'launcher-dock-sum__g' }, note),
+    extra ?? null)
+
+  if (tab === 'review') {
+    body.push(sum('git', '未提交的改动', `${summary.n} 个文件`,
+      h('span', { className: 'launcher-dock-sum__cg' },
+        h('span', { className: 'launcher-git-add' }, `+${summary.a}`),
+        h('span', { className: 'launcher-git-del' }, `−${summary.d}`))))
+    const diff = Array.isArray(data.diff) ? data.diff : []
+    if (diff.length === 0) {
+      body.push(h('div', { className: 'launcher-dock-empty', key: 'empty' }, '都提交了', h('p', null, '再看一遍 diff 就点上面的「文件」。')))
+    }
+    for (const file of diff) {
+      const head = h('div', { className: 'launcher-diff-h', key: `h-${file.file}` },
+        dockIcon(h, 'file'),
+        h('span', { className: 'launcher-diff-h__f', title: file.file }, file.file),
+        h('span', { className: 'launcher-diff-h__a' }, `+${file.add}`),
+        h('span', { className: 'launcher-diff-h__d' }, `−${file.del}`),
+        file.staged === true ? h('span', { className: 'launcher-tag ok', style: { marginLeft: 'auto' } }, '已暂存') : null)
+      const lines = (file.lines ?? []).map((line, index) => h('div', {
+        key: `l-${index}`,
+        className: `launcher-diff-line${line[0] === '+' ? ' add' : (line[0] === '-' ? ' del' : '')}`,
+      },
+      h('span', { className: 'launcher-diff-line__ln' }, String(index + 1)),
+      h('span', { className: 'launcher-diff-line__sg' }, line[0] || ' '),
+      h('span', { className: 'launcher-diff-line__cd' }, String(line[1] ?? '').trim())))
+      body.push(h('div', { className: 'launcher-diff', key: `d-${file.file}` }, head, ...lines))
+    }
+    body.push(h('div', { className: 'launcher-dock-foot', key: 'foot' },
+      h('button', { type: 'button', className: 'launcher-seg', onClick: () => emit({ type: 'stage' }) }, '全部暂存'),
+      h('button', { type: 'button', className: 'launcher-seg', onClick: () => emit({ type: 'revert' }) }, '还原'),
+      h('span', { className: 'launcher-dock-foot__grow' }),
+      h('button', { type: 'button', className: 'launcher-seg launcher-seg--primary', onClick: () => emit({ type: 'commit' }) }, '提交…')))
+  } else if (tab === 'files') {
+    const files = Array.isArray(data.files) ? data.files : []
+    const sel = Number.isFinite(Number(data.fileSel)) ? Number(data.fileSel) : 0
+    body.push(sum('folder', 'dsh-launcher', `${files.filter((file) => file.chg === true).length} 处改动`))
+    body.push(h('div', { className: 'launcher-tree', key: 'tree' },
+      files.map((file, index) => h('button', {
+        key: `f-${index}`,
+        type: 'button',
+        className: `launcher-tree-row${sel === index ? ' on' : ''}`,
+        style: { paddingLeft: `${6 + file.d * 12}px` },
+        title: file.n,
+        onClick: () => emit({ type: 'fileSel', index }),
+      },
+      dockIcon(h, file.t === 'dir' ? 'folder' : 'file'),
+      h('span', { className: 'launcher-tree-row__n' }, file.n),
+      file.chg === true ? h('span', { className: 'launcher-tree-row__d' }, 'M') : null))))
+    const selected = files[sel] ?? files[0]
+    const preview = ['<!doctype html>', '<html lang="zh-CN">', '  <link rel="stylesheet">', '</html>']
+    body.push(h('div', { className: 'launcher-diff', key: 'preview' },
+      h('div', { className: 'launcher-diff-h' }, dockIcon(h, 'file'), h('span', { className: 'launcher-diff-h__f' }, selected?.n ?? '—')),
+      preview.map((line, index) => h('div', { key: `p-${index}`, className: `launcher-diff-line${index === 2 ? ' add' : ''}` },
+        h('span', { className: 'launcher-diff-line__ln' }, String(index + 1)),
+        h('span', { className: 'launcher-diff-line__sg' }, index === 2 ? '+' : ' '),
+        h('span', { className: 'launcher-diff-line__cd' }, line)))))
+  } else if (tab === 'term') {
+    const lines = Array.isArray(data.term) ? data.term : []
+    body.push(h('pre', { className: 'launcher-term', key: 'out' },
+      lines.map((line, index) => h('span', { key: `t-${index}`, className: `launcher-term__${line[0] ?? 'o'}` }, `${line[1] ?? ''}\n`))))
+    body.push(h('div', { className: 'launcher-term-in', key: 'in' },
+      h('span', { className: 'launcher-term-in__prompt' }, '$'),
+      h('input', {
+        className: 'launcher-term-in__input',
+        'aria-label': '终端输入',
+        placeholder: '敲命令，Enter 执行（演示）',
+        value: data.termIn ?? '',
+        onChange: (event) => emit({ type: 'termIn', value: event?.target?.value }),
+      }),
+      h('button', { type: 'button', className: 'launcher-seg', onClick: () => emit({ type: 'termRun' }) }, '执行')))
+  } else if (tab === 'tasks') {
+    const tasks = Array.isArray(data.tasks) ? data.tasks : []
+    body.push(sum('target', '任务', `${tasks.length} 个`))
+    for (const task of tasks) {
+      body.push(h('div', { className: 'launcher-mini', key: task.id },
+        h('div', { className: 'launcher-mini__t' }, task.t),
+        h('div', { className: 'launcher-mini__s' },
+          h('span', { className: 'launcher-mini__who' }, task.who),
+          h('span', { className: `launcher-tag ${task.col === 'done' ? 'ok' : (task.col === 'doing' ? 'acc' : '')}` }, task.col === 'done' ? '完成' : (task.col === 'doing' ? '在做' : '待办'))),
+        h('div', { className: 'launcher-mini__s' }, task.sub)))
+    }
+    body.push(h('div', { className: 'launcher-dock-foot', key: 'foot' },
+      h('button', { type: 'button', className: 'launcher-seg', onClick: () => emit({ type: 'newTask' }) }, '新建任务'),
+      h('span', { className: 'launcher-dock-foot__grow' }),
+      h('span', { className: 'launcher-dock-foot__note' }, `${tasks.filter((task) => task.col === 'doing').length} 个在做`)))
+  } else {
+    const messages = Array.isArray(data.side) ? data.side : []
+    body.push(h('div', { className: 'launcher-chat-mini', key: 'chat' },
+      messages.map((message, index) => h('div', { key: `b-${index}`, className: `launcher-bub${message.me === true ? ' me' : ''}` }, message.t))))
+    body.push(h('div', { className: 'launcher-term-in', key: 'in' },
+      h('input', {
+        className: 'launcher-term-in__input',
+        'aria-label': '侧聊输入',
+        placeholder: '在这个分支里问…（上下文独立）',
+        value: data.sideIn ?? '',
+        onChange: (event) => emit({ type: 'sideIn', value: event?.target?.value }),
+      }),
+      h('button', { type: 'button', className: 'launcher-seg launcher-seg--primary', onClick: () => emit({ type: 'sideSend' }) }, '发')))
+  }
+
+  return h('div', { className: 'launcher-dock__panel', role: 'tabpanel', 'data-dock-tab': tab }, ...body)
+}
+  const renderSettings = function renderSettings(h, options) {
+  const opts = options ?? {}
+  const groups = Array.isArray(opts.groups) ? opts.groups : []
+  const sectionsMap = opts.sections ?? {}
+  const values = opts.values ?? {}
+  const groupIds = groups.map((group) => group.id)
+  const resolved = groupIds.includes(opts.active) ? opts.active : (groupIds[0] ?? 'general')
+  const onGroup = typeof opts.onGroup === 'function' ? opts.onGroup : () => {}
+  const onAction = typeof opts.onAction === 'function' ? opts.onAction : () => {}
+  const onClose = typeof opts.onClose === 'function' ? opts.onClose : () => {}
+
+  function renderControl(row) {
+    const control = row.control ?? {}
+    if (control.type === 'segmented') {
+      const options = Array.isArray(control.options) ? control.options : []
+      return options.map((option) => h('button', {
+        key: option.id,
+        type: 'button',
+        className: `launcher-seg${values[control.key] === option.id ? ' on' : ''}`,
+        'aria-pressed': values[control.key] === option.id,
+        'data-control': control.key,
+        'data-value': option.id,
+        onClick: () => onAction({ type: 'segmented', key: control.key, value: option.id }),
+      }, option.label))
+    }
+    if (control.type === 'toggle') {
+      const on = control.key === 'dock' ? values.dockOpen === true : values[control.key] === true
+      return h('button', {
+        key: control.key,
+        type: 'button',
+        className: `launcher-seg${on ? ' on' : ''}`,
+        'aria-pressed': on,
+        'data-control': control.key,
+        onClick: () => onAction({ type: 'toggle', key: control.key }),
+      }, on ? (control.onLabel ?? '关') : (control.offLabel ?? '开'))
+    }
+    if (control.type === 'switch') {
+      const on = values[control.key] === true
+      return h('button', {
+        key: control.key,
+        type: 'button',
+        role: 'switch',
+        'aria-checked': on,
+        'aria-label': row.label,
+        className: `launcher-switch${on ? ' on' : ''}`,
+        'data-control': control.key,
+        onClick: () => onAction({ type: 'switch', key: control.key }),
+      }, h('span', { className: 'launcher-switch__dot' }))
+    }
+    if (control.type === 'static') return h('span', { className: 'launcher-static' }, String(control.value ?? ''))
+    if (control.type === 'kbd') return h('kbd', { className: 'launcher-kbd' }, String(control.value ?? ''))
+    if (control.type === 'nav') {
+      return h('button', { key: 'nav', type: 'button', className: 'launcher-seg', 'data-target': control.target, onClick: () => onAction({ type: 'nav', target: control.target }) }, control.label ?? '打开')
+    }
+    if (control.type === 'danger') {
+      return h('button', { key: 'danger', type: 'button', className: 'launcher-seg launcher-seg--danger', onClick: () => onAction({ type: 'danger', key: control.key }) }, control.label ?? '回退')
+    }
+    if (control.type === 'disabled') {
+      return h('button', { key: 'disabled', type: 'button', className: 'launcher-seg', disabled: true, 'aria-disabled': 'true', title: control.reason ?? '' }, control.label ?? '检查')
+    }
+    return null
+  }
+
+  function renderRow(row, index) {
+    return h('div', { className: 'launcher-set-row', key: row.id ?? `row-${index}` },
+      h('span', { className: 'launcher-set-row__lbl' },
+        h('span', { className: 'launcher-set-row__label' }, row.label),
+        row.hint === undefined || row.hint === null ? null : h('span', { className: 'launcher-set-row__hint' }, row.hint)),
+      h('span', { className: 'launcher-set-row__ctl' }, renderControl(row)))
+  }
+
+  const tabs = groups.map((group) => h('button', {
+    key: group.id,
+    type: 'button',
+    role: 'tab',
+    className: `launcher-settings__tab${group.id === resolved ? ' on' : ''}`,
+    'aria-selected': group.id === resolved,
+    'data-group': group.id,
+    onClick: () => onGroup(group.id),
+  }, group.label))
+
+  const sectionsForGroup = Array.isArray(sectionsMap[resolved]) ? sectionsMap[resolved] : []
+  const body = sectionsForGroup.map((section, sectionIndex) => {
+    const rows = Array.isArray(section.rows) ? section.rows : []
+    return h('section', { className: 'launcher-settings__card', key: `section-${sectionIndex}` },
+      section.title === undefined || section.title === null ? null : h('div', { className: 'launcher-settings__colh' }, section.title),
+      ...rows.map((row, index) => renderRow(row, index)))
+  })
+
+  return h('div', { className: 'launcher-settings', role: 'dialog', 'aria-modal': 'true', 'aria-label': '设置' },
+    h('header', { className: 'launcher-settings__head' },
+      h('h2', { className: 'launcher-settings__title' }, '设置'),
+      h('button', { type: 'button', className: 'launcher-settings__close', 'aria-label': '关闭设置', title: '关闭', onClick: () => onClose() }, '✕')),
+    h('div', { className: 'launcher-settings__tabs', role: 'tablist', 'aria-label': '设置分组' }, ...tabs),
+    h('div', { className: 'launcher-settings__body' }, ...body))
+}
+  // #endregion dock-settings-from-lib
+
   // 与 lib/new-session.js 的 STARTERS 逐条对齐（text 是整句：只填入、不发送）；
   // 漂移由 test/new-session.test.mjs 的同步检查挡住。
   const STARTERS = [
@@ -569,14 +1040,20 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 .launcher-empty__starter{align-items:center;background:var(--dsw-alias-button-floating-fill,rgba(127,127,127,.08));border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));border-radius:10px;color:inherit;cursor:pointer;display:flex;font:inherit;font-size:13px;height:36px;justify-content:center;padding:0 10px}
 .launcher-empty__hint{color:var(--dsw-alias-label-tertiary,#8a8a8a);font-size:11px;margin:4px 0 0}
 .launcher-conflict{border-bottom:1px solid var(--dsw-alias-state-warn-border,#d9a441);background:var(--dsw-alias-state-warn-fill,#fff6e0);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.5;padding:6px 12px;position:sticky;top:0;z-index:50}
+.launcher-hostguard{position:sticky;top:0;z-index:60;border-bottom:1px solid var(--dsw-alias-state-warn-border,#d9a441);background:var(--dsw-alias-state-warn-fill,#fff6e0);color:var(--dsw-alias-label-primary,#1f1f1f);font-size:12px;line-height:1.6;padding:8px 12px;display:flex;flex-direction:column;gap:6px}
+.launcher-hostguard__head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:600}
+.launcher-hostguard__close{font:inherit;font-size:12px;height:24px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.2));border-radius:6px;background:transparent;color:inherit;cursor:pointer;flex:none}
+.launcher-hostguard__reasons{margin:0;padding-left:18px}
+.launcher-hostguard__cmd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--dsw-alias-bg-2,rgba(0,0,0,.06));border-radius:6px;padding:6px;margin:0}
 `
 
   function ensureStyle() {
     if (document.getElementById('dsh-launcher-style') !== null) return
     const tag = document.createElement('style')
     tag.id = 'dsh-launcher-style'
-    // 先铺令牌（日夜两套变量），再原有样式，最后骨架覆盖（v17 图标栏/状态条/四列底色）+ 侧栏三段卡片
-    tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}\n${SIDEBAR_CSS}`
+    // 先铺令牌（日夜两套变量），再原有样式，最后骨架覆盖（v17 图标栏/状态条/四列底色）
+    // 票 33 的右栏五面板 / 设置页样式由 lib/dock-settings.js 生成（DOCK_SETTINGS_CSS）铺在最后。
+    tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}\n${DOCK_SETTINGS_CSS}\n${SIDEBAR_CSS}`
     document.head.appendChild(tag)
   }
 
@@ -1781,6 +2258,12 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       }
     })
     const [splitMode, setSplitMode] = React.useState(1)
+    // 票 33：右栏当前面板 / 设置页开关与分组 / 密度 / 团队协作开关（后两项来自设置页）
+    const [dockTab, setDockTab] = React.useState('review')
+    const [settingsOpen, setSettingsOpen] = React.useState(false)
+    const [settingsGroup, setSettingsGroup] = React.useState('general')
+    const [density, setDensity] = React.useState('cozy')
+    const [teamOn, setTeamOn] = React.useState(false)
     // ≤860：侧栏转抽屉（默认收起），与 rail 互斥；主区从 rail 后起算
     const [drawerOpen, setDrawerOpen] = React.useState(false)
     const [themeMode, setThemeMode] = React.useState(() => {
@@ -2018,10 +2501,10 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     const [query, setQuery] = React.useState('')
     const shown = commands.filter((cmd) => query === '' || String(cmd.label).includes(query))
     const dockCanShow = dockOpen && viewportWidth >= DOCK_HIDE_BELOW
-    const dockWidth = dockCanShow ? clampDock(dragWidth, viewportWidth) : 0
-    // 四列几何（票 30）：与 lib/shell-layout.js 同一条公式——列宽合计 = 视口，主区吸收余量。
-    // 取代原来手抠 `100vw - 56 - 侧栏 - 右栏`，1100-2000 无横向溢出这条验收落在这里。
-    const columns = shellColumns({ viewportWidth, sidebarCollapsed: props.sidebarCollapsed === true, dockWidth })
+    // 票 33：右栏有效宽度与四列几何都走 lib/dock-settings.js（与 layout/shell-layout 同一条公式）。
+    // 收起→0、展开→固定宽度，列宽合计恒等于视口，主区由 minmax(0,1fr) 吸收，切换不跳、不溢出。
+    const dockWidth = dockWidthFor({ viewportWidth, requestedWidth: dragWidth, open: dockOpen })
+    const columns = dockColumnsFor({ viewportWidth, dockWidth, sidebarCollapsed: props.sidebarCollapsed === true })
     const mainWidth = columns.main
     const effectiveSplit = resolveSplit(splitMode, mainWidth, (typeof window === 'undefined' ? 900 : window.innerHeight) - 26)
     const [cols, rows] = SPLIT_GRID[effectiveSplit] ?? SPLIT_GRID[1]
@@ -2068,7 +2551,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       const railKey = entry.id === 'conversation'
         ? 'conversation'
         : resolveMainKey(ctx, RAIL_CANDIDATES[entry.id] ?? [entry.id])
-      const disabled = railKey === null
+      // 票 33：设置入口永远可点——打开外壳自己的六分组设置页（不依赖宿主是否注册 settings main key）。
+      const isSettings = entry.id === 'settings'
+      const disabled = isSettings ? false : railKey === null
       const title = entry.id === 'plugins'
         ? (disabled ? '插件工作台本版未接' : '插件工作台')
         : (disabled ? (entry.id === 'approvals' ? '见 设置 → 审批与权限' : '本版未接') : entry.label)
@@ -2082,6 +2567,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         title,
         onSelect: () => {
           if (disabled) return
+          if (isSettings) { setSettingsOpen(true); return }
           try {
             ctx?.layout?.selectPanel?.(entry.id === 'conversation' ? null : railKey)
           } catch (error) {
@@ -2090,6 +2576,30 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         },
       }
     })
+    // 票 33：设置页动作 → 取值 + 副作用（状态机在 lib/dock-settings.js 的 applySetting，单测覆盖）。
+    // 主题/密度/右栏开关即时生效；团队开关本地记；导航/回退给出可见反馈（不留假执行）。
+    const handleSettingAction = (action) => {
+      const { effect } = applySetting({ theme: themeMode, density, dockOpen, team: teamOn }, action)
+      if (effect === null) return
+      if (effect.type === 'theme') applyTheme(effect.value)
+      else if (effect.type === 'density') setDensity(effect.value)
+      else if (effect.type === 'team') setTeamOn(effect.value)
+      else if (effect.type === 'dock') toggleRef.current.dock?.()
+      else if (effect.type === 'nav') showLauncherToast(`该入口本版未接：${effect.target}`)
+      else if (effect.type === 'danger') showLauncherToast('回退原生 UI：请按 runbook 复制 remove / install / 重启 命令（演示）')
+    }
+    // 右栏面板内的按钮/输入：每个都有可见反馈，不留死控件（0 dead control）。
+    const handleDockPanelAction = (action) => {
+      if (action === null || action === undefined) return
+      if (action.type === 'stage') showLauncherToast('全部暂存（演示）')
+      else if (action.type === 'revert') showLauncherToast('还原所有改动（演示）')
+      else if (action.type === 'commit') showLauncherToast('提交改动（演示）')
+      else if (action.type === 'newTask') showLauncherToast('新建任务（演示）')
+      else if (action.type === 'termRun') showLauncherToast('终端执行（演示）')
+      else if (action.type === 'sideSend') showLauncherToast('侧聊已发送（演示，独立上下文）')
+      else if (action.type === 'fileSel') showLauncherToast(`选中文件 ${Number(action.index) + 1}`)
+      // termIn / sideIn：输入框自身保留输入态，不需要额外反馈
+    }
     const runCommand = (cmd) => {
       setPaletteOpen(false)
       requestAnimationFrame(() => { const pane = document.querySelector('.launcher-pane'); if (pane !== null) pane.scrollTop = paneScrollRef.current })
@@ -2153,6 +2663,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
       'data-theme': themeMode,
       // 05 §6.3-7：属性挂外壳根，不挂 documentElement（避免改到宿主自己的代码块）
       'data-code-wrap': wrapOn ? 'on' : 'off',
+      // 票 33：密度即时生效（compact 时行高变量收紧），主题/右栏已由 data-theme/--launcher-dock 承载
+      'data-density': density,
       style: { '--launcher-composer-h': `${composerHeight}px`, '--launcher-dock': `${dockWidth}px`, '--launcher-sidebar': `${columns.sidebar}px` },
       'data-build': BUILD_STAMP,
       onKeyDown: onRootKeyDown,
@@ -2246,6 +2758,17 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
           onPointerDown: startDrag,
           onDoubleClick: () => { const next = clampDock(DOCK_WIDTH, viewportWidth); setDragWidth(next); try { window.localStorage.setItem('dsh.launcher.dockWidth', String(next)) } catch { /* 忽略 */ } },
         }),
+        // 票 33：右栏五面板（审阅/文件/终端/任务/侧聊）+ 收起按钮，内容来自 lib/dock-settings.js
+        renderDockTabs(h, {
+          tabs: DOCK_TABS,
+          active: dockTab,
+          onSelect: (id) => setDockTab(id),
+          onCollapse: () => toggleRef.current.dock?.(),
+        }),
+        renderDockPanel(h, { tab: dockTab, data: DOCK_DEMO, onAction: handleDockPanelAction }),
+        // rightbar 是 single/root 槽：必须常驻挂载，否则宿主认为没有 occupant →
+        // sidebarRight 没有可开 tab → toggle 永远 blocked → dockWidth 永远 0（互相等）。
+        // 换成 v17 五面板后，宿主右栏容器隐藏但保持挂载（DOCK_SETTINGS_CSS 里 display:none）。
         h('div', {
           key: 'rightbar-host',
           className: 'launcher-dock__host',
@@ -2254,7 +2777,23 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         }, renderSlot('rightbar', { width: dockWidth, viewportWidth, canShow: dockCanShow }))),
       renderStatusbar(h, status(), { bottom: renderSlot('shell.bottom', {}) }),
       h('div', { className: 'launcher-overlay' },
-        renderSlot('shell.overlay', {})),
+        renderSlot('shell.overlay', {}),
+        // 票 33：六分组设置页（从 rail 设置入口打开；Esc 关闭）。主题/密度/右栏开关即时生效。
+        settingsOpen
+          ? h('div', {
+            key: 'settings-layer',
+            onKeyDown: (event) => { if (event.key === 'Escape') { event.preventDefault(); setSettingsOpen(false) } },
+          }, renderSettings(h, {
+            groups: SET_GROUPS,
+            sections: SET_SECTIONS,
+            shortcuts: SET_SHORTCUTS,
+            active: settingsGroup,
+            values: { theme: themeMode, density, dockOpen, team: teamOn },
+            onGroup: (id) => setSettingsGroup(id),
+            onAction: handleSettingAction,
+            onClose: () => setSettingsOpen(false),
+          }))
+          : null),
       devOpen ? h('div', { className: 'launcher-diag', role: 'dialog', 'aria-label': '外壳调试面板', onKeyDown: onDiagKeyDown },
         h('header', { className: 'launcher-diag__head' },
           h('span', null, '外壳调试面板（开发用）'),
@@ -2327,10 +2866,9 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     for (const listener of DOCK_LISTENERS) listener()
     try { window.dispatchEvent(new CustomEvent('launcher:dock', { detail: { open: DOCK_OPEN_STATE } })) } catch { /* 忽略 */ }
   }
-  const DOCK_MAX = 520
   const DOCK_HIDE_BELOW = 1020
-  const dockMaxFor = (viewportWidth) => Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.round((Number.isFinite(viewportWidth) ? viewportWidth : 1440) - 816)))
-  const clampDock = (w, viewportWidth) => Math.max(DOCK_MIN, Math.min(dockMaxFor(viewportWidth), Math.round(w)))
+  // 票 33：夹紧口径统一到 lib/dock-settings.js 的 dockWidthFor（与右栏有效宽度同一份逻辑）。
+  const clampDock = (w, viewportWidth) => dockWidthFor({ viewportWidth, requestedWidth: w, open: true })
   // 与 lib/panes.js 的 GRID 一致：1/2/4/6 档 → 行列
   const SPLIT_GRID = { 1: [1, 1], 2: [2, 1], 4: [2, 2], 6: [3, 2] }
 
@@ -2375,8 +2913,138 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   // W5 命令清单**动态枚举**：由接线方（clientRoot 包装层）从宿主命令源取；取不到就是空表，
   // 面板显示「未接入命令源」——不拿硬编码清单充数（05 §6.5 TC-16-3/16-6）。
 
+  // ---- HostGuard / Bootstrap（票 29）：注册前自检，不接管时保留原生 UI + 可关闭横幅 ----
+
+  /** 宿主主题变量前缀（能读到的第一个）；读不到返回 undefined（guard 按"未知"跳过）。 */
+  function detectThemePrefix() {
+    if (typeof window !== 'undefined' && typeof window.__DSH_LAUNCHER_THEME_PREFIX__ === 'string') {
+      return window.__DSH_LAUNCHER_THEME_PREFIX__
+    }
+    if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return undefined
+    try {
+      const style = getComputedStyle(document.documentElement)
+      for (const prefix of ['--dsh-', '--dsw-']) {
+        if (style.getPropertyValue(`${prefix}alias-bg-base`).trim().length > 0) return prefix
+      }
+    } catch {
+      /* 读不到就跳过前缀检查 */
+    }
+    return undefined
+  }
+
+  /**
+   * 从运行期 ctx 探测宿主形状（供 HostGuard）。
+   * `ctx.slots.spec` 是宿主槽声明；读不到（旧宿主 / API 缺失）返回无 slots，Bootstrap 跳过自检而不是误判。
+   * 允许 `window.__DSH_LAUNCHER_HOST_SHAPE__` 覆盖（canary 用变异基线注入）。
+   * @param {object} ctx - cordis 上下文。
+   * @returns {object} guardHost 的输入。
+   */
+  function probeHostShape(ctx) {
+    const override = typeof window !== 'undefined' ? window.__DSH_LAUNCHER_HOST_SHAPE__ : null
+    if (override !== null && typeof override === 'object') return override
+    let slots
+    if (typeof ctx?.slots?.spec === 'function') {
+      const found = []
+      for (const name of Object.keys(CHILDREN)) {
+        let spec
+        try { spec = ctx.slots.spec(name) } catch { spec = undefined }
+        if (spec !== undefined && spec !== null) found.push({ name, kind: spec.kind, scope: spec.scope })
+      }
+      slots = found.length > 0 ? found : undefined
+    }
+    let renderSlots
+    try {
+      const rootSpec = typeof ctx?.slots?.spec === 'function' ? ctx.slots.spec('root') : undefined
+      if (rootSpec !== undefined && rootSpec !== null && Array.isArray(rootSpec.renderSlots)) renderSlots = rootSpec.renderSlots
+    } catch {
+      /* 读不到就不检查 renderSlots */
+    }
+    let hostVersion = typeof window !== 'undefined'
+      ? (window.__DSH_LAUNCHER_HOST_VERSION__ || window.__DSH_BOOT__?.release?.version || '')
+      : ''
+    if (typeof hostVersion !== 'string' || hostVersion.length === 0) hostVersion = HOST_BASELINE.hostVersion
+    return { hostVersion, baseline: HOST_BASELINE, slots, renderSlots, themePrefix: detectThemePrefix() }
+  }
+
+  /** 横幅模型（原因列表 + 回退命令 + 本次不再提示），命令复用生成的 rollbackCommand。 */
+  function hostGuardBanner(verdict) {
+    const profile = typeof window !== 'undefined' && typeof window.__DSH_LAUNCHER_PROFILE__ === 'string'
+      ? window.__DSH_LAUNCHER_PROFILE__
+      : 'web'
+    return {
+      id: 'launcher-hostguard-banner',
+      title: '本版 UI 与当前 dsh 不匹配，已保留原生界面',
+      reasons: verdict.blockers.map((item) => item.message || item.code),
+      command: rollbackCommand(profile),
+      dismissLabel: '本次不再提示',
+    }
+  }
+
+  /** 渲染可关闭横幅（不持久化：关闭只移除本节点，下次启动仍提示）。重复 id 不叠加。 */
+  function showHostGuardBanner(model) {
+    if (typeof document === 'undefined' || document.body === null) return
+    if (document.getElementById(model.id) !== null) return
+    const bar = document.createElement('div')
+    bar.id = model.id
+    bar.className = 'launcher-hostguard'
+    bar.setAttribute('role', 'alert')
+    const head = document.createElement('div')
+    head.className = 'launcher-hostguard__head'
+    const title = document.createElement('span')
+    title.textContent = model.title
+    const close = document.createElement('button')
+    close.type = 'button'
+    close.className = 'launcher-hostguard__close'
+    close.textContent = model.dismissLabel
+    close.addEventListener('click', () => bar.remove())
+    head.append(title, close)
+    const reasons = document.createElement('ul')
+    reasons.className = 'launcher-hostguard__reasons'
+    for (const reason of model.reasons) {
+      const li = document.createElement('li')
+      li.textContent = reason
+      reasons.append(li)
+    }
+    const command = document.createElement('pre')
+    command.className = 'launcher-hostguard__cmd'
+    command.textContent = model.command
+    const copy = document.createElement('button')
+    copy.type = 'button'
+    copy.className = 'launcher-hostguard__close'
+    copy.textContent = '复制命令'
+    copy.addEventListener('click', () => {
+      try {
+        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(model.command)
+      } catch {
+        /* 复制失败就让用户手动选中命令 */
+      }
+    })
+    bar.append(head, reasons, command, copy)
+    document.body.prepend(bar)
+  }
+
   function apply(ctx) {
     ensureStyle()
+    // 票 29 Bootstrap：guard.ok 才注册 root；不 ok 时保留原生 UI + 横幅，不抛错、不重复。
+    if (HOST_GUARD_DONE) return () => {}
+    HOST_GUARD_DONE = true
+    const hostShape = probeHostShape(ctx)
+    if (hostShape.slots === undefined) {
+      // 读不到槽声明 API（旧宿主）就不能判定；按旧宿主兼容继续，不让自检把界面挡死。
+      console.warn('dsh-client-ui-launcher: 读不到宿主槽声明（ctx.slots.spec 缺失），跳过 HostGuard 自检')
+    } else {
+      const verdict = guardHost(hostShape)
+      if (!verdict.ok) {
+        window.__DSH_LAUNCHER_SHELL__ = false
+        window.__DSH_LAUNCHER_HOST_GUARD__ = verdict
+        try { showHostGuardBanner(hostGuardBanner(verdict)) } catch (error) { console.warn('dsh-client-ui-launcher: 横幅渲染失败', error) }
+        console.info('dsh-client-ui-launcher: HostGuard 未接管', JSON.stringify(verdict.blockers.map((item) => item.code)))
+        return () => { HOST_GUARD_DONE = false }
+      }
+      if (verdict.warnings.length > 0) {
+        console.warn('dsh-client-ui-launcher: HostGuard 警告（仍接管）', JSON.stringify(verdict.warnings.map((item) => item.code)))
+      }
+    }
     // 本实现的运行时标记：verify 用它 + [data-shell] 双特征判"现在装的是哪一版 layout"，
     // 不靠容易在两侧都出现的槽标记（实测 [data-slot="sidebar"] 两态都有）。
     window.__DSH_LAUNCHER_SHELL__ = true
@@ -2493,6 +3161,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     }
     return () => {
       window.__DSH_LAUNCHER_SHELL__ = false
+      HOST_GUARD_DONE = false
       if (window.__DSH_LAUNCHER_CTX__ === ctx) delete window.__DSH_LAUNCHER_CTX__
       if (typeof window.removeEventListener === 'function') window.removeEventListener('resize', syncFolded)
       // 会话动作的 dispose 只释放一次（之前被外层循环重复调用）
