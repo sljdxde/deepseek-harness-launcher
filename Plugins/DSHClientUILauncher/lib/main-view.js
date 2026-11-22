@@ -314,7 +314,7 @@ export function renderTools(h, tools, opts = {}) {
     mainIcon(h, 'terminal'),
     h('span', null, `这一轮跑了 ${list.length} 步`),
     h('span', { className: 'launcher-tools__n' }, open ? '收起' : '展开'),
-    h('span', { className: 'launcher-grow' }),
+    h('span', { className: 'launcher-main-grow' }),
     mainIcon(h, open ? 'chevronDown' : 'chevronRight')),
   ]
   if (open) {
@@ -337,11 +337,11 @@ export function renderPlan(h, plan) {
     h('div', { className: 'launcher-plan__h' },
       mainIcon(h, 'target'),
       h('span', null, '实现计划'),
-      h('span', { className: 'launcher-kbd' }, `${done} / ${list.length}`)),
+      h('span', { className: 'launcher-main-kbd' }, `${done} / ${list.length}`)),
     list.map((p, idx) => h('div', { className: `launcher-plan-step ${p?.st ?? ''}` },
       h('span', { className: 'launcher-plan-step__no' }, p?.st === 'done' ? '✓' : String(idx + 1)),
       h('span', { className: 'launcher-plan-step__nm' }, String(p?.s ?? '')),
-      h('span', { className: 'launcher-tag' }, p?.st === 'done' ? '完成' : p?.st === 'doing' ? '进行中' : '待排期'))))
+      h('span', { className: 'launcher-main-tag' }, p?.st === 'done' ? '完成' : p?.st === 'doing' ? '进行中' : '待排期'))))
 }
 
 /** 任务卡（勾选项）。 */
@@ -353,8 +353,8 @@ export function renderTaskCard(h, card, opts = {}) {
     h('div', { className: 'launcher-bcard__h' },
       mainIcon(h, 'target'),
       h('span', { className: 'launcher-bcard__who' }, String(c.who ?? '')),
-      h('span', { className: 'launcher-tag acc' }, String(c.assignee ?? '')),
-      h('span', { className: 'launcher-bcard__r' }, h('span', { className: 'launcher-tag' }, `覆盖 ${rows.length} 项`))),
+      h('span', { className: 'launcher-main-tag acc' }, String(c.assignee ?? '')),
+      h('span', { className: 'launcher-bcard__r' }, h('span', { className: 'launcher-main-tag' }, `覆盖 ${rows.length} 项`))),
     h('div', { className: 'launcher-bcard__b' },
       h('h4', { className: 'launcher-card-t' }, String(c.title ?? '')),
       h('div', { className: 'launcher-sub' }, '做完一项勾一项，勾完即算过。'),
@@ -388,7 +388,7 @@ export function renderReportCard(h, card, opts = {}) {
       h('h4', { className: 'launcher-card-t' }, String(c.title ?? '')),
       h('div', { className: 'launcher-sub' }, String(c.body ?? '')),
       links.length
-        ? h('div', { className: 'launcher-tags' }, links.map((l) => h('span', { className: 'launcher-tag acc' }, mainIcon(h, 'file'), String(l))))
+        ? h('div', { className: 'launcher-main-tags' }, links.map((l) => h('span', { className: 'launcher-main-tag acc' }, mainIcon(h, 'file'), String(l))))
         : null,
       open === true ? h('div', { className: 'launcher-dyn' }, h('b', null, '动态'), h('span', null, String(c.dyn ?? ''))) : null))
 }
@@ -407,9 +407,9 @@ export function renderChangedCard(h, chg, opts = {}) {
       mainIcon(h, 'file'),
       h('span', { className: 'launcher-chg-row__f', title: String(f?.f ?? '') }, String(f?.f ?? '')),
       h('span', { className: 'launcher-chg-sum' },
-        h('span', { className: 'launcher-git-add' }, `+${f?.add ?? 0}`),
+        h('span', { className: 'launcher-main-git-add' }, `+${f?.add ?? 0}`),
         ' ',
-        h('span', { className: 'launcher-git-del' }, `−${f?.del ?? 0}`))))))
+        h('span', { className: 'launcher-main-git-del' }, `−${f?.del ?? 0}`))))))
 }
 
 /** 审批卡：pending 三态按钮；决策后显示 done + 撤销。 */
@@ -607,7 +607,7 @@ export function renderCommandPalette(h, opts = {}) {
         onChange: (event) => opts.onQuery?.(event?.target?.value ?? ''),
         onKeyDown,
       }),
-      h('span', { className: 'launcher-kbd' }, 'Esc')),
+      h('span', { className: 'launcher-main-kbd' }, 'Esc')),
     h('ul', { className: 'launcher-palette__list', id: 'launcher-palette-list' },
       shown.length === 0 ? h('li', { className: 'launcher-palette__empty' }, '没有匹配的命令') : null,
       shown.map((cmd, i) => h('li', {
@@ -697,7 +697,7 @@ export function mainCss() {
     '.launcher-tools__h{display:flex;align-items:center;gap:7px;padding:7px 10px;font:inherit;font-size:12px;color:var(--l-ink2);width:100%;text-align:left;border:0;background:transparent;cursor:pointer}',
     '.launcher-tools__h:hover{background:var(--l-hover)}',
     '.launcher-tools__n{color:var(--l-ink4);font-family:var(--font-mono,ui-monospace);font-size:11px}',
-    '.launcher-grow{flex:1}',
+    '.launcher-main-grow{flex:1}',
     '.launcher-tool-row{display:grid;grid-template-columns:18px 52px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 10px;border-top:1px solid var(--l-line);font-size:12px;min-width:0}',
     '.launcher-tool-row__k{color:var(--l-ink3);font-family:var(--font-mono,ui-monospace);font-size:11px}',
     '.launcher-tool-row__c{font-family:var(--font-mono,ui-monospace);font-size:12px;color:var(--l-ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
@@ -705,7 +705,7 @@ export function mainCss() {
     '.launcher-tool-row.bad .launcher-tool-row__c{color:var(--l-red)}',
     '.launcher-plan{border:1px solid var(--l-line);border-radius:var(--l-radius-md);background:var(--l-surface);padding:11px 12px;margin:8px 0 0}',
     '.launcher-plan__h{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--l-ink2);margin-bottom:8px}',
-    '.launcher-kbd{margin-left:auto;font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4)}',
+    '.launcher-main-kbd{margin-left:auto;font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4)}',
     '.launcher-plan-step{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;align-items:center;padding:5px 0;font-size:13px}',
     '.launcher-plan-step__no{width:18px;height:18px;border-radius:50%;border:1px solid var(--l-line2);display:grid;place-items:center;font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink3)}',
     '.launcher-plan-step.done .launcher-plan-step__no{background:var(--l-green-soft);border-color:transparent;color:var(--l-green)}',
@@ -718,8 +718,8 @@ export function mainCss() {
     '.launcher-bcard__b{padding:11px 12px;min-width:0}',
     '.launcher-card-t{font-size:14px;font-weight:600;margin:0 0 4px;overflow-wrap:anywhere}',
     '.launcher-sub{font-size:12px;color:var(--l-ink3);line-height:1.7;overflow-wrap:anywhere}',
-    '.launcher-tag{display:inline-flex;align-items:center;gap:3px;font:11px/1 var(--font-mono,ui-monospace);border:1px solid var(--l-line);border-radius:4px;padding:2px 5px;color:var(--l-ink3);background:transparent}',
-    '.launcher-tag.acc{color:var(--l-accent);background:var(--l-accentSoft);border-color:transparent}',
+    '.launcher-main-tag{display:inline-flex;align-items:center;gap:3px;font:11px/1 var(--font-mono,ui-monospace);border:1px solid var(--l-line);border-radius:4px;padding:2px 5px;color:var(--l-ink3);background:transparent}',
+    '.launcher-main-tag.acc{color:var(--l-accent);background:var(--l-accentSoft);border-color:transparent}',
     '.launcher-report-tag{font:11px/1 var(--font-mono,ui-monospace);letter-spacing:.4px;color:var(--l-accent);background:var(--l-accentSoft);border-radius:4px;padding:3px 5px}',
     '.launcher-prog-row{display:flex;align-items:center;gap:8px;margin-top:9px;font-size:11px;color:var(--l-ink3)}',
     '.launcher-bar{flex:1;height:6px;border-radius:3px;background:var(--l-surface3);overflow:hidden}',
@@ -736,8 +736,8 @@ export function mainCss() {
     '.launcher-chg-row:last-child{border-bottom:0}',
     '.launcher-chg-row__f{font-family:var(--font-mono,ui-monospace);font-size:12px;color:var(--l-ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.launcher-chg-sum{font:11px/1 var(--font-mono,ui-monospace);color:var(--l-ink4);white-space:nowrap}',
-    '.launcher-git-add{color:var(--l-green)}.launcher-git-del{color:var(--l-red)}',
-    '.launcher-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}',
+    '.launcher-main-git-add{color:var(--l-green)}.launcher-main-git-del{color:var(--l-red)}',
+    '.launcher-main-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}',
     '.launcher-appr{border:1px solid var(--l-line2);background:var(--l-surface);border-radius:var(--l-radius-md);overflow:hidden;min-width:0}',
     '.launcher-appr__h{display:flex;align-items:center;gap:7px;padding:8px 12px;font-size:12px;color:var(--l-amber);font-weight:600;border-bottom:1px solid var(--l-line)}',
     '.launcher-appr__b{padding:11px 12px;min-width:0}',
