@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   const React = require('react')
   const h = React.createElement
   // 由 tools/sync-contract.mjs 按 package.json 版本 + git 短 sha 生成（页面 data-build 用它）
-  const BUILD_STAMP = "0.2.2-rc.4+4432f4a"
+  const BUILD_STAMP = "0.2.2-rc.4+dceb4e3"
   let CURRENT_CTX = null
 
   // #region children-from-contract
@@ -174,6 +174,289 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
 }
   // #endregion shell-from-lib
 
+  // #region sidebar-from-lib
+  // 本段由 tools/sync-contract.mjs 从 lib/sidebar.js 生成，勿手改；
+  // 漂移由 test/sidebar-client.test.mjs 的同步检查挡住。
+  const SIDEBAR_METRICS = {"rowHeight":32,"radius":12,"cardRadius":12,"cardHeaderHeight":40,"rowPaddingLeft":9,"rowPaddingRight":8,"leadWidth":16,"gap":6,"chevronButton":28,"scrollPadding":8}
+  const SIDEBAR_ICONS = {"chevronRight":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M9 6l6 6l-6 6\"  />","chevronDown":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M6 9l6 6l6 -6\"  />","folder":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2\"  />","folderOpen":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M5 19l2.757 -7.351a1 1 0 0 1 .936 -.649h12.307a1 1 0 0 1 .986 1.164l-.996 5.211a2 2 0 0 1 -1.964 1.625h-14.026a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v2\"  />","dots":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M5 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\"  /> <path d=\"M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\"  /> <path d=\"M19 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\"  />","plus":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M12 5l0 14\"  /> <path d=\"M5 12l14 0\"  />","search":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0\"  /> <path d=\"M21 21l-6 -6\"  />"}
+  const SIDEBAR_CSS = ".launcher-sidebar__inner{display:flex;flex-direction:column;height:100%;min-height:0;color:var(--l-ink)}\n.launcher-sidebar .side-h{display:flex;align-items:center;gap:8px;padding:12px 12px 6px 16px;min-height:44px}\n.launcher-sidebar .side-h h2{font-size:14px;font-weight:600;letter-spacing:.2px;margin:0}\n.launcher-sidebar .side-h .side-collapse{margin-left:auto;display:grid;place-items:center;width:28px;height:28px;border:0;background:none;border-radius:8px;color:var(--l-ink3);cursor:pointer}\n.launcher-sidebar .side-h .side-collapse:hover{background:var(--l-hover);color:var(--l-ink)}\n.launcher-sidebar .side-h .side-collapse svg{width:16px;height:16px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-sidebar .side-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 8px 12px;display:flex;flex-direction:column;gap:0}\n.launcher-sidebar .side-card{border:1px solid var(--l-line);border-radius:12px;background:var(--l-surface);overflow:hidden;margin:0 0 8px;flex:0 0 auto}\n.launcher-sidebar .side-card:last-child{margin-bottom:0}\n.launcher-sidebar .card-hd{display:flex;align-items:center;gap:4px;height:40px;padding:0 6px 0 10px}\n.launcher-sidebar .card-toggle{display:flex;align-items:center;gap:6px;flex:1;min-width:0;height:28px;padding:0 6px;border:0;border-radius:8px;background:none;font:inherit;text-align:left;color:inherit;cursor:pointer}\n.launcher-sidebar .card-toggle:hover{background:var(--l-hover)}\n.launcher-sidebar .card-toggle .dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto}\n.launcher-sidebar .card-toggle .dot.wait{background:var(--l-amber)}\n.launcher-sidebar .card-toggle .dot.accent{background:var(--l-accent)}\n.launcher-sidebar .card-toggle .dot.muted{background:var(--l-ink4)}\n.launcher-sidebar .card-toggle b{font-size:13px;font-weight:600;color:var(--l-ink);white-space:nowrap}\n.launcher-sidebar .card-toggle .n{font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;padding:3px 6px;border-radius:6px;background:var(--l-surface2);color:var(--l-ink3)}\n.launcher-sidebar .card-toggle .n.wait{background:var(--l-accentSoft);color:var(--l-amber)}\n.launcher-sidebar .card-toggle .n.accent{background:var(--l-accentSoft);color:var(--l-accent)}\n.launcher-sidebar .card-hd .acts{display:flex;gap:2px;margin-left:2px}\n.launcher-sidebar .card-chev{margin-left:auto;width:28px;height:28px;display:grid;place-items:center;border:0;border-radius:8px;background:none;color:var(--l-ink4);cursor:pointer;flex:0 0 auto}\n.launcher-sidebar .card-chev:hover{background:var(--l-hover);color:var(--l-ink2)}\n.launcher-sidebar .card-chev svg{width:14px;height:14px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-sidebar .card-body{display:flex;flex-direction:column;gap:2px;padding:0 4px 6px}\n.launcher-sidebar .row{position:relative;display:flex;align-items:center;height:32px;padding:0 8px 0 9px;border-radius:12px;width:100%;box-sizing:border-box}\n.launcher-sidebar .row:hover{background:var(--l-hover)}\n.launcher-sidebar .row.is-on{background:var(--l-accentSoft)}\n.launcher-sidebar .row-main{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;height:100%;background:none;border:0;padding:0;font:inherit;color:var(--l-ink);text-align:left;cursor:pointer}\n.launcher-sidebar .row .lead{flex:0 0 auto;width:16px;height:20px;display:grid;place-items:center;color:var(--l-ink4)}\n.launcher-sidebar .row .lead svg{width:16px;height:16px;stroke-width:var(--l-icon-stroke);fill:none;stroke:currentColor}\n.launcher-sidebar .row .ttl{flex:1 1 auto;min-width:0;font-size:13px;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--l-ink)}\n.launcher-sidebar .row .meta{flex:0 0 auto;font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--l-ink4);display:flex;align-items:center;gap:5px}\n.launcher-sidebar .row.child{padding:0 8px 0 9px}\n.launcher-sidebar .row.child .ttl{color:var(--l-ink2)}\n.launcher-sidebar .ws-group{display:flex;flex-direction:column;gap:2px}\n.launcher-sidebar .ws-row .lead{color:var(--l-ink4)}\n.launcher-sidebar .need-sub{display:flex;align-items:center;gap:6px;height:28px;padding:0 12px;font-size:11px;font-weight:600;letter-spacing:.2px;color:var(--l-ink3);background:var(--l-surface2);border-top:1px solid var(--l-line)}\n.launcher-sidebar .need-sub .n{font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--l-ink4)}\n.launcher-sidebar .row.flat{border-radius:0}\n.launcher-sidebar .ndot{width:6px;height:6px;border-radius:50%;display:inline-block}\n.launcher-sidebar .ndot.wait{background:var(--l-amber)}\n.launcher-sidebar .ndot.ok{background:var(--l-green)}\n.launcher-sidebar .side-empty{padding:8px 10px;font-size:12px;color:var(--l-ink3);line-height:1.5}\n.launcher-sidebar :focus-visible{outline:2px solid var(--l-accent);outline-offset:1px;border-radius:8px}"
+  const sidebarIcon = function sidebarIcon(h, name) {
+  const body = SIDEBAR_ICONS[name] ?? ''
+  return h('svg', {
+    viewBox: '0 0 24 24',
+    className: 'launcher-ic',
+    'aria-hidden': 'true',
+    focusable: 'false',
+    dangerouslySetInnerHTML: { __html: body },
+  })
+}
+  const rowTitleLeftX = function rowTitleLeftX() {
+  return SIDEBAR_METRICS.rowPaddingLeft + SIDEBAR_METRICS.leadWidth + SIDEBAR_METRICS.gap
+}
+  const normalizeSession = function normalizeSession(raw) {
+  if (raw === null || raw === undefined || typeof raw !== 'object') return null
+  const id = String(raw.id ?? '')
+  if (id === '') return null
+  return {
+    id,
+    title: String(raw.displayTitle ?? raw.title ?? raw.name ?? id),
+    cwd: typeof raw.cwd === 'string' && raw.cwd.length > 0 ? raw.cwd : '',
+    updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
+    blank: raw.blank === true,
+    origin: raw.origin,
+  }
+}
+  const normalizeSessions = function normalizeSessions(snapshot) {
+  if (Array.isArray(snapshot)) return snapshot.map(normalizeSession).filter((item) => item !== null)
+  if (snapshot !== null && snapshot !== undefined && Array.isArray(snapshot.ids) && snapshot.byId !== null && typeof snapshot.byId === 'object') {
+    return snapshot.ids.map((id) => normalizeSession(snapshot.byId[id])).filter((item) => item !== null)
+  }
+  return []
+}
+  const workspaceName = function workspaceName(cwd) {
+  const parts = String(cwd ?? '').split('/').filter((part) => part !== '')
+  return parts.length === 0 ? '未命名目录' : parts[parts.length - 1]
+}
+  const groupSessions = function groupSessions(sessions) {
+  const list = Array.isArray(sessions) ? sessions : []
+  const workspaces = []
+  const index = new Map()
+  const tasks = []
+  for (const session of list) {
+    if (session === null || session === undefined) continue
+    if (session.blank === true || session.origin === 'subagent') continue
+    if (session.cwd === '') {
+      tasks.push(session)
+      continue
+    }
+    let group = index.get(session.cwd)
+    if (group === undefined) {
+      group = { id: session.cwd, name: workspaceName(session.cwd), cwd: session.cwd, sessions: [] }
+      index.set(session.cwd, group)
+      workspaces.push(group)
+    }
+    group.sessions.push(session)
+  }
+  return { workspaces, tasks }
+}
+  const needSummary = function needSummary(need) {
+  const pending = need !== null && need !== undefined && Array.isArray(need.pending) ? need.pending : []
+  const done = need !== null && need !== undefined && Array.isArray(need.done) ? need.done : []
+  return { pending, done, total: pending.length + done.length }
+}
+  const normalizeOpen = function normalizeOpen(open) {
+  return {
+    need: open === null || open === undefined || open.need !== false,
+    workspaces: open === null || open === undefined || open.workspaces !== false,
+    tasks: open === null || open === undefined || open.tasks !== false,
+  }
+}
+  const buildSidebarState = function buildSidebarState({ state, sessions, need, open, activeId, enabled } = {}) {
+  if (state !== null && state !== undefined && typeof state === 'object') {
+    return {
+      available: true,
+      need: needSummary(state.need),
+      workspaces: Array.isArray(state.workspaces) ? state.workspaces : [],
+      tasks: Array.isArray(state.tasks) ? state.tasks : [],
+      open: normalizeOpen(state.open ?? open),
+      activeId: state.activeId ?? activeId ?? null,
+    }
+  }
+  const list = normalizeSessions(sessions)
+  const groups = groupSessions(list)
+  const summary = needSummary(need)
+  return {
+    available: enabled === true && (list.length > 0 || summary.total > 0),
+    need: summary,
+    workspaces: groups.workspaces,
+    tasks: groups.tasks,
+    open: normalizeOpen(open),
+    activeId: activeId ?? null,
+  }
+}
+  const renderCardHeader = function renderCardHeader(h, options) {
+  const opts = options ?? {}
+  const key = String(opts.key ?? opts.label ?? '')
+  const open = opts.open !== false
+  const acts = Array.isArray(opts.acts) ? opts.acts : []
+  const children = [
+    h('button', {
+      key: 'toggle',
+      type: 'button',
+      className: 'card-toggle',
+      'aria-expanded': open,
+      'data-side-toggle': key,
+      onClick: opts.onToggle,
+    },
+    h('span', { className: `dot ${opts.dot ?? 'muted'}`, 'aria-hidden': 'true' }),
+    h('b', null, String(opts.label ?? '')),
+    h('span', { className: `n ${opts.dot ?? 'muted'}` }, String(opts.count ?? 0))),
+  ]
+  if (acts.length > 0) children.push(h('span', { key: 'acts', className: 'acts' }, ...acts))
+  // 箭头必须最后渲染：flex 下 margin-left:auto 把它顶到最右
+  children.push(h('button', {
+    key: 'chev',
+    type: 'button',
+    className: 'card-chev',
+    'aria-expanded': open,
+    'aria-label': open ? '收起' : '展开',
+    'data-side-toggle-chev': key,
+    onClick: opts.onToggle,
+  }, sidebarIcon(h, open ? 'chevronDown' : 'chevronRight')))
+  return h('div', { className: 'card-hd' }, ...children)
+}
+  const renderNeedRow = function renderNeedRow(h, item, kind, onOpen) {
+  const row = item ?? {}
+  return h('div', { key: String(row.id ?? row.title ?? ''), className: 'row flat' },
+    h('button', {
+      type: 'button',
+      className: 'row-main',
+      title: String(row.title ?? ''),
+      'data-side-item': String(row.id ?? ''),
+      onClick: onOpen === undefined ? undefined : () => onOpen(row.id),
+    },
+    h('span', { className: 'lead' }, h('i', { className: `ndot ${kind === 'done' ? 'ok' : 'wait'}`, 'aria-hidden': 'true' })),
+    h('span', { className: 'ttl' }, String(row.title ?? '')),
+    h('span', { className: 'meta' }, String(row.meta ?? ''))))
+}
+  const renderNeedCard = function renderNeedCard(h, state, opts) {
+  const options = opts ?? {}
+  const need = state?.need ?? needSummary(undefined)
+  const open = state?.open?.need !== false
+  const children = [renderCardHeader(h, {
+    key: 'need',
+    label: '需要你',
+    dot: 'wait',
+    count: need.total,
+    open,
+    onToggle: options.onToggle === undefined ? undefined : () => options.onToggle('need'),
+  })]
+  if (open) {
+    const body = []
+    if (need.pending.length > 0) {
+      body.push(h('div', { key: 'sub-pending', className: 'need-sub' }, '待我处理', h('span', { className: 'n' }, String(need.pending.length))))
+      for (const item of need.pending) body.push(renderNeedRow(h, item, 'wait', options.onOpenNeed))
+    }
+    if (need.done.length > 0) {
+      body.push(h('div', { key: 'sub-done', className: 'need-sub' }, '已完成未查看', h('span', { className: 'n' }, String(need.done.length))))
+      for (const item of need.done) body.push(renderNeedRow(h, item, 'done', options.onOpenNeed))
+    }
+    if (need.total === 0) body.push(h('div', { key: 'empty', className: 'side-empty' }, '暂时没有等你处理的事'))
+    children.push(h('div', { key: 'body', className: 'card-body' }, ...body))
+  }
+  return h('section', { className: 'side-card side-card--need', 'aria-label': '需要你' }, ...children)
+}
+  const renderSessionRow = function renderSessionRow(h, session, opts) {
+  const options = opts ?? {}
+  const row = session ?? {}
+  const active = row.id !== undefined && row.id === options.activeId
+  return h('div', { key: String(row.id ?? ''), className: `row${options.child === true ? ' child' : ''}${active ? ' is-on' : ''}` },
+    h('button', {
+      type: 'button',
+      className: 'row-main',
+      title: String(row.title ?? ''),
+      'data-session-id': String(row.id ?? ''),
+      onClick: options.onOpenSession === undefined ? undefined : () => options.onOpenSession(row.id),
+    },
+    h('span', { className: 'lead' }),
+    h('span', { className: 'ttl' }, String(row.title ?? ''))),
+    h('span', { className: 'meta' }, h('span', { className: 'when' }, String(row.meta ?? ''))))
+}
+  const renderWorkspaceRow = function renderWorkspaceRow(h, workspace, opts) {
+  const options = opts ?? {}
+  const ws = workspace ?? {}
+  const open = options.open !== false
+  return h('div', { className: `row ws-row${open ? ' open' : ''}` },
+    h('button', {
+      type: 'button',
+      className: 'row-main',
+      'aria-expanded': open,
+      title: String(ws.cwd ?? ws.name ?? ''),
+      'data-workspace-id': String(ws.id ?? ''),
+      onClick: options.onToggleWorkspace === undefined ? undefined : () => options.onToggleWorkspace(ws.id),
+    },
+    h('span', { className: 'lead' }, sidebarIcon(h, open ? 'folderOpen' : 'folder')),
+    h('span', { className: 'ttl' }, String(ws.name ?? ws.cwd ?? ''))))
+}
+  const renderWorkspaceCard = function renderWorkspaceCard(h, state, opts) {
+  const options = opts ?? {}
+  const workspaces = Array.isArray(state?.workspaces) ? state.workspaces : []
+  const open = state?.open?.workspaces !== false
+  const collapsedIds = options.collapsedWorkspaces ?? {}
+  const children = [renderCardHeader(h, {
+    key: 'workspaces',
+    label: '工作区',
+    dot: 'accent',
+    count: workspaces.length,
+    open,
+    onToggle: options.onToggle === undefined ? undefined : () => options.onToggle('workspaces'),
+  })]
+  if (open) {
+    const body = []
+    if (workspaces.length === 0) body.push(h('div', { key: 'empty', className: 'side-empty' }, '还没有绑定目录的工作区'))
+    for (const workspace of workspaces) {
+      const wsOpen = collapsedIds[workspace.id] !== true
+      const rows = [renderWorkspaceRow(h, workspace, {
+        open: wsOpen,
+        onToggleWorkspace: options.onToggleWorkspace,
+      })]
+      if (wsOpen) {
+        for (const session of workspace.sessions ?? []) {
+          rows.push(renderSessionRow(h, session, { child: true, activeId: state?.activeId, onOpenSession: options.onOpenSession }))
+        }
+      }
+      body.push(h('div', { key: String(workspace.id ?? ''), className: 'ws-group' }, ...rows))
+    }
+    children.push(h('div', { key: 'body', className: 'card-body' }, ...body))
+  }
+  return h('section', { className: 'side-card side-card--workspaces', 'aria-label': '工作区' }, ...children)
+}
+  const renderTaskCard = function renderTaskCard(h, state, opts) {
+  const options = opts ?? {}
+  const tasks = Array.isArray(state?.tasks) ? state.tasks : []
+  const open = state?.open?.tasks !== false
+  const children = [renderCardHeader(h, {
+    key: 'tasks',
+    label: '任务',
+    dot: 'muted',
+    count: tasks.length,
+    open,
+    onToggle: options.onToggle === undefined ? undefined : () => options.onToggle('tasks'),
+  })]
+  if (open) {
+    const body = []
+    if (tasks.length === 0) body.push(h('div', { key: 'empty', className: 'side-empty' }, '临时会话放这里，不绑目录。'))
+    for (const session of tasks) {
+      body.push(renderSessionRow(h, session, { activeId: state?.activeId, onOpenSession: options.onOpenSession }))
+    }
+    children.push(h('div', { key: 'body', className: 'card-body' }, ...body))
+  }
+  return h('section', { className: 'side-card side-card--tasks', 'aria-label': '任务' }, ...children)
+}
+  const renderSidebar = function renderSidebar(h, state, options) {
+  const opts = options ?? {}
+  const head = [
+    h('h2', { key: 'title' }, '会话'),
+    opts.onCollapse === undefined
+      ? null
+      : h('button', {
+        key: 'collapse',
+        type: 'button',
+        className: 'icon-btn side-collapse',
+        'aria-label': '收起侧栏',
+        'data-side-action': 'collapse',
+        onClick: opts.onCollapse,
+      }, sidebarIcon(h, 'sidebar')),
+  ].filter((node) => node !== null)
+  return h('div', { className: 'launcher-sidebar__inner' },
+    h('div', { className: 'side-h' }, ...head),
+    h('div', { className: 'side-scroll', 'data-side-scroll': 'true' },
+      renderNeedCard(h, state, opts),
+      renderWorkspaceCard(h, state, opts),
+      renderTaskCard(h, state, opts)))
+}
+  // #endregion sidebar-from-lib
+
   // 与 lib/new-session.js 的 STARTERS 逐条对齐（text 是整句：只填入、不发送）；
   // 漂移由 test/new-session.test.mjs 的同步检查挡住。
   const STARTERS = [
@@ -292,8 +575,8 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
     if (document.getElementById('dsh-launcher-style') !== null) return
     const tag = document.createElement('style')
     tag.id = 'dsh-launcher-style'
-    // 先铺令牌（日夜两套变量），再原有样式，最后骨架覆盖（v17 图标栏/状态条/四列底色）
-    tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}`
+    // 先铺令牌（日夜两套变量），再原有样式，最后骨架覆盖（v17 图标栏/状态条/四列底色）+ 侧栏三段卡片
+    tag.textContent = `${TOKENS_CSS}\n${CSS}\n${SKELETON_CSS}\n${SIDEBAR_CSS}`
     document.head.appendChild(tag)
   }
 
@@ -1438,6 +1721,35 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
   /** 外壳本体：56 图标栏 + 侧栏列 + 主区 + 右栏轨道 + 底状态条 + 浮层。 */
   function LauncherRoot(props) {
     const renderSlot = props.renderSlot
+    // 侧栏三段卡片（票 31）：折叠态由本地 state 管，会话行来自宿主 useSessions，
+    // 需要你计数由 props.sidebarNeed / props.sidebarState 现算（不硬编码）。
+    const [sidebarSections, setSidebarSections] = React.useState({ need: true, workspaces: true, tasks: true })
+    const [sidebarCollapsedWs, setSidebarCollapsedWs] = React.useState({})
+    const hasSessionsHook = typeof props.useSessions === 'function'
+    let sidebarSessions = null
+    if (hasSessionsHook) {
+      try { sidebarSessions = props.useSessions((snapshot) => snapshot ?? null) } catch { sidebarSessions = null }
+    }
+    const sidebarState = sidebarSessions === null && props.sidebarState === undefined
+      ? buildSidebarState({ enabled: false })
+      : buildSidebarState({
+        state: props.sidebarState,
+        sessions: sidebarSessions,
+        need: props.sidebarNeed,
+        open: sidebarSections,
+        activeId: props.selectedSessionId,
+        enabled: hasSessionsHook,
+      })
+    const toggleSidebarSection = (key) => setSidebarSections((prev) => ({ ...prev, [key]: prev[key] === false }))
+    const toggleSidebarWorkspace = (id) => setSidebarCollapsedWs((prev) => ({ ...prev, [id]: prev[id] !== true }))
+    const openSidebarSession = (id) => {
+      if (id === undefined || id === null) return
+      try {
+        const workspaceNav = CURRENT_CTX?.get?.('uiWorkspace')
+        if (workspaceNav !== undefined && typeof workspaceNav.openSession === 'function') { workspaceNav.openSession(id); return }
+      } catch { /* 落到下一档 */ }
+      try { CURRENT_CTX?.sessions?.open?.(id) } catch { /* 忽略：没有会话服务就保持原样 */ }
+    }
     const [viewportWidth, setViewportWidth] = React.useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth))
     React.useEffect(() => {
       const onResize = () => setViewportWidth(window.innerWidth)
@@ -1858,7 +2170,17 @@ window.__ModuleLoader__.load({ id: MODULE_ID, factory: (require) => {
         onOpenPalette: () => { openerRef.current = document.activeElement; setPaletteOpen(true); setPaletteIndex(0) },
       }),
       h('aside', { className: 'launcher-sidebar', 'data-drawer': narrow ? (drawerOpen ? 'open' : 'closed') : 'static' },
-        collapsed ? null : renderSlot('sidebar', { collapsed, width: 280, drawer: narrow })),
+        collapsed
+          ? null
+          : sidebarState.available === true
+            ? renderSidebar(h, sidebarState, {
+              onToggle: toggleSidebarSection,
+              onOpenSession: openSidebarSession,
+              onToggleWorkspace: toggleSidebarWorkspace,
+              collapsedWorkspaces: sidebarCollapsedWs,
+              onCollapse: narrow ? () => setDrawerOpen(false) : undefined,
+            })
+            : renderSlot('sidebar', { collapsed, width: 280, drawer: narrow })),
       h('main', {
         className: 'launcher-main',
         'data-split': splitMode,
