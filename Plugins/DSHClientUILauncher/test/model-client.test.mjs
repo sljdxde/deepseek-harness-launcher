@@ -70,3 +70,30 @@ test('withModelBlock：没有标记区时原样返回（兼容旧 fixture）', (
   const plain = 'no markers here\n'
   assert.equal(withModelBlock(plain), plain)
 })
+
+test('设置→模型：模型/推理等级读绑定值，团队仍是 role=switch', async () => {
+  const { renderSettings, SET_GROUPS, SET_SECTIONS } = await import('../lib/dock-settings.js')
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity).filter((child) => child !== null && child !== undefined) })
+  const walk = function* (node) {
+    if (node === null || node === undefined || typeof node !== 'object') return
+    yield node
+    for (const child of node.children ?? []) yield* walk(child)
+  }
+  const textOf = (node) => {
+    if (node === null || node === undefined) return ''
+    if (typeof node === 'string' || typeof node === 'number') return String(node)
+    return (node.children ?? []).map(textOf).join('')
+  }
+  const tree = renderSettings(h, {
+    groups: SET_GROUPS,
+    sections: SET_SECTIONS,
+    active: 'model',
+    values: { theme: 'light', density: 'cozy', dockOpen: false, team: true, model: 'deepseek r1 · routing group', reason: 'High' },
+    onGroup: () => {}, onAction: () => {}, onClose: () => {},
+  })
+  const text = textOf(tree)
+  assert.ok(text.includes('deepseek r1 · routing group'), '模型值读真实状态')
+  assert.ok(text.includes('High'), '推理等级读真实状态')
+  const sw = [...walk(tree)].find((node) => node.props.role === 'switch')
+  assert.equal(sw.props['aria-checked'], true)
+})
