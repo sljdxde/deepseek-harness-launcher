@@ -3,9 +3,14 @@ name: CI
 on:
   push:
     branches:
-      - main
-  pull_request:
+      - '**'          # 所有分支都跑（原先只跑 main，feature 分支推上去没有任何反馈）
+  pull_request:       # PR 一律跑（含以 feature 分支为 base 的 PR）
   workflow_dispatch:
+
+# 同一分支连续推送只保留最新一次，避免排队烧机器
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -37,6 +42,8 @@ jobs:
 
   regression:
     name: Regression
+    # 重活只在 main 与 PR 上跑；分支 push 由 guards/contract/canary 先给快反馈
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -73,6 +80,8 @@ jobs:
 
   memory-gate:
     name: First-install memory gate
+    # 重活只在 main 与 PR 上跑
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -98,6 +107,8 @@ jobs:
 
   windows:
     name: Windows build
+    # 重活只在 main 与 PR 上跑
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
