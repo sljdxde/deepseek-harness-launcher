@@ -199,6 +199,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var terminateAfterDSHInstall = false
     /// 只校验本启动器拉起且有更新前快照的实例。
     private var dshUpdateReadiness: DSHUpdateReadiness?
+    /// 最近一次 dsh 版本更新后的插件同步结果；只在 `runtime.rollback` 存在时
+    /// 参与更新验收，避免「dsh 能打开但插件没同步」被当成更新成功。
+    private var dshUpdatePluginSyncFailed = false
+    private var dshUpdatePluginFailureShown = false
     /// App 自带锁文件要求的运行环境版本（比已装的新时才非 nil）。只作为「可更新
     /// 的目标」缓存：启动流程不会自己开始装，装与不装由用户在弹窗/菜单里决定。
     private var pendingBundledUpgrade: BundledRuntimeUpgrade?
@@ -275,17 +279,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHArchiveManager") ?? rootURL.appendingPathComponent("Plugins/DSHArchiveManager") }
     private var pluginManagerURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHPluginManager") ?? rootURL.appendingPathComponent("Plugins/DSHPluginManager") }
     private var sessionNotifyPluginURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHSessionNotify") ?? rootURL.appendingPathComponent("Plugins/DSHSessionNotify") }
-    /// 整壳 UI 插件（同名 drop-in）：包名就是宿主 layout 包名，运行时按名解析到本包。
-    private var clientUILauncherURL: URL { Bundle.main.resourceURL?.appendingPathComponent("DSHClientUILauncher") ?? rootURL.appendingPathComponent("Plugins/DSHClientUILauncher") }
     private var bundledPlugins: [BundledPlugin] {
         [
             BundledPlugin(linkName: "dsh-archive-manager", bundleMarker: "DSHArchiveManager", url: pluginURL),
             BundledPlugin(linkName: "dsh-plugin-manager", bundleMarker: "DSHPluginManager", url: pluginManagerURL),
-            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL),
-            // 分发通道一：随安装包默认携带。linkName 用**宿主包名**（含 scope），
-            // profile 的 node_modules/@deepseek-ai/dsh-client-ui-layout 指到 App 包，
-            // dsh 运行期按名解析时用这条链接顶替宿主原生 layout。
-            BundledPlugin(linkName: "@deepseek-ai/dsh-client-ui-layout", bundleMarker: "DSHClientUILauncher", url: clientUILauncherURL)
+            BundledPlugin(linkName: "dsh-session-notify", bundleMarker: "DSHSessionNotify", url: sessionNotifyPluginURL)
         ]
     }
     private var patchPath: String { pluginURL.appendingPathComponent("cordis.patch.yml").path }
@@ -1890,6 +1888,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let isUpgrade = mode == .upgrade
         let isRepair = mode == .repair
         let isDSHUpdate = updateVersion != nil
+        if isUpgrade || isDSHUpdate {
+            dshUpdatePluginSyncFailed = false
+            dshUpdatePluginFailureShown = false
+        }
         // 重启若转入安装/更新流程，反馈由安装窗口接管，菜单栏文案不再适用。
         showStatusTitle(nil)
         switch mode {
@@ -1975,7 +1977,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.applyDSHUpdatePresentation()
                     if relaunchAfterInstall, self.state != .stopped {
                         self.appendLogString("dsh 新版已安装，正在同步更新已安装插件…\n")
-                        self.updateProfilePlugins(executableURL: executableURL, environment: environment) {
+                        self.updateProfilePlugins(executableURL: executableURL, environment: environment) { _ in
                             self.appendLogString("正在启动 dsh 新版并验证会话…\n")
                             self.launchInstalledDSH(port: self.selectedPort ?? port, executableURL: executableURL, environment: environment)
                         }
@@ -1990,7 +1992,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if isUpgrade, relaunchAfterInstall {
                     // App 内置锁文件升级同样是 dsh 版本变化，插件需要跟上
                     self.appendLogString("dsh runtime 安装完成，正在同步更新已安装插件…\n")
-                    self.updateProfilePlugins(executableURL: executableURL, environment: environment) {
+                    self.updateProfilePlugins(executableURL: executableURL, environment: environment) { _ in
                         self.launchInstalledDSH(port: self.selectedPort ?? port, executableURL: executableURL, environment: environment)
                     }
                     return
@@ -2018,8 +2020,31 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// （0.1.5-rc.2 移除 dsh-settings 的 settingsNamespace 导出即是一例，
     /// 导致 dsh 完全无法启动）。通过 dsh 自带的 plugin 子命令（转发
     /// pnpm）执行 `update --latest`：file:/github: 等本地与固定源依赖
-    /// 不受影响。同步失败仍允许启动，以新版实际返回的默认会话状态验证更新。
-    private func updateProfilePlugins(executableURL: URL, environment: [String: String], completion: @escaping () -> Void) {
+    /// 不受影响。同步失败仍允许启动，但会保留回退快照并提示用户。
+    private func updateProfilePlugins(
+        executableURL: URL,
+        environment: [String: String],
+        completion: @escaping (_ succeeded: Bool) -> Void
+    ) {
+        // dsh 的 plugin update 在 pnpm 完成后还会 reconcile bundles；一条失效的
+        // link:/file: 就能让整批更新以 exit 1 结束。先把这类已经不可能加载的
+        // 本地条目移出 profile（package.json 有备份），源码目录不动。
+        let profileURL = DSHRuntimeSupport.dshHomeURL.appendingPathComponent("profiles/web", isDirectory: true)
+        let repair = ProfilePluginRepair.repairBrokenLocalDependencies(profileURL: profileURL)
+        if let error = repair.error {
+            appendLogString("插件同步前的本地插件预检失败：\(error)\n")
+        }
+        if !repair.removedPackages.isEmpty {
+            let details = repair.removedPackages.map { name -> String in
+                guard let path = repair.removedLocalPaths[name] else { return name }
+                return "\(name)（\(path)）"
+            }.joined(separator: "、")
+            appendLogString(
+                "插件同步前移除了失效的本地插件：\(details)；"
+                    + "原 package.json 已备份到 \(repair.backupURL?.path ?? "（备份路径不可用）")\n"
+            )
+        }
+
         var env = environment
         let pnpmBin = DSHRuntimeSupport.dshHomeURL.appendingPathComponent("pnpm-bin", isDirectory: true)
         env["PATH"] = "\(pnpmBin.path):\(env["PATH"] ?? "")"
@@ -2040,17 +2065,31 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let text = String(data: data, encoding: .utf8) { self?.appendLog(Data(text.utf8), prefix: "plugin-update") }
         }
         var finished = false
-        let finish: (String) -> Void = { [weak self] note in
-            guard !finished else { return }
+        let finishLock = NSLock()
+        let finish: (String, Bool) -> Void = { [weak self] note, succeeded in
+            finishLock.lock()
+            guard !finished else {
+                finishLock.unlock()
+                return
+            }
             finished = true
+            finishLock.unlock()
             pipe.fileHandleForReading.readabilityHandler = nil
             if let self {
                 self.appendLogString("\(note)（插件更新输出已记入日志）\n")
             }
-            DispatchQueue.main.async { completion() }
+            DispatchQueue.main.async {
+                self?.dshUpdatePluginSyncFailed = !succeeded
+                self?.dshUpdatePluginFailureShown = false
+                completion(succeeded)
+            }
         }
         task.terminationHandler = { terminated in
-            finish(terminated.terminationStatus == 0 ? "插件同步更新完成" : "插件同步更新失败（exit \(terminated.terminationStatus)），继续启动 dsh")
+            let succeeded = terminated.terminationStatus == 0
+            finish(
+                succeeded ? "插件同步更新完成" : "插件同步更新失败（exit \(terminated.terminationStatus)），继续启动 dsh",
+                succeeded
+            )
         }
         do {
             try task.run()
@@ -2062,11 +2101,11 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 task.terminate()
                 DSHRuntimeSupport.terminateProcessTree(pid: task.processIdentifier)
                 self?.appendLogString("插件同步更新超时，已按进程组终止 pnpm\n")
-                finish("插件同步更新超时（5 分钟），继续启动 dsh")
+                finish("插件同步更新超时（5 分钟），继续启动 dsh", false)
             }
         } catch {
             appendLogString("无法启动插件更新命令：\(error.localizedDescription)，继续启动 dsh\n")
-            finish("插件同步更新未能启动")
+            finish("插件同步更新未能启动", false)
         }
     }
 
@@ -2243,7 +2282,10 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !retired.isEmpty {
             appendLogString("已清理旧内置插件软链：\(retired.joined(separator: ", "))\n")
         }
-        if !ensureBundledPluginLinks(plugins: bundledPlugins, profileURLs: locations) {
+        // 用户明确停用的内置插件不能再建链，否则「停用」会被下一次启动自己覆盖掉。
+        // 停用是面板写状态、启动器读状态决定建不建链（drop-in 摘链即回原生样式）。
+        let disabled = PluginIsolationSupport.disabledBundleNames(url: pluginDisabledStateURL)
+        if !ensureBundledPluginLinks(plugins: bundledPlugins, profileURLs: locations, disabledBundles: disabled) {
             appendLogString("无法更新内置插件链接，保留现有插件配置\n")
         }
     }
@@ -2283,9 +2325,16 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startRuntimeWatchdog(port: port)
         openBrowserWhenReadyIfNeeded()
         let task = process
-        dshUpdateReadiness = task != nil && DSHRuntimeSupport.hasRollback() ? DSHUpdateReadiness() : nil
+        dshUpdateReadiness = task != nil && DSHRuntimeSupport.hasRollback()
+            ? DSHUpdateReadiness(pluginSyncSucceeded: !dshUpdatePluginSyncFailed)
+            : nil
         if let task, dshUpdateReadiness != nil {
             monitorUpdatedSessionPreset(port: port, process: task)
+            if dshUpdateReadiness?.pluginSyncSucceeded == false {
+                DispatchQueue.main.async { [weak self] in
+                    self?.showDSHUpdatePluginSyncFailure(port: port, process: task)
+                }
+            }
         }
         monitorArchivePlugin(port: port, process: task)
         monitorSessionNotify(port: port)
@@ -2466,8 +2515,46 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func finishDSHUpdateIfReady() {
         guard dshUpdateReadiness?.canDiscardRollback == true else { return }
         dshUpdateReadiness = nil
+        dshUpdatePluginSyncFailed = false
+        dshUpdatePluginFailureShown = false
         DSHRuntimeSupport.discardRollback()
-        appendLogString("新版 dsh 的默认会话预设和归档已通过验证\n")
+        appendLogString("新版 dsh 通过更新验收，已清理回退快照\n")
+    }
+
+    private func showDSHUpdatePluginSyncFailure(port: Int, process task: Process) {
+        guard !dshUpdatePluginFailureShown,
+              self.process === task,
+              state == .running,
+              dshUpdateReadiness?.pluginSyncSucceeded == false else { return }
+        dshUpdatePluginFailureShown = true
+        appendLogString("新版 dsh 的插件同步未完成，更新前的运行环境仍保留\n")
+        let rollbackVersion = DSHRuntimeSupport.rollbackVersion()
+        let target = rollbackVersion.map { "v\($0)" } ?? "更新前的版本"
+        let alert = NSAlert()
+        AlertDesign.style(alert, tone: .warning)
+        alert.messageText = "插件同步更新未完成"
+        AlertDesign.setBoundedText(
+            "新版 dsh 已经启动，但同步已安装插件时返回了错误，部分插件可能没有跟上新版。"
+                + "更新前的运行环境仍然保留，可以回退到 \(target) 并立即重启；"
+                + "如果你的插件都在正常工作，也可以继续使用新版。",
+            on: alert
+        )
+        alert.addButton(withTitle: "回退并重启")
+        alert.addButton(withTitle: "继续使用新版")
+        alert.addButton(withTitle: "打开日志")
+        switch AlertDesign.runIfIdle(alert, escapeButtonIndex: 1) {
+        case .alertFirstButtonReturn:
+            rollbackFailedDSHUpdate(to: rollbackVersion)
+        case .alertSecondButtonReturn:
+            dshUpdatePluginSyncFailed = false
+            dshUpdateReadiness?.pluginSyncSucceeded = true
+            appendLogString("用户选择继续使用新版 dsh，插件同步失败不再阻止更新验收\n")
+            finishDSHUpdateIfReady()
+        case .alertThirdButtonReturn:
+            openLogs()
+        default:
+            break
+        }
     }
 
     private func showDSHUpdateSessionFailure(port: Int) {

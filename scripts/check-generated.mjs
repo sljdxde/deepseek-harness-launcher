@@ -31,7 +31,10 @@ for (const f of tracked) {
 }
 
 // 2) 生成块同名顶层符号
-if (!existsSync(CLIENT)) problems.push(`读不到 ${CLIENT}`)
+// 整壳 UI 插件已独立成库（dsh-client-ui-layout 仓库）：本仓库检出里没有它时，
+// 第 2/3 项（生成块同名符号、BUILD_STAMP）跳过——那两项归该包自己的检查，
+// 冲突标记检查（第 1 项）对本仓库照旧全量生效。
+if (!existsSync(CLIENT)) console.log('ℹ 未检出 Plugins/DSHClientUILauncher（已独立成库），跳过生成块与 BUILD_STAMP 检查')
 else {
   const src = readFileSync(CLIENT, 'utf8')
   const regions = [...src.matchAll(/\/\/ #region ([a-z0-9-]+)\n([\s\S]*?)\/\/ #endregion \1/g)]

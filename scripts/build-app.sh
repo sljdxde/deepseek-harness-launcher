@@ -16,7 +16,6 @@ copy_bundled_plugin() {
 copy_bundled_plugin DSHArchiveManager
 copy_bundled_plugin DSHPluginManager
 copy_bundled_plugin DSHSessionNotify
-copy_bundled_plugin DSHClientUILauncher
 cp -R "$ROOT/Resources/dsh-runtime" "$OUT/Contents/Resources/dsh-runtime"
 cp "$ROOT/scripts/install-from-app.sh" "$OUT/Contents/Resources/install-from-app.sh"; chmod +x "$OUT/Contents/Resources/install-from-app.sh"
 cp "$ROOT/Resources/menubar-creature.png" "$OUT/Contents/Resources/menubar-creature.png"
