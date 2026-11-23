@@ -291,25 +291,14 @@ test('宿主版本读取：profile 里 dsh 包是坏 JSON 时落到下一档（�
 })
 
 test('页面 data-build：构建标记 = 包版本 + git 短 sha，且 client 里已注入', () => {
-  // stamp 是「上次同步时的 HEAD」：允许 HEAD 与 HEAD^（提交 stamp 本身会让它落后一笔）
-  const stamp = buildStampBlock()
-  const acceptable = new Set([stamp])
+  // 只校验「版本前缀正确 + sha 形状合法」；sha 是否为近期提交由 scripts/check-generated.mjs 守
+  // （CI 的 PR checkout 是 merge commit，父链是 base 侧，在这里比 HEAD^ 会假红）。
   const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
-  // PR 的 checkout 是 merge commit：stamp 记的是 head 提交，需额外认 GITHUB_HEAD_SHA 与近几个提交
-  const refs = ['HEAD^', 'HEAD~2', 'HEAD~3', 'HEAD~4']
-  for (const ref of refs) {
-    try {
-      const sha = execFileSync('git', ['-C', fileURLToPath(new URL('..', import.meta.url)), 'rev-parse', '--short', ref], { encoding: 'utf8' }).trim()
-      acceptable.add(`${version}+${sha}`)
-    } catch {
-      /* 浅克隆/无父提交就只认当前 */
-    }
-  }
-  if (process.env.GITHUB_HEAD_SHA) acceptable.add(`${version}+${process.env.GITHUB_HEAD_SHA.slice(0, 7)}`)
-  assert.match(stamp, /^\d+\.\d+\.\d+(-[\w.]+)?\+[\w]+$/)
   const source = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
   const match = source.match(/const BUILD_STAMP = "([^"]*)"/)
   assert.ok(match !== null, 'client 必须有 BUILD_STAMP')
-  assert.ok(acceptable.has(match[1]), `client 的 BUILD_STAMP 必须是 HEAD/HEAD^/HEAD~2 之一，实际 ${match[1]}`)
+  const [stampVersion, sha] = match[1].split('+')
+  assert.equal(stampVersion, version, `BUILD_STAMP 版本必须等于 package.json 版本，实际 ${match[1]}`)
+  assert.match(sha ?? '', /^[0-9a-f]{7,40}$/, `BUILD_STAMP 的 sha 形状不合法：${match[1]}`)
   assert.ok(source.includes("'data-build': BUILD_STAMP"), '根元素必须输出 data-build')
 })
