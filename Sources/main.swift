@@ -197,6 +197,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var dshInstallHandle: DSHRuntimeInstallHandle?
     private var dshInstallProgressTracker: DSHInstallProgressTracker?
     private var terminateAfterDSHInstall = false
+    /// 只校验本启动器拉起且有更新前快照的实例。
+    private var dshUpdateReadiness: DSHUpdateReadiness?
     /// App 自带锁文件要求的运行环境版本（比已装的新时才非 nil）。只作为「可更新
     /// 的目标」缓存：启动流程不会自己开始装，装与不装由用户在弹窗/菜单里决定。
     private var pendingBundledUpgrade: BundledRuntimeUpgrade?
@@ -237,8 +239,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // dsh 0.1.5-rc.2 起 Web 首页需要 token 认证：进程启动时在 stdout 打印
     // `dsh web: http://127.0.0.1:<port>/?token=…`。打开浏览器必须用这个
     // 带 token 的入口 URL（首次访问换取绑定域名的 cookie）；旧版无 token，
-    // 打印的 URL 同样可用。stdout 回调在后台线程，读写需持 webURLLock。
-    private let webURLLock = NSLock()
+    // 打印的 URL 同样可用。stdout 解析后的入口在主线程按受管进程身份发布。
     private var authenticatedWebURL: URL?
     private let settings = LauncherSettings.shared
     private let updateService = UpdateService()
@@ -805,7 +806,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 仍拿不到再退回裸地址——旧版 dsh 没有 token，外部实例则只能显示认证失败页
     /// 并提示改用浏览器。
     private func resolveHarnessEntryURL(port: Int, attempt: Int = 0, completion: @escaping (URL?) -> Void) {
-        if let authenticated = authenticatedWebURLSnapshot(), authenticated.port == port {
+        if let authenticated = authenticatedWebURL, authenticated.port == port {
             completion(authenticated)
             return
         }
@@ -824,12 +825,6 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             self.resolveHarnessEntryURL(port: port, attempt: attempt + 1, completion: completion)
         }
-    }
-
-    private func authenticatedWebURLSnapshot() -> URL? {
-        webURLLock.lock()
-        defer { webURLLock.unlock() }
-        return authenticatedWebURL
     }
 
     /// 主菜单「重新载入 Harness 页面」（⌘R）。只重载页面，不重启 dsh。
@@ -1006,13 +1001,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// （0.1.5-rc.2 起首页 401，裸 URL 打不开），否则回退裸地址（旧版）。
     /// token 只对根路径有效，非根 path 一律走裸地址（插件路由无需认证）。
     private func webRootURL(for port: Int, path: String = "/") -> URL? {
-        if path == "/" {
-            webURLLock.lock()
-            let authenticated = authenticatedWebURL
-            webURLLock.unlock()
-            if let authenticated, authenticated.port == port {
-                return authenticated
-            }
+        if path == "/", let authenticatedWebURL, authenticatedWebURL.port == port {
+            return authenticatedWebURL
         }
         return BrowserConnectionSupport.pageURL(port: port, path: path)
     }
@@ -1020,15 +1010,16 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 从 dsh stdout 捕获 `dsh web: <url>` 入口行（含 0.1.5-rc.2 起的
     /// ?token= 认证参数）。URL 是进程生命周期内有效的认证入口，任何时刻
     /// 交给浏览器都能完成 token → cookie 兑换。
-    private func captureWebURL(from output: String, port: Int) {
+    private func captureWebURL(from output: String, port: Int, process task: Process) {
         guard let url = HarnessWebCompatibility.webEntryURL(fromOutput: output, port: port) else { return }
-        webURLLock.lock()
-        authenticatedWebURL = url
-        webURLLock.unlock()
-        appendLogString("捕获 Web 认证入口 URL\n")
         // dsh 打印 token 可能晚于 HTTP 就绪（本机实测 22 秒）：内置窗口若已经落到
         // 401 兜底页，拿到 token 后自动重载，用户不用再点一次菜单。
-        DispatchQueue.main.async { [weak self] in self?.recoverEmbeddedWindowWaitingForAuth() }
+        DispatchQueue.main.async { [weak self, weak task] in
+            guard let self, let task, self.process === task, self.selectedPort == port else { return }
+            self.authenticatedWebURL = url
+            self.appendLogString("捕获 Web 认证入口 URL\n")
+            self.recoverEmbeddedWindowWaitingForAuth()
+        }
     }
 
     /// 兜底页 → 真实页面的自动恢复（只处理「启动器自己拉起、token 晚到」这一种）。
@@ -1302,7 +1293,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let trackedPID = process?.processIdentifier ?? 0
         process = nil; selectedPort = nil; didAutoOpenBrowser = false; openWhenReady = false; pendingSessionId = nil
         // 旧进程的 token 随进程失效，重开后必须用新进程打印的入口 URL。
-        webURLLock.lock(); authenticatedWebURL = nil; webURLLock.unlock()
+        authenticatedWebURL = nil
+        dshUpdateReadiness = nil
         setState(.stopped)
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var pids = self?.managedDSHPIDs() ?? []
@@ -1947,6 +1939,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
             environment: environment,
             force: isUpgrade || isRepair || isDSHUpdate,
             packageSpec: updateVersion.map { "@deepseek-ai/dsh@\($0)" },
+            preserveRollback: isUpgrade,
             onOutput: { [weak self, weak installWindow] text in
                 self?.appendLog(Data(text.utf8), prefix: "npm")
                 guard let self else { return }
@@ -1981,15 +1974,15 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     }
                     self.applyDSHUpdatePresentation()
                     if relaunchAfterInstall, self.state != .stopped {
-                        self.appendLogString("dsh 更新完成，正在同步更新已安装插件…\n")
+                        self.appendLogString("dsh 新版已安装，正在同步更新已安装插件…\n")
                         self.updateProfilePlugins(executableURL: executableURL, environment: environment) {
-                            self.appendLogString("dsh 更新完成，正在重新启动…\n")
+                            self.appendLogString("正在启动 dsh 新版并验证会话…\n")
                             self.launchInstalledDSH(port: self.selectedPort ?? port, executableURL: executableURL, environment: environment)
                         }
                     } else {
                         self.setState(.stopped)
-                        self.appendLogString("dsh 已更新到 v\(updateVersion ?? "")，下次启动生效\n")
-                        self.showInfo(title: "Deepseek Harness 已更新", message: "已更新到 v\(updateVersion ?? "")，下次启动时生效。")
+                        self.appendLogString("dsh v\(updateVersion ?? "") 已安装，下次启动时验证会话\n")
+                        self.showInfo(title: "Deepseek Harness 新版已安装", message: "v\(updateVersion ?? "") 将在下次启动时验证会话。")
                     }
                     return
                 }
@@ -2025,7 +2018,7 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// （0.1.5-rc.2 移除 dsh-settings 的 settingsNamespace 导出即是一例，
     /// 导致 dsh 完全无法启动）。通过 dsh 自带的 plugin 子命令（转发
     /// pnpm）执行 `update --latest`：file:/github: 等本地与固定源依赖
-    /// 不受影响。失败只记日志，不阻塞启动——插件更新是尽力而为的增强。
+    /// 不受影响。同步失败仍允许启动，以新版实际返回的默认会话状态验证更新。
     private func updateProfilePlugins(executableURL: URL, environment: [String: String], completion: @escaping () -> Void) {
         var env = environment
         let pnpmBin = DSHRuntimeSupport.dshHomeURL.appendingPathComponent("pnpm-bin", isDirectory: true)
@@ -2114,14 +2107,14 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let stdoutPipe = Pipe(); let stderrPipe = Pipe()
         task.standardOutput = stdoutPipe; task.standardError = stderrPipe
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self, weak task] handle in
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
             } else {
                 self?.appendLog(data, prefix: "stdout")
-                if let text = String(data: data, encoding: .utf8) {
-                    self?.captureWebURL(from: text, port: port)
+                if let task, let text = String(data: data, encoding: .utf8) {
+                    self?.captureWebURL(from: text, port: port, process: task)
                 }
             }
         }
@@ -2157,6 +2150,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 self.process = nil
                 self.selectedPort = nil
+                self.authenticatedWebURL = nil
+                self.dshUpdateReadiness = nil
                 // 前端（插件管理）在卸载插件后会调 /dsh-plugin-manager/restart 让 dsh
                 // 以 exit 0 优雅退出。此时 dsh 处于 running 状态、退出码为 0，不是崩溃，
                 // 启动器应自动拉起新进程，让侧边栏 slot 刷新——而不是弹「进程已退出」。
@@ -2173,7 +2168,8 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         do {
             try task.run()
-            process = task; selectedPort = port; didAutoOpenBrowser = false; pollUntilReady(port: port, startedAt: Date())
+            process = task; selectedPort = port; didAutoOpenBrowser = false
+            pollUntilReady(port: port, process: task, startedAt: Date())
         } catch {
             fail("无法启动 Deepseek Harness：\(error.localizedDescription)")
         }
@@ -2252,13 +2248,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func pollUntilReady(port: Int, startedAt: Date) {
-        guard process?.isRunning == true else { return }
+    private func pollUntilReady(port: Int, process task: Process, startedAt: Date) {
+        guard process === task, task.isRunning else { return }
         let elapsed = Date().timeIntervalSince(startedAt)
         // A cold dsh runtime bootstrap can still take several minutes. Do not
         // mistake that startup phase for a dead Harness process.
         guard elapsed < 10 * 60 else {
-            terminateProcessGroup(pid: process?.processIdentifier ?? 0)
+            terminateProcessGroup(pid: task.processIdentifier)
             fail("\(LauncherBrand.fullName) 启动超过 10 分钟，请检查网络和日志")
             return
         }
@@ -2267,16 +2263,13 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return }
         ServiceProbe.body(at: url) { [weak self] body in
-            guard let self, self.state != .stopped else { return }
+            guard let self, self.process === task, self.state == .checking else { return }
             if let body, self.isHarnessWebBody(body) {
                 self.setState(.running)
-                // 判据不降级：首页一响应就删回退快照，会出现「dsh 升到 X 之后所有插件
-                // 加载失败，但界面显示成功、也一键回不去」。快照留到内置插件真的加载
-                // 出来（monitorArchivePlugin 探测成功）才释放。
                 self.startHealthMonitors(port: port)
             } else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    self.pollUntilReady(port: port, startedAt: startedAt)
+                    self.pollUntilReady(port: port, process: task, startedAt: startedAt)
                 }
             }
         }
@@ -2289,7 +2282,12 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func startHealthMonitors(port: Int) {
         startRuntimeWatchdog(port: port)
         openBrowserWhenReadyIfNeeded()
-        monitorArchivePlugin(port: port)
+        let task = process
+        dshUpdateReadiness = task != nil && DSHRuntimeSupport.hasRollback() ? DSHUpdateReadiness() : nil
+        if let task, dshUpdateReadiness != nil {
+            monitorUpdatedSessionPreset(port: port, process: task)
+        }
+        monitorArchivePlugin(port: port, process: task)
         monitorSessionNotify(port: port)
         monitorPluginUpdates(port: port)
     }
@@ -2423,29 +2421,114 @@ final class DHLLauncher: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
     }
 
-    /// 等归档插件的路由探针就绪。预算见 BuiltinPluginProbePolicy.readiness。
-    /// 只有 `.ready` 才清理回退快照；`.missing`（确定 404）才记「基础模式」；
-    /// `.unknown` 只是这次没探到确定结论，不打扰用户。
+    /// 等归档插件的路由探针就绪。`.missing`（确定 404）才记「基础模式」。
     /// 放到后台线程用同步探针，不占主线程。
-    private func monitorArchivePlugin(port: Int) {
+    private func monitorArchivePlugin(port: Int, process task: Process?) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let verdict = Self.archivePluginVerdict(port: port, policy: .readiness)
             DispatchQueue.main.async {
-                guard let self, self.state != .stopped, self.selectedPort == port else { return }
+                guard let self, self.state == .running, self.selectedPort == port, self.process === task else { return }
                 switch verdict {
                 case .ready:
                     self.appendLogString("归档增强插件已就绪\n")
-                    // 走到这里才算「dsh 的插件树加载完成」：新版 dsh 的首启到此刻才算成功。
-                    if DSHRuntimeSupport.hasRollback() {
-                        DSHRuntimeSupport.discardRollback()
-                        self.appendLogString("dsh 插件树加载完成，已清理回退快照\n")
-                    }
+                    self.dshUpdateReadiness?.archiveReady = true
+                    self.finishDSHUpdateIfReady()
                 case .missing:
                     self.appendLogString("归档增强插件未随当前 dsh 加载（接口 404），\(LauncherBrand.fullName) 将以基础模式运行\n")
                 case .unknown:
                     self.appendLogString("归档增强插件就绪探测未拿到确定结果（超时/非 404），本次不判未加载\n")
                 }
             }
+        }
+    }
+
+    private func monitorUpdatedSessionPreset(port: Int, process task: Process) {
+        resolveHarnessEntryURL(port: port) { [weak self] entry in
+            guard let self, self.process === task, let entry else { return }
+            DSHDefaultSessionReadiness.inspect(entryURL: entry) { [weak self] verdict in
+                DispatchQueue.main.async {
+                    guard let self, self.state == .running, self.process === task,
+                          self.dshUpdateReadiness != nil else { return }
+                    self.dshUpdateReadiness?.session = verdict
+                    switch verdict {
+                    case .ready:
+                        self.finishDSHUpdateIfReady()
+                    case .broken:
+                        self.showDSHUpdateSessionFailure(port: port)
+                    case .unverified:
+                        self.appendLogString("未能验证新版 dsh 的默认会话预设，保留更新前的运行环境\n")
+                    }
+                }
+            }
+        }
+    }
+
+    private func finishDSHUpdateIfReady() {
+        guard dshUpdateReadiness?.canDiscardRollback == true else { return }
+        dshUpdateReadiness = nil
+        DSHRuntimeSupport.discardRollback()
+        appendLogString("新版 dsh 的默认会话预设和归档已通过验证\n")
+    }
+
+    private func showDSHUpdateSessionFailure(port: Int) {
+        appendLogString("新版 dsh 的默认会话预设无法激活，保留更新前的运行环境\n")
+        setPortMenuTitle("端口：\(port) · 更新后无法新建会话")
+        let rollbackVersion = DSHRuntimeSupport.rollbackVersion()
+        let target = rollbackVersion.map { "v\($0)" } ?? "更新前的版本"
+        let alert = NSAlert()
+        AlertDesign.style(alert, tone: .warning)
+        alert.messageText = "Deepseek Harness 更新后无法新建会话"
+        AlertDesign.setBoundedText(
+            "DSH 报告默认会话预设无法激活。更新前的运行环境已经保留，可以回退到 \(target) 并立即重启。",
+            on: alert
+        )
+        alert.addButton(withTitle: "回退并重启")
+        alert.addButton(withTitle: "打开日志")
+        alert.addButton(withTitle: "继续使用新版")
+        switch AlertDesign.runIfIdle(alert, escapeButtonIndex: 2) {
+        case .alertFirstButtonReturn:
+            rollbackFailedDSHUpdate(to: rollbackVersion)
+        case .alertSecondButtonReturn:
+            openLogs()
+        default:
+            break
+        }
+    }
+
+    private func rollbackFailedDSHUpdate(to version: String?) {
+        let target = version.map { "v\($0)" } ?? "更新前版本"
+        guard DSHRuntimeSupport.hasRollback() else {
+            showInfo(title: "无法回退 Deepseek Harness", message: "更新前的运行环境快照已不存在，请打开日志检查安装状态。")
+            return
+        }
+        appendLogString("用户选择回退 dsh 到 \(target)，正在停止新版并恢复运行环境…\n")
+        setPortMenuTitle("正在回退 Deepseek Harness…")
+        showStatusTitle("正在回退…")
+        stopDHL { [weak self] in
+            guard let self else { return }
+            guard DSHRuntimeSupport.performRollback() else {
+                self.openWhenReady = false
+                self.showStatusTitle(nil)
+                self.appendLogString("回退 dsh 到 \(target) 失败，运行环境保持现状\n")
+                self.setPortMenuTitle("回退失败：菜单可查看日志")
+                self.showInfo(
+                    title: "回退 Deepseek Harness 失败",
+                    message: "未能换回更新前的运行环境。请打开日志检查磁盘空间和文件权限。",
+                    tone: .error
+                )
+                return
+            }
+            self.appendLogString("已恢复 dsh \(target) 的运行环境，正在重新启动…\n")
+            if let upgrade = DSHRuntimeSupport.bundledUpgradeTarget(
+                environment: LauncherEnvironment.nodeEnvironment(preferOffline: false)
+            ) {
+                self.settings.deferredBundledRuntimeVersion = upgrade.bundled
+                self.pendingBundledUpgrade = upgrade
+                self.appendLogString("本次回退后暂不重试 v\(upgrade.bundled)，菜单仍可手动更新\n")
+            }
+            self.relaunchingAfterRestart = true
+            self.openWhenReady = true
+            self.start()
         }
     }
 

@@ -176,7 +176,7 @@ enum DSHRuntimeSupport {
         dshHomeURL.appendingPathComponent("profiles/web/node_modules", isDirectory: true)
     }
 
-    /// 版本定向更新（菜单触发的 dsh 更新）前保留的旧 runtime 快照。
+    /// dsh 版本更新前保留的旧 runtime 快照。
     /// 新版本启动失败（如插件不兼容）时可用 performRollback() 一键回退；
     /// 新版本启动成功后由调用方 discardRollback() 清理。
     static var rollbackURL: URL {
@@ -368,6 +368,7 @@ enum DSHRuntimeSupport {
         environment: [String: String],
         force: Bool = false,
         packageSpec: String? = nil,
+        preserveRollback: Bool = false,
         onOutput: @escaping (String) -> Void,
         completion: @escaping (Result<URL, Error>) -> Void
     ) -> DSHRuntimeInstallHandle {
@@ -413,6 +414,7 @@ enum DSHRuntimeSupport {
             root: root,
             handle: handle,
             packageSpec: packageSpec,
+            preserveRollback: preserveRollback || packageSpec != nil,
             onOutput: onOutput,
             completion: completion
         )
@@ -447,6 +449,7 @@ enum DSHRuntimeSupport {
         root: URL,
         handle: DSHRuntimeInstallHandle,
         packageSpec: String?,
+        preserveRollback: Bool,
         onOutput: @escaping (String) -> Void,
         completion: @escaping (Result<URL, Error>) -> Void
     ) {
@@ -586,6 +589,7 @@ enum DSHRuntimeSupport {
                     root: root,
                     handle: handle,
                     packageSpec: packageSpec,
+                    preserveRollback: preserveRollback,
                     onOutput: onOutput,
                     completion: completion
                 )
@@ -607,6 +611,7 @@ enum DSHRuntimeSupport {
                     root: root,
                     handle: handle,
                     packageSpec: packageSpec,
+                    preserveRollback: preserveRollback,
                     onOutput: onOutput,
                     completion: completion
                 )
@@ -629,6 +634,7 @@ enum DSHRuntimeSupport {
                     root: root,
                     handle: handle,
                     packageSpec: packageSpec,
+                    preserveRollback: preserveRollback,
                     onOutput: onOutput,
                     completion: completion
                 )
@@ -648,9 +654,8 @@ enum DSHRuntimeSupport {
                     try fileManager.moveItem(at: runtimeURL, to: backup)
                     do {
                         try fileManager.moveItem(at: staging, to: runtimeURL)
-                        if packageSpec != nil {
-                            // 版本定向更新：保留旧 runtime 作为回退快照，直到
-                            // 新版本证明能启动（启动成功后 discardRollback）。
+                        if preserveRollback {
+                            // 菜单更新和锁文件升级都留到新版通过就绪验证再清理。
                             try? fileManager.removeItem(at: rollbackURL)
                             try? fileManager.moveItem(at: backup, to: rollbackURL)
                         } else {

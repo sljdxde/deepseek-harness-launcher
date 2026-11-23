@@ -976,6 +976,8 @@ swiftc "$ROOT/scripts/test-release-notes.swift" "$ROOT/Sources/ReleaseNotesSuppo
 # 回本机 loopback；否则内置窗口拿公开域名换 cookie，任何网络波动都会落到 401 页。
 swiftc "$ROOT/scripts/test-harness-web-compat.swift" "$ROOT/Sources/HarnessWebCompatibility.swift" -o "$ROOT/build/test-harness-web-compat"
 "$ROOT/build/test-harness-web-compat"
+swiftc "$ROOT/scripts/test-dsh-update-readiness.swift" "$ROOT/Sources/DSHUpdateReadiness.swift" -o "$ROOT/build/test-dsh-update-readiness"
+"$ROOT/build/test-dsh-update-readiness"
 swiftc "$ROOT/scripts/test-plugin-isolation.swift" "$ROOT/Sources/PluginIsolationSupport.swift" -o "$ROOT/build/test-plugin-isolation"
 "$ROOT/build/test-plugin-isolation"
 swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupport.swift" -o "$ROOT/build/test-plugin-updates"
