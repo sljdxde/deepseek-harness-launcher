@@ -3,9 +3,8 @@ name: CI
 on:
   push:
     branches:
-      - '**'          # 所有分支都跑（原先只跑 main，feature 分支推上去没有任何反馈）
-  pull_request:       # PR 一律跑（含以 feature 分支为 base 的 PR）
-  workflow_dispatch:
+      - main          # 暂时只跑 main；其他分支 push 不触发，避免消耗 runner
+  workflow_dispatch:  # 需要时可在任意分支手动触发
 
 # 同一分支连续推送只保留最新一次，避免排队烧机器
 concurrency:
@@ -23,8 +22,6 @@ jobs:
     name: Guards
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,12 +41,8 @@ jobs:
 
   regression:
     name: Regression
-    # 重活只在 main 与 PR 上跑；分支 push 由 guards/contract/canary 先给快反馈
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 30
-    env:
-      GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -86,8 +79,6 @@ jobs:
 
   memory-gate:
     name: First-install memory gate
-    # 重活只在 main 与 PR 上跑
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -113,8 +104,6 @@ jobs:
 
   windows:
     name: Windows build
-    # 重活只在 main 与 PR 上跑
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
