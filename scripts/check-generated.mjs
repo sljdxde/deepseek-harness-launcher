@@ -73,9 +73,13 @@ else {
       const [stampVersion, sha] = stamp.split('+')
       if (stampVersion !== version) problems.push(`BUILD_STAMP 版本 ${stampVersion} ≠ package.json ${version}`)
       const recent = new Set()
-      for (const ref of ['HEAD', 'HEAD^', 'HEAD~2']) {
+      // PR 的 checkout 是 merge commit：stamp 记的是 head 提交，不在 HEAD/HEAD^/HEAD~2 里，
+      // 因此还要认 GITHUB_HEAD_SHA 与最近 5 个提交。
+      for (const ref of ['HEAD', 'HEAD^', 'HEAD~2', 'HEAD~3', 'HEAD~4']) {
         try { recent.add(git(['rev-parse', '--short', ref])) } catch { /* 浅克隆忽略 */ }
       }
+      for (const sha of git(['log', '-5', '--format=%h']).split('\n')) if (sha) recent.add(sha)
+      if (process.env.GITHUB_HEAD_SHA) recent.add(process.env.GITHUB_HEAD_SHA.slice(0, 7))
       if (recent.size && !recent.has(sha)) problems.push(`BUILD_STAMP sha ${sha} 不在近期提交 ${[...recent].join('/')} 内（跑 node tools/sync-contract.mjs 更新）`)
     }
   }

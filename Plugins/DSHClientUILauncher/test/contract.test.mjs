@@ -294,15 +294,18 @@ test('页面 data-build：构建标记 = 包版本 + git 短 sha，且 client �
   // stamp 是「上次同步时的 HEAD」：允许 HEAD 与 HEAD^（提交 stamp 本身会让它落后一笔）
   const stamp = buildStampBlock()
   const acceptable = new Set([stamp])
-  for (const ref of ['HEAD^', 'HEAD~2']) {
+  const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
+  // PR 的 checkout 是 merge commit：stamp 记的是 head 提交，需额外认 GITHUB_HEAD_SHA 与近几个提交
+  const refs = ['HEAD^', 'HEAD~2', 'HEAD~3', 'HEAD~4']
+  for (const ref of refs) {
     try {
       const sha = execFileSync('git', ['-C', fileURLToPath(new URL('..', import.meta.url)), 'rev-parse', '--short', ref], { encoding: 'utf8' }).trim()
-      const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
       acceptable.add(`${version}+${sha}`)
     } catch {
       /* 浅克隆/无父提交就只认当前 */
     }
   }
+  if (process.env.GITHUB_HEAD_SHA) acceptable.add(`${version}+${process.env.GITHUB_HEAD_SHA.slice(0, 7)}`)
   assert.match(stamp, /^\d+\.\d+\.\d+(-[\w.]+)?\+[\w]+$/)
   const source = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
   const match = source.match(/const BUILD_STAMP = "([^"]*)"/)
