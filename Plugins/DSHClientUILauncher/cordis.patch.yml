@@ -1,4 +1,0 @@
-# 本包是 layout 的**同名 drop-in**：包名就是 @deepseek-ai/dsh-client-ui-layout，
-# 由 profile 的依赖 / override 按名字解析到这一份，行 id 仍是 ui-layout。
-# 所以这里不能再 insert 自己的行——insert 会让同一个实现被加载两次、root 注册两次。
-[]

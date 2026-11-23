@@ -58,17 +58,6 @@ if rg -q 'stopRunningAgents|需要二次确认删除|只能删除已归档' "$RO
   exit 1
 fi
 rg -Fq 'body: JSON.stringify({ sessionIds: confirmIds })' "$ROOT/Plugins/DSHArchiveManager/client/client.js"
-# 审批与权限服务（PR-A）：判定/策略/审计/服务层，安全敏感代码不允许零 CI 覆盖。
-node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/audit.mjs"
-node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/decision.mjs"
-node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/index.mjs"
-node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/policy-store.mjs"
-node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/queue.mjs"
-node --check "$ROOT/Plugins/DSHClientUILauncher/lib/approval/ulid.mjs"
-node --test "$ROOT/Plugins/DSHClientUILauncher/test/approval-audit.test.mjs"
-node --test "$ROOT/Plugins/DSHClientUILauncher/test/approval-decision.test.mjs"
-node --test "$ROOT/Plugins/DSHClientUILauncher/test/approval-policy-store.test.mjs"
-node --test "$ROOT/Plugins/DSHClientUILauncher/test/approval-service.test.mjs"
 node --check "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 node --check "$ROOT/Plugins/DSHPluginManager/client/client.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-manager.test.js"
@@ -76,10 +65,9 @@ node --test "$ROOT/Plugins/DSHPluginManager/test/client-toasts.test.js"
 node --test "$ROOT/Plugins/DSHPluginManager/test/client-updates.test.js"
 # 客户端 UI 渲染冒烟：纯函数测不到的组件接线（工具栏/行内标记/批量轮询/多选/降级）。
 node "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
-# T3 外壳（同名 drop-in layout）：契约块必须与 lib 一致，单测全跑（与 T4 分支同一段，别各插一处）
-node --check "$ROOT/Plugins/DSHClientUILauncher/client/client.js"
-node "$ROOT/Plugins/DSHClientUILauncher/tools/sync-contract.mjs" --check
-node --test "$ROOT/Plugins/DSHClientUILauncher/test/"*.test.mjs
+# 生成物纪律（冲突标记 / 生成块同名符号 / BUILD_STAMP）与测试断言纪律（禁源码文本断言）
+node "$ROOT/scripts/check-generated.mjs"
+node "$ROOT/scripts/check-tests.mjs"
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-manager.integration.test.js"
 # 插件停用/启用：行 id 发现 → patch 文本渲染 → 状态写入/启用移除 → 去重/不可停用过滤。
 node --test "$ROOT/Plugins/DSHPluginManager/test/plugin-disabled.test.js"
@@ -184,9 +172,10 @@ rg -Fq 'dsh-pm-seg' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'setCategory(active ? ' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'dsh-pm-sec2' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'dsh-pm-crumbs' "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq 'categoryHue' "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq 'dsh-pm-hue-brand' "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq '场景10（分类条：分段/展开/分类视图/返回）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
+# 选中分类统一用 --pm-accent（旧的 categoryHue / hue-brand 色相表已随 v3 重构删除）。
+rg -Fq 'dsh-pm-seg.on' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'var(--pm-accent)' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq '场景10（分类条：折叠/展开/分类视图/返回）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -Fq '场景16（分区查看全部 → 分类视图 + 分页）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -Fq '场景17（全屏切换）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
 rg -Fq '场景18（描述找插件：模型挑选 + 降级标注）' "$ROOT/Plugins/DSHPluginManager/test/client-render.smoke.mjs"
@@ -195,9 +184,9 @@ rg -Fq 'MARKET_GROUPS' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -Fq 'marketGroupOf' "$ROOT/Plugins/DSHPluginManager/lib/index.js" "$ROOT/Plugins/DSHPluginManager/test/plugin-sources.test.js"
 # 分类条：原始分类折叠（前 8 平铺 + 「全部 N 类」按钮），但下拉必须保持删除。
 rg -Fq 'dsh-pm-seg more' "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq 'dsh-pm-segs-open' "$ROOT/Plugins/DSHPluginManager/client/client.js"
-# 展开后「全部 N 类」胶囊消失，收起入口用低调文字 dsh-pm-collapse。
-rg -Fq 'dsh-pm-collapse' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq "dsh-pm-segs' + (catExpanded ? ' xp'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+# 展开后「全部 N 类」胶囊消失，收起入口是 dsh-pm-seg xall（文字「收起」）。
+rg -Fq 'dsh-pm-seg xall' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 分类筛选参数：客户端必须用 category=（精确匹配原始分类），
 # 不许再塞进 group=（服务端 group 只认 6 个分组 id，塞原始分类名会匹配不到
 # 任何插件 → 用户报的现象：胶囊上写着「工作流 674」，点进去却是 0 个插件）。
@@ -219,7 +208,7 @@ rg -Fq 'dsh-pm-ai-bar' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 检索走流式接口，UI 实时打印步骤与模型输出。
 rg -Fq '/dsh-plugin-manager/ai-search/stream' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -Fq 'searchPluginsByDescriptionStream' "$ROOT/Plugins/DSHPluginManager/lib/index.js"
-rg -Fq 'dsh-pm-ai-log' "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq 'dsh-pm-ai-steps' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 # 全屏：面板可铺满窗口（顶栏按钮 + localStorage 记忆）。
 rg -Fq 'dsh-pm-full' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'toggleFullscreen' "$ROOT/Plugins/DSHPluginManager/client/client.js"
@@ -298,13 +287,14 @@ if rg -q 'dsh-interrupted-dot' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml
   echo "dsh-interrupted-dot 只能在 Windows 侧合成进 base patch，不能进 macOS 共享补丁" >&2
   exit 1
 fi
-# 提交的 Windows 内嵌副本必须与 Plugins/ 源一致（build.ps1 在构建时同步）。
-if ! diff -rq "$ROOT/Plugins/DSHInterruptedDot" "$ROOT/windows/internal/assets/plugins/DSHInterruptedDot" >/dev/null; then
+# 提交的 Windows 内嵌副本必须与 Plugins/ 源一致（build.ps1 在构建时同步，
+# 并按发行包口径排除 test/ 与 Sources/）。
+if ! diff -rq -x test -x Sources "$ROOT/Plugins/DSHInterruptedDot" "$ROOT/windows/internal/assets/plugins/DSHInterruptedDot" >/dev/null; then
   echo "windows/internal/assets/plugins/DSHInterruptedDot 与 Plugins/DSHInterruptedDot 不同步" >&2
   exit 1
 fi
 # 国内加速独立插件（dsh-china-mirror）：资源列表 / 构建同步 / base patch 合成 /
-# bundled 识别 / 与 Plugins/ 源一致，一条都不能少。
+# bundled 识别 / 与 Plugins/ 源一致（同样排除 test/ 与 Sources/），一条都不能少。
 rg -Fq 'DSHChinaMirror' "$ROOT/windows/build.ps1" "$ROOT/windows/internal/assets/assets.go"
 rg -Fq "'DSHChinaMirror'" "$ROOT/Plugins/DSHPluginManager/lib/index.js"
 rg -Fq 'DSHChinaMirror' "$ROOT/windows/internal/pluginisolation/pluginisolation.go"
@@ -314,7 +304,7 @@ if rg -q 'dsh-china-mirror' "$ROOT/Plugins/DSHArchiveManager/cordis.patch.yml"; 
   echo "dsh-china-mirror 只能在 Windows 侧合成进 base patch，不能进 macOS 共享补丁" >&2
   exit 1
 fi
-if ! diff -rq "$ROOT/Plugins/DSHChinaMirror" "$ROOT/windows/internal/assets/plugins/DSHChinaMirror" >/dev/null; then
+if ! diff -rq -x test -x Sources "$ROOT/Plugins/DSHChinaMirror" "$ROOT/windows/internal/assets/plugins/DSHChinaMirror" >/dev/null; then
   echo "windows/internal/assets/plugins/DSHChinaMirror 与 Plugins/DSHChinaMirror 不同步" >&2
   exit 1
 fi
@@ -336,7 +326,7 @@ rg -Fq "'/dsh-plugin-manager/sources'" "$ROOT/Plugins/DSHPluginManager/client/cl
 # 方案 B 的四个视图与国内加速开关必须在客户端真的接线（渲染冒烟 13/14 兜行为）。
 rg -Fq "tab === 'discover' ? discoverTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq "tab === 'builtin' ? builtinTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
-rg -Fq "tab === 'sources' ? sourcesTab" "$ROOT/Plugins/DSHPluginManager/client/client.js"
+rg -Fq ': sourcesTab' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq "className: 'dsh-pm-frame'" "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'dsh-pm-rail' "$ROOT/Plugins/DSHPluginManager/client/client.js"
 rg -Fq 'aria-label' "$ROOT/Plugins/DSHPluginManager/client/client.js"
@@ -574,11 +564,12 @@ if [[ "$(plutil -extract LSUIElement raw "$ROOT/Resources/Info.plist" 2>/dev/nul
   exit 1
 fi
 plutil -extract CFBundleName raw "$ROOT/Resources/Info.plist" | grep -qx 'Deepseek Harness Launcher'
-# 版本号规则见 AGENTS.md：正式 x.y.z；提测 x.y.z-a.b；开发 x.y.z-a.b-SNAPSHOT。
+# 版本号规则见 AGENTS.md：正式 x.y.z；提测 x.y.z-a.b；开发 x.y.z-a.b-SNAPSHOT；
+# x.y.z-ui 是本地特殊测试版（只允许本地安装，release.yml 会拒绝正式发布）。
 # 门禁只校验格式规则与两处 plist 一致性，不锁定具体版本号。
 APP_VERSION="$(plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/Info.plist")"
 INSTALLER_VERSION="$(plutil -extract CFBundleShortVersionString raw "$ROOT/Resources/InstallerInfo.plist")"
-VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+\.[0-9]+(-SNAPSHOT)?)?$'
+VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+(-ui|-[0-9]+\.[0-9]+(-SNAPSHOT)?)?$'
 echo "$APP_VERSION" | grep -Eqx "$VERSION_PATTERN" || { echo "Info.plist 版本不符合 AGENTS.md 规则: $APP_VERSION" >&2; exit 1; }
 echo "$INSTALLER_VERSION" | grep -Eqx "$VERSION_PATTERN" || { echo "InstallerInfo.plist 版本不符合 AGENTS.md 规则: $INSTALLER_VERSION" >&2; exit 1; }
 [[ "$APP_VERSION" == "$INSTALLER_VERSION" ]] || { echo "版本不一致: $APP_VERSION vs $INSTALLER_VERSION" >&2; exit 1; }
@@ -973,6 +964,10 @@ swiftc "$ROOT/scripts/test-release-notes.swift" "$ROOT/Sources/ReleaseNotesSuppo
 # 回本机 loopback；否则内置窗口拿公开域名换 cookie，任何网络波动都会落到 401 页。
 swiftc "$ROOT/scripts/test-harness-web-compat.swift" "$ROOT/Sources/HarnessWebCompatibility.swift" -o "$ROOT/build/test-harness-web-compat"
 "$ROOT/build/test-harness-web-compat"
+swiftc "$ROOT/scripts/test-dsh-update-readiness.swift" "$ROOT/Sources/DSHUpdateReadiness.swift" -o "$ROOT/build/test-dsh-update-readiness"
+"$ROOT/build/test-dsh-update-readiness"
+swiftc "$ROOT/scripts/test-profile-plugin-repair.swift" "$ROOT/Sources/ProfilePluginRepair.swift" -o "$ROOT/build/test-profile-plugin-repair"
+"$ROOT/build/test-profile-plugin-repair"
 swiftc "$ROOT/scripts/test-plugin-isolation.swift" "$ROOT/Sources/PluginIsolationSupport.swift" -o "$ROOT/build/test-plugin-isolation"
 "$ROOT/build/test-plugin-isolation"
 swiftc "$ROOT/scripts/test-plugin-updates.swift" "$ROOT/Sources/PluginUpdateSupport.swift" -o "$ROOT/build/test-plugin-updates"

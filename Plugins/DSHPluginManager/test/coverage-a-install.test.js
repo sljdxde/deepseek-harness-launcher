@@ -11,7 +11,7 @@
 // 环境变量（DSH_HOME）每个用例都要改，所以全部串行（concurrency: false）并在
 // finally 里恢复。
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -556,7 +556,10 @@ serialTest('ensurePnpmPath：PATH 上有 pnpm 就直接用；没有就用 corepa
   await withTempHome('dsh-pm-pnpm-', async home => {
     const bin = join(home, 'bin-with-pnpm');
     await mkdir(bin, { recursive: true });
-    await writeFile(join(bin, process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'), '');
+    const fakePnpm = join(bin, process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm');
+    await writeFile(fakePnpm, '');
+    // hasCommandOnPath 用 X_OK 判定：假 pnpm 必须带执行位，否则在某些环境（CI Node 24）被当成不存在
+    if (process.platform !== 'win32') await chmod(fakePnpm, 0o755);
 
     await withPath(bin, async () => {
       const [path, note] = await ensurePnpmPath();
@@ -566,7 +569,9 @@ serialTest('ensurePnpmPath：PATH 上有 pnpm 就直接用；没有就用 corepa
 
     const bin2 = join(home, 'bin-with-corepack');
     await mkdir(bin2, { recursive: true });
-    await writeFile(join(bin2, process.platform === 'win32' ? 'corepack.cmd' : 'corepack'), '');
+    const fakeCorepack = join(bin2, process.platform === 'win32' ? 'corepack.cmd' : 'corepack');
+    await writeFile(fakeCorepack, '');
+    if (process.platform !== 'win32') await chmod(fakeCorepack, 0o755);
     await withPath(bin2, async () => {
       const [path, note] = await ensurePnpmPath();
       assert.match(note, /pnpm shim prepared via corepack/);

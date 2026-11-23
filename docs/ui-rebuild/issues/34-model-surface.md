@@ -1,6 +1,6 @@
 Label: ready-for-agent
 Type: task
-Status: ready
+Status: resolved
 
 # 34：模型与推理等级：浮层 + 设置条目面板
 
@@ -17,3 +17,6 @@ Status: ready
 - [ ] 点浮层外、按 Esc、切换页面都会收起
 - [ ] 设置→模型三条目：模型值、推理等级 Default/低/高、团队开关状态都读自真实状态
 - [ ] 键盘可用：Tab 可达，`aria-checked`/`aria-expanded` 正确
+
+---
+Closed: 2026-11-22 · 集成分支 `feat/ui-rebuild-spec` @ f82c186 · 418 单测绿

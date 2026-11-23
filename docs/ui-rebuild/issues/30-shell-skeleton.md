@@ -1,6 +1,6 @@
 Label: ready-for-agent
 Type: task
-Status: ready
+Status: resolved
 
 # 30：外壳骨架移植（prefactor + 壳层）
 
@@ -17,3 +17,6 @@ Status: ready
 - [ ] 空页面可跑：图标栏 + 状态栏 + 主区容器渲染，无控制台报错
 - [ ] 日夜切换即时生效，正文/次要文字对比度均 ≥ 4.5:1
 - [ ] 窗口从 1100 到 2000 宽无横向溢出、无元素重叠
+
+---
+Closed: 2026-11-22 · 集成分支 `feat/ui-rebuild-spec` @ f82c186 · 418 单测绿

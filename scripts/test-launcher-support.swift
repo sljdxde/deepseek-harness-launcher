@@ -49,6 +49,17 @@ struct LauncherSupportChecks {
         let profileManagerDestination = try FileManager.default.destinationOfSymbolicLink(atPath: profileManagerLink.path)
         precondition(profileManagerDestination == currentManager.path)
 
+        // 作用域包（@deepseek-ai/dsh-client-ui-layout）的链接在 node_modules/@deepseek-ai/ 下：
+        // 父目录不存在时也要能建出来，否则同名 drop-in 的链接永远失败。
+        let scopedRoot = root.appendingPathComponent("scoped-profile/node_modules", isDirectory: true)
+        try FileManager.default.createDirectory(at: scopedRoot, withIntermediateDirectories: true)
+        let scopedSource = root.appendingPathComponent("app/Contents/Resources/DSHClientUILauncher", isDirectory: true)
+        try FileManager.default.createDirectory(at: scopedSource, withIntermediateDirectories: true)
+        let scoped = BundledPlugin(linkName: "@deepseek-ai/dsh-client-ui-layout", bundleMarker: "DSHClientUILauncher", url: scopedSource)
+        precondition(ensureBundledPluginLink(plugin: scoped, profileURL: scopedRoot), "作用域包链接要能建父目录")
+        let scopedLink = scopedRoot.appendingPathComponent("@deepseek-ai/dsh-client-ui-layout")
+        precondition((try? FileManager.default.destinationOfSymbolicLink(atPath: scopedLink.path)) == scopedSource.path, "作用域软链指向本包目录")
+
         // MARK: - 旧内置插件软链回收
 
         // 旧版本内置插件整体下线后，~/.dsh/profiles/**/node_modules 里会留下指向

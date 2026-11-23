@@ -1,6 +1,6 @@
 Label: ready-for-agent
 Type: task
-Status: ready
+Status: resolved
 
 # 37：死控件巡检与可访问性验收（发布验收票）
 
@@ -17,3 +17,6 @@ Status: ready
 - [ ] 所有交互元素可 Tab 到达，焦点环可见
 - [ ] 点击目标不小于 24×24（或满足间距豁免）
 - [ ] 巡检报告归档，作为发布验收证据
+
+---
+Closed: 2026-11-22 · 集成分支 `feat/ui-rebuild-spec` @ f82c186 · 418 单测绿

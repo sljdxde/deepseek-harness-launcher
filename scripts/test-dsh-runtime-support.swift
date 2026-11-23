@@ -220,13 +220,14 @@ struct DSHRuntimeSupportChecks {
             throw TestError("升级目标未携带 bundled / installed 版本号")
         }
 
-        // 3) force 重装必须走 npm ci 且提示升级，而不是跳过
+        // 3) 锁文件升级走 npm ci，也保留更新前的快照供首启验证
         let box = ResultBox()
         var output = ""
         _ = DSHRuntimeSupport.install(
             npmPath: fakeNPM.path,
             environment: ["DHL_NPM_REGISTRY": "https://npm.example.test", "FAKE_NPM_ENV_FILE": envFile.path],
             force: true,
+            preserveRollback: true,
             onOutput: { output += $0 },
             completion: { box.value = $0 }
         )
@@ -240,6 +241,10 @@ struct DSHRuntimeSupportChecks {
         guard output.contains("检测到新的 dsh 版本") else {
             throw TestError("升级重装缺少升级提示")
         }
+        guard DSHRuntimeSupport.hasRollback() else {
+            throw TestError("锁文件升级未保留更新前的 runtime")
+        }
+        DSHRuntimeSupport.discardRollback()
         try FileManager.default.removeItem(at: DSHRuntimeSupport.runtimeURL)
     }
 
@@ -322,8 +327,7 @@ struct DSHRuntimeSupportChecks {
     // Rollback safety net: a version-targeted update must keep the previous
     // runtime as a snapshot; performRollback swaps it back; discardRollback
     // cleans it. The snapshot must carry the OLD bits (marker proves it), and
-    // non-targeted installs (first install / lockfile upgrade) keep deleting
-    // the old runtime as before.
+    // A repair without an upgrade does not retain a rollback snapshot.
     private static func testUpdateKeepsRollbackSnapshot(fakeNPM: URL) throws {
         // 1) 前置：装一个健康 runtime 并植入版本标记
         let first = runInstall(fakeNPM: fakeNPM, environment: [:])
@@ -370,7 +374,7 @@ struct DSHRuntimeSupportChecks {
             throw TestError("回退后快照应被消费")
         }
 
-        // 4) 非定向安装（force 升级路径）不保留快照
+        // 4) 运行环境重建不保留快照
         let upgradeBox = ResultBox()
         _ = DSHRuntimeSupport.install(
             npmPath: fakeNPM.path,
@@ -381,10 +385,10 @@ struct DSHRuntimeSupportChecks {
         )
         waitForResult(upgradeBox)
         guard case .success = upgradeBox.value else {
-            throw TestError("非定向升级安装未成功")
+            throw TestError("运行环境重建未成功")
         }
         guard !DSHRuntimeSupport.hasRollback() else {
-            throw TestError("非定向安装不应保留回退快照")
+            throw TestError("重建运行环境不应保留回退快照")
         }
         DSHRuntimeSupport.discardRollback()
         try FileManager.default.removeItem(at: DSHRuntimeSupport.runtimeURL)

@@ -1,6 +1,6 @@
 Label: ready-for-agent
 Type: task
-Status: ready
+Status: resolved
 
 # 29：HostGuard 判定表 + Bootstrap：不接管与横幅
 
@@ -20,3 +20,6 @@ Status: ready
 - [ ] 主题前缀改名时仍接管，页面无样式错乱（退化为 fallback 配色）
 - [ ] guard 判定表单测覆盖每个分支（含 warnings 不阻挡接管）
 - [ ] 重复加载幂等：不会注册两次、不会叠出两条横幅
+
+---
+Closed: 2026-11-22 · 集成分支 `feat/ui-rebuild-spec` @ f82c186 · 418 单测绿

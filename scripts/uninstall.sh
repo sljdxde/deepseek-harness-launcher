@@ -141,7 +141,7 @@ remove_dsh_runtime
 
 # Only remove links that still point into one of our app bundles; anything
 # else is a user-installed plugin with the same name and must be preserved.
-for PLUGIN_SPEC in "dsh-archive-manager:DSHArchiveManager" "dsh-plugin-manager:DSHPluginManager" "dsh-session-notify:DSHSessionNotify"; do
+for PLUGIN_SPEC in "dsh-archive-manager:DSHArchiveManager" "dsh-plugin-manager:DSHPluginManager" "dsh-session-notify:DSHSessionNotify" "@deepseek-ai/dsh-client-ui-layout:DSHClientUILauncher"; do
   PLUGIN_NAME="${PLUGIN_SPEC%%:*}"
   PLUGIN_MARKER="${PLUGIN_SPEC##*:}"
   for MODULES_DIR in "$HOME/.dsh/profiles/web/node_modules" "$HOME/.dsh/profiles/node_modules"; do

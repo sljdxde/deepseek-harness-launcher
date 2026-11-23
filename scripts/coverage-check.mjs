@@ -42,7 +42,27 @@ const TARGETS = [
 
 const THRESHOLD = Number(process.env.COV_THRESHOLD || 100);
 
-const pluginDirs = ['DSHPluginManager', 'DSHArchiveManager', 'DSHChinaMirror'];
+// 自动发现：Plugins/ 下任何带 test(s)/ 的插件都跑测试；其中"有 lib 代码却没有任何
+// TARGETS 条目"的插件视为免检口 → 直接失败（新插件不会再被漏掉）。
+// GRANDFATHERED 是两个历史插件（只有 index.js，尚未纳入 100% 门禁），显式挂账；
+// 新插件想豁免必须加进这个名单并在评审里说明理由。
+const GRANDFATHERED = ['DSHInterruptedDot', 'DSHSessionNotify'];
+const discovered = readdirSync(pluginsDir, { withFileTypes: true })
+  .filter((d) => d.isDirectory())
+  .map((d) => d.name)
+  .filter((n) => {
+    const base = join(pluginsDir, n);
+    return existsSync(join(base, 'package.json')) &&
+      (existsSync(join(base, 'test')) || existsSync(join(base, 'tests')));
+  });
+const pluginDirs = [...new Set(['DSHPluginManager', 'DSHArchiveManager', 'DSHChinaMirror', ...discovered])];
+const uncovered = discovered.filter((n) =>
+  !GRANDFATHERED.includes(n) && !TARGETS.some((t) => t.startsWith(`Plugins/${n}/`)));
+if (uncovered.length) {
+  console.error(`✗ 覆盖率门禁：这些插件有测试却没有任何 TARGETS 条目（免检口）：${uncovered.join(', ')}`);
+  console.error('  修法：把其 lib/*.js 加进 TARGETS；确属历史豁免则加进 GRANDFATHERED 并说明理由。');
+  process.exit(1);
+}
 const testFiles = [];
 for (const plugin of pluginDirs) {
   const dir = join(pluginsDir, plugin);
@@ -110,10 +130,13 @@ for (const name of readdirSync(covDir)) {
   try { parsed = JSON.parse(readFileSync(join(covDir, name), 'utf8')); } catch { continue; }
   const byFile = new Map();
   for (const entry of parsed.result || []) {
-    // V8's url is file:///D:/... (percent-encoded when the path has non-ASCII).
+    // V8's url is file:///D:/... on Windows and file:///Users/... on macOS,
+    // percent-encoded when the path has non-ASCII. fileURLToPath understands
+    // both shapes; stripping the scheme by hand used to break every macOS path
+    // (file:///Users/... became "Users/..." relative to the repo).
     let file;
     try {
-      file = resolve(decodeURIComponent(String(entry.url).replace(/^file:\/\//, '').replace(/^\//, '')));
+      file = fileURLToPath(String(entry.url));
     } catch { continue; }
     let spans = byFile.get(file);
     if (!spans) { spans = []; byFile.set(file, spans); }

@@ -1,6 +1,6 @@
 Label: ready-for-agent
 Type: task
-Status: ready
+Status: resolved
 
 # 32：主区移植：对话流与各类卡片
 
@@ -17,3 +17,6 @@ Status: ready
 - [ ] 输入行 Enter 发送、Shift+Enter 换行；空内容时发送禁用
 - [ ] 命令面板可开、可搜、可执行、Esc 关闭
 - [ ] 主区无横向溢出；消息滚动跟随正常
+
+---
+Closed: 2026-11-22 · 集成分支 `feat/ui-rebuild-spec` @ f82c186 · 418 单测绿

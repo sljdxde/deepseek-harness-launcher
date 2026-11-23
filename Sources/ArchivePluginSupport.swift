@@ -98,6 +98,9 @@ func ensureBundledPluginLink(
     let link = profileURL.appendingPathComponent(plugin.linkName)
     do {
         try fileManager.createDirectory(at: profileURL, withIntermediateDirectories: true)
+        // 作用域包（如 @deepseek-ai/dsh-client-ui-layout）的链接在
+        // node_modules/@deepseek-ai/ 下，父目录不存在时 createSymbolicLink 会失败。
+        try fileManager.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
 
         // fileExists(atPath:) follows symlinks and returns false for a dangling
         // link left by an older DSH installation. Read the link itself first so

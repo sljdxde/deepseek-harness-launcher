@@ -3,14 +3,42 @@ name: CI
 on:
   push:
     branches:
-      - main
-  pull_request:
-  workflow_dispatch:
+      - main          # 暂时只跑 main；其他分支 push 不触发，避免消耗 runner
+  workflow_dispatch:  # 需要时可在任意分支手动触发
+
+# 同一分支连续推送只保留最新一次，避免排队烧机器
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  # 生成物与测试纪律（retro 2026-11-22）：比 regression 快得多，先跑，失败早于打包。
+  # 覆盖三类真实事故：合并残留冲突标记、生成块同名顶层符号、BUILD_STAMP 漂移；
+  # 以及 CODING_STANDARDS §1「禁止源码文本断言」（文件级放行需写明理由）。
+  guards:
+    name: Guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 5
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Generated-region guard
+        run: node scripts/check-generated.mjs
+
+      - name: Test-assertion guard
+        run: node scripts/check-tests.mjs
+
   regression:
     name: Regression
     runs-on: macos-15
@@ -18,6 +46,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 5
 
       - name: Install test dependencies
         run: brew install ripgrep
