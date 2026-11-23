@@ -161,6 +161,8 @@ jobs:
   # 避免把整套运行时拉进 CI。
   contract:
     name: Contract check (${{ matrix.label }})
+    # latest-rc 是「提示跟进支持区间」的信息位：挂了不挡合并，但会在 PR 上留红点
+    continue-on-error: ${{ matrix.label == 'latest-rc' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -198,6 +200,8 @@ jobs:
   # （支持区间 >=0.2.2-rc.4 <0.3.0）。
   canary:
     name: Canary (${{ matrix.label }})
+    # latest-rc 是「提示跟进支持区间」的信息位：挂了不挡合并，但会在 PR 上留红点
+    continue-on-error: ${{ matrix.label == 'latest-rc' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
