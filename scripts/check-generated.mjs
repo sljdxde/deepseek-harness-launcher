@@ -72,6 +72,10 @@ else {
       const [, stamp] = m
       const [stampVersion, sha] = stamp.split('+')
       if (stampVersion !== version) problems.push(`BUILD_STAMP 版本 ${stampVersion} ≠ package.json ${version}`)
+      // 浅克隆（CI 默认 depth=1）里拿不到父提交：此时只校验版本前缀，
+      // 并在输出里说明跳过了 sha 新鲜度检查（本地/完整克隆仍会查）。
+      let shallow = false
+      try { shallow = git(['rev-parse', '--is-shallow-repository']) === 'true' } catch { shallow = true }
       const recent = new Set()
       // PR 的 checkout 是 merge commit：stamp 记的是 head 提交，不在 HEAD/HEAD^/HEAD~2 里，
       // 因此还要认 GITHUB_HEAD_SHA 与最近 5 个提交。
@@ -80,7 +84,9 @@ else {
       }
       for (const sha of git(['log', '-5', '--format=%h']).split('\n')) if (sha) recent.add(sha)
       if (process.env.GITHUB_HEAD_SHA) recent.add(process.env.GITHUB_HEAD_SHA.slice(0, 7))
-      if (recent.size && !recent.has(sha)) problems.push(`BUILD_STAMP sha ${sha} 不在近期提交 ${[...recent].join('/')} 内（跑 node tools/sync-contract.mjs 更新）`)
+      const canCheckSha = !shallow && recent.size > 1
+      if (!canCheckSha) console.log(`ℹ 浅克隆：跳过 BUILD_STAMP sha 新鲜度检查（本地或 fetch-depth≥3 时仍会校验）`)
+      else if (!recent.has(sha)) problems.push(`BUILD_STAMP sha ${sha} 不在近期提交 ${[...recent].join('/')} 内（跑 node tools/sync-contract.mjs 更新）`)
     }
   }
 }

@@ -23,11 +23,13 @@ jobs:
     name: Guards
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 3
+          fetch-depth: 5
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -46,9 +48,13 @@ jobs:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 5
 
       - name: Install test dependencies
         run: brew install ripgrep
