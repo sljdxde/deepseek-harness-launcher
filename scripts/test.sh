@@ -1077,8 +1077,25 @@ else
     exit 1
   fi
   "$ROOT/scripts/build-dmg.sh" >/dev/null
-  test -s "$ROOT/dist/Deepseek Harness Launcher.dmg"
-  hdiutil verify "$ROOT/dist/Deepseek Harness Launcher.dmg" >/dev/null
+  DMG="$ROOT/dist/Deepseek Harness Launcher.dmg"
+  test -s "$DMG"
+  # CI 偶发在 DMG 刚生成后遇到 "Resource temporarily unavailable"；短暂退避后
+  # 再验，连续失败仍然让回归失败，不能把真实损坏当成瞬时占用放过去。
+  dmg_verify_ok=0
+  for attempt in 1 2 3; do
+    if dmg_verify_output="$(hdiutil verify "$DMG" 2>&1)"; then
+      dmg_verify_ok=1
+      break
+    fi
+    print -u2 "hdiutil verify 第 $attempt 次失败：$dmg_verify_output"
+    if (( attempt < 3 )); then
+      sleep $((attempt * 2))
+    fi
+  done
+  if (( ! dmg_verify_ok )); then
+    print -u2 "DMG 校验失败（已重试 3 次）：$DMG"
+    exit 1
+  fi
 fi
 # 覆盖率门禁：插件的每个源文件都要 100% 行覆盖。
 # 放在打包之前 —— 它是逻辑门禁，不该被 macOS 打包步骤挡住（Windows CI 上跳过打包
