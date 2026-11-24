@@ -152,7 +152,35 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
 
     // MARK: - WKNavigationDelegate
 
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        preferences: WKWebpagePreferences,
+        decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
+    ) {
+        if #available(macOS 26.4, *) {
+            let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+            let useCompatibility = HarnessWindowSupport.shouldUseWebKitCompatibilityMode(
+                enabled: LauncherSettings.shared.webKitCompatibilityMode,
+                isMainFrame: isMainFrame,
+                supportsMaximumCompatibility: true
+            )
+            preferences.securityRestrictionMode = useCompatibility ? .maximizeCompatibility : .none
+        }
+        decideNavigationPolicy(for: navigationAction, in: webView) { policy in
+            decisionHandler(policy, preferences)
+        }
+    }
+
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        decideNavigationPolicy(for: navigationAction, in: webView, decisionHandler: decisionHandler)
+    }
+
+    private func decideNavigationPolicy(
+        for navigationAction: WKNavigationAction,
+        in webView: WKWebView,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
         guard let url = navigationAction.request.url else {
             decisionHandler(.allow)
             return

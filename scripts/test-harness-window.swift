@@ -146,6 +146,32 @@ struct HarnessWindowChecks {
         check(nil == HarnessWindowSupport.navigationRedirect(url: url("https://example.com"), harnessPort: 3080, frameIsMainFrame: false), "iframe 外链不改道（插件内嵌面板依赖）")
         check(nil == HarnessWindowSupport.navigationRedirect(url: url("http://127.0.0.1:3080/x"), harnessPort: 3080, frameIsMainFrame: true), "同源主框架导航放行")
 
+        // MARK: - 2b. WebKit 兼容模式（关闭 JS JIT，绕开内容进程崩溃）
+        check(
+            HarnessWindowSupport.shouldUseWebKitCompatibilityMode(
+                enabled: true, isMainFrame: true, supportsMaximumCompatibility: true
+            ),
+            "开关开启时主框架应使用 WebKit 兼容模式"
+        )
+        check(
+            !HarnessWindowSupport.shouldUseWebKitCompatibilityMode(
+                enabled: false, isMainFrame: true, supportsMaximumCompatibility: true
+            ),
+            "开关关闭时不限制 WebKit"
+        )
+        check(
+            !HarnessWindowSupport.shouldUseWebKitCompatibilityMode(
+                enabled: true, isMainFrame: false, supportsMaximumCompatibility: true
+            ),
+            "子框架不单独设置兼容模式（由主框架继承）"
+        )
+        check(
+            !HarnessWindowSupport.shouldUseWebKitCompatibilityMode(
+                enabled: true, isMainFrame: true, supportsMaximumCompatibility: false
+            ),
+            "系统/WebKit 不支持时不得使用兼容模式"
+        )
+
         // MARK: - 3. 下载落点
         let downloads = URL(fileURLWithPath: "/Users/tester/Downloads")
         var existing = Set<String>()

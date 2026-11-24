@@ -84,6 +84,19 @@ enum HarnessWindowSupport {
         return .showOnly
     }
 
+    /// 主框架导航是否应切到 WebKit 兼容模式。
+    ///
+    /// macOS 26.4+ 的 WebKit 偶尔会在 JSC JIT 替换编译时触发 SIGSEGV，内容进程
+    /// 崩溃后只能整页重载。`.maximizeCompatibility` 关闭 JIT、页面功能不变；代价是
+    /// CPU 密集脚本变慢，因此保留开关。子框架由 WebKit 继承主框架的限制，不重复设置。
+    static func shouldUseWebKitCompatibilityMode(
+        enabled: Bool,
+        isMainFrame: Bool,
+        supportsMaximumCompatibility: Bool
+    ) -> Bool {
+        enabled && isMainFrame && supportsMaximumCompatibility
+    }
+
     // MARK: - 链接与导航
 
     enum LinkAction: Equatable {

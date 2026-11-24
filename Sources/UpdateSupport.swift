@@ -158,6 +158,7 @@ final class LauncherSettings {
             "updateIntervalHours": 6.0,
             "openBrowserOnReady": true,
             "embeddedHarnessWindow": true,
+            "webKitCompatibilityMode": true,
             "launchAtLogin": false,
             "globalHotKeyEnabled": true,
             "globalHotKeyModifiers": 0x1800,
@@ -198,6 +199,14 @@ final class LauncherSettings {
             return defaults.bool(forKey: "embeddedHarnessWindow")
         }
         set { defaults.set(newValue, forKey: "embeddedHarnessWindow") }
+    }
+
+    /// 关闭内置 Harness 页面的 JavaScript JIT。
+    /// macOS 26.4+ 的 `.maximizeCompatibility` 改走解释执行，绕开 JSC JIT 崩溃；
+    /// 代价是 CPU 密集脚本变慢，所以设置里允许关闭。
+    var webKitCompatibilityMode: Bool {
+        get { defaults.bool(forKey: "webKitCompatibilityMode") }
+        set { defaults.set(newValue, forKey: "webKitCompatibilityMode") }
     }
 
     /// 用户选择「跳过此版本」的 dsh 版本：不再写进菜单标题，也不亮菜单栏角标；

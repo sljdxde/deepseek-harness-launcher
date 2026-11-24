@@ -73,6 +73,13 @@ struct SettingsWindowChecks {
         check(pluginBox != nil, "找不到「自动检测插件更新」勾选框")
         check(pluginBox?.state == expectedPlugin, "打开设置时勾选状态应反映已保存的设置")
 
+        if #available(macOS 26.4, *) {
+            let expectedWebKit = settings.webKitCompatibilityMode ? NSControl.StateValue.on : .off
+            let webKitBox = checkbox("WebKit 兼容模式（关闭 JS JIT）")
+            check(webKitBox != nil, "macOS 26.4+ 必须提供 WebKit 兼容模式开关")
+            check(webKitBox?.state == expectedWebKit, "WebKit 兼容模式应反映已保存的设置")
+        }
+
         let expectedInterval = max(settings.updateIntervalHours, 1)
         check(abs((intervalField?.doubleValue ?? 0) - expectedInterval) < 0.001,
               "打开设置时间隔应反映已保存的值（实际 \((intervalField?.doubleValue ?? -1))，期望 \(expectedInterval)）")

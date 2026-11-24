@@ -17,6 +17,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     private let pluginUpdateCheckbox = NSButton(checkboxWithTitle: "自动检测插件更新", target: nil, action: nil)
     private let embeddedWindowCheckbox = NSButton(checkboxWithTitle: "用内置窗口显示 Harness（不打开浏览器）", target: nil, action: nil)
+    private let webKitCompatibilityCheckbox = NSButton(checkboxWithTitle: "WebKit 兼容模式（关闭 JS JIT）", target: nil, action: nil)
     private let openBrowserCheckbox = NSButton(checkboxWithTitle: "就绪后自动打开 Harness 界面", target: nil, action: nil)
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "登录 macOS 时自动启动", target: nil, action: nil)
     private let globalHotKeyCheckbox = NSButton(checkboxWithTitle: "启用全局快捷键呼出", target: nil, action: nil)
@@ -129,11 +130,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         globalHotKeyCheckbox.target = self
         globalHotKeyCheckbox.action = #selector(globalHotKeyCheckChanged)
 
+        var startupRows = [configureCheckbox(embeddedWindowCheckbox)]
+        if #available(macOS 26.4, *) {
+            webKitCompatibilityCheckbox.toolTip = "防止 WebKit 崩溃导致页面自动刷新；会降低脚本性能，下次加载生效。"
+            startupRows.append(configureCheckbox(webKitCompatibilityCheckbox))
+        }
+        startupRows += [configureCheckbox(openBrowserCheckbox), configureCheckbox(launchAtLoginCheckbox)]
+
         let column = makeColumn([
             makeHeader(),
             makeCard(
                 title: "启动行为",
-                rows: [configureCheckbox(embeddedWindowCheckbox), configureCheckbox(openBrowserCheckbox), configureCheckbox(launchAtLoginCheckbox)]
+                rows: startupRows
             ),
             makeCard(
                 title: "快捷呼出",
@@ -465,6 +473,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private func loadSettings() {
         pluginUpdateCheckbox.state = settings.autoCheckPluginUpdates ? .on : .off
         embeddedWindowCheckbox.state = settings.embeddedHarnessWindow ? .on : .off
+        if #available(macOS 26.4, *) {
+            webKitCompatibilityCheckbox.state = settings.webKitCompatibilityMode ? .on : .off
+        }
         openBrowserCheckbox.state = settings.openBrowserOnReady ? .on : .off
         launchAtLoginCheckbox.state = settings.launchAtLogin ? .on : .off
         globalHotKeyCheckbox.state = settings.globalHotKeyEnabled ? .on : .off
@@ -557,6 +568,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         settings.autoCheckPluginUpdates = pluginUpdateCheckbox.state == .on
         settings.embeddedHarnessWindow = embeddedWindowCheckbox.state == .on
+        if #available(macOS 26.4, *) {
+            settings.webKitCompatibilityMode = webKitCompatibilityCheckbox.state == .on
+        }
         settings.openBrowserOnReady = openBrowserCheckbox.state == .on
         settings.launchAtLogin = launchAtLoginCheckbox.state == .on
         settings.updateIntervalHours = max(intervalField.doubleValue, 1)
