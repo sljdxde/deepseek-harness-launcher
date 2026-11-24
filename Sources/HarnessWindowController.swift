@@ -18,6 +18,9 @@ import WebKit
 /// 这些都不是锦上添花——少一个，Harness 界面就有功能会「点了没反应」。
 final class HarnessWindowController: NSWindowController, NSWindowDelegate,
     WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+    // 直接访问该成员会让旧 SDK（CI 的 macos-15 runner）编译失败，运行时按 selector 设置。
+    private static let securityRestrictionModeSelector = NSSelectorFromString("setSecurityRestrictionMode:")
+
     private let logger: (String) -> Void
     private let onClose: () -> Void
     /// 页面**连不上**当前端口（不是 401、不是内容错误）时回调，参数是这次要加载的
@@ -158,14 +161,19 @@ final class HarnessWindowController: NSWindowController, NSWindowDelegate,
         preferences: WKWebpagePreferences,
         decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
     ) {
-        if #available(macOS 26.4, *) {
+        if #available(macOS 26.4, *),
+           preferences.responds(to: Self.securityRestrictionModeSelector) {
             let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
             let useCompatibility = HarnessWindowSupport.shouldUseWebKitCompatibilityMode(
                 enabled: LauncherSettings.shared.webKitCompatibilityMode,
                 isMainFrame: isMainFrame,
                 supportsMaximumCompatibility: true
             )
-            preferences.securityRestrictionMode = useCompatibility ? .maximizeCompatibility : .none
+            // 1 = WKSecurityRestrictionModeMaximizeCompatibility，0 = .none。
+            preferences.setValue(
+                NSNumber(value: useCompatibility ? 1 : 0),
+                forKey: "securityRestrictionMode"
+            )
         }
         decideNavigationPolicy(for: navigationAction, in: webView) { policy in
             decisionHandler(policy, preferences)
