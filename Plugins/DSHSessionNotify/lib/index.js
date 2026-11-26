@@ -32,10 +32,17 @@
  * launcher can reset its sequence cursor after a dsh restart instead of
  * re-counting or missing events.
  *
+ * On startup the plugin also scans recently persisted root sessions whose last
+ * turn was closed by a process exit (`interrupted`, or `aborted` with a
+ * `disposed` cause) and requests one continuation through the live Agent. This
+ * is the background equivalent of opening the session and pressing "continue",
+ * so a forced dsh restart does not leave old work waiting for a manual click.
+ *
  * @module dsh-session-notify
  */
 
 import { randomUUID } from 'node:crypto';
+import { stat } from 'node:fs/promises';
 
 /** Plugin display name. */
 export const name = 'dsh-session-notify';
@@ -73,6 +80,19 @@ export const FOCUSED_CLIENT_GRACE_MS = 2500;
  * fired; hidden tabs poll at least once a minute, so 90s is safely above it.
  */
 export const PRESENCE_TTL_MS = 90 * 1000;
+
+/**
+ * Wait for the host services (persistence, session query, agent controller) to
+ * finish mounting before touching session files. The scan is best-effort and
+ * never blocks startup or the HTTP routes.
+ */
+const AUTO_RESUME_DELAY_MS = 8 * 1000;
+/** Only sessions touched within this window are considered; old logs are left alone. */
+const AUTO_RESUME_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Cap the expensive zstd/replay reads, newest activity first. */
+const AUTO_RESUME_SCAN_LIMIT = 30;
+/** Cap concurrent model turns started by one restart. */
+const AUTO_RESUME_LIMIT = 10;
 
 export function createPresenceTracker(ttlMs = PRESENCE_TTL_MS) {
   const lastSeen = new Map();
@@ -213,6 +233,225 @@ export function summarizeTurnStart(session, event, now = Date.now()) {
   const sessionId = String(session?.header?.id ?? session?.id ?? '');
   if (!sessionId) return null;
   return { sessionId, title: sessionTitle(session), at: now, kind: 'resumed' };
+}
+
+/**
+ * Whether the last turn boundary says dsh's process exited while work was
+ * still running.
+ *
+ * `readSession` balances an open tail with synthetic `interrupted` closers, so
+ * a crash normally shows up as a trailing `turn/end` with that reason. The
+ * `aborted` + `disposed` pair is what a graceful launcher-initiated shutdown
+ * writes when dsh is stopped during a turn. A user stop (`aborted` + `user`)
+ * is deliberately not resumable: the user asked it to stop.
+ */
+export function isInterruptedSession(header, events) {
+  if (!header || header.origin === 'subagent') return false;
+  if (!Array.isArray(events) || events.length === 0) return false;
+  let lastTurnBoundary;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type === 'turn/end' || event?.type === 'turn/start') {
+      lastTurnBoundary = event;
+      break;
+    }
+  }
+  if (lastTurnBoundary === undefined) return false;
+  // A raw log can end in an open turn; session-query normally closes it first.
+  if (lastTurnBoundary.type === 'turn/start') return true;
+  const reason = lastTurnBoundary.data?.reason;
+  if (reason?.kind === 'interrupted') return true;
+  return reason?.kind === 'aborted' && reason.reason?.kind === 'disposed';
+}
+
+/**
+ * Best-effort scan for root sessions whose last turn was cut off by a dsh
+ * exit, then request one empty retry message from each live Agent.
+ *
+ * The empty `retry` message is exactly what the composer's "continue" action
+ * records: it wakes the next turn, renders as "requested to continue", and the
+ * provider serializers skip its empty content. Resolving through the normal
+ * session controller also persists dsh's synthetic interrupted closers, so
+ * unfinished tool calls still carry their "outcome unknown" warning.
+ *
+ * @param {object} services - sessionQuery/sessionController/sessionPersistence/
+ *   workspaceRegistry/logger as resolved from the host context.
+ * @param {object} [options] - test seams and limits.
+ * @returns {Promise<{scanned:number,resumed:number}>} scan statistics.
+ */
+export async function resumeInterruptedSessions(services, options = {}) {
+  const {
+    now = Date.now(),
+    maxAgeMs = AUTO_RESUME_MAX_AGE_MS,
+    scanLimit = AUTO_RESUME_SCAN_LIMIT,
+    resumeLimit = AUTO_RESUME_LIMIT,
+    statFile = stat,
+    logger = services.logger,
+  } = options;
+  const query = services.sessionQuery;
+  const controller = services.sessionController;
+  if (typeof query?.listSessions !== 'function'
+    || typeof query?.readSession !== 'function'
+    || typeof controller?.resolveAgent !== 'function') {
+    return { scanned: 0, resumed: 0 };
+  }
+
+  const snapshotsPromise = (async () => {
+    if (typeof services.sessionPersistence?.list !== 'function') return [];
+    try {
+      return await services.sessionPersistence.list();
+    } catch {
+      // Recency falls back to header.createdAt; the scan must not depend on a
+      // metadata listing that a backend may refuse.
+      return [];
+    }
+  })();
+  const [records, snapshots] = await Promise.all([query.listSessions(), snapshotsPromise]);
+
+  const snapshotsById = new Map();
+  for (const snapshot of snapshots ?? []) {
+    const id = String(snapshot?.header?.id ?? '');
+    if (id) snapshotsById.set(id, snapshot);
+  }
+  const archived = new Set();
+  try {
+    for (const sessionId of services.workspaceRegistry?.archivedSessionIds ?? []) {
+      archived.add(String(sessionId));
+    }
+  } catch {
+    // An unavailable registry must not block continuation of legitimate work.
+  }
+
+  const candidates = [];
+  await Promise.all((records ?? []).map(async record => {
+    const header = record?.header;
+    const sessionId = String(header?.id ?? '');
+    // Live is not a skip condition: the built-in Harness window may restore the
+    // last session before this scan runs. The post-resolve status and tail
+    // checks still keep active work and already-continued turns untouched.
+    if (!sessionId || header?.origin === 'subagent' || archived.has(sessionId)) return;
+    // Session resume requires a stored cwd; without one there is nothing the
+    // controller can reattach.
+    if (typeof header?.cwd !== 'string' || header.cwd.length === 0) return;
+    // A format migration is a user-visible operation; do not trigger it in the
+    // background just because the process happened to stop mid-turn.
+    if (record?.formatStatus === 'migration-required') return;
+
+    let at = typeof header.createdAt === 'number' && Number.isFinite(header.createdAt)
+      ? header.createdAt
+      : 0;
+    const path = snapshotsById.get(sessionId)?.location?.path;
+    if (typeof path === 'string' && path.length > 0) {
+      try {
+        const info = await statFile(path);
+        const mtimeMs = Number(info?.mtimeMs);
+        // The artifact mtime is the authoritative "last activity" time: a
+        // session created months ago can have been running yesterday, and a
+        // freshly created session can be an untouched stub. Only fall back to
+        // createdAt when the file cannot be inspected.
+        if (Number.isFinite(mtimeMs)) at = mtimeMs;
+      } catch {
+        // Missing/unreadable artifacts fall back to the stored creation time.
+      }
+    }
+    if (now - at > maxAgeMs) return;
+    candidates.push({ sessionId, at });
+  }));
+  candidates.sort((left, right) => right.at - left.at || left.sessionId.localeCompare(right.sessionId));
+
+  let scanned = 0;
+  let resumed = 0;
+  for (const candidate of candidates.slice(0, scanLimit)) {
+    if (resumed >= resumeLimit) break;
+    scanned += 1;
+    const { sessionId } = candidate;
+
+    let snapshot;
+    try {
+      snapshot = await query.readSession(sessionId);
+    } catch (error) {
+      logger?.warn?.(`[dsh-session-notify] auto-resume: cannot read session ${sessionId}: ${String(error)}`);
+      continue;
+    }
+    if (!isInterruptedSession(snapshot?.session, snapshot?.events)) continue;
+
+    try {
+      const found = await controller.resolveAgent(sessionId);
+      if (found?.error !== undefined) {
+        logger?.warn?.(`[dsh-session-notify] auto-resume: cannot resolve session ${sessionId}: ${found.error?.message ?? String(found.error)}`);
+        continue;
+      }
+      const agent = found?.agent;
+      // A user (or another startup path) may already be running this session.
+      if (!agent || typeof agent.followup !== 'function' || agent.status !== 'idle') continue;
+
+      // Re-check after resolve: opening the session can append closers, and a
+      // user may have continued it between our cold read and this point.
+      let liveEvents;
+      try {
+        if (typeof agent.session?.snapshotEvents === 'function') liveEvents = agent.session.snapshotEvents();
+      } catch {
+        // Keep the cold-read decision if the live snapshot is unavailable.
+      }
+      if (Array.isArray(liveEvents)
+        && !isInterruptedSession(agent.session?.header ?? snapshot?.session, liveEvents)) {
+        continue;
+      }
+
+      agent.followup({
+        id: randomUUID(),
+        role: 'user',
+        content: [],
+        source: { kind: 'retry', rpcId: randomUUID() },
+      });
+      resumed += 1;
+      logger?.info?.(`[dsh-session-notify] auto-resumed interrupted session ${sessionId}`);
+    } catch (error) {
+      logger?.warn?.(`[dsh-session-notify] auto-resume: session ${sessionId} failed: ${String(error)}`);
+    }
+  }
+  return { scanned, resumed };
+}
+
+/**
+ * Schedule one deferred auto-resume scan and return its disposer. Tests use a
+ * context without `get`, so nothing is scheduled there.
+ */
+function scheduleInterruptedResume(ctx) {
+  if (typeof ctx.get !== 'function') return () => {};
+  let disposed = false;
+  let timer = setTimeout(() => {
+    timer = undefined;
+    if (disposed) return;
+    try {
+      const services = {
+        sessionQuery: ctx.get('sessionQuery'),
+        sessionController: ctx.get('sessionController'),
+        sessionPersistence: ctx.get('sessionPersistence'),
+        workspaceRegistry: ctx.get('workspaceRegistry'),
+        logger: ctx.logger,
+      };
+      void resumeInterruptedSessions(services)
+        .then(result => {
+          if (!disposed && result.resumed > 0) {
+            ctx.logger?.info?.(`[dsh-session-notify] auto-resume: resumed ${result.resumed} session(s)`);
+          }
+        })
+        .catch(error => {
+          if (!disposed) {
+            ctx.logger?.warn?.(`[dsh-session-notify] auto-resume scan failed: ${String(error)}`);
+          }
+        });
+    } catch (error) {
+      ctx.logger?.warn?.(`[dsh-session-notify] auto-resume setup failed: ${String(error)}`);
+    }
+  }, AUTO_RESUME_DELAY_MS);
+  timer.unref?.();
+  return () => {
+    disposed = true;
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
 }
 
 function json(response, value) {
@@ -376,6 +615,7 @@ export function apply(ctx) {
   });
 
   ctx.inject(['webServer'], host => {
+    host.effect(() => scheduleInterruptedResume(ctx), 'dsh-session-notify: resume interrupted sessions');
     host.effect(() => {
       // 零成本的存活探针（启动器据此判「插件是否随 dsh 加载」，不再拿 /events
       // 当就绪探针；两者注册在同一个 effect 里，能探到 health 就说明路由已挂上）。

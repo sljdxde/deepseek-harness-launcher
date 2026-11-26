@@ -304,6 +304,7 @@ const ROUTES = [
   ['/dsh-plugin-manager/set-disabled', 'POST'],
   ['/dsh-plugin-manager/marketplace', 'GET'],
   ['/dsh-plugin-manager/marketplace/query', 'GET'],
+  ['/dsh-plugin-manager/marketplace/stats', 'GET'],
   ['/dsh-plugin-manager/refresh', 'POST'],
   ['/dsh-plugin-manager/ai-search', 'POST'],
   ['/dsh-plugin-manager/ai-search/stream', 'POST'],
@@ -2127,7 +2128,7 @@ serialTest('searchPluginsByDescriptionStream：上次验证过的模型要先单
 serialTest('apply 的 effect 会返回注销函数，注销时要把所有路由的 disposer 都跑掉', async () => {
   await withTempHome(async () => {
     const { routes, dispose } = boot();
-    assert.equal(routes.length, 27);
+    assert.equal(routes.length, 28);
     assert.equal(typeof dispose, 'function');
     dispose(); // 不抛异常就算过
   });

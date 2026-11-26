@@ -62,6 +62,7 @@ test('apply 注册全部插件管理路由', () => {
     '/dsh-plugin-manager/installed',
     '/dsh-plugin-manager/marketplace',
     '/dsh-plugin-manager/marketplace/query',
+    '/dsh-plugin-manager/marketplace/stats',
     '/dsh-plugin-manager/refresh',
     '/dsh-plugin-manager/release-notes',
     '/dsh-plugin-manager/restart',

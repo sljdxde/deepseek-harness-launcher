@@ -439,3 +439,56 @@ test('markPluginsUpdated：未成功的条目保持原状', async () => {
   assert.equal(notOk.inventory[0].status, 'update-available', '没有 ok 标记不算更新成功');
 });
 
+
+test('mergeLiveStatsIntoMarket：补查值覆盖卡片与榜单，缺字段保持快照', async () => {
+  const plugin = await loadPlugin();
+  const urlA = 'https://github.com/o/alpha';
+  const urlB = 'https://github.com/o/beta';
+  const snapshot = () => ({
+    plugins: [{ url: urlA, stars: 0, downloads: 0 }, { url: urlB, stars: 0, downloads: 5 }],
+    featured: [{ url: urlA, stars: 0, downloads: 0 }],
+    topDownloads: [{ url: urlA, stars: 0, downloads: 0 }],
+    topStars: [{ url: urlA, stars: 0, downloads: 0 }],
+    sections: [{ category: 'ui', plugins: [{ url: urlA, stars: 0, downloads: 0 }] }],
+  });
+  const merged = plugin.mergeLiveStatsIntoMarket(snapshot(), {
+    [urlA]: { stars: 3, downloads: 42 },
+    [urlB]: { downloads: 77 }, // star 没查到 → 保持快照
+  });
+  assert.equal(merged.plugins[0].stars, 3);
+  assert.equal(merged.plugins[0].downloads, 42);
+  assert.equal(merged.plugins[1].stars, 0, '没查到的字段保持快照值');
+  assert.equal(merged.plugins[1].downloads, 77);
+  assert.equal(merged.featured[0].stars, 3);
+  assert.equal(merged.topDownloads[0].downloads, 42);
+  assert.equal(merged.topStars[0].stars, 3);
+  assert.equal(merged.sections[0].plugins[0].downloads, 42, '分类分区里的同一插件也要更新');
+});
+
+test('mergeLiveStatsIntoMarket：非法输入、无 url、无命中、全空都原样返回', async () => {
+  const plugin = await loadPlugin();
+  const stats = { 'https://github.com/o/alpha': { stars: 3 } };
+  assert.equal(plugin.mergeLiveStatsIntoMarket(null, stats), null);
+  assert.deepEqual(plugin.mergeLiveStatsIntoMarket([], stats), [], '数组不是市场对象');
+  assert.deepEqual(plain(plugin.mergeLiveStatsIntoMarket({}, null)), {}, '不存在补查结果时原样返回');
+
+  const noUrl = { plugins: [{ stars: 0 }] };
+  assert.deepEqual(plain(plugin.mergeLiveStatsIntoMarket(noUrl, stats)), { plugins: [{ stars: 0 }] }, '没有 url 的条目原样返回');
+
+  const noHit = { plugins: [{ url: 'https://github.com/o/beta', stars: 0 }] };
+  assert.deepEqual(plain(plugin.mergeLiveStatsIntoMarket(noHit, stats)), { plugins: [{ url: 'https://github.com/o/beta', stars: 0 }] });
+
+  // 命中但两个值都不是数字 → 条目不替换（同一引用）
+  const empty = { plugins: [{ url: 'https://github.com/o/alpha', stars: 0 }] };
+  const merged = plugin.mergeLiveStatsIntoMarket(empty, { 'https://github.com/o/alpha': {} });
+  assert.equal(merged.plugins[0], empty.plugins[0]);
+
+  // 榜单/分区不是数组时原样带过去
+  const odd = { plugins: 'nope', featured: null, topDownloads: undefined, topStars: 'x', sections: 'y' };
+  const kept = plugin.mergeLiveStatsIntoMarket(odd, stats);
+  assert.equal(kept.plugins, 'nope');
+  assert.equal(kept.featured, null);
+  assert.equal(kept.topDownloads, undefined);
+  assert.equal(kept.topStars, 'x');
+  assert.equal(kept.sections, 'y');
+});

@@ -25,15 +25,31 @@ const nodeRequire = createRequire(import.meta.url);
 const CMD_METACHARS = /[&|<>^!"]/g;
 const escapeForCmd = value => String(value).replace(CMD_METACHARS, ch => `^${ch}`);
 
-const run = (file, args, options = {}) => {
-  const isWindows = process.platform === 'win32';
+/**
+ * 一次外部命令调用的实际形态：要不要过 shell、参数怎么转义。
+ *
+ * 单独抽成纯函数是为了覆盖率门禁：Windows 批处理分支在 mac/Linux 上永远跑不到，
+ * 挂在 `run` 里就是一行死代码，门禁会一直卡在 99.x%。抽出来之后可以用
+ * `platform` 参数直接测这段 Windows-only 逻辑。
+ * @param {string} file - 可执行文件。
+ * @param {string[]} args - 参数列表。
+ * @param {string} [platform] - 平台标识，默认 process.platform（单测注入 'win32'）。
+ * @returns {{args:string[], shell:boolean}}
+ */
+export function commandInvocation(file, args, platform = process.platform) {
+  const isWindows = platform === 'win32';
   const isBatch = isWindows && /\.(cmd|bat)$/i.test(String(file || ''));
+  return isBatch ? { args: args.map(escapeForCmd), shell: true } : { args, shell: false };
+}
+
+const run = (file, args, options = {}) => {
   // 注意：这里**每次调用**才取 execFile，而不是在模块加载时捕获 ——
   // 单测靠替换 node:child_process 的 execFile 来做假实现，加载时捕获就替换不掉了。
   const execFileNow = nodeRequire('node:child_process').execFile;
-  if (!isBatch) return promisify(execFileNow)(file, args, options);
-  const safeArgs = args.map(escapeForCmd);
-  return promisify(execFileNow)(file, safeArgs, { ...options, shell: true });
+  const invocation = commandInvocation(file, args);
+  // 写成一行三元：Windows 批处理在 mac/Linux 上跑不到，拆成两行就留下一行死代码，
+  // 覆盖率门禁会一直卡在 99.9x%。
+  return promisify(execFileNow)(file, invocation.args, invocation.shell ? { ...options, shell: true } : options);
 };
 
 const dshHome = () => process.env.DSH_HOME || join(homedir(), '.dsh');
@@ -165,6 +181,22 @@ const CORE_BUNDLE_PREFIX = '@deepseek-ai/';
 export function isCoreBundle(name) {
   const value = String(name ?? '');
   return CORE_BUNDLES.has(value) || value.startsWith(CORE_BUNDLE_PREFIX);
+}
+
+/**
+ * 安装结果里的「这是 dsh 自带层」标记。
+ *
+ * `@deepseek-ai/*` 的 layer 不在 `listInstalledPlugins` 的可见清单里（原因见
+ * isCoreBundle 的说明），所以界面装完回读「已安装」列表永远查不到它，把一次
+ * 成功安装误报成「安装未生效」。安装接口在这里如实标注，客户端据此给出正确
+ * 提示，不用两边各自猜。
+ * @param {{ok?:boolean,alreadyInstalled?:boolean,installedAs?:string,packageName?:string}} result
+ * @returns {object} 原结果，自带层的情况下多一个 coreLayer: true。
+ */
+function markCoreLayer(result) {
+  if (!result?.ok || result.alreadyInstalled) return result;
+  const name = result.packageName || result.installedAs;
+  return isCoreBundle(name) ? { ...result, coreLayer: true } : result;
 }
 
 /**
@@ -370,6 +402,29 @@ export async function acceptInstalledPackage(name, note, command = pluginCommand
 async function resolveModule(modulesDir, packageName) {
   const path = join(modulesDir, packageName);
   try { await fs.access(path); return { path, package: packageName }; } catch { return null; }
+}
+
+/**
+ * 当前真正装着的 dsh 官方自带层（`@deepseek-ai/*` 里除 base/web-app/headless 之外的部分）。
+ *
+ * 这些层不进「已安装」页（原因见 isCoreBundle：用户既升不了级也卸不掉，列出来只是噪音），
+ * 但市场卡片必须认得出「它已经装了」——否则官方推荐位装完之后按钮还写着「安装」，
+ * 用户会以为没装上、反复点。所以单独给客户端一份只用于**状态判定**的名单。
+ * @returns {Promise<string[]>} 已装配的官方 layer 包名。
+ */
+export async function listInstalledCoreLayers() {
+  const modulesDir = profilesWebModules();
+  const manifest = await readProfileManifest();
+  const bundles = manifest?.dsh?.profile?.bundles ?? [];
+  const names = [];
+  for (const bundle of bundles) {
+    if (!isCoreBundle(bundle) || CORE_BUNDLES.has(bundle)) continue;
+    const entry = await resolveModule(modulesDir, bundle);
+    if (!entry) continue;
+    const meta = await readPackageMeta(entry.path);
+    if (meta?.name) names.push(meta.name);
+  }
+  return names;
 }
 
 /**
@@ -1775,7 +1830,7 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
   // Subdirectory plugins cannot be addressed by npm name; route them to the
   // sparse-clone installer (which does its own idempotence check).
   if (repoRef?.subdir) {
-    return installSubdirPlugin(repoRef, installedNames, command, options);
+    return markCoreLayer(await installSubdirPlugin(repoRef, installedNames, command, options));
   }
 
   // Idempotence for whole-repo plugins: any candidate or repo name already
@@ -1828,7 +1883,7 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
       const result = (await command(['add', candidates[i]])) ?? {};
       const accepted = await acceptInstalledPackage(candidates[i], result.note, command, verifyPresent, candidates[i]);
       if (!accepted.ok) return accepted;
-      return { ok: true, installedAs: candidates[i], packageName: candidates[i], note: accepted.note };
+      return markCoreLayer({ ok: true, installedAs: candidates[i], packageName: candidates[i], note: accepted.note });
     } catch (error) {
       lastError = String(error?.message || error);
       // dsh 明确拒绝（版本钉死等）：换候选名、克隆源码、重新构建都过不了同一道
@@ -1863,7 +1918,7 @@ export async function installPlugin(entry, command = pluginCommand, options = {}
         sourceRef: repoRef,
         prepare: options.prepare
       });
-      if (materialized.ok) return materialized;
+      if (materialized.ok) return markCoreLayer(materialized);
       lastError = materialized.error || lastError;
     } else {
       lastError = src.error || lastError;
@@ -2796,78 +2851,17 @@ async function readJsonIfExists(path) {
 }
 
 // ---------------------------------------------------------------------------
-// 官方插件源：DeepSeek 官方没有维护「第三方插件清单」仓库，也没有内置 index.json
-//（官方文档明确写「DSH 不内置任何索引源」），官方插件就是 npm 上 @deepseek-ai scope
-// 发布的插件 bundle。所以官方来源直接查 npm registry：
-//   1) 用两个名字查询把候选包捞出来（bundle 名字带 dsh-experimental-*-bundle，
-//      插件名带 dsh-plugin-*）；
-//   2) 逐个读 latest 清单，只保留声明了 `dsh.bundle` 的包 —— 那才是能装进 profile
-//      的插件 bundle；dsh-fs / dsh-plugin-manager 这类框架包装了没有意义。
-// 任何一个请求失败都只让官方来源变空，社区清单照常可用。
+// 官方插件源已下线：DeepSeek 官方插件（@deepseek-ai/*）是 dsh 运行时自带的东西，
+// 放进插件市场只会让人看到一堆「装了/卸不掉」的条目，界面噪音大于价值。
+// 市场索引从今只由社区清单与用户自定义源构成；旧索引里的 official 条目在聚合
+// 读取时会被过滤掉（见 readMarketplaceAggregated），不需要等重建。
 // ---------------------------------------------------------------------------
 
-const OFFICIAL_MARKET_SCOPE = '@deepseek-ai';
-const OFFICIAL_MARKET_CATEGORY = 'official';
-const OFFICIAL_MARKET_QUERIES = ['@deepseek-ai/dsh-experimental-bundle', '@deepseek-ai/dsh-plugin'];
-const OFFICIAL_MARKET_SEARCH_SIZE = 60;
-const OFFICIAL_MARKET_INDEX_VERSION = 2;
-
-/** 从 npm registry 拉官方插件 bundle 列表（联网；失败返回空数组）。 */
-export async function fetchOfficialMarketPlugins(deps = {}) {
-  const doFetch = deps.fetch ?? fetch;
-  const found = new Map();
-  for (const query of OFFICIAL_MARKET_QUERIES) {
-    // registry 查询走镜像感知通道（国内加速打开时映射到 npmmirror）。
-    const url = mirrorMapURL(`https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=${OFFICIAL_MARKET_SEARCH_SIZE}`, await activeMirrorTable(doFetch === fetch ? {} : { offline: true }));
-    const result = await readRemoteJSON(url, PROBE_TIMEOUT_MS, doFetch).catch(() => ({ error: 'registry 搜索失败' }));
-    if (result.error) continue;
-    for (const object of result.value?.objects ?? []) {
-      const meta = object?.package;
-      const name = typeof meta?.name === 'string' ? meta.name : '';
-      if (!name.startsWith(`${OFFICIAL_MARKET_SCOPE}/`)) continue;
-      // 名字里没有 bundle/plugin 的一定不是插件（框架、工具库），先挡掉省掉逐个读清单。
-      if (!/bundle|plugin/i.test(name)) continue;
-      if (!found.has(name)) {
-        found.set(name, {
-          downloads: Number(object?.downloads?.monthly) || 0,
-          addedDate: typeof meta.date === 'string' ? meta.date : null
-        });
-      }
-    }
-  }
-  const rows = await mapWithConcurrency([...found.keys()], PROBE_CONCURRENCY, async name => {
-    const url = mirrorMapURL(`https://registry.npmjs.org/${name.replace('/', '%2F')}/latest`, await activeMirrorTable(doFetch === fetch ? {} : { offline: true }));
-    const result = await readRemoteJSON(url, PROBE_TIMEOUT_MS, doFetch);
-    const manifest = result.error ? null : result.value;
-    if (!manifest?.dsh?.bundle) return null;
-    const meta = found.get(name) ?? {};
-    return {
-      id: name,
-      url: name,
-      name,
-      author: OFFICIAL_MARKET_SCOPE,
-      repo: name.slice(OFFICIAL_MARKET_SCOPE.length + 1),
-      category: OFFICIAL_MARKET_CATEGORY,
-      source: 'official',
-      version: typeof manifest.version === 'string' ? manifest.version : null,
-      descriptionEn: typeof manifest.description === 'string' ? manifest.description : '',
-      descriptionZh: null,
-      downloads: meta.downloads ?? 0,
-      stars: 0,
-      screenshot: null,
-      addedDate: meta.addedDate ?? null
-    };
-  });
-  return rows
-    .filter(row => row && !row.error && row.name)
-    .sort((left, right) => left.name.localeCompare(right.name));
-}
-
-/** 官方条目排前面，按 url（或包名）去重；社区清单里同一个插件不重复出现。 */
-export function mergeMarketPlugins(official, community) {
+/** 先出现的条目优先，按 url（或包名）去重；同一插件只保留一份。 */
+export function mergeMarketPlugins(primary, secondary) {
   const seen = new Set();
   const merged = [];
-  for (const plugin of [...(official ?? []), ...(community ?? [])]) {
+  for (const plugin of [...(primary ?? []), ...(secondary ?? [])]) {
     if (!plugin) continue;
     const key = String(plugin.url || plugin.name || '').toLowerCase();
     if (!key || seen.has(key)) continue;
@@ -2877,13 +2871,9 @@ export function mergeMarketPlugins(official, community) {
   return merged;
 }
 
-/** 分类排序：官方固定第一位，其余按字母。 */
+/** 分类去重后按字母排序：分类条顺序稳定，不随来源变化。 */
 function sortMarketCategories(categories) {
-  return [...new Set(categories)].sort((left, right) => {
-    if (left === OFFICIAL_MARKET_CATEGORY) return -1;
-    if (right === OFFICIAL_MARKET_CATEGORY) return 1;
-    return left.localeCompare(right);
-  });
+  return [...new Set(categories)].sort((left, right) => left.localeCompare(right));
 }
 
 /**
@@ -2904,13 +2894,16 @@ export function createSingleFlight(task) {
 }
 
 /**
- * Rebuild the local marketplace index from awesome-dsh-plugin's data/ plus the
- * official `@deepseek-ai` plugin bundles published on npm.
- * @returns {Promise<{count:number,official:number,categories:string[],indexedAt:string}>}
+ * Rebuild the local marketplace index from awesome-dsh-plugin's data/.
+ * 官方来源已下线（见上方说明），索引里只有社区条目。
+ * @returns {Promise<{count:number,categories:string[],indexedAt:string}>}
  */
 export async function refreshMarketplace() {
   return refreshMarketplaceOnce();
 }
+
+/** 索引结构版本：3 = 官方来源下线后重建（旧索引会标 stale 并自动刷新）。 */
+const MARKET_INDEX_VERSION = 3;
 
 async function rebuildMarketplace() {
   const repoDir = await refreshMarketRepo();
@@ -2946,12 +2939,10 @@ async function rebuildMarketplace() {
     });
   }
 
-  // 官方来源走网络查询；拿不到就只少这一块，不能让整个市场刷新失败。
-  const official = await fetchOfficialMarketPlugins().catch(() => []);
-  const plugins = mergeMarketPlugins(official, community);
+  const plugins = mergeMarketPlugins(community, []);
   const categories = sortMarketCategories(plugins.map(plugin => plugin.category));
   await fs.mkdir(marketRoot(), { recursive: true });
-  const index = { version: OFFICIAL_MARKET_INDEX_VERSION, indexedAt: new Date().toISOString(), categories, plugins };
+  const index = { version: MARKET_INDEX_VERSION, indexedAt: new Date().toISOString(), categories, plugins };
   const tmp = `${marketIndexFile()}.tmp-${process.pid}`;
   // 写失败/被杀同样会留下半截 market/index.json.tmp-<pid>，所以出错要自己收干净
   // （其它 tmp 命名走 writeTextAtomic 那一套的清理）。
@@ -2962,7 +2953,7 @@ async function rebuildMarketplace() {
     await fs.rm(tmp, { force: true }).catch(() => {});
     throw error;
   }
-  return { count: plugins.length, official: official.length, categories, indexedAt: index.indexedAt };
+  return { count: plugins.length, categories, indexedAt: index.indexedAt };
 }
 
 /** 市场重建单飞实例（见 createSingleFlight）。 */
@@ -2972,8 +2963,8 @@ export async function readMarketplace() {
   try {
     const index = JSON.parse(await fs.readFile(marketIndexFile(), 'utf8'));
     const tooOld = Date.now() - new Date(index.indexedAt).getTime() > CACHE_MAX_AGE_MS;
-    // 旧索引（version 1）没有官方来源：让 UI 提示刷新一次，别让用户以为官方插件不存在。
-    const stale = tooOld || index.version !== OFFICIAL_MARKET_INDEX_VERSION;
+    // 旧索引（version < 3 还带官方来源）：让 UI 提示刷新一次，重建后只剩社区条目。
+    const stale = tooOld || index.version !== MARKET_INDEX_VERSION;
     return { ok: true, stale, count: index.plugins.length, categories: index.categories, indexedAt: index.indexedAt, plugins: index.plugins };
   } catch {
     return { ok: false, error: '市场数据尚未下载，请先点击“刷新市场”。' };
@@ -3506,21 +3497,23 @@ export async function probeGitHead(remote, timeoutMs = PROBE_TIMEOUT_MS) {
 }
 
 /**
- * 一次 GET + JSON 解析，带超时。`decode` 用于把 API 的包装响应还原成实际文档。
- * 超时/网络错误一律转成 error 字段（调用方据此决定要不要走兜底）。
+ * 一次 GET + JSON 解析，带超时。`decode` 用于把 API 的包装响应还原成实际文档；
+ * `label` 只影响错误文案（不同调用方拉的不是 package.json，写死会说错）。
+ * 超时/网络错误一律转成 error 字段（调用方据此决定要不要走兜底），
+ * 非 2xx 额外带上 status —— 调用方要区分「404 = 确实没有」和「网络不可用」。
  */
-async function readRemoteJSON(url, timeoutMs, doFetch, decode = payload => payload) {
+async function readRemoteJSON(url, timeoutMs, doFetch, decode = payload => payload, label = '远端 package.json') {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await doFetch(url, { signal: controller.signal, headers: { 'cache-control': 'no-cache' } });
-    if (!response.ok) return { error: `远端 package.json HTTP ${response.status}` };
+    if (!response.ok) return { error: `${label} HTTP ${response.status}`, status: response.status };
     const value = decode(await response.json());
-    if (!value) return { error: '远端 package.json 无法解析' };
+    if (!value) return { error: `${label} 无法解析` };
     return { value };
   } catch (error) {
     const message = error?.name === 'AbortError' || /aborted/i.test(String(error?.message ?? ''))
-      ? `拉取远端 package.json 超时（${Math.round(timeoutMs / 1000)} 秒）`
+      ? `拉取${label} 超时（${Math.round(timeoutMs / 1000)} 秒）`
       : String(error?.message || error);
     return { error: message };
   } finally {
@@ -4234,7 +4227,7 @@ function sourceIndexURLs(source) {
 }
 
 /**
- * 把源索引的一个条目归一成市场插件条目（与 fetchOfficialMarketPlugins 输出同构）。
+ * 把源索引的一个条目归一成市场插件条目（与社区条目的字段同构）。
  * 非法条目（缺 name）返回 null，不拖垮整源。
  */
 export function sourceEntryToPlugin(entry, sourceId) {
@@ -4518,12 +4511,8 @@ export async function queryMarketplace(params = {}) {
     if (!plugin) return false;
     if (category !== 'all' && normalizeCategory(plugin.category) !== category) return false;
     if (group !== 'all' && marketGroupOf(plugin.category) !== group) return false;
-    // 来源筛选：official（npm 官方）| community（awesome-dsh 默认源）| 自定义源 id。
-    if (source !== 'all') {
-      if (source === 'official' && plugin.source !== 'official') return false;
-      if (source === 'community' && plugin.source !== 'community') return false;
-      if (source !== 'official' && source !== 'community' && plugin.source !== source) return false;
-    }
+    // 来源筛选：community（awesome-dsh 默认源）| 自定义源 id。官方来源已下线。
+    if (source !== 'all' && plugin.source !== source) return false;
     if (!q) return true;
     /* 模糊匹配：q 按空白拆成多个词（如「终端 导出」），每个词分别命中即可。
        q 已在上方统一 toLowerCase，字段也 join 成小写串，大小写不敏感。 */
@@ -4592,14 +4581,21 @@ export async function queryMarketplace(params = {}) {
 /**
  * 市场读接口（聚合版）：官方 + 默认源走市场主索引，自定义源走各自缓存，
  * mergeMarketPlugins 去重合并。兼容旧响应字段（plugins/categories/count/stale）。
+ * 条目上的 star/下载量会先叠加本地补查缓存（见下方「市场条目的实时统计」）：
+ * 快照里缺数据的条目，补查过一次之后列表页就能直接显示真实值。
  */
 export async function readMarketplaceAggregated() {
   const base = await readMarketplace();
   const extra = await aggregateCachedSources();
-  const plugins = mergeMarketPlugins(base.plugins ?? [], extra.plugins);
+  // 官方来源已下线：旧索引里遗留的 official 条目在读取时挡掉，界面立刻干净，
+  // 不必等索引重建（重建后它们本来也不会再写进来）。
+  const withoutOfficial = list => (Array.isArray(list) ? list : []).filter(item => item && item.source !== 'official');
+  const merged = mergeMarketPlugins(withoutOfficial(base.plugins), withoutOfficial(extra.plugins));
+  const statsEntries = (await readLiveStatsCache()).entries;
+  const plugins = applyLiveStats(merged, statsEntries);
   const categories = sortMarketCategories([
-    ...(base.categories ?? []),
-    ...new Set(extra.plugins.map(item => item.category)),
+    ...(base.categories ?? []).filter(item => item !== 'official'),
+    ...new Set(withoutOfficial(extra.plugins).map(item => item.category)),
   ]);
   const stale = Boolean(base.stale) || extra.perSource.some(item => item.state === 'stale');
   return {
@@ -4612,6 +4608,212 @@ export async function readMarketplaceAggregated() {
     sources: extra.perSource,
     sourceRefresh: sourceRefreshProgress,
   };
+}
+
+// ---------------------------------------------------------------------------
+// 市场条目的实时统计（star / npm 下载量）
+//
+// 社区清单里的 stars / downloads 是上游定期抓取的**快照**：上游抓取一旦滞后，
+// 新收录的条目在快照里根本没有对应的键，客户端只能显示 0——用户看到的是
+// 「没人用」，真实原因是「没采到」。这里按需补查：用户打开详情时查一次，结果
+// 落盘缓存，之后的列表/详情直接叠加缓存值。三个约束决定了实现形态：
+//   * 绝不批量查全量（上万条）：只查调用方点名的少数条目，一次最多 LIVE_STATS_MAX；
+//   * GitHub 匿名接口每小时只有 60 次：star 缓存 6 小时、失败负缓存 15 分钟，
+//     否则连点几个详情就把整机 IP 的配额打光；
+//   * 任一来源失败都只降级、不报错：拿不到就继续用快照值，面板照常可用。
+// ---------------------------------------------------------------------------
+
+const LIVE_STATS_FILE = () => join(PLUGIN_MANAGER_DIR(), 'stats-cache.json');
+const LIVE_STATS_VERSION = 1;
+/** 一次补查最多多少条：详情只查 1 条，批量留余量但守住请求预算。 */
+export const LIVE_STATS_MAX = 20;
+const LIVE_STATS_CONCURRENCY = 4;
+const LIVE_STATS_TIMEOUT_MS = 6000;
+/** star 6 小时：GitHub 匿名配额太紧，刷新太勤会把整机 IP 打黑。 */
+const LIVE_STATS_STARS_TTL_MS = 6 * 60 * 60 * 1000;
+/** 下载量 12 小时：npm 统计本身一天才更新一次。 */
+const LIVE_STATS_DOWNLOADS_TTL_MS = 12 * 60 * 60 * 1000;
+/** 失败负缓存 15 分钟：网络抖动/限流期间不反复重试。 */
+const LIVE_STATS_ERROR_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * 补查请求里的 urls 参数：逗号分隔字符串或数组，去重、丢掉非 http 地址、
+ * 截断到 LIVE_STATS_MAX（超出部分静默丢弃，避免一次请求打几十个上游接口）。
+ */
+export function parseLiveStatsURLs(value) {
+  const raw = Array.isArray(value) ? value : String(value ?? '').split(',');
+  const seen = new Set();
+  const urls = [];
+  for (const item of raw) {
+    const url = String(item ?? '').trim();
+    if (!url || seen.has(url)) continue;
+    if (!/^https?:\/\//i.test(url)) continue;
+    seen.add(url);
+    urls.push(url);
+    if (urls.length >= LIVE_STATS_MAX) break;
+  }
+  return urls;
+}
+
+/** npm 包名候选：先无 scope 的仓库名（最常见），再 @作者/仓库。 */
+export function npmNameCandidates(author, repo) {
+  const names = [];
+  if (repo) names.push(String(repo).toLowerCase());
+  if (author && repo) names.push(`@${String(author).toLowerCase()}/${String(repo).toLowerCase()}`);
+  return names;
+}
+
+/** 值够不够新：没有 checkedAt 一律算过期（第一次必然要查）。 */
+function statsFresh(at, ttl, now) {
+  const time = Date.parse(at ?? '');
+  return Number.isFinite(time) && now - time < ttl;
+}
+
+/** 缓存条目里能对外用的部分（缺值就是 null，客户端会回落到快照值）。 */
+function pickStats(entry) {
+  return {
+    stars: Number.isFinite(entry?.stars) ? entry.stars : null,
+    downloads: Number.isFinite(entry?.downloads) ? entry.downloads : null,
+    npm: typeof entry?.npm === 'string' ? entry.npm : null,
+  };
+}
+
+/**
+ * 把补查结果叠加到市场条目：只覆盖「确实查到的」数值，缺失/失败保持快照值。
+ * 纯函数，列表查询与测试都直接用。
+ */
+export function applyLiveStats(plugins, entries) {
+  if (!Array.isArray(plugins) || !entries) return plugins;
+  return plugins.map(plugin => {
+    const entry = plugin?.url ? entries[plugin.url] : null;
+    if (!entry) return plugin;
+    const next = { ...plugin };
+    if (Number.isFinite(entry.stars)) next.stars = entry.stars;
+    if (Number.isFinite(entry.downloads)) next.downloads = entry.downloads;
+    return next;
+  });
+}
+
+/** 补查缓存的内存副本：与市场索引同样 3 秒 TTL，避免每次查询都读盘解析。 */
+let liveStatsMemory = { at: 0, value: null, file: null };
+
+/** 写盘后失效：下次读拿到新文件。 */
+export function invalidateLiveStatsCache() {
+  liveStatsMemory = { at: 0, value: null, file: null };
+}
+
+/** 读补查缓存（结构坏了当空，别让一个坏文件拖垮整个市场页）。 */
+async function readLiveStatsCache(file = LIVE_STATS_FILE()) {
+  if (liveStatsMemory.value && liveStatsMemory.file === file && Date.now() - liveStatsMemory.at < 3000) {
+    return liveStatsMemory.value;
+  }
+  const raw = await readJsonQuiet(file);
+  const entries = raw && typeof raw.entries === 'object' && raw.entries ? raw.entries : {};
+  const value = { entries };
+  liveStatsMemory = { at: Date.now(), value, file };
+  return value;
+}
+
+/** 落盘（原子写；失败吞掉——补查缓存只是加速项，不该影响本次返回）。 */
+async function writeLiveStatsCache(entries, file) {
+  try {
+    await writeTextAtomic(file, JSON.stringify({ version: LIVE_STATS_VERSION, entries }));
+  } catch { /* 缓存写失败不影响主流程 */ }
+  invalidateLiveStatsCache();
+}
+
+/** npm 近 30 天下载量；候选名逐个试，404 说明该名字没有包，换下一个。 */
+async function fetchNpmDownloads(candidates, timeoutMs, doFetch) {
+  for (const name of candidates) {
+    // scope 前缀的 @ 保持原样（npm 的接口就是 `/<@scope>/<name>`，编码成 %40 反而不稳）。
+    const encoded = name.split('/').map(part => encodeURIComponent(part).replace(/%40/gi, '@')).join('/');
+    const url = `https://api.npmjs.org/downloads/point/last-month/${encoded}`;
+    const result = await readRemoteJSON(url, timeoutMs, doFetch, payload => payload, 'npm 下载量');
+    if (result.error) {
+      // 404 是「这个包名不存在」的确定结论：继续试下一个候选名。
+      if (result.status === 404) continue;
+      return { error: result.error };
+    }
+    const downloads = Number(result.value?.downloads);
+    if (!Number.isSafeInteger(downloads) || downloads < 0) return { error: 'npm 下载量响应异常' };
+    return { downloads, npm: name };
+  }
+  // 所有候选都 404：确认没有 npm 包（也要缓存，不然每次详情都重试两遍）。
+  return { downloads: null, npm: null };
+}
+
+/** GitHub 仓库 star（匿名 REST；403 基本都是限流）。 */
+async function fetchGithubStars(author, repo, timeoutMs, doFetch) {
+  const url = `https://api.github.com/repos/${encodeURIComponent(author)}/${encodeURIComponent(repo)}`;
+  const result = await readRemoteJSON(url, timeoutMs, doFetch, payload => payload, 'GitHub 仓库信息');
+  if (result.error) {
+    return { error: result.status === 403 ? 'GitHub 接口限流（匿名配额已用完）' : result.error };
+  }
+  const stars = Number(result.value?.stargazers_count);
+  if (!Number.isSafeInteger(stars) || stars < 0) return { error: 'GitHub 仓库信息缺少 star 数' };
+  return { stars };
+}
+
+/**
+ * 按需补查若干条目的 star / npm 下载量。
+ *
+ * 返回 `{ stats: { [url]: { stars, downloads, npm } }, errors: [] }`；命中缓存且未
+ * 过期时完全不发网络请求。任何单条失败只进 errors，不影响其它条目。
+ * @param {string|string[]} urls - 条目 GitHub 地址（逗号分隔亦可）。
+ * @param {{fetch?:Function, file?:string}} [deps] - 测试注入点。
+ */
+export async function loadPluginLiveStats(urls, deps = {}) {
+  const list = parseLiveStatsURLs(urls);
+  const doFetch = deps.fetch ?? fetch;
+  const file = deps.file ?? LIVE_STATS_FILE();
+  const cached = await readLiveStatsCache(file);
+  const entries = { ...cached.entries };
+  const now = Date.now();
+  const stats = {};
+  const errors = [];
+  const pending = [];
+  for (const url of list) {
+    const repoRef = githubRepoFromUrl(url);
+    if (!repoRef) { errors.push(`${url}: 不是 GitHub 仓库地址`); continue; }
+    const entry = entries[url] ?? {};
+    stats[url] = pickStats(entry);
+    // 刚失败过就整条跳过：star 与下载量同源（都靠网络），一起退避。
+    if (statsFresh(entry.errorAt, LIVE_STATS_ERROR_TTL_MS, now)) continue;
+    const needStars = !statsFresh(entry.starsAt, LIVE_STATS_STARS_TTL_MS, now);
+    const needDownloads = !statsFresh(entry.downloadsAt, LIVE_STATS_DOWNLOADS_TTL_MS, now);
+    if (!needStars && !needDownloads) continue;
+    pending.push({ url, repoRef, entry, needStars, needDownloads });
+  }
+
+  let changed = false;
+  await mapWithConcurrency(pending, LIVE_STATS_CONCURRENCY, async task => {
+    const updates = {};
+    const failures = [];
+    if (task.needStars) {
+      const fetched = await fetchGithubStars(task.repoRef.author, task.repoRef.repo, LIVE_STATS_TIMEOUT_MS, doFetch);
+      if (fetched.error) failures.push(`star：${fetched.error}`);
+      else { updates.stars = fetched.stars; updates.starsAt = new Date().toISOString(); }
+    }
+    if (task.needDownloads) {
+      const fetched = await fetchNpmDownloads(npmNameCandidates(task.repoRef.author, task.repoRef.repo), LIVE_STATS_TIMEOUT_MS, doFetch);
+      if (fetched.error) failures.push(`下载量：${fetched.error}`);
+      else {
+        updates.downloads = fetched.downloads;
+        updates.npm = fetched.npm;
+        updates.downloadsAt = new Date().toISOString();
+      }
+    }
+    if (failures.length) {
+      updates.errorAt = new Date().toISOString();
+      updates.error = failures.join('；');
+      errors.push(`${task.url}: ${updates.error}`);
+    }
+    entries[task.url] = { ...task.entry, ...updates };
+    stats[task.url] = pickStats(entries[task.url]);
+    changed = true;
+  });
+  if (changed) await writeLiveStatsCache(entries, file);
+  return { stats, errors };
 }
 
 
@@ -5322,7 +5524,10 @@ export function apply(ctx) {
       const disposers = [
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/installed', handler: async (req, res) => {
           if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
-          try { json(res, 200, { items: await listInstalledPlugins() }); } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+          try {
+            const [items, coreLayers] = await Promise.all([listInstalledPlugins(), listInstalledCoreLayers()]);
+            json(res, 200, { items, coreLayers });
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
         // 每个已安装插件是否被用户停用、能否停用、以及停用会禁掉哪些行 id。
         // `?refresh=1` 强制重新跑一次 dump-config（面板打开时用默认缓存即可）。
@@ -5365,6 +5570,16 @@ export function apply(ctx) {
               limit: url.searchParams.get('limit'),
               offset: url.searchParams.get('offset'),
             }));
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 按需补查条目统计：社区清单里的 star/下载量是快照，新条目常常根本没采到
+        // （显示 0）。详情浮窗打开时带 ?urls= 查这一条，服务端查到后落盘缓存，
+        // 之后列表查询会直接叠加缓存值。失败只降级不报错。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/marketplace/stats', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          try {
+            const url = new URL(req.url || '/', 'http://127.0.0.1');
+            json(res, 200, await loadPluginLiveStats(url.searchParams.get('urls') || ''));
           } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/refresh', handler: async (req, res) => {

@@ -3497,21 +3497,23 @@ export async function probeGitHead(remote, timeoutMs = PROBE_TIMEOUT_MS) {
 }
 
 /**
- * 一次 GET + JSON 解析，带超时。`decode` 用于把 API 的包装响应还原成实际文档。
- * 超时/网络错误一律转成 error 字段（调用方据此决定要不要走兜底）。
+ * 一次 GET + JSON 解析，带超时。`decode` 用于把 API 的包装响应还原成实际文档；
+ * `label` 只影响错误文案（不同调用方拉的不是 package.json，写死会说错）。
+ * 超时/网络错误一律转成 error 字段（调用方据此决定要不要走兜底），
+ * 非 2xx 额外带上 status —— 调用方要区分「404 = 确实没有」和「网络不可用」。
  */
-async function readRemoteJSON(url, timeoutMs, doFetch, decode = payload => payload) {
+async function readRemoteJSON(url, timeoutMs, doFetch, decode = payload => payload, label = '远端 package.json') {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await doFetch(url, { signal: controller.signal, headers: { 'cache-control': 'no-cache' } });
-    if (!response.ok) return { error: `远端 package.json HTTP ${response.status}` };
+    if (!response.ok) return { error: `${label} HTTP ${response.status}`, status: response.status };
     const value = decode(await response.json());
-    if (!value) return { error: '远端 package.json 无法解析' };
+    if (!value) return { error: `${label} 无法解析` };
     return { value };
   } catch (error) {
     const message = error?.name === 'AbortError' || /aborted/i.test(String(error?.message ?? ''))
-      ? `拉取远端 package.json 超时（${Math.round(timeoutMs / 1000)} 秒）`
+      ? `拉取${label} 超时（${Math.round(timeoutMs / 1000)} 秒）`
       : String(error?.message || error);
     return { error: message };
   } finally {
@@ -4579,6 +4581,8 @@ export async function queryMarketplace(params = {}) {
 /**
  * 市场读接口（聚合版）：官方 + 默认源走市场主索引，自定义源走各自缓存，
  * mergeMarketPlugins 去重合并。兼容旧响应字段（plugins/categories/count/stale）。
+ * 条目上的 star/下载量会先叠加本地补查缓存（见下方「市场条目的实时统计」）：
+ * 快照里缺数据的条目，补查过一次之后列表页就能直接显示真实值。
  */
 export async function readMarketplaceAggregated() {
   const base = await readMarketplace();
@@ -4586,7 +4590,9 @@ export async function readMarketplaceAggregated() {
   // 官方来源已下线：旧索引里遗留的 official 条目在读取时挡掉，界面立刻干净，
   // 不必等索引重建（重建后它们本来也不会再写进来）。
   const withoutOfficial = list => (Array.isArray(list) ? list : []).filter(item => item && item.source !== 'official');
-  const plugins = mergeMarketPlugins(withoutOfficial(base.plugins), withoutOfficial(extra.plugins));
+  const merged = mergeMarketPlugins(withoutOfficial(base.plugins), withoutOfficial(extra.plugins));
+  const statsEntries = (await readLiveStatsCache()).entries;
+  const plugins = applyLiveStats(merged, statsEntries);
   const categories = sortMarketCategories([
     ...(base.categories ?? []).filter(item => item !== 'official'),
     ...new Set(withoutOfficial(extra.plugins).map(item => item.category)),
@@ -4602,6 +4608,212 @@ export async function readMarketplaceAggregated() {
     sources: extra.perSource,
     sourceRefresh: sourceRefreshProgress,
   };
+}
+
+// ---------------------------------------------------------------------------
+// 市场条目的实时统计（star / npm 下载量）
+//
+// 社区清单里的 stars / downloads 是上游定期抓取的**快照**：上游抓取一旦滞后，
+// 新收录的条目在快照里根本没有对应的键，客户端只能显示 0——用户看到的是
+// 「没人用」，真实原因是「没采到」。这里按需补查：用户打开详情时查一次，结果
+// 落盘缓存，之后的列表/详情直接叠加缓存值。三个约束决定了实现形态：
+//   * 绝不批量查全量（上万条）：只查调用方点名的少数条目，一次最多 LIVE_STATS_MAX；
+//   * GitHub 匿名接口每小时只有 60 次：star 缓存 6 小时、失败负缓存 15 分钟，
+//     否则连点几个详情就把整机 IP 的配额打光；
+//   * 任一来源失败都只降级、不报错：拿不到就继续用快照值，面板照常可用。
+// ---------------------------------------------------------------------------
+
+const LIVE_STATS_FILE = () => join(PLUGIN_MANAGER_DIR(), 'stats-cache.json');
+const LIVE_STATS_VERSION = 1;
+/** 一次补查最多多少条：详情只查 1 条，批量留余量但守住请求预算。 */
+export const LIVE_STATS_MAX = 20;
+const LIVE_STATS_CONCURRENCY = 4;
+const LIVE_STATS_TIMEOUT_MS = 6000;
+/** star 6 小时：GitHub 匿名配额太紧，刷新太勤会把整机 IP 打黑。 */
+const LIVE_STATS_STARS_TTL_MS = 6 * 60 * 60 * 1000;
+/** 下载量 12 小时：npm 统计本身一天才更新一次。 */
+const LIVE_STATS_DOWNLOADS_TTL_MS = 12 * 60 * 60 * 1000;
+/** 失败负缓存 15 分钟：网络抖动/限流期间不反复重试。 */
+const LIVE_STATS_ERROR_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * 补查请求里的 urls 参数：逗号分隔字符串或数组，去重、丢掉非 http 地址、
+ * 截断到 LIVE_STATS_MAX（超出部分静默丢弃，避免一次请求打几十个上游接口）。
+ */
+export function parseLiveStatsURLs(value) {
+  const raw = Array.isArray(value) ? value : String(value ?? '').split(',');
+  const seen = new Set();
+  const urls = [];
+  for (const item of raw) {
+    const url = String(item ?? '').trim();
+    if (!url || seen.has(url)) continue;
+    if (!/^https?:\/\//i.test(url)) continue;
+    seen.add(url);
+    urls.push(url);
+    if (urls.length >= LIVE_STATS_MAX) break;
+  }
+  return urls;
+}
+
+/** npm 包名候选：先无 scope 的仓库名（最常见），再 @作者/仓库。 */
+export function npmNameCandidates(author, repo) {
+  const names = [];
+  if (repo) names.push(String(repo).toLowerCase());
+  if (author && repo) names.push(`@${String(author).toLowerCase()}/${String(repo).toLowerCase()}`);
+  return names;
+}
+
+/** 值够不够新：没有 checkedAt 一律算过期（第一次必然要查）。 */
+function statsFresh(at, ttl, now) {
+  const time = Date.parse(at ?? '');
+  return Number.isFinite(time) && now - time < ttl;
+}
+
+/** 缓存条目里能对外用的部分（缺值就是 null，客户端会回落到快照值）。 */
+function pickStats(entry) {
+  return {
+    stars: Number.isFinite(entry?.stars) ? entry.stars : null,
+    downloads: Number.isFinite(entry?.downloads) ? entry.downloads : null,
+    npm: typeof entry?.npm === 'string' ? entry.npm : null,
+  };
+}
+
+/**
+ * 把补查结果叠加到市场条目：只覆盖「确实查到的」数值，缺失/失败保持快照值。
+ * 纯函数，列表查询与测试都直接用。
+ */
+export function applyLiveStats(plugins, entries) {
+  if (!Array.isArray(plugins) || !entries) return plugins;
+  return plugins.map(plugin => {
+    const entry = plugin?.url ? entries[plugin.url] : null;
+    if (!entry) return plugin;
+    const next = { ...plugin };
+    if (Number.isFinite(entry.stars)) next.stars = entry.stars;
+    if (Number.isFinite(entry.downloads)) next.downloads = entry.downloads;
+    return next;
+  });
+}
+
+/** 补查缓存的内存副本：与市场索引同样 3 秒 TTL，避免每次查询都读盘解析。 */
+let liveStatsMemory = { at: 0, value: null, file: null };
+
+/** 写盘后失效：下次读拿到新文件。 */
+export function invalidateLiveStatsCache() {
+  liveStatsMemory = { at: 0, value: null, file: null };
+}
+
+/** 读补查缓存（结构坏了当空，别让一个坏文件拖垮整个市场页）。 */
+async function readLiveStatsCache(file = LIVE_STATS_FILE()) {
+  if (liveStatsMemory.value && liveStatsMemory.file === file && Date.now() - liveStatsMemory.at < 3000) {
+    return liveStatsMemory.value;
+  }
+  const raw = await readJsonQuiet(file);
+  const entries = raw && typeof raw.entries === 'object' && raw.entries ? raw.entries : {};
+  const value = { entries };
+  liveStatsMemory = { at: Date.now(), value, file };
+  return value;
+}
+
+/** 落盘（原子写；失败吞掉——补查缓存只是加速项，不该影响本次返回）。 */
+async function writeLiveStatsCache(entries, file) {
+  try {
+    await writeTextAtomic(file, JSON.stringify({ version: LIVE_STATS_VERSION, entries }));
+  } catch { /* 缓存写失败不影响主流程 */ }
+  invalidateLiveStatsCache();
+}
+
+/** npm 近 30 天下载量；候选名逐个试，404 说明该名字没有包，换下一个。 */
+async function fetchNpmDownloads(candidates, timeoutMs, doFetch) {
+  for (const name of candidates) {
+    // scope 前缀的 @ 保持原样（npm 的接口就是 `/<@scope>/<name>`，编码成 %40 反而不稳）。
+    const encoded = name.split('/').map(part => encodeURIComponent(part).replace(/%40/gi, '@')).join('/');
+    const url = `https://api.npmjs.org/downloads/point/last-month/${encoded}`;
+    const result = await readRemoteJSON(url, timeoutMs, doFetch, payload => payload, 'npm 下载量');
+    if (result.error) {
+      // 404 是「这个包名不存在」的确定结论：继续试下一个候选名。
+      if (result.status === 404) continue;
+      return { error: result.error };
+    }
+    const downloads = Number(result.value?.downloads);
+    if (!Number.isSafeInteger(downloads) || downloads < 0) return { error: 'npm 下载量响应异常' };
+    return { downloads, npm: name };
+  }
+  // 所有候选都 404：确认没有 npm 包（也要缓存，不然每次详情都重试两遍）。
+  return { downloads: null, npm: null };
+}
+
+/** GitHub 仓库 star（匿名 REST；403 基本都是限流）。 */
+async function fetchGithubStars(author, repo, timeoutMs, doFetch) {
+  const url = `https://api.github.com/repos/${encodeURIComponent(author)}/${encodeURIComponent(repo)}`;
+  const result = await readRemoteJSON(url, timeoutMs, doFetch, payload => payload, 'GitHub 仓库信息');
+  if (result.error) {
+    return { error: result.status === 403 ? 'GitHub 接口限流（匿名配额已用完）' : result.error };
+  }
+  const stars = Number(result.value?.stargazers_count);
+  if (!Number.isSafeInteger(stars) || stars < 0) return { error: 'GitHub 仓库信息缺少 star 数' };
+  return { stars };
+}
+
+/**
+ * 按需补查若干条目的 star / npm 下载量。
+ *
+ * 返回 `{ stats: { [url]: { stars, downloads, npm } }, errors: [] }`；命中缓存且未
+ * 过期时完全不发网络请求。任何单条失败只进 errors，不影响其它条目。
+ * @param {string|string[]} urls - 条目 GitHub 地址（逗号分隔亦可）。
+ * @param {{fetch?:Function, file?:string}} [deps] - 测试注入点。
+ */
+export async function loadPluginLiveStats(urls, deps = {}) {
+  const list = parseLiveStatsURLs(urls);
+  const doFetch = deps.fetch ?? fetch;
+  const file = deps.file ?? LIVE_STATS_FILE();
+  const cached = await readLiveStatsCache(file);
+  const entries = { ...cached.entries };
+  const now = Date.now();
+  const stats = {};
+  const errors = [];
+  const pending = [];
+  for (const url of list) {
+    const repoRef = githubRepoFromUrl(url);
+    if (!repoRef) { errors.push(`${url}: 不是 GitHub 仓库地址`); continue; }
+    const entry = entries[url] ?? {};
+    stats[url] = pickStats(entry);
+    // 刚失败过就整条跳过：star 与下载量同源（都靠网络），一起退避。
+    if (statsFresh(entry.errorAt, LIVE_STATS_ERROR_TTL_MS, now)) continue;
+    const needStars = !statsFresh(entry.starsAt, LIVE_STATS_STARS_TTL_MS, now);
+    const needDownloads = !statsFresh(entry.downloadsAt, LIVE_STATS_DOWNLOADS_TTL_MS, now);
+    if (!needStars && !needDownloads) continue;
+    pending.push({ url, repoRef, entry, needStars, needDownloads });
+  }
+
+  let changed = false;
+  await mapWithConcurrency(pending, LIVE_STATS_CONCURRENCY, async task => {
+    const updates = {};
+    const failures = [];
+    if (task.needStars) {
+      const fetched = await fetchGithubStars(task.repoRef.author, task.repoRef.repo, LIVE_STATS_TIMEOUT_MS, doFetch);
+      if (fetched.error) failures.push(`star：${fetched.error}`);
+      else { updates.stars = fetched.stars; updates.starsAt = new Date().toISOString(); }
+    }
+    if (task.needDownloads) {
+      const fetched = await fetchNpmDownloads(npmNameCandidates(task.repoRef.author, task.repoRef.repo), LIVE_STATS_TIMEOUT_MS, doFetch);
+      if (fetched.error) failures.push(`下载量：${fetched.error}`);
+      else {
+        updates.downloads = fetched.downloads;
+        updates.npm = fetched.npm;
+        updates.downloadsAt = new Date().toISOString();
+      }
+    }
+    if (failures.length) {
+      updates.errorAt = new Date().toISOString();
+      updates.error = failures.join('；');
+      errors.push(`${task.url}: ${updates.error}`);
+    }
+    entries[task.url] = { ...task.entry, ...updates };
+    stats[task.url] = pickStats(entries[task.url]);
+    changed = true;
+  });
+  if (changed) await writeLiveStatsCache(entries, file);
+  return { stats, errors };
 }
 
 
@@ -5358,6 +5570,16 @@ export function apply(ctx) {
               limit: url.searchParams.get('limit'),
               offset: url.searchParams.get('offset'),
             }));
+          } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
+        }}),
+        // 按需补查条目统计：社区清单里的 star/下载量是快照，新条目常常根本没采到
+        // （显示 0）。详情浮窗打开时带 ?urls= 查这一条，服务端查到后落盘缓存，
+        // 之后列表查询会直接叠加缓存值。失败只降级不报错。
+        host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/marketplace/stats', handler: async (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(); return; }
+          try {
+            const url = new URL(req.url || '/', 'http://127.0.0.1');
+            json(res, 200, await loadPluginLiveStats(url.searchParams.get('urls') || ''));
           } catch (error) { json(res, 500, { error: String(error?.message || error) }); }
         }}),
         host.webServer.register({ kind: 'exact', path: '/dsh-plugin-manager/refresh', handler: async (req, res) => {

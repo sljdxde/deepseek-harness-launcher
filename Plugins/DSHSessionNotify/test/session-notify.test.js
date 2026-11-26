@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { name, apply, summarizeTurnEnd, summarizeTurnStart, sessionLabelFromId, createPresenceTracker, createCommandQueue, PRESENCE_TTL_MS, FOCUSED_CLIENT_GRACE_MS } from '../lib/index.js';
+import {
+  name,
+  apply,
+  summarizeTurnEnd,
+  summarizeTurnStart,
+  sessionLabelFromId,
+  createPresenceTracker,
+  createCommandQueue,
+  isInterruptedSession,
+  resumeInterruptedSessions,
+  PRESENCE_TTL_MS,
+  FOCUSED_CLIENT_GRACE_MS,
+} from '../lib/index.js';
 
 /** A session whose event log ends with a `session/title`. */
 function makeSession({ id = 'sess-1234-abcd', origin = undefined, title = null, events = [] } = {}) {
@@ -10,8 +22,12 @@ function makeSession({ id = 'sess-1234-abcd', origin = undefined, title = null, 
   return { header, events };
 }
 
-function turnEnd(kind = 'completed') {
-  return { type: 'turn/end', data: { reason: { kind } } };
+function turnEnd(kind = 'completed', extra = {}) {
+  return { type: 'turn/end', data: { reason: { kind, ...extra } } };
+}
+
+function turnStart(turn = 1) {
+  return { type: 'turn/start', data: { turn } };
 }
 
 /**
@@ -547,5 +563,344 @@ test('requireEmbedded 命令走真实路由：/open 带标记，列表按 embedd
   });
   assert.equal(embeddedClaim.status, 200);
   assert.equal(embeddedClaim.json().command.sessionId, 'session-route');
+});
+
+function resumeRecord(id, { live = false, origin, createdAt = 0, cwd = '/repo', formatStatus = 'current' } = {}) {
+  const header = { id, version: 4, createdAt, isSeeded: false, cwd };
+  if (origin) header.origin = origin;
+  return { header, live, persisted: true, formatStatus };
+}
+
+function resumeSnapshot(id, events, header = {}) {
+  return {
+    session: { id, version: 4, createdAt: 0, isSeeded: false, cwd: '/repo', ...header },
+    inheritedEventCount: 0,
+    events,
+  };
+}
+
+function resumeAgent(id, { status = 'idle', events = [] } = {}) {
+  const followups = [];
+  const agent = {
+    id,
+    status,
+    session: {
+      header: { id, version: 4, createdAt: 0, isSeeded: false, cwd: '/repo' },
+      snapshotEvents: () => events,
+    },
+    followups,
+    followup(message) { followups.push(message); },
+  };
+  return { agent, followups };
+}
+
+function makeResumeHarness({
+  records,
+  sessions,
+  agents = {},
+  archived = [],
+  snapshots = [],
+  readErrors = {},
+  resolveResult,
+  logger = { info() {}, warn() {} },
+} = {}) {
+  const readCalls = [];
+  const resolved = [];
+  return {
+    services: {
+      sessionQuery: {
+        listSessions: async () => records,
+        readSession: async id => {
+          readCalls.push(id);
+          if (readErrors[id] !== undefined) throw readErrors[id];
+          return sessions[id];
+        },
+      },
+      sessionController: {
+        resolveAgent: async id => {
+          resolved.push(id);
+          return resolveResult === undefined ? { agent: agents[id] } : resolveResult(id);
+        },
+      },
+      sessionPersistence: { list: async () => snapshots },
+      workspaceRegistry: { archivedSessionIds: archived },
+      logger,
+    },
+    readCalls,
+    resolved,
+  };
+}
+
+test('isInterruptedSession 只认进程中断/关闭的尾巴，用户停止不续跑', () => {
+  const header = { id: 'session-tail', cwd: '/repo' };
+  assert.equal(isInterruptedSession(header, [turnStart(), turnEnd('interrupted')]), true);
+  // 进程关闭时 agent 以 disposed 取消，落盘是 aborted + reason.disposed。
+  assert.equal(
+    isInterruptedSession(header, [turnStart(), turnEnd('aborted', { reason: { kind: 'disposed' } })]),
+    true,
+  );
+  // session-query 冷读会补上合成 closer；直接喂原始 open turn 也要识别。
+  assert.equal(isInterruptedSession(header, [turnStart()]), true);
+  // 尾巴后的标题事件不影响判断。
+  assert.equal(
+    isInterruptedSession(header, [turnStart(), turnEnd('interrupted'), { type: 'session/title', data: { title: 'x' } }]),
+    true,
+  );
+  // 用户自己按停止：不自动跑。
+  assert.equal(
+    isInterruptedSession(header, [turnStart(), turnEnd('aborted', { reason: { kind: 'user' } })]),
+    false,
+  );
+  for (const kind of ['completed', 'error', 'max-tokens', 'blocked']) {
+    assert.equal(isInterruptedSession(header, [turnStart(), turnEnd(kind)]), false);
+  }
+  // 中断后已经完整跑过一轮：不重复续跑。
+  assert.equal(
+    isInterruptedSession(header, [turnStart(), turnEnd('interrupted'), turnStart(2), turnEnd('completed')]),
+    false,
+  );
+  assert.equal(
+    isInterruptedSession({ ...header, origin: 'subagent' }, [turnStart(), turnEnd('interrupted')]),
+    false,
+  );
+  assert.equal(isInterruptedSession(header, []), false);
+  assert.equal(isInterruptedSession(header, [{ type: 'session/title', data: { title: 'x' } }]), false);
+});
+
+test('自动继续：只续跑中断/进程关闭的根会话，跳过用户停止、归档、子会话和旧会话', async () => {
+  const now = 1_000_000;
+  const interruptedEvents = [turnStart(), turnEnd('interrupted')];
+  const disposedEvents = [turnStart(), turnEnd('aborted', { reason: { kind: 'disposed' } })];
+  const openEvents = [turnStart(2)];
+  const userStopEvents = [turnStart(), turnEnd('aborted', { reason: { kind: 'user' } })];
+  const completedEvents = [turnStart(), turnEnd('completed')];
+  const interrupted = resumeAgent('session-interrupted', { events: interruptedEvents });
+  const disposed = resumeAgent('session-disposed', { events: disposedEvents });
+  const open = resumeAgent('session-open', { events: openEvents });
+  const records = [
+    resumeRecord('session-interrupted', { createdAt: now - 1000 }),
+    resumeRecord('session-disposed', { createdAt: now - 2000 }),
+    resumeRecord('session-open', { createdAt: now - 3000 }),
+    resumeRecord('session-user-stop', { createdAt: now - 4000 }),
+    resumeRecord('session-completed', { createdAt: now - 5000 }),
+    resumeRecord('session-archived', { createdAt: now - 1000 }),
+    resumeRecord('session-subagent', { createdAt: now - 1000, origin: 'subagent' }),
+    resumeRecord('session-no-cwd', { createdAt: now - 1000, cwd: null }),
+    resumeRecord('session-migration', { createdAt: now - 1000, formatStatus: 'migration-required' }),
+    resumeRecord('session-old', { createdAt: now - 120_000 }),
+  ];
+  const harness = makeResumeHarness({
+    records,
+    sessions: {
+      'session-interrupted': resumeSnapshot('session-interrupted', interruptedEvents),
+      'session-disposed': resumeSnapshot('session-disposed', disposedEvents),
+      'session-open': resumeSnapshot('session-open', openEvents),
+      'session-user-stop': resumeSnapshot('session-user-stop', userStopEvents),
+      'session-completed': resumeSnapshot('session-completed', completedEvents),
+      'session-old': resumeSnapshot('session-old', interruptedEvents),
+    },
+    agents: {
+      'session-interrupted': interrupted.agent,
+      'session-disposed': disposed.agent,
+      'session-open': open.agent,
+    },
+    archived: ['session-archived'],
+    snapshots: [{ header: { id: 'session-old' }, location: { kind: 'jsonl', path: '/tmp/session-old' } }],
+  });
+
+  const result = await resumeInterruptedSessions(harness.services, {
+    now,
+    maxAgeMs: 60_000,
+    statFile: async () => ({ mtimeMs: now - 120_000 }),
+  });
+  assert.deepEqual(result, { scanned: 5, resumed: 3 });
+  assert.deepEqual(harness.resolved, ['session-interrupted', 'session-disposed', 'session-open']);
+  assert.deepEqual(harness.readCalls, [
+    'session-interrupted',
+    'session-disposed',
+    'session-open',
+    'session-user-stop',
+    'session-completed',
+  ]);
+  for (const agent of [interrupted, disposed, open]) {
+    assert.equal(agent.followups.length, 1);
+    const message = agent.followups[0];
+    assert.equal(message.role, 'user');
+    assert.deepEqual(message.content, []);
+    assert.equal(message.source.kind, 'retry');
+    assert.equal(typeof message.id, 'string');
+    assert.ok(message.id.length > 0);
+    assert.equal(typeof message.source.rpcId, 'string');
+    assert.ok(message.source.rpcId.length > 0);
+  }
+});
+
+test('自动继续：Harness 已打开的 live 会话只要 agent 空闲、尾巴仍中断就续跑', async () => {
+  const now = 1_000_000;
+  const events = [turnStart(), turnEnd('interrupted')];
+  const live = resumeAgent('session-live-idle', { events });
+  const harness = makeResumeHarness({
+    records: [resumeRecord('session-live-idle', { createdAt: now - 1000, live: true })],
+    sessions: { 'session-live-idle': resumeSnapshot('session-live-idle', events) },
+    agents: { 'session-live-idle': live.agent },
+  });
+
+  const result = await resumeInterruptedSessions(harness.services, { now, maxAgeMs: 60_000 });
+  assert.deepEqual(result, { scanned: 1, resumed: 1 });
+  assert.deepEqual(harness.resolved, ['session-live-idle']);
+  assert.equal(live.followups.length, 1);
+});
+
+test('自动继续：文件 mtime 覆盖旧 createdAt；旧活动会话不续跑', async () => {
+  const now = 1_000_000;
+  const events = [turnStart(), turnEnd('interrupted')];
+  const revived = resumeAgent('session-revived', { events });
+  const old = resumeAgent('session-old', { events });
+  const records = [
+    // createdAt 很旧，但文件最近还在写：说明是最近一次崩溃的会话。
+    resumeRecord('session-revived', { createdAt: now - 200_000 }),
+    // createdAt 很新，但文件早已没动：只是旧日志，不因创建时间新鲜而误跑。
+    resumeRecord('session-old', { createdAt: now - 1000 }),
+  ];
+  const harness = makeResumeHarness({
+    records,
+    sessions: {
+      'session-revived': resumeSnapshot('session-revived', events),
+      'session-old': resumeSnapshot('session-old', events),
+    },
+    agents: {
+      'session-revived': revived.agent,
+      'session-old': old.agent,
+    },
+    snapshots: [
+      { header: { id: 'session-revived' }, location: { kind: 'jsonl', path: '/tmp/session-revived' } },
+      { header: { id: 'session-old' }, location: { kind: 'jsonl', path: '/tmp/session-old' } },
+    ],
+  });
+
+  const result = await resumeInterruptedSessions(harness.services, {
+    now,
+    maxAgeMs: 60_000,
+    statFile: async path => ({ mtimeMs: path.endsWith('session-revived') ? now - 1000 : now - 200_000 }),
+  });
+  assert.deepEqual(result, { scanned: 1, resumed: 1 });
+  assert.deepEqual(harness.readCalls, ['session-revived']);
+  assert.equal(revived.followups.length, 1);
+  assert.equal(old.followups.length, 0);
+});
+
+test('自动继续：metadata 列表失败时回退 createdAt，不影响扫描', async () => {
+  const now = 1_000_000;
+  const events = [turnStart(), turnEnd('interrupted')];
+  const recent = resumeAgent('session-recent', { events });
+  const old = resumeAgent('session-old', { events });
+  const harness = makeResumeHarness({
+    records: [
+      resumeRecord('session-recent', { createdAt: now - 1000 }),
+      resumeRecord('session-old', { createdAt: now - 200_000 }),
+    ],
+    sessions: {
+      'session-recent': resumeSnapshot('session-recent', events),
+      'session-old': resumeSnapshot('session-old', events),
+    },
+    agents: {
+      'session-recent': recent.agent,
+      'session-old': old.agent,
+    },
+  });
+  harness.services.sessionPersistence = {
+    list: async () => { throw new Error('listing unavailable'); },
+  };
+
+  const result = await resumeInterruptedSessions(harness.services, { now, maxAgeMs: 60_000 });
+  assert.deepEqual(result, { scanned: 1, resumed: 1 });
+  assert.deepEqual(harness.readCalls, ['session-recent']);
+});
+
+test('自动继续：单个会话读取/恢复失败不影响其它会话，也不抢已经继续的会话', async () => {
+  const now = 1_000_000;
+  const events = [turnStart(), turnEnd('interrupted')];
+  const running = resumeAgent('session-running', { events, status: 'running' });
+  const already = resumeAgent('session-already', { events: [turnStart(), turnEnd('completed')] });
+  const good = resumeAgent('session-good', { events });
+  const warnings = [];
+  const records = [
+    'session-read-fail',
+    'session-resolve-fail',
+    'session-running',
+    'session-already',
+    'session-good',
+  ].map((id, index) => resumeRecord(id, { createdAt: now - (index + 1) * 1000 }));
+  // 正在跑的会话也可能是 live（例如 Harness 已打开正在生成）：不能因为 live
+  // 就把命令塞进新回合，必须由 agent.status 拦住。
+  records[2] = resumeRecord('session-running', { createdAt: now - 3000, live: true });
+  const agents = {
+    'session-running': running.agent,
+    'session-already': already.agent,
+    'session-good': good.agent,
+  };
+  const harness = makeResumeHarness({
+    records,
+    sessions: Object.fromEntries(records.map(record => [record.header.id, resumeSnapshot(record.header.id, events)])),
+    agents,
+    readErrors: { 'session-read-fail': new Error('corrupt log') },
+    resolveResult: id => id === 'session-resolve-fail'
+      ? { error: { message: 'cannot reattach' } }
+      : { agent: agents[id] },
+    logger: { info() {}, warn: message => warnings.push(message) },
+  });
+
+  const result = await resumeInterruptedSessions(harness.services, { now, maxAgeMs: 60_000 });
+  assert.deepEqual(result, { scanned: 5, resumed: 1 });
+  assert.deepEqual(harness.resolved, [
+    'session-resolve-fail',
+    'session-running',
+    'session-already',
+    'session-good',
+  ]);
+  assert.equal(running.followups.length, 0);
+  assert.equal(already.followups.length, 0);
+  assert.equal(good.followups.length, 1);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /cannot read session/);
+  assert.match(warnings[1], /cannot resolve session/);
+});
+
+test('自动继续：扫描与恢复数量都有上限，按最近活动优先', async () => {
+  const now = 1_000_000;
+  const events = [turnStart(), turnEnd('interrupted')];
+  const records = [1, 2, 3].map(index => resumeRecord(`session-${index}`, { createdAt: now - index * 1000 }));
+  const agents = Object.fromEntries(records.map(record => {
+    const id = record.header.id;
+    return [id, resumeAgent(id, { events }).agent];
+  }));
+  const sessions = Object.fromEntries(records.map(record => [record.header.id, resumeSnapshot(record.header.id, events)]));
+  const harness = makeResumeHarness({ records, sessions, agents });
+
+  const result = await resumeInterruptedSessions(harness.services, {
+    now,
+    maxAgeMs: 60_000,
+    scanLimit: 2,
+    resumeLimit: 2,
+  });
+  assert.deepEqual(result, { scanned: 2, resumed: 2 });
+  assert.deepEqual(harness.readCalls, ['session-1', 'session-2']);
+
+  const second = makeResumeHarness({ records, sessions, agents });
+  const limited = await resumeInterruptedSessions(second.services, {
+    now,
+    maxAgeMs: 60_000,
+    resumeLimit: 1,
+  });
+  assert.deepEqual(limited, { scanned: 1, resumed: 1 });
+  assert.deepEqual(second.readCalls, ['session-1']);
+});
+
+test('自动继续：宿主没有会话服务时安全退出', async () => {
+  assert.deepEqual(await resumeInterruptedSessions({}), { scanned: 0, resumed: 0 });
+  assert.deepEqual(await resumeInterruptedSessions({
+    sessionQuery: { listSessions: async () => [], readSession: async () => undefined },
+    sessionController: {},
+  }), { scanned: 0, resumed: 0 });
 });
 

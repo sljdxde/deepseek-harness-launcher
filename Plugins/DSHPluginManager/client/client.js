@@ -156,6 +156,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
 .dsh-pm-drawer-meta{color:var(--dsw-alias-label-tertiary);display:inline;font-size:11.5px;font-weight:400}
 .dsh-pm-drawer-desc{border-top:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5;margin:0;padding:11px 16px}
 .dsh-pm-drawer-stats{border-top:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-tertiary);display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;line-height:18px;margin:0;padding:9px 16px}
+.dsh-pm-drawer-live{color:var(--dsw-alias-label-tertiary);font-size:11px;opacity:.75}
 .dsh-pm-drawer-actions{align-items:center;border-top:1px solid var(--dsw-alias-border-l2);display:flex;gap:10px;margin:0;padding:10px 16px 12px}
 .dsh-pm-drawer-link{color:var(--pm-accent);cursor:pointer;display:inline-block;font-size:11.5px;line-height:18px;margin:0 0 0 auto;text-decoration:none}
 .dsh-pm-confirm{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:14px;margin-bottom:10px}
@@ -762,6 +763,33 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     return next
   }
 
+  /// 把补查到的 star/下载量并回市场状态（列表卡片、两张榜、分类分区用的是同一批
+  /// 条目对象，只改 plugins 会出现「卡片更新了、榜单还是旧值」的割裂）。
+  function mergeLiveStatsIntoMarket(value, stats) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !stats) return value
+    const patch = item => {
+      if (!item || !item.url) return item
+      const live = stats[item.url]
+      if (!live) return item
+      const next = { ...item }
+      let updated = false
+      if (Number.isFinite(live.stars)) { next.stars = live.stars; updated = true }
+      if (Number.isFinite(live.downloads)) { next.downloads = live.downloads; updated = true }
+      return updated ? next : item
+    }
+    const patchList = list => (Array.isArray(list) ? list.map(patch) : list)
+    return {
+      ...value,
+      plugins: patchList(value.plugins),
+      featured: patchList(value.featured),
+      topDownloads: patchList(value.topDownloads),
+      topStars: patchList(value.topStars),
+      sections: Array.isArray(value.sections)
+        ? value.sections.map(section => (section ? { ...section, plugins: patchList(section.plugins) } : section))
+        : value.sections,
+    }
+  }
+
   /// Toast 队列：安装/卸载/清理/刷新等操作结果用浮层提示呈现并自动消失。
   /// 纯逻辑（计时器通过 schedule 注入），与 React 解耦，可直接单测：
   /// 成功/提示 3.2s 自动消失，失败 6s（读清错误需要更长时间）；
@@ -1309,10 +1337,37 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     const [detailPos, setDetailPos] = React.useState(null)
     const panelRef = React.useRef(null)
     /* 详情浮窗跟手：打开时把点击点换算成面板内坐标；无坐标（键盘路径）时居中兜底。 */
+    /// 详情里的 star / 下载量补查：社区清单里这两个字段是上游抓取的快照，新收录的
+    /// 插件在快照里往往根本没这条数据（卡片只能显示 0）。这里只补用户点开的这一条，
+    /// 服务端查到后落盘缓存，下次列表查询就直接带上真实值；失败静默保持快照值。
+    const loadLiveStats = plugin => {
+      const url = plugin && plugin.url
+      if (!url) return
+      fetch('/dsh-plugin-manager/marketplace/stats?urls=' + encodeURIComponent(url), { cache: 'no-store' })
+        .then(r => r.json())
+        .then(v => {
+          const stats = v && v.stats && v.stats[url]
+          if (!stats) return
+          // 补查期间用户可能已关掉或换了详情：按 url 校验，别把数字写到别的插件上。
+          setDetailState(current => {
+            if (!current || current.url !== url) return current
+            const next = { ...current }
+            let updated = false
+            if (Number.isFinite(stats.stars)) { next.stars = stats.stars; updated = true }
+            if (Number.isFinite(stats.downloads)) { next.downloads = stats.downloads; updated = true }
+            // 两个来源都没查到有效值时别打「已更新」，免得把快照值说成补查值。
+            if (!updated) return current
+            next.statsLive = true
+            return next
+          })
+        })
+        .catch(() => { /* 补查失败保持快照值，不打扰用户 */ })
+    }
     const setDetail = (plugin, e) => {
       setDetailState(plugin)
       const pr = (e && panelRef.current && panelRef.current.getBoundingClientRect) ? panelRef.current.getBoundingClientRect() : null
       setDetailPos(e && Number.isFinite(e.clientX) && pr ? { x: e.clientX - pr.left, y: e.clientY - pr.top } : null)
+      if (plugin) loadLiveStats(plugin)
     }
     const [busy, setBusyState] = React.useState('')
     // busy 的**同步**镜像：串行泵的 waitWhileDestructive 靠它决定「有没有破坏性
@@ -1423,11 +1478,32 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
         .join('&')
     }
+    /// 列表里的 0 不一定是真的 0：社区清单的 star/下载量是上游快照，新收录条目
+    /// 经常根本没采到。对当前页缺 star 的条目补查一次，把结果并回卡片与榜单；
+    /// 服务端有 6–12 小时缓存，重复查询不会再打上游接口。
+    const liveStatsRequested = React.useRef(new Set())
+    const requestLiveStats = plugins => {
+      const urls = (plugins || [])
+        .filter(plugin => plugin && plugin.url && !(plugin.stars > 0) && !liveStatsRequested.current.has(plugin.url))
+        .map(plugin => plugin.url)
+        .slice(0, 20) // 与服务端 LIVE_STATS_MAX 对齐：一次最多补 20 条
+      if (!urls.length) return
+      urls.forEach(url => liveStatsRequested.current.add(url))
+      fetch('/dsh-plugin-manager/marketplace/stats?urls=' + encodeURIComponent(urls.join(',')), { cache: 'no-store' })
+        .then(r => r.json())
+        .then(v => {
+          if (!v || !v.stats) return
+          setMarket(current => mergeLiveStatsIntoMarket(current, v.stats))
+        })
+        // 失败就放开去重记录，下次搜索/翻页允许重试（服务端还有负缓存兜着）。
+        .catch(() => { urls.forEach(url => liveStatsRequested.current.delete(url)) })
+    }
     const loadMarket = (overrides = {}) => fetch(marketQueryURL(overrides), { cache: 'no-store' })
       .then(r => r.json()).then(v => {
         if (v.error) throw Error(v.error)
         setMarket(stripOfficialMarket(v))
         setError('')
+        requestLiveStats(v.plugins)
         // 索引过期、或还是旧版索引（没有官方插件来源）时自动重建一次，别让用户手动找按钮。
         if (v.stale && !autoRefreshed.current) { autoRefreshed.current = true; refreshMarket() }
       })
@@ -1447,6 +1523,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
           setMarket(current => current && current !== false
             ? { ...current, plugins: [...(current.plugins || []), ...(v.plugins || [])], total: v.total ?? current.total }
             : v)
+          requestLiveStats(v.plugins)
         })
         .catch(e => toast('error', `加载更多失败：${String(e.message || e)}`))
         .finally(() => setLoadingMore(false))
@@ -2472,6 +2549,12 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
         h('div', { className: 'dsh-pm-drawer-stats' },
           h('span', null, `★ ${detail.stars || 0}`),
           h('span', null, `下载 ${detail.downloads || 0}`),
+          detail.statsLive
+            ? h('span', {
+              className: 'dsh-pm-drawer-live',
+              title: '已按需补查 npm 下载量 / GitHub 星标（与清单快照不一致时以补查值为准，本地缓存 6–12 小时）',
+            }, '已更新')
+            : null,
           detail.addedDate ? h('span', null, `添加于 ${detail.addedDate}`) : null),
         h('div', { className: 'dsh-pm-drawer-actions' },
           isInstalledPlugin(detail) || installStatus[detail.id] ? null : installButton(detail, { status: installStatus[detail.id], disabled: batchRunning || busyOther }),
@@ -3274,6 +3357,7 @@ div:has(> [data-slot='sidebar.footer.action']){flex-wrap:wrap}
     createToastStore,
     createUpdatesStore,
     stripOfficialMarket,
+    mergeLiveStatsIntoMarket,
     updatesAvailableCount,
     updatesBadgeText,
     updateEntryFor,

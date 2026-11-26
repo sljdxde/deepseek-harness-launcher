@@ -1898,6 +1898,189 @@ await openInstalledPanel(runtime);
   console.log('场景23（插件详情抽屉）通过');
 }
 
+/** 场景 23b：详情里的 star/下载量按需补查 —— 打开时只补这一条，服务端返回的
+ *  实时值要覆盖快照并打「实时」标记；晚回来的旧请求不能写到新打开的插件上；
+ *  查不到有效值时不标记、失败时静默保持快照。 */
+{
+  const marketPlugins = [
+    { id: 'a', name: 'alpha', repo: 'owner/alpha', author: 'owner', category: 'ui', descriptionEn: 'A', descriptionZh: '甲', downloads: 1234, stars: 56, version: '1.0.0', addedDate: null, url: 'https://github.com/owner/alpha' },
+    { id: 'b', name: 'beta', repo: 'owner/beta', author: 'owner', category: 'ui', descriptionEn: 'B', descriptionZh: '乙', downloads: 1, stars: 2, version: '1.0.0', addedDate: null, url: 'https://github.com/owner/beta' },
+    { id: 'c', name: 'gamma', repo: 'owner/gamma', author: 'owner', category: 'ui', descriptionEn: 'C', descriptionZh: '丙', downloads: 3, stars: 4, version: '1.0.0', addedDate: null, url: 'https://github.com/owner/gamma' },
+  ];
+  // 补查请求先挂起，由用例决定谁先回来（复现「晚回来的旧请求」）。
+  const pending = [];
+  const fetchImpl = (url, options = {}) => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    if (url.startsWith('/dsh-plugin-manager/marketplace/stats')) {
+      const requested = new URL(url, 'http://127.0.0.1').searchParams.get('urls');
+      return new Promise((resolve, reject) => {
+        pending.push({
+          url: requested,
+          resolve: body => resolve({ ok: true, status: 200, json: () => Promise.resolve(body) }),
+          reject,
+        });
+      });
+    }
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/marketplace')) {
+      return respond({
+        ok: true, stale: false, total: marketPlugins.length, allTotal: marketPlugins.length,
+        counts: [{ name: 'ui', count: 3, label: '界面' }], categories: ['ui'],
+        plugins: marketPlugins, sections: [],
+        featured: marketPlugins, topDownloads: marketPlugins, topStars: marketPlugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  const cards = findAll(runtime.tree, node => node.type === 'div' && /(^| )dsh-pm-card( |$)/.test(String(node.props.className || '')));
+  assert.equal(cards.length, 3, '三张市场卡片');
+  const openCard = async index => { cards[index].props.onClick({ stopPropagation() {} }); await settle(runtime, 10); };
+  const drawerNow = () => findAll(runtime.tree, node => node.type === 'div' && String(node.props.className || '').includes('dsh-pm-drawer'))[0];
+
+  // 打开 alpha → 请求挂起；再打开 beta → 又挂一个请求。
+  await openCard(0);
+  assert.equal(pending.length, 1, '打开详情会补查这一条');
+  assert.equal(pending[0].url, 'https://github.com/owner/alpha');
+  await openCard(1);
+  assert.equal(pending.length, 2, '换详情会补查新的一条');
+  assert.equal(pending[1].url, 'https://github.com/owner/beta');
+
+  // alpha 的响应晚回来：当前详情是 beta，不能把 alpha 的数字写上去。
+  pending[0].resolve({ stats: { 'https://github.com/owner/alpha': {} } });
+  await settle(runtime, 10);
+  let drawer = drawerNow();
+  assert.ok(textOf(drawer).includes('owner/beta'), '抽屉仍是 beta');
+  assert.ok(!textOf(drawer).includes('已更新'), '空结果不标记已更新');
+
+  // beta 的响应：只有下载量（star 查不到）→ 下载量覆盖、star 保持快照、打实时标记。
+  pending[1].resolve({ stats: { 'https://github.com/owner/beta': { stars: null, downloads: 888 } } });
+  await settle(runtime, 10);
+  drawer = drawerNow();
+  assert.ok(textOf(drawer).includes('★ 2'), '没查到的 star 保持快照值');
+  assert.ok(textOf(drawer).includes('下载 888'), '查到的下载量覆盖快照值');
+  assert.ok(textOf(drawer).includes('已更新'), '补查到有效值后打已更新标记');
+
+  // 再点 gamma：请求直接失败 → 静默保持快照，不弹错误。
+  await openCard(2);
+  pending[2].reject(new Error('network down'));
+  await settle(runtime, 10);
+  drawer = drawerNow();
+  assert.ok(textOf(drawer).includes('下载 3'), '补查失败保持快照值');
+  assert.ok(!textOf(drawer).includes('已更新'), '失败不标记已更新');
+
+  console.log('场景23b（详情统计补查）通过');
+}
+
+/** 场景 23c：列表自动补查 —— 卡片上的 0 不一定是真的 0（社区清单快照可能没采到），
+ *  打开列表时补查缺 star 的条目并并回卡片；查过的条目不再重复请求；失败不打扰
+ *  用户，且放开去重记录允许下次重试。 */
+{
+  const URL_ = {
+    alpha: 'https://github.com/owner/alpha',
+    beta: 'https://github.com/owner/beta',
+    gamma: 'https://github.com/owner/gamma',
+    delta: 'https://github.com/owner/delta',
+    epsilon: 'https://github.com/owner/epsilon',
+  };
+  const mk = (id, name, url, stars = 0, downloads = 0) => ({
+    id, name, repo: `owner/${name}`, author: 'owner', category: 'ui',
+    descriptionEn: name, descriptionZh: name, stars, downloads,
+    version: '1.0.0', addedDate: null, url,
+  });
+  const alpha = mk('a', 'alpha', URL_.alpha, 0, 0);
+  const beta = mk('b', 'beta', URL_.beta, 0, 5);
+  const gamma = mk('c', 'gamma', URL_.gamma, 9, 9);
+  const delta = mk('d', 'delta', URL_.delta, 0, 0);
+  const epsilon = mk('e', 'epsilon', URL_.epsilon, 0, 0);
+  const byQuery = {
+    '': [alpha, beta, gamma],
+    alpha: [alpha, beta],
+    gamma: [gamma],
+    delta: [delta],
+    epsilon: [epsilon],
+    epsilon2: [epsilon],
+  };
+  // 每次补查请求按顺序取一个响应：首屏空结果、delta 命中、epsilon 失败、epsilon 重试。
+  const statsPlan = [
+    { body: {} },
+    { body: { stats: { [URL_.delta]: { stars: 7, downloads: 70 } } } },
+    { reject: true },
+    { body: {} },
+  ];
+  const statsRequests = [];
+  const fetchImpl = (url, options = {}) => {
+    const respond = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    const parsed = new URL(url, 'http://127.0.0.1');
+    if (parsed.pathname === '/dsh-plugin-manager/marketplace/stats') {
+      statsRequests.push(String(parsed.searchParams.get('urls')).split(','));
+      const plan = statsPlan.shift() || { body: {} };
+      if (plan.reject) return Promise.reject(new Error('network down'));
+      return respond(plan.body);
+    }
+    if (url.startsWith('/dsh-plugin-manager/installed')) return respond({ items: [] });
+    if (url.startsWith('/dsh-plugin-manager/updates')) return respond({ checkedAt: null, refreshing: false, inventory: [] });
+    if (url.startsWith('/dsh-plugin-manager/disabled')) return respond({ items: [] });
+    if (parsed.pathname === '/dsh-plugin-manager/marketplace/query') {
+      const plugins = byQuery[parsed.searchParams.get('q') || ''] || [];
+      return respond({
+        ok: true, stale: false, total: plugins.length, allTotal: plugins.length,
+        counts: [{ name: 'ui', count: plugins.length, label: '界面' }], categories: ['ui'],
+        plugins, sections: [{ category: 'ui', label: '界面', count: plugins.length, plugins }],
+        featured: plugins, topDownloads: plugins, topStars: plugins,
+      });
+    }
+    return respond({});
+  };
+  const { runtime, trigger } = boot({ fetchImpl });
+  runtime.render(runtime.makeReact().createElement(trigger, { wide: true }));
+  await settle(runtime);
+  await openPanelOn(runtime, null);
+  await settle(runtime, 10);
+
+  // 首屏：只补缺 star 的 alpha/beta（gamma 已有 9 星，不浪费请求）。
+  assert.equal(statsRequests.length, 1, '列表加载后自动补查一次');
+  assert.deepEqual(statsRequests[0], [URL_.alpha, URL_.beta], '跳过已有 star 的条目');
+  assert.ok(textOf(runtime.tree).includes('★ 0'), '补查没有结果时保持快照值');
+
+  const searchBox = () => findAll(runtime.tree, node => node.type === 'input' && node.props['aria-label'] === '搜索插件和作者')[0];
+  const typeSearch = async value => {
+    searchBox().props.onChange({ target: { value } });
+    await settleQuery(runtime);
+  };
+
+  // 搜 gamma：结果里没有缺 star 的条目 → 不发补查请求。
+  await typeSearch('gamma');
+  assert.equal(statsRequests.length, 1, '没有需要补查的条目就不发请求');
+
+  // 搜 delta：补查命中 → 卡片上的数字就地更新。
+  await typeSearch('delta');
+  assert.equal(statsRequests.length, 2);
+  assert.deepEqual(statsRequests[1], [URL_.delta]);
+  assert.ok(textOf(runtime.tree).includes('★ 7'), '补到的 star 更新到卡片');
+  assert.ok(textOf(runtime.tree).includes('↓ 70'), '补到的下载量更新到卡片');
+
+  // 搜 epsilon：补查失败 → 数字保持快照，不弹错误。
+  await typeSearch('epsilon');
+  assert.equal(statsRequests.length, 3);
+  assert.deepEqual(statsRequests[2], [URL_.epsilon]);
+  assert.equal(toasts(runtime.tree).filter(item => item.kind === 'error').length, 0, '补查失败不打扰用户');
+
+  // 再搜一次：失败的条目允许重试（去重记录已放开），不会永久卡在 0。
+  await typeSearch('epsilon2');
+  assert.equal(statsRequests.length, 4, '失败后下次查询允许重试');
+  assert.deepEqual(statsRequests[3], [URL_.epsilon]);
+
+  console.log('场景23c（列表自动补查）通过');
+}
+
 /** 场景 24：描述找插件的流式事件分支 —— 服务端每种 step 都要在时间线上
  *  留下对应文案；error 事件、流提前结束、模型降级都要如实显示，不能静默。 */
 {
